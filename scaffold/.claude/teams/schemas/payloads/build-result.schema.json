@@ -1,0 +1,26 @@
+{
+  "$id": "build-result",
+  "title": "實作／測試／整合的結果",
+  "type": "object",
+  "required": ["task_id", "branch", "commits", "files_changed", "tests"],
+  "properties": {
+    "task_id": {"type": "string"},
+    "branch": {"type": "string"},
+    "worktree": {"type": "string"},
+    "commits": {"type": "array", "items": {"type": "string"}, "description": "短 SHA＋訊息"},
+    "files_changed": {"type": "array", "items": {"type": "string"}},
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "result"],
+        "properties": {
+          "command": {"type": "string"},
+          "result": {"type": "string", "enum": ["pass", "fail", "red_as_expected", "not_run"]},
+          "summary": {"type": "string"}
+        }
+      }
+    },
+    "conflicts": {"type": "array", "items": {"type": "object", "required": ["file", "kind", "resolution"], "properties": {"file": {"type": "string"}, "kind": {"type": "string", "enum": ["mechanical", "seam", "judgement", "implicit_compile", "implicit_behavior", "generated"]}, "resolution": {"type": "string"}}}}
+  }
+}

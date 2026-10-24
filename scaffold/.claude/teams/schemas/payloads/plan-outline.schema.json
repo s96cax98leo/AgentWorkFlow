@@ -1,0 +1,29 @@
+{
+  "$id": "plan-outline",
+  "title": "計劃大綱：判斷要不要拆成子計劃（sub plan），以及每個子計劃的範圍與相依",
+  "type": "object",
+  "required": ["epic", "split", "reason", "sub_plans"],
+  "properties": {
+    "epic": {"type": "string"},
+    "split": {"type": "boolean", "description": "true＝拆成子計劃，由多個 dev-spec-author 平行規劃；false＝範圍夠小，一個人規劃"},
+    "reason": {"type": "string", "minLength": 1, "description": "拆或不拆的理由（預估子任務數、可獨立交付的區塊）"},
+    "estimated_subtasks": {"type": "integer", "minimum": 1},
+    "sub_plans": {
+      "type": "array",
+      "description": "split=true 時至少 2 個；split=false 時留空",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "scope", "owns", "depends_on"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "短 id，例如 api、ui；子計劃文件放 specs/<epic>/sub/<id>/，子任務 id 以 <id>- 開頭"},
+          "title": {"type": "string"},
+          "scope": {"type": "string", "minLength": 1, "description": "這個子計劃負責的範圍與不負責的範圍"},
+          "owns": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "這個子計劃的子任務能擁有的檔案或目錄；子計劃之間不得重疊"},
+          "depends_on": {"type": "array", "items": {"type": "string"}, "description": "依賴的其他子計劃 id"},
+          "story_ids": {"type": "array", "items": {"type": "string"}},
+          "interfaces": {"type": "array", "items": {"type": "string"}, "description": "和其他子計劃之間的介面（端點、事件、型別），由彙整步驟核對"}
+        }
+      }
+    }
+  }
+}

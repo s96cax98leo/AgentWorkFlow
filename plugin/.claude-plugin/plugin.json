@@ -1,0 +1,9 @@
+{
+  "name": "agent-workflow",
+  "version": "0.1.0",
+  "description": "AI-native SDLC 與事件處理的 agent team：dev-*／tpm-* agents、skills、slash commands，以及守門與交件信封 hooks（設定讀專案的 .claude/teams/guard.config.json）",
+  "author": {
+    "name": "AgentWorkFlow"
+  },
+  "keywords": ["sdlc", "agent-team", "hooks", "workflow"]
+}

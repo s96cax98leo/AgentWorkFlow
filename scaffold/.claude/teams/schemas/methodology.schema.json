@@ -1,0 +1,148 @@
+{
+  "$id": "methodology",
+  "title": "開發規範 profile：SDLC 各段的做法與專案慣例。模版只管工作流程，做法由這份 profile 決定",
+  "description": "init.py 把選定的 profile（scaffold/.claude/teams/methodologies/<名稱>.json）加上使用者回答的慣例，合併成目標專案的 .claude/teams/methodology.json；build.py 把它內嵌進 sdlc-*.js。改了 profile 要重跑 build.py。",
+  "type": "object",
+  "required": ["name", "description", "stages", "requirements", "conventions"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1, "description": "profile 名稱，例如 default、lightweight"},
+    "description": {"type": "string", "minLength": 1},
+    "stages": {
+      "type": "object",
+      "description": "SDLC 各段的做法；guidance 會原文放進該段的派工單",
+      "required": ["plan", "design", "build", "test", "deliver", "merge"],
+      "properties": {
+        "plan": {
+          "type": "object",
+          "required": ["artifacts", "guidance"],
+          "properties": {
+            "artifacts": {"type": "array", "items": {"type": "string"}, "description": "這一段的產出文件（檔名，放在 specs/<epic>/）"},
+            "template": {"type": "string", "description": "沒有專案範本時的格式說明"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "design": {
+          "type": "object",
+          "required": ["artifacts", "requirement_style", "guidance"],
+          "properties": {
+            "artifacts": {"type": "array", "items": {"type": "string"}},
+            "requirement_style": {"type": "string", "minLength": 1, "description": "需求／驗收條件的寫法"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "build": {
+          "type": "object",
+          "required": ["test_first", "guidance"],
+          "properties": {
+            "test_first": {"type": "boolean", "description": "true：先由 dev-acceptance-tester 寫會失敗的測試、合進整合分支後才實作；false：先實作，再補驗證測試"},
+            "unit_tests": {"type": "string", "description": "實作者寫單元測試的方式"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "test": {
+          "type": "object",
+          "required": ["verification", "guidance"],
+          "properties": {
+            "verification": {"type": "string", "minLength": 1, "description": "怎麼驗證需求（逐條驗收、手動清單、指令…）"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "deliver": {
+          "type": "object",
+          "required": ["guidance"],
+          "properties": {
+            "review_axes": {"type": "array", "items": {"type": "string"}, "description": "審查重點補充（四軸固定，這裡補專案特有的）"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "merge": {
+          "type": "object",
+          "required": ["guidance"],
+          "properties": {
+            "guidance": {"type": "string"}
+          }
+        }
+      }
+    },
+    "parallelism": {
+      "type": "object",
+      "description": "工作流程參數（不是開發規範）：計劃太大時拆子計劃平行規劃、驗證分片平行跑。省略時用 workflow 內的預設值",
+      "properties": {
+        "split_threshold": {"type": "integer", "minimum": 2, "description": "預估子任務數超過這個值（或有多個可獨立交付的區塊）就拆成子計劃；預設 8"},
+        "max_sub_plans": {"type": "integer", "minimum": 2, "description": "子計劃數上限（同時也是平行規劃與分片驗證的 agent 數上限）；預設 4"},
+        "shard_verification": {"type": "boolean", "description": "有子計劃時，驗證是否每個子計劃派一個 dev-verifier 平行跑；預設 true"}
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "description": "需求來源；格式同 merge_gate.py 的 adapter（guard.config.json 的 requirements）。guard.config.json 沒設 path／command 時，merge_gate 讀這裡",
+      "required": ["source"],
+      "properties": {
+        "source": {"type": "string", "enum": ["json", "command", "spec-md"]},
+        "path": {"type": "string"},
+        "command": {"type": "string"},
+        "id_pattern": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "description": "專案慣例：code style、commit、分支、PR 大小、文件格式",
+      "required": ["code_style", "commit", "branch", "pr_size", "doc_format"],
+      "properties": {
+        "code_style": {
+          "type": "object",
+          "required": ["description"],
+          "properties": {
+            "description": {"type": "string", "minLength": 1},
+            "tool": {"type": ["string", "null"]},
+            "command": {"type": ["string", "null"], "description": "檢查指令；null＝沒有，照 description"}
+          }
+        },
+        "commit": {
+          "type": "object",
+          "required": ["format", "examples"],
+          "properties": {
+            "format": {"type": "string", "minLength": 1},
+            "examples": {
+              "type": "object",
+              "description": "各類 commit 的範例；<epic>、<Story> 由 workflow 或 agent 換成實際值",
+              "properties": {
+                "docs": {"type": "string"},
+                "test": {"type": "string"},
+                "feat": {"type": "string"},
+                "fix": {"type": "string"}
+              }
+            },
+            "check_regex": {"type": ["string", "null"], "description": "commit 標題要符合的正規式；null＝不檢查（check_rules.py --git 只查署名行）"}
+          }
+        },
+        "branch": {
+          "type": "object",
+          "required": ["prefix"],
+          "properties": {
+            "prefix": {"type": "string", "minLength": 1, "description": "epic 與子任務分支的前綴（同 BRANCH_PREFIX）"},
+            "naming": {"type": "string"}
+          }
+        },
+        "pr_size": {
+          "type": "object",
+          "required": ["max_lines", "max_files"],
+          "properties": {
+            "max_lines": {"type": ["integer", "null"], "minimum": 1, "description": "null＝不限"},
+            "max_files": {"type": ["integer", "null"], "minimum": 1, "description": "null＝不限"},
+            "scope": {"type": "string", "description": "怎麼量，例如只算修改既有檔"}
+          }
+        },
+        "doc_format": {
+          "type": "object",
+          "required": ["format"],
+          "properties": {
+            "format": {"type": "string", "minLength": 1},
+            "notes": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(python3 .claude/teams/tools/build.py:*)",
+      "Bash(python3 .claude/teams/tools/check_envelope.py:*)",
+      "Bash(python3 .claude/teams/tools/check_rules.py:*)",
+      "Bash(python3 .claude/teams/tools/check_agents.py:*)",
+      "Bash(python3 .claude/teams/tools/save_run.py:*)",
+      "Bash(node .claude/teams/tools/check_workflows.mjs:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)"
+    ]
+  }
+}

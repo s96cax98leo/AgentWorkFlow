@@ -1,0 +1,23 @@
+{
+  "$id": "docs",
+  "title": "文件產出（writer、spec-author）",
+  "type": "object",
+  "required": ["documents"],
+  "properties": {
+    "documents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "kind", "audience"],
+        "properties": {
+          "path": {"type": "string"},
+          "kind": {"type": "string", "enum": ["intent", "design", "spec", "plan", "progress", "verifier", "design_review", "security_review", "adr", "exec_record", "research", "for_owner", "pr_description", "meeting_summary", "other"]},
+          "audience": {"type": "string", "enum": ["internal", "owner", "external", "agents"]},
+          "notes": {"type": "string"}
+        }
+      }
+    },
+    "rule_check": {"type": "string", "description": "check_rules.py 的結果摘要"}
+  }
+}

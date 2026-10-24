@@ -1,0 +1,26 @@
+{
+  "$id": "items",
+  "title": "事項清單（會議、需求變動、決策落地、demo 檢查、待辦共用）",
+  "type": "object",
+  "required": ["source", "items"],
+  "properties": {
+    "source": {"type": "string", "description": "事件來源：會議檔、需求檔、決策、檢查目標"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "text", "owner", "status", "refs"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"type": "string", "enum": ["action", "decision", "risk", "issue", "dependency", "doc_update", "impact", "change", "check", "todo"]},
+          "text": {"type": "string"},
+          "owner": {"type": "string", "description": "人名或角色；不知道寫 unknown"},
+          "due": {"type": "string"},
+          "status": {"type": "string", "enum": ["open", "done", "waiting", "red", "yellow", "green", "n_a"]},
+          "refs": {"type": "array", "items": {"type": "string"}, "description": "路徑:行號、會議時間戳、URL"},
+          "target_files": {"type": "array", "items": {"type": "string"}, "description": "要改或受影響的檔案"}
+        }
+      }
+    }
+  }
+}

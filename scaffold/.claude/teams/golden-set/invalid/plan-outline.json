@@ -1,0 +1,59 @@
+{
+ "payload": "plan-outline",
+ "data": {
+  "status": "done",
+  "summary": "範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃",
+  "artifacts": [
+   "specs/demo-200-x/outline.md"
+  ],
+  "evidence": [
+   {
+    "claim": "預估 11 個子任務",
+    "source": "specs/demo-200-x/intent.md:12",
+    "result": "超過門檻 8"
+   }
+  ],
+  "confidence": 0.85,
+  "open_questions": [],
+  "derived_work": [],
+  "payload": {
+   "epic": "demo-200-x",
+   "reason": "預估 11 個子任務，api 與 ui 可獨立交付",
+   "estimated_subtasks": 11,
+   "sub_plans": [
+    {
+     "id": "API 子計劃",
+     "title": "匯出 API",
+     "scope": "匯出端點與資料轉換；不含畫面",
+     "owns": [
+      "services/export/"
+     ],
+     "depends_on": [],
+     "story_ids": [
+      "S1"
+     ],
+     "interfaces": [
+      "GET /export.csv"
+     ]
+    },
+    {
+     "id": "ui",
+     "title": "匯出按鈕",
+     "scope": "前端按鈕與下載；不含後端",
+     "owns": [
+      "web/src/export/"
+     ],
+     "depends_on": [
+      "api"
+     ],
+     "story_ids": [
+      "S2"
+     ],
+     "interfaces": [
+      "GET /export.csv"
+     ]
+    }
+   ]
+  }
+ }
+}

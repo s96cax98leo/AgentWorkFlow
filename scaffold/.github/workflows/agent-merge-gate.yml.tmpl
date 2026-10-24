@@ -1,0 +1,189 @@
+# agent-merge-gate：把確定性 merge gate（.claude/teams/tools/merge_gate.py）當成 PR 的 required check。
+# init.py 由 AgentWorkFlow 的 scaffold/.github/workflows/agent-merge-gate.yml.tmpl 產生。完整說明見 AgentWorkFlow 的 docs/自動合併信任模型.md。
+#
+# 為什麼這樣寫：
+# - 信任邊界在 GitHub 伺服器端，不在本機 hook。這支 CI 的結果才是能不能合併的依據。
+# - gate 與設定一律從「受保護的 base 分支」checkout 後執行，不執行 PR 自帶的 merge_gate.py、guard.config.json 或任何 PR 程式碼。
+#   PR 只被當成資料（git diff）。所以用 pull_request_target（在 base 的脈絡執行），並且絕對不要 checkout PR head 後執行它的程式。
+# - 結果用「gate App」的身分寫成 check run（名稱 agent-merge-gate/decision），ruleset 的 required check 綁定這個 App 當來源，
+#   任何其他身分（包括有 write 權限的人或 agent）設的同名 status 都不算數。
+#
+# 目標 repo 的 ruleset（Settings → Rules → Rulesets，套用到 main）必須設定：
+#   1. Require status checks to pass：加入 agent-merge-gate/decision，來源（source）選 gate App，不要選 any source。
+#      勾 Require branches to be up to date；有用 merge queue 時也在 merge_group 重跑（本檔已觸發）。
+#   2. Do not allow bypassing the above settings（bypass list 留空，admin 也不能繞過）。
+#   3. Restrict updates：只有 merger App（以及人）能更新 main；禁止 force push、禁止刪除。
+#   4. Require a pull request before merging：
+#      - 自動合併通道（fork 的最低風險等級）required approvals 設 0，由本 check 把關；
+#      - Dismiss stale approvals、Require approval of the most recent push 照開；
+#      - Require review from Code Owners：CODEOWNERS 指定 .claude/teams/guard.config.json、.claude/teams/tools/、.github/ 只能由人核准。
+#   5. Actions 設定維持「不允許 GitHub Actions 建立或核准 PR」。
+#
+# 需要的設定（Settings → Secrets and variables → Actions）：
+#   vars.AGENT_GATE_APP_ID             gate App 的 App ID（只需要 Checks: write、Pull requests: read、Contents: read）
+#   secrets.AGENT_GATE_APP_PRIVATE_KEY gate App 的私鑰
+#   vars.AGENT_MERGER_BOT              merger App 的 bot 帳號（例如 acme-merger[bot]）；gate 只採信它貼在 PR 的輸入
+#
+# gate 的輸入：
+#   - 需求清單：base 分支上 guard.config.json 的 requirements（json／command／spec-md adapter）；沒設 path／command 時用 base 分支上
+#     .claude/teams/methodology.json（開發規範 profile）的 requirements，和本機 merge_gate 同一個來源。
+#   - diff：git diff base...head（只讀，不執行）。
+#   - required checks：本 PR 其他 check 的結果（排除本 check）。
+#   - steward 的 merge-decision、驗證證據、測試數：dev-merge-steward 在執行模式跑 gate 之前，以 merger App 身分貼在 PR 的最後一則留言
+#     （sdlc-merge.js 的 Execute 階段與 dev-merge-steward.md 的執行模式第 2 步），
+#     內含 <!-- agent-merge-gate-inputs --> 標記與一個 ```json 區塊：
+#       {"decision": {...merge-decision 信封...}, "evidence": [...], "tests_before": N, "tests_after": N, "findings": [...]}
+#     不是 vars.AGENT_MERGER_BOT 貼的留言一律忽略；沒有留言時 gate 判 hold（fail-closed）。
+#   團隊的驗證方式不同時，改這一步的資料來源即可；判定邏輯都在 merge_gate.py，不要搬進 YAML。
+
+name: agent-merge-gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  issue_comment:
+    types: [created]
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+concurrency:
+  group: agent-merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 取得 gate App 的 token
+        id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.AGENT_GATE_APP_ID }}
+          private-key: ${{ secrets.AGENT_GATE_APP_PRIVATE_KEY }}
+
+      - name: 找出 PR 編號、base 與 head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_FROM_EVENT: ${{ github.event.pull_request.number || github.event.issue.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "merge_group" ]; then
+            # gh-readonly-queue/<base>/pr-<編號>-<sha>
+            PR="$(printf '%s' "$QUEUE_REF" | sed -n 's#.*/pr-\([0-9][0-9]*\)-.*#\1#p')"
+          else
+            PR="$PR_FROM_EVENT"
+          fi
+          test -n "$PR"
+          gh api "repos/$REPO/pulls/$PR" --jq '"pr=\(.number)\nbase_ref=\(.base.ref)\nbase_sha=\(.base.sha)\nhead_sha=\(.head.sha)"' >> "$GITHUB_OUTPUT"
+
+      - name: checkout 受保護的 base 分支（gate 與設定都從這裡來）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.base_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 取 PR 的 diff（只當資料，不 checkout、不執行 PR 程式碼）
+        env:
+          PR: ${{ steps.pr.outputs.pr }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gate"
+          git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
+          test "$(git rev-parse refs/remotes/pr/head)" = "$HEAD_SHA"
+          git diff --no-color --no-ext-diff "origin/$BASE_REF...$HEAD_SHA" > "$RUNNER_TEMP/gate/diff.txt"
+
+      - name: 收集 required checks 與 merger App 貼的 gate 輸入
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          MERGER_BOT: ${{ vars.AGENT_MERGER_BOT }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/gate"
+          gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
+            --jq '.check_runs[] | select(.name != "agent-merge-gate/decision" and .name != "gate") | {name, conclusion: (.conclusion // .status)} | @json' \
+            | python3 -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))' > "$OUT/checks.json"
+          gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | @json' > "$OUT/comments.jsonl"
+          python3 - "$OUT" "$MERGER_BOT" <<'PY'
+          import json, re, sys
+          from pathlib import Path
+          out, bot = Path(sys.argv[1]), sys.argv[2]
+          picked = None
+          for line in (out / "comments.jsonl").read_text(encoding="utf-8").splitlines():
+              c = json.loads(line)
+              if bot and c["user"]["login"] == bot and "<!-- agent-merge-gate-inputs -->" in c["body"]:
+                  picked = c["body"]
+          if picked is None:
+              print("沒有 merger App 貼的 gate 輸入（gate 會判 hold）")
+              sys.exit(0)
+          m = re.search(r"```json\s*(\{.*?\})\s*```", picked, re.S)
+          data = json.loads(m.group(1)) if m else {}
+          for key in ("decision", "evidence", "findings"):
+              if key in data:
+                  (out / f"{key}.json").write_text(json.dumps(data[key], ensure_ascii=False), encoding="utf-8")
+          for key in ("tests_before", "tests_after"):
+              if isinstance(data.get(key), int):
+                  (out / key).write_text(str(data[key]), encoding="utf-8")
+          PY
+
+      - name: 跑 merge_gate.py check（base 分支上的版本）
+        id: gate
+        env:
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/gate"
+          ARGS=(check --project-dir "$GITHUB_WORKSPACE" --runs-dir "$OUT/runs" --repo "$REPO" --pr "$PR" --head-sha "$HEAD_SHA"
+                --checks "$OUT/checks.json" --diff "$OUT/diff.txt")
+          [ -f "$OUT/decision.json" ] && ARGS+=(--decision "$OUT/decision.json")
+          [ -f "$OUT/evidence.json" ] && ARGS+=(--evidence "$OUT/evidence.json")
+          [ -f "$OUT/findings.json" ] && ARGS+=(--findings "$OUT/findings.json")
+          [ -f "$OUT/tests_before" ] && ARGS+=(--tests-before "$(cat "$OUT/tests_before")")
+          [ -f "$OUT/tests_after" ] && ARGS+=(--tests-after "$(cat "$OUT/tests_after")")
+          python3 .claude/teams/tools/merge_gate.py "${ARGS[@]}" > "$OUT/result.json"
+          code=$?
+          cat "$OUT/result.json"
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 以 gate App 身分回報 check run（ruleset 綁定這個來源）
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          GATE_EXIT: ${{ steps.gate.outputs.exit }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/gate"
+          if [ "$GATE_EXIT" = "0" ]; then CONCLUSION=success; else CONCLUSION=failure; fi
+          python3 - "$OUT/result.json" "$CONCLUSION" "$HEAD_SHA" > "$OUT/check.json" <<'PY'
+          import json, sys
+          try:
+              res = json.load(open(sys.argv[1], encoding="utf-8"))
+          except (OSError, ValueError):
+              res = {"decision": "hold", "reasons": ["gate 沒有輸出結果"]}
+          summary = f"decision: {res.get('decision')}\n\n" + "\n".join(f"- {r}" for r in res.get("reasons", []))
+          print(json.dumps({"name": "agent-merge-gate/decision", "head_sha": sys.argv[3], "status": "completed",
+                            "conclusion": sys.argv[2],
+                            "output": {"title": f"merge gate：{res.get('decision')}", "summary": summary[:60000]}},
+                           ensure_ascii=False))
+          PY
+          gh api -X POST "repos/$REPO/check-runs" --input "$OUT/check.json" > /dev/null
+          test "$CONCLUSION" = success

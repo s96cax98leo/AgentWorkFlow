@@ -1,0 +1,1 @@
+【填空：執行 shasum -a 256 references/<正本檔> > references/SHA256SUMS 產生；格式「<sha256>  <檔名>」】

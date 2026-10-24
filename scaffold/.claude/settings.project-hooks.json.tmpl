@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(python3 .claude/teams/tools/build.py:*)",
+      "Bash(python3 .claude/teams/tools/check_envelope.py:*)",
+      "Bash(python3 .claude/teams/tools/check_rules.py:*)",
+      "Bash(python3 .claude/teams/tools/check_agents.py:*)",
+      "Bash(python3 .claude/teams/tools/save_run.py:*)",
+      "Bash(node .claude/teams/tools/check_workflows.mjs:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} guard-shell", "onFailure": "block"{{AWF_HOOK_SHELL}}}]},
+      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} guard-paths", "onFailure": "block"{{AWF_HOOK_SHELL}}}]},
+      {"matcher": "SubagentHandback|StructuredOutput", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} envelope", "onFailure": "continue"{{AWF_HOOK_SHELL}}}]}
+    ],
+    "SubagentStop": [
+      {"hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} envelope"{{AWF_HOOK_SHELL}}}]}
+    ],
+    "TaskCompleted": [
+      {"hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} envelope"{{AWF_HOOK_SHELL}}}]}
+    ]
+  }
+}

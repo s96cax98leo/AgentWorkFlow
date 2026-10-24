@@ -1,0 +1,39 @@
+{
+ "payload": "build-result",
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [
+   "補文件"
+  ],
+  "payload": {
+   "task_id": "t1",
+   "branch": "feature/x--t1",
+   "commits": [
+    "abc fix"
+   ],
+   "files_changed": [
+    "src/a.ts"
+   ],
+   "tests": [
+    {
+     "command": "vitest",
+     "result": "ok"
+    }
+   ]
+  }
+ },
+ "semantic": false
+}

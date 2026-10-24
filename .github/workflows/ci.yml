@@ -1,0 +1,53 @@
+# AgentWorkFlow 模版本身的 CI：三個作業系統都跑 tests/run_all.py
+# （去客戶化掃描、init 煙霧測試含 golden-set／build.py --check／check_workflows.mjs／check_agents.py、hook 測試）。
+# Windows 用 pwsh 執行，確認不依賴 bash。
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 保留 LF 換行（Windows 預設 autocrlf 會把 checkout 的檔案改成 CRLF）
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安裝 golden-set 需要的 jsonschema
+        run: python -m pip install --disable-pip-version-check jsonschema
+
+      - name: git 身分（hook 測試會建暫存 repo）
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+
+      - name: 全部測試（POSIX）
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python tests/run_all.py
+
+      - name: 全部測試（Windows，pwsh）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PYTHONUTF8: "1"
+        run: python tests/run_all.py

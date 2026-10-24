@@ -1,0 +1,28 @@
+{
+  "$id": "criteria",
+  "title": "逐條驗收結果（verifier、自我驗收共用）",
+  "type": "object",
+  "required": ["commit", "scope_covered", "scope_skipped", "criteria"],
+  "properties": {
+    "commit": {"type": "string", "description": "驗證當下的 HEAD；非 git 產出寫 n/a"},
+    "scope_covered": {"type": "string"},
+    "scope_skipped": {"type": "string", "description": "沒驗的與原因；沒有寫 none"},
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "criterion", "command", "result", "evidence"],
+        "properties": {
+          "id": {"type": "string"},
+          "criterion": {"type": "string"},
+          "command": {"type": "string"},
+          "result": {"type": "string", "enum": ["pass", "fail", "not_verifiable"]},
+          "evidence": {"type": "string"},
+          "repro": {"type": "string", "description": "fail 時：重現步驟／預期／實際／環境"}
+        }
+      }
+    },
+    "anti_cheat": {"type": "array", "items": {"type": "string"}, "description": "反作弊檢查發現的 file:line；沒有就空陣列"}
+  }
+}

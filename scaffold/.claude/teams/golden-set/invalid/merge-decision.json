@@ -1,0 +1,28 @@
+{
+ "payload": "merge-decision",
+ "semantic": true,
+ "data": {
+  "status": "done",
+  "summary": "示範客戶 ACME：宣稱可合併，但對照表有一條不一致（應被語意規則擋下）",
+  "artifacts": ["_tpm/runs/x/merge-decision.md"],
+  "evidence": [{"claim": "對照完成", "source": "_tpm/runs/x/merge-decision.md:1", "result": "宣稱 merge"}],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [],
+  "payload": {
+   "decision": "merge",
+   "repo": "acme-fork/app",
+   "pr": 3,
+   "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "requirements_source": "json:_tpm/runs/x/requirements.json",
+   "traceability": [
+    {"requirement_id": "REQ-1", "requirement": "匯出按鈕下載 CSV", "evidence": ["results.json REQ-1 pass"], "result": "match"},
+    {"requirement_id": "REQ-2", "requirement": "超過一萬筆時提示縮小範圍", "evidence": ["results.json REQ-2 fail：沒有提示"], "result": "mismatch"}
+   ],
+   "out_of_scope": [],
+   "followups": [],
+   "risk_tier": "low",
+   "gate_reasons": []
+  }
+ }
+}

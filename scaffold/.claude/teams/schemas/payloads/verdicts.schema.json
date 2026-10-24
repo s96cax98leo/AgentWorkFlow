@@ -1,0 +1,21 @@
+{
+  "$id": "verdicts",
+  "title": "skeptic 的反駁判定",
+  "type": "object",
+  "required": ["verdicts"],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target_id", "refuted", "reason"],
+        "properties": {
+          "target_id": {"type": "string", "description": "被檢驗的 finding 或結論 id"},
+          "refuted": {"type": "boolean", "description": "不確定時判 true"},
+          "reason": {"type": "string"},
+          "counter_evidence": {"type": "string"}
+        }
+      }
+    }
+  }
+}

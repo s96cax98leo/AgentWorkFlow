@@ -1,0 +1,74 @@
+{
+  "name": "default",
+  "description": "預設 profile（模版原本的做法）：spec 驅動，驗收條件用 EARS 句型，測試先行（先寫會失敗的驗收測試再實作），Conventional Commits 加 Story scope，PR 修改既有檔上限 300 行或 15 檔。",
+  "stages": {
+    "plan": {
+      "artifacts": ["intent.md"],
+      "template": "問題、期望結果、受影響的使用者與系統、限制、待解問題",
+      "guidance": "intent 只寫問題空間，不寫解法；每個主張附出處；最多 5 個待釐清問題，blocking 的附 2–3 個選項與代價。"
+    },
+    "design": {
+      "artifacts": ["design.md", "spec.md", "plan.md", "progress.md"],
+      "requirement_style": "spec.md 的驗收條件用 EARS 句型（例：「當 <觸發> 時，系統應 <行為>」），逐條對 Story ID，數值與錯誤碼照原文；另有影響系統表、疑慮節、整合修訂與例外節。",
+      "guidance": "design.md 有新介面、跨服務、要取捨時才寫；架構取捨寫 ADR（至少 2 個真實選項）。plan.md 寫任務、檔案、測試對應表；progress.md 是從 plan 拆出的清單。"
+    },
+    "build": {
+      "test_first": true,
+      "unit_tests": "單元測試由實作者以 TDD（紅燈 → 綠燈 → 重構）撰寫。",
+      "guidance": "驗收測試先寫、確認以預期的理由失敗並合進整合分支，才開始實作；實作者不得修改驗收測試。"
+    },
+    "test": {
+      "verification": "在目前 HEAD 逐條驗證 spec.md 的驗收條件（pass／fail／not_verifiable），fail 用缺陷四欄寫，並對 diff 做反作弊檢查。",
+      "guidance": "先跑機械檢查（verify 指令），再核對證據，最後對抗性抽查。"
+    },
+    "deliver": {
+      "review_axes": [],
+      "guidance": "四軸審查（standards、spec、bugs、history），只留信心 ≥0.8 且未被 skeptic 推翻的發現。"
+    },
+    "merge": {
+      "guidance": "需求清單逐條對照驗證證據，全部一致且 merge_gate.py 判 merge 才合併。"
+    }
+  },
+  "parallelism": {
+    "split_threshold": 8,
+    "max_sub_plans": 4,
+    "shard_verification": true
+  },
+  "requirements": {
+    "source": "json",
+    "path": "",
+    "command": "",
+    "id_pattern": "",
+    "notes": "預設不指定需求檔：sdlc-merge 用 args.requirements 或 merge_gate --requirements 帶入；guard.config.json 的 requirements 有設 path／command 時以它為準。"
+  },
+  "conventions": {
+    "code_style": {
+      "description": "照目標 repo 既有的 linter／formatter 設定（CLAUDE.md、設定檔）；新增程式碼不得新增 lint 錯誤。",
+      "tool": null,
+      "command": null
+    },
+    "commit": {
+      "format": "Conventional Commits：<type>(<scope>): <摘要>，scope 放 Story ID（文件類放 epic）；結尾署名行。",
+      "examples": {
+        "docs": "docs(<epic>): intent 草稿",
+        "test": "test(<Story>): 驗收測試",
+        "feat": "feat(<Story>): 實作",
+        "fix": "fix(<Story>): 修正驗收失敗"
+      },
+      "check_regex": null
+    },
+    "branch": {
+      "prefix": "feature/",
+      "naming": "epic 分支 <prefix><epic>；子任務分支 <prefix><epic>--<子任務 id>；解衝突用 merge/<短名>-into-<整合分支>-<YYYYMMDD>。"
+    },
+    "pr_size": {
+      "max_lines": 300,
+      "max_files": 15,
+      "scope": "只算修改既有檔（git diff --numstat --diff-filter=M）；超過時建議拆成依序可合的小 PR。"
+    },
+    "doc_format": {
+      "format": "Markdown",
+      "notes": "specs/<epic>/ 下的文件照 specs/_templates/ 的範本；沒有範本時用本 profile 各段的說明。"
+    }
+  }
+}

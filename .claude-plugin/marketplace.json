@@ -1,0 +1,19 @@
+{
+  "name": "agentworkflow",
+  "owner": {
+    "name": "AgentWorkFlow"
+  },
+  "metadata": {
+    "description": "AgentWorkFlow 本機 marketplace：AI-native SDLC、事件處理與網站分析的 agent team 模版",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "agent-workflow",
+      "source": "./plugin",
+      "description": "AI-native SDLC（plan → design → build → test → deliver）、事件處理 agent team、交件信封與守門 hooks",
+      "version": "0.1.0",
+      "category": "development"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "description": "agent-workflow 守門與交件信封檢查，單一入口 awf_hook.py（純 Python，macOS／Linux／Windows 共用）。shell 守門同時涵蓋 Bash 與 PowerShell 工具；守門類 hook 跑不起來時一律擋下（onFailure: block）。設定讀 ${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json；用 plugin 安裝時，專案的 .claude/settings.json 不要再註冊同樣的 hooks。",
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" guard-shell", "onFailure": "block"}]},
+      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" guard-paths", "onFailure": "block"}]},
+      {"matcher": "SubagentHandback|StructuredOutput", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope", "onFailure": "continue"}]}
+    ],
+    "SubagentStop": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope"}]}
+    ],
+    "TaskCompleted": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope"}]}
+    ]
+  }
+}

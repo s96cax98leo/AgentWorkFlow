@@ -1,0 +1,65 @@
+# AgentWorkFlow 專案設定：init.py 用這些值替換 scaffold/ 裡的 {{佔位符}}。
+# 用法：cp workflow.config.example workflow.config，改值後跑 python3 init.py --target <專案目錄>
+# 格式：每行 KEY=value（value 到行尾，不用加引號）；# 開頭是註解；值留空＝不設定。
+# 清單用逗號分隔。不要在這裡放任何金鑰或密碼。
+
+# 專案名（文件標題、guard.config.json 的 project_name）。預設：my-project
+PROJECT_NAME=my-project
+
+# 客戶泛稱（CLAUDE.md 的資料邊界段）。預設：示範客戶
+CLIENT_NAME=示範客戶
+
+# 工作區根目錄（session 的專案目錄）。預設：留空＝init 的 --target
+WORKSPACE_DIR=
+
+# 我方 repo clone 所在的目錄（相對工作區）；留空＝工作區本身就是目標 repo。預設：repos
+REPOS_DIR=repos
+
+# 上游 repo（不可寫入；push 與 gh 寫入會被擋），格式 owner/repo，可多個用逗號分隔。預設：留空
+UPSTREAM_REPO=
+
+# 我方 fork（推送目標；gh 寫入要明確寫 --repo 這個值），格式 owner/repo。預設：留空
+FORK_REPO=
+
+# 絕對不能碰的目錄（相對工作區或絕對路徑）或 repo（owner/repo），逗號分隔。預設：留空
+FORBIDDEN_REPOS=
+
+# 輸出語言（rules.md 的強約束、派工單）。預設：繁體中文
+OUTPUT_LANGUAGE=繁體中文
+
+# 任務編號前綴（上層系統發的編號長相：前綴＋數字，例如 TASK-0123）；留空＝不檢查自編編號。預設：TASK-
+TASK_ID_PREFIX=TASK-
+
+# 發任務編號的上層系統或角色名。預設：任務管理系統
+TASK_AUTHORITY=任務管理系統
+
+# 拍板的人（泛稱）。預設：使用者
+DECISION_OWNER=使用者
+
+# 需求方（泛稱）。預設：需求方
+STAKEHOLDER=需求方
+
+# 開發分支前綴（epic 與子任務分支）。預設：feature/
+BRANCH_PREFIX=feature/
+
+# 允許的新分支前綴，逗號分隔（要包含 BRANCH_PREFIX）。預設：feature/,bugfix/,hotfix/,release/,merge/
+ALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/
+
+# run 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs
+RUNS_DIR=_tpm/runs
+
+# 簡報目錄（上層系統發來的任務簡報，相對工作區）。預設：_tpm/briefs
+BRIEFS_DIR=_tpm/briefs
+
+# commit 結尾的署名行。預設：Assisted-by: Claude
+ATTRIBUTION_LINE=Assisted-by: Claude
+
+# 設計系統名（設計系統 skill 的名稱）。預設：my-design-system
+DESIGN_SYSTEM_NAME=my-design-system
+
+# workflow 的 agentType 前綴：用 plugin 安裝 agents 時是「plugin 名:」；agents 放專案 .claude/agents 時留空。預設：agent-workflow:
+AGENT_NS=agent-workflow:
+
+# 開發規範 profile（scaffold/.claude/teams/methodologies/ 的檔名，或自己的 profile JSON 路徑）：決定各段做法與慣例（需求寫法、測試先行與否、commit 格式、PR 大小…）。
+# 內建：default（spec 驅動、測試先行、Conventional Commits，即模版原本的做法）、lightweight（範例：需求來自 issue、不強制測試先行）。預設：default
+METHODOLOGY=default

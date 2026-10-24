@@ -1,0 +1,36 @@
+{
+ "payload": "findings",
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [
+   "補文件"
+  ],
+  "payload": {
+   "lens": "bugs",
+   "findings": [
+    {
+     "id": "f1",
+     "severity": "critical",
+     "claim": "x",
+     "location": "a.ts:3",
+     "recommendation": "y",
+     "confidence": 0.85
+    }
+   ]
+  }
+ },
+ "semantic": false
+}

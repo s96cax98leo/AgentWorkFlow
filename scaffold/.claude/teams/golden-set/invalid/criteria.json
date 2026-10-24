@@ -1,0 +1,37 @@
+{
+ "payload": "criteria",
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [
+   "補文件"
+  ],
+  "payload": {
+   "commit": "abc1234",
+   "scope_covered": "all",
+   "scope_skipped": "none",
+   "criteria": [
+    {
+     "id": "T1",
+     "criterion": "402",
+     "command": "pytest",
+     "result": "通過",
+     "evidence": "1 passed"
+    }
+   ]
+  }
+ },
+ "semantic": false
+}

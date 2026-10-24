@@ -1,0 +1,56 @@
+{
+  "$id": "merge-decision",
+  "title": "合併判定（dev-merge-steward 的需求對照表；merge_gate.py 機械複核）",
+  "description": "需求清單來自團隊自訂的來源（guard.config.json 的 requirements），不綁定任何開發規範。語意規則（merge 時不得有 mismatch、missing、followups、out_of_scope 等）在 tools/schemalib.py 的 merge_decision_errors。",
+  "type": "object",
+  "required": ["decision", "repo", "pr", "head_sha", "traceability", "out_of_scope", "followups", "risk_tier", "gate_reasons"],
+  "properties": {
+    "decision": {"type": "string", "enum": ["merge", "hold", "escalate"], "description": "merge＝全部一致可合併；hold＝退回 PR 並開新需求；escalate＝交給人"},
+    "repo": {"type": "string", "minLength": 1, "description": "owner/name"},
+    "pr": {"type": "integer", "minimum": 1},
+    "head_sha": {"type": "string", "minLength": 7, "description": "對照與驗證當下的 PR head commit"},
+    "requirements_source": {"type": "string", "description": "需求清單從哪裡來，例如 json:<路徑>、command、spec-md（範例 adapter）"},
+    "traceability": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["requirement_id", "requirement", "evidence", "result"],
+        "properties": {
+          "requirement_id": {"type": "string", "minLength": 1},
+          "requirement": {"type": "string", "description": "需求原文（逐字引用）"},
+          "evidence": {"type": "array", "items": {"type": "string"}, "description": "驗證結果、測試、程式位置（路徑:行號或可重跑的指令）"},
+          "result": {"type": "string", "enum": ["match", "mismatch", "missing"], "description": "match＝一致；mismatch＝不一致；missing＝缺證據"}
+        }
+      }
+    },
+    "out_of_scope": {
+      "type": "array",
+      "description": "diff 裡對不到任何需求的改動",
+      "items": {
+        "type": "object",
+        "required": ["location", "change"],
+        "properties": {
+          "location": {"type": "string", "description": "路徑或路徑:行號"},
+          "change": {"type": "string"}
+        }
+      }
+    },
+    "followups": {
+      "type": "array",
+      "description": "要求調整的新需求；範圍外改動的 requirement_id 寫 out_of_scope",
+      "items": {
+        "type": "object",
+        "required": ["requirement_id", "expected", "actual", "adjustment"],
+        "properties": {
+          "requirement_id": {"type": "string", "minLength": 1},
+          "expected": {"type": "string"},
+          "actual": {"type": "string"},
+          "adjustment": {"type": "string"}
+        }
+      }
+    },
+    "risk_tier": {"type": "string", "enum": ["low", "medium", "high"]},
+    "gate_reasons": {"type": "array", "items": {"type": "string"}, "description": "merge_gate.py 的判定理由（steward 跑 gate 後照抄）"}
+  }
+}

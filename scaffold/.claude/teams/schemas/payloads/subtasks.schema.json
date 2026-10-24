@@ -1,0 +1,27 @@
+{
+  "$id": "subtasks",
+  "title": "拆工結果：子任務、檔案所有權、相依圖",
+  "type": "object",
+  "required": ["epic", "subtasks"],
+  "properties": {
+    "epic": {"type": "string", "description": "specs/<epic>/ 的目錄名，或事件的短名"},
+    "subtasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "kind", "owns", "depends_on", "acceptance"],
+        "properties": {
+          "id": {"type": "string", "description": "短 id，例如 t1；不是任務編號"},
+          "title": {"type": "string"},
+          "kind": {"type": "string", "enum": ["code", "test", "doc", "research", "check", "decision"]},
+          "owns": {"type": "array", "items": {"type": "string"}, "description": "這個子任務獨佔可改的檔案或目錄；子任務之間不得重疊"},
+          "depends_on": {"type": "array", "items": {"type": "string"}},
+          "acceptance": {"type": "array", "items": {"type": "string"}, "description": "可機械判定的完成條件；對應 spec 驗收條件時寫測試 ID"},
+          "story_ids": {"type": "array", "items": {"type": "string"}},
+          "sub_plan": {"type": "string", "description": "屬於哪個子計劃（plan-outline 的 sub_plans[].id）；沒拆子計劃時省略"}
+        }
+      }
+    }
+  }
+}

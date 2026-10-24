@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+.DS_Store
+workflow.config
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# run 紀錄（辯論、端到端演練），不進版控
+/_tpm/
+
+# 本機去客戶化清單（真實客戶、人名、帳號），只留在自己的電腦
+tests/scrub_terms.local.txt
+
+# 根目錄的本機 Claude Code 設定與 agent worktree（scaffold/.claude 是模版，要進版控）
+/.claude/
+.worktrees/
+
+# graft 的搜尋設定（本機工具）
+/.ignore
+
+# 機敏檔與本機環境
+.env
+.env.*
+*.pem
+*.key
+.venv/
+node_modules/
+*.log

@@ -1,0 +1,25 @@
+{
+  "$id": "findings",
+  "title": "發現清單（審查、調研、上游分析、衝突預測共用）",
+  "type": "object",
+  "required": ["lens", "findings"],
+  "properties": {
+    "lens": {"type": "string", "description": "這份發現的觀點，例如 standards、spec、bugs、history、security、design、research、upstream、conflict、impact"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "claim", "location", "recommendation", "confidence"],
+        "properties": {
+          "id": {"type": "string"},
+          "severity": {"type": "string", "enum": ["important", "nit", "pre_existing", "info", "blocker", "should_fix"]},
+          "claim": {"type": "string"},
+          "location": {"type": "string", "description": "file:line、URL、PR 編號或指令"},
+          "recommendation": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "quote": {"type": "string", "description": "引用的原文（spec、Story），必要時"}
+        }
+      }
+    }
+  }
+}

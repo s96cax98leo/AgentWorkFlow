@@ -1,0 +1,15 @@
+# 公開的去客戶化規則：一行一個 ERE 正規式，只放通用規則（不寫真實名稱）。
+# 真實客戶、人名、帳號、內部代號寫在 tests/scrub_terms.local.txt（不進版控），scrub_check.py 兩份一起讀。
+# 本機絕對路徑
+/Users/
+/home/[a-z][a-z0-9_-]*/
+[A-Za-z]:\\Users\\
+# 憑證與金鑰的實際值（只抓值的形狀，不抓偵測規則的原始碼）
+\bghp_[A-Za-z0-9]{36}\b
+\bgithub_pat_[A-Za-z0-9_]{60,}
+\bAKIA[0-9A-Z]{16}\b
+\bsk-ant-[A-Za-z0-9_-]{20,}
+\bxox[bp]-[0-9]+-[0-9A-Za-z-]+
+-----BEGIN [A-Z ]*PRIVATE KEY-----
+# 個人信箱（範例請用 example.com／example.invalid）
+[A-Za-z0-9._%+-]+@(gmail|yahoo|hotmail|outlook|icloud)\.com

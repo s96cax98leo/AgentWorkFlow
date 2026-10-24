@@ -1,0 +1,41 @@
+{
+ "payload": null,
+ "data": {
+  "status": "needs_decision",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [
+   {
+    "question": "q",
+    "blocking": true,
+    "why_blocking": "w",
+    "options": [
+     {
+      "choice": "A",
+      "cost": "x"
+     },
+     {
+      "choice": "B",
+      "cost": "y"
+     }
+    ],
+    "recommendation": "A",
+    "default_applied": "none"
+   }
+  ],
+  "derived_work": [
+   "補文件"
+  ],
+  "payload": {}
+ }
+}
