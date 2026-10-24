@@ -72,6 +72,20 @@
     "format": "Markdown",
     "notes": "精簡為主。"
    }
-  }
+  },
+  "extensions": [
+   {
+    "name": "db-migration",
+    "agent": "acme-db-reviewer",
+    "stage": "test",
+    "instructions": "檢查示範客戶 ACME 的 migration 能不能回滾；不能回滾列 important。"
+   },
+   {
+    "name": "a11y",
+    "agent": "my-plugin:a11y-check",
+    "stage": "deliver",
+    "instructions": "檢查新畫面的無障礙標籤。"
+   }
+  ]
  }
 }

@@ -20,6 +20,9 @@
   "forbidden_trailers": ["Co-Authored-By"],
   "team_agent_prefixes": ["tpm-", "dev-"],
   "team_agent_namespaces": ["{{AGENT_NS}}"],
+  "extension_agents": {
+    "_說明": "使用者加進 workflow 的自己的 agent（methodology.json 的 extensions）：\"完整 agent_type\": \"套用哪個模版角色的規則\"，例如 \"acme-db-reviewer\": \"tpm-reviewer\"。登記後推送、GitHub 寫入、寫入範圍都照該角色擋，交件信封也會驗證。只能對應唯讀類角色（tpm-researcher、tpm-reviewer、tpm-skeptic、dev-verifier、dev-pr-reviewer、dev-security-reviewer、dev-design-reviewer），其他值一律改套 tpm-reviewer。用 /add-agent 設定。"
+  },
   "auto_merge": {
     "_說明": "預設關閉。啟用前先完成 docs/自動合併信任模型.md 的啟用前檢查清單（ruleset、gate App、CODEOWNERS）。repos：白名單與各 repo 的風險上限（low／medium／high）；merger_role、freeze_writers 比對完整 agent_type（含命名空間）；merge_method 是 steward 合併時必須帶的方式（squash／merge／rebase）；upstream_authorized_by：上游 repo 對應上游維護者的書面授權（by、link、scope、expires），沒有就一律擋；freeze_file 的內容是 frozen=true 時凍結（event-post-merge 寫；freeze_writers 只能寫 frozen=true，解凍由人做）；small_lines、large_lines、large_files 是 merge_gate 的風險分級行數門檻。",
     "enabled": false,

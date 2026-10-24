@@ -35,6 +35,11 @@
   - `split_threshold`：預估子任務超過幾個就拆子計劃。
   - `max_sub_plans`：子計劃數上限。
   - `shard_verification`：有子計劃時驗證要不要分片。
+- **加入自己的 agent**：
+  - 用 `/add-agent` 設定，寫在 `methodology.json` 的 `extensions` 與 `guard.config.json` 的 `extension_agents`。
+  - 擴充 agent 和該段的內建 agent 平行執行，交 findings，結果寫在 `<run_dir>/ext-<name>.md`。
+  - 只能套用唯讀類角色；沒登記守門角色時 `build.py` 會拒絕內嵌。
+  - build、merge 段不開放擴充。
 - **halted 時停下交人**：子計劃範圍重疊或相依循環、彙整後默默少了子任務、彙整時改了驗證結果或各分片驗的不是同一個 HEAD，workflow 都會回傳 `halted: true`。
 - **worktree**：
   - epic：`<repo>/.worktrees/<epic>`，分支 `{{BRANCH_PREFIX}}<epic>`。
@@ -77,6 +82,7 @@
   - `tpm-*`／`dev-*` 不能 push，也不能對 GitHub 寫入；推送一律由主 session 在決策者同意後執行。
   - 只有命名空間在 `team_agent_namespaces`（預設 `agent-workflow:`）裡的才算模版角色，專案 `.claude/agents/` 裡使用者自己的 agent 不套用角色規則。
   - 名字和模版角色完全相同的 agent 例外，照樣套用。
+  - 登記在 `extension_agents` 的擴充 agent 也算，套用登記的角色規則；只能對應唯讀類角色，其他值改套 `tpm-reviewer`。
 - **上游與禁止路徑**：
   - 擋推到 `upstream_repos`、擋對它做 gh 寫入；gh 寫入要明確寫 `--repo <fork_repo>`。
   - 擋寫入、移動、刪除 `forbidden_paths`。

@@ -1,6 +1,7 @@
 // 乾跑檢查 .claude/workflows/*.js（不呼叫真的 agent）：
 //   1. meta 是純字面值，有 name／description，phase() 用到的標題都在 meta.phases
-//   2. 每個 agent() 的 schema：根是 object、required ⊆ properties（Workflow 的要求）、agentType 是 tpm-*／dev-*（可帶 plugin 命名空間）且定義檔存在
+//   2. 每個 agent() 的 schema：根是 object、required ⊆ properties（Workflow 的要求）、agentType 是 tpm-*／dev-*（可帶 plugin 命名空間）且定義檔存在；
+//      profile extensions 登記的使用者 agent 例外：沒有命名空間時檢查專案 .claude/agents/<名>.md 存在，其他 plugin 的不檢查定義檔
 //   3. 用依 schema 產生的假回傳把腳本從頭跑到尾，確定沒有 runtime 錯誤
 //   4. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
 // 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>]
@@ -16,6 +17,11 @@ const argAt = process.argv.indexOf('--agents-dir')
 const pluginDir = process.env.AWF_PLUGIN_DIR || process.env.CLAUDE_PLUGIN_ROOT
 const agentsDir = argAt > 0 ? process.argv[argAt + 1] : (pluginDir && existsSync(join(pluginDir, 'agents')) ? join(pluginDir, 'agents') : join(claude, 'agents'))
 const role = (t) => String(t || '').split(':').pop()
+const projectAgents = join(claude, 'agents')
+const METH_RE = /\/\*@methodology\*\/ ([\s\S]*?) \/\*@end\*\//
+const embedded = (src) => { const m = src.match(METH_RE); try { return m ? JSON.parse(m[1]) : null } catch { return null } }
+// 情境可以覆寫內嵌的 profile（例如加 extensions），測擴充 agent 的分支
+const withProfile = (src, patch) => patch ? src.replace(METH_RE, () => `/*@methodology*/ ${JSON.stringify({ ...(embedded(src) || {}), ...patch })} /*@end*/`) : src
 
 const SAMPLE_ARGS = {
   repo: '/tmp/repo', epic: 'demo-999-sample', requirement: '範例需求', base: 'origin/main', run_dir: '/tmp/run',
@@ -58,8 +64,9 @@ function checkSchema(s, path, errs) {
 }
 
 // 乾跑一次：fakes 依 agent label 覆寫假回傳（例如讓大綱判 split=true），沒覆寫的照 schema 產生最小合法值
-async function dryRun(src, titles, args, fakes) {
+async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   const errs = []
+  const extAgents = new Set(((embedded(src) || {}).extensions || []).map((e) => e.agent))
   let agents = 0
   const visited = []
   const labels = []
@@ -70,7 +77,10 @@ async function dryRun(src, titles, args, fakes) {
       labels.push(opts.label)
       if (typeof prompt !== 'string' || !prompt) errs.push('agent() 的 prompt 空白')
       if (opts.phase && !titles.has(opts.phase)) errs.push(`opts.phase「${opts.phase}」不在 meta.phases`)
-      if (!opts.agentType || !/^(tpm|dev)-/.test(role(opts.agentType))) errs.push(`agent ${opts.label} 沒有指定 tpm-*／dev-* agentType`)
+      if (opts.agentType && extAgents.has(opts.agentType)) {
+        if (!opts.agentType.includes(':') && !virtualAgents.includes(opts.agentType) && !existsSync(join(projectAgents, `${opts.agentType}.md`)))
+          errs.push(`擴充 agent ${opts.agentType} 的定義檔不存在（${projectAgents}）`)
+      } else if (!opts.agentType || !/^(tpm|dev)-/.test(role(opts.agentType))) errs.push(`agent ${opts.label} 沒有指定 tpm-*／dev-* agentType`)
       else if (!existsSync(join(agentsDir, `${role(opts.agentType)}.md`))) errs.push(`agentType ${opts.agentType} 的定義檔不存在（${agentsDir}）`)
       if (!opts.schema) errs.push(`agent ${opts.label} 沒有 schema（交接要結構化）`)
       else { if (opts.schema.type !== 'object') errs.push(`agent ${opts.label} 的 schema 根不是 object`); checkSchema(opts.schema, opts.label, errs) }
@@ -102,8 +112,22 @@ const SUB_PLANS = [
 ]
 const crit = (id, result) => ({ id, criterion: 'c', command: 'x', result, evidence: 'e' })
 const CRIT = (rows, cheats = []) => ENV({ commit: 'abc', scope_covered: 'x', scope_skipped: 'none', criteria: rows, anti_cheat: cheats })
+// 擴充 agent 的情境：一個沒有命名空間的專案 agent、一個其他 plugin 的 agent，各段都要被派出
+const EXT_PROFILE = { extensions: [
+  { name: 'db', agent: 'acme-db-reviewer', stage: 'plan', instructions: 'x' },
+  { name: 'db2', agent: 'acme-db-reviewer', stage: 'design', instructions: 'x' },
+  { name: 'db3', agent: 'acme-db-reviewer', stage: 'test', instructions: 'x' },
+  { name: 'a11y', agent: 'my-plugin:a11y', stage: 'deliver', instructions: 'x' },
+] }
+const extScenario = (label) => ({
+  name: '擴充 agent', args: {}, fakes: {}, profile: EXT_PROFILE, virtualAgents: ['acme-db-reviewer'],
+  expect: (r) => (r.labels.includes(label) ? [] : [`沒有派出擴充 agent ${label}：${r.labels.join(',')}`]),
+})
 const SCENARIOS = {
+  'sdlc-plan.js': [extScenario('ext:db')],
+  'sdlc-deliver.js': [extScenario('ext:a11y')],
   'sdlc-design.js': [
+    extScenario('ext:db2'),
     {
       name: '拆成子計劃',
       fakes: {
@@ -140,6 +164,7 @@ const SCENARIOS = {
     },
   ],
   'sdlc-test.js': [
+    extScenario('ext:db3'),
     {
       name: '分片驗證＋平行修正',
       args: { sub_plans: SUB_PLANS },
@@ -192,7 +217,7 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
   const visited = []
   const scenarios = [{ name: '', args: {}, fakes: {} }, ...(SCENARIOS[f] || [])]
   for (const sc of scenarios) {
-    const r = await dryRun(src, titles, { ...SAMPLE_ARGS, ...sc.args }, sc.fakes)
+    const r = await dryRun(withProfile(src, sc.profile), titles, { ...SAMPLE_ARGS, ...sc.args }, sc.fakes, sc.virtualAgents)
     agents += r.agents
     r.visited.forEach((t) => { if (!visited.includes(t)) visited.push(t) })
     errs.push(...r.errs.map((e) => (sc.name ? `[情境：${sc.name}] ${e}` : e)))

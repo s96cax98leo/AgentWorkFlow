@@ -21,6 +21,7 @@
 - `sdlc-build` 會讓沒有相依的子任務各自開 worktree 平行實作，再合併。
 - 有子計劃時，`sdlc-test` 會分片平行驗證；修正也平行進行，再合併。
 - 觸發門檻在 `.claude/teams/methodology.json` 的 `parallelism`。
+- 團隊自己的 agent 可以加進 plan、design、test、deliver 任一段：用 `/add-agent` 設定，寫在 `methodology.json` 的 `extensions`，守門角色登記在 `guard.config.json` 的 `extension_agents`。
 
 ## 不可逆節點
 - push、開 PR、寫上游（{{UPSTREAM_REPO}}）、刪資料、對外寄送：一律停下，等 {{DECISION_OWNER}} 當下同意。先前的同意不延伸到下一次。

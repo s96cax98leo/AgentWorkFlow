@@ -51,13 +51,23 @@ const ANGLES = [
   { key: 'upstream', ask: '唯讀查上游 {{UPSTREAM_REPO}}：最近合進 main、還開著的 PR 是否碰到同一塊（gh pr list／gh api，不做任何寫入），評估衝突風險。' },
 ]
 
+// 使用者加進這一段的自己的 agent（profile 的 extensions，用 /add-agent 設定）：和內建 agent 平行執行，交 findings；
+// blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
+const EXT = (MP.extensions || []).filter((e) => e.stage === 'plan')
+const extJob = (e, ctx, phaseName) => () => agent(
+  `${ctx}\n\n## 派工單（擴充 agent：${e.name}）\n${e.instructions}\n` +
+  `只讀不改：不改程式、測試與 spec，不 push、不對 GitHub 寫入。詳細結果寫到 ${A.run_dir}/ext-${e.name}.md。` +
+  `payload 用 findings（lens=${e.name}）：每則附 0–1 信心與嚴重度；會擋住上線或合併的列 blocker／important（會擋住政策核准），其餘列 nit／info。`,
+  { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema: FINDINGS },
+)
+
 phase('Research')
-const research = await parallel(ANGLES.map((a) => () => agent(
+const research = await parallel([...ANGLES.map((a) => () => agent(
   `${CTX}\n\n## 派工單（調研角度：${a.key}）\n${a.ask}\n詳細筆記寫到 ${A.run_dir}/research-${a.key}.md。payload 用 findings，lens=${a.key}。`,
   { label: `research:${a.key}`, phase: 'Research', agentType: NS + 'tpm-researcher', schema: FINDINGS },
-)))
+)), ...EXT.map((e) => extJob(e, CTX, 'Research'))])
 const got = research.filter(Boolean)
-log(`調研完成 ${got.length}/${ANGLES.length} 個角度`)
+log(`調研完成 ${got.length}/${ANGLES.length + EXT.length} 個角度${EXT.length ? `（含擴充 agent：${EXT.map((e) => e.name).join('、')}）` : ''}`)
 
 phase('Intent')
 const intent = await agent(

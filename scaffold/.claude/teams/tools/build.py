@@ -10,6 +10,7 @@ build 後變成 `/*@schema:subtasks*/ {...完整 JSON...} /*@end*/`。名稱是 
 build 後換成專案 .claude/teams/methodology.json 的內容（init.py 依選定的 profile 與使用者回答的慣例產生）。
 沒有 methodology.json（例如模版本身的 scaffold）時保留 null，workflow 改用中性指引（依目標 repo 既有慣例）。
 改了 methodology.json 就要重跑 build.py；--check 會抓到不一致。
+profile 的 extensions（使用者自己的 agent）必須登記在 guard.config.json 的 extension_agents，否則不內嵌（exit 1）。
 
 用法：
     python3 .claude/teams/tools/build.py          # 寫回
@@ -46,6 +47,20 @@ def load_methodology():
     return data
 
 
+def unregistered_extensions(methodology) -> list[str]:
+    """profile 的 extensions 裡、沒有登記在 guard.config.json extension_agents 的 agent。沒有守門設定檔時不檢查。
+    沒登記的擴充 agent 不套任何角色規則（和主 session 一樣能 push），所以一律擋下，不內嵌。"""
+    exts = [e for e in (methodology or {}).get("extensions") or [] if isinstance(e, dict)]
+    guard = schemalib.TEAMS_DIR / "guard.config.json"
+    if not exts or not guard.is_file():
+        return []
+    try:
+        registered = json.loads(guard.read_text(encoding="utf-8")).get("extension_agents") or {}
+    except (json.JSONDecodeError, AttributeError):
+        registered = {}
+    return [f"{e.get('name')}（{e.get('agent')}）" for e in exts if e.get("agent") not in registered]
+
+
 def render(text: str, methodology=None) -> str:
     def sub(m: re.Match) -> str:
         name = m.group(1)
@@ -61,6 +76,11 @@ def main() -> int:
     stale = []
     files = sorted(WF_DIR.glob("*.js"))
     methodology = load_methodology()
+    missing = unregistered_extensions(methodology)
+    if missing:
+        print("methodology.json 的 extensions 有 agent 沒登記在 guard.config.json 的 extension_agents：" + "、".join(missing)
+              + "（登記要套用哪個模版角色的規則，例如 \"tpm-reviewer\"；可以用 /add-agent 設定）")
+        return 1
     for f in files:
         old = f.read_text(encoding="utf-8")
         new = render(old, methodology)

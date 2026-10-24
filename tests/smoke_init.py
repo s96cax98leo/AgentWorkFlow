@@ -297,6 +297,36 @@ def check_answers_methodology(target: Path) -> None:
         skip("沒有 git，略過 check_rules --git")
 
 
+def check_extensions(target: Path, work: Path) -> None:
+    """使用者自己的 agent 加進 workflow（/add-agent 做的事）：沒登記守門角色時 build.py 擋下；登記並放好定義檔後，
+    build 通過、乾跑會派出擴充 agent，hook 照對應角色擋 push。在複本上測，不影響其他檢查。"""
+    t = work / "project-ext"
+    shutil.copytree(target, t)
+    teams = t / ".claude/teams"
+    meth = json.loads((teams / "methodology.json").read_text(encoding="utf-8"))
+    meth["extensions"] = [{"name": "db", "agent": "acme-db-reviewer", "stage": "test", "instructions": "檢查 migration 能不能回滾"}]
+    (teams / "methodology.json").write_text(json.dumps(meth, ensure_ascii=False), encoding="utf-8")
+    r = run([PY, ".claude/teams/tools/build.py"], cwd=t)
+    ok("擴充 agent：沒登記 extension_agents 時 build.py 擋下") if r.returncode == 1 and "extension_agents" in r.stdout else bad("擴充 agent：沒登記卻沒擋", r.stdout + r.stderr)
+    guard = json.loads((teams / "guard.config.json").read_text(encoding="utf-8"))
+    guard.setdefault("extension_agents", {})["acme-db-reviewer"] = "tpm-reviewer"
+    (teams / "guard.config.json").write_text(json.dumps(guard, ensure_ascii=False), encoding="utf-8")
+    (t / ".claude/agents").mkdir(parents=True, exist_ok=True)
+    (t / ".claude/agents/acme-db-reviewer.md").write_text("---\nname: acme-db-reviewer\ndescription: 示範客戶 ACME 的 migration 審查\ntools: Read, Grep, Glob, Bash\n---\n檢查 migration。\n", encoding="utf-8")
+    r = run([PY, ".claude/teams/tools/build.py"], cwd=t)
+    ok("擴充 agent：登記後 build.py 通過") if r.returncode == 0 else bad("擴充 agent：登記後 build.py 失敗", r.stdout + r.stderr)
+    node = shutil.which("node")
+    if node:
+        r = run([node, ".claude/teams/tools/check_workflows.mjs", "--agents-dir", str(ROOT / "plugin" / "agents")], cwd=t)
+        ok("擴充 agent：workflow 乾跑通過") if r.returncode == 0 else bad("擴充 agent：workflow 乾跑失敗", r.stdout[-800:])
+    else:
+        skip("擴充 agent：沒有 node，略過 workflow 乾跑")
+    data = {"tool_name": "Bash", "agent_type": "acme-db-reviewer", "cwd": str(t), "tool_input": {"command": "git push origin feature/x"}}
+    hook = subprocess.run([PY, str(ROOT / "plugin/hooks/awf_hook.py"), "guard-shell"], input=json.dumps(data).encode("utf-8"),
+                          capture_output=True, env={**os.environ, "CLAUDE_PROJECT_DIR": str(t)})
+    ok("擴充 agent：hook 照 tpm-reviewer 規則擋 push") if hook.returncode == 2 else bad(f"擴充 agent：hook 沒擋 push（exit {hook.returncode}）")
+
+
 def check_merge_gate_optin(target: Path, config: Path, env: dict) -> None:
     print("== merge gate CI（預設不放，--with-merge-gate 才放） ==")
     ci = target / ".github/workflows/agent-merge-gate.yml"
@@ -459,6 +489,7 @@ def main(argv: list[str]) -> int:
         check_tools(target)
         check_default_methodology(target)
         check_merge_gate_optin(target, config, env)
+        check_extensions(target, work)
 
         print("\n== 執行 init.py（非預設 methodology profile＋--answers 答案檔） ==")
         target3 = work / "project-methodology"

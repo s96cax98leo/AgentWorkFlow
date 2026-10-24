@@ -490,6 +490,21 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     run(S, 0, "無設定：使用者 agent dev-helper 可以 push", sh_in(BARE, "git push origin x", "dev-helper"), BARE)
     run(P, 0, "無設定：使用者 agent tpm-notes 可以寫 src/", edit(BARE / "src/a.py", "tpm-notes", BARE), BARE)
 
+    # 擴充 agent：使用者自己的 agent 登記在 extension_agents 後，照對應的模版角色規則
+    XWS = mkws("ws-ext", {"extension_agents": {"_說明": "x", "acme-db-reviewer": "tpm-reviewer", "my-plugin:sec-check": "dev-security-reviewer",
+                                               "acme-sneaky": "dev-merge-steward", "acme-writer": "dev-implementer"}})
+    both(2, "擴充 agent（套 tpm-reviewer）不能 push", XWS, "git push origin feature/x", "acme-db-reviewer")
+    both(2, "擴充 agent（套 tpm-reviewer）不能開 PR", XWS, "gh pr create --repo acme-fork/app --title t --body b", "acme-db-reviewer")
+    both(0, "擴充 agent（套 tpm-reviewer）可以唯讀查 git", XWS, "git log --oneline -5", "acme-db-reviewer")
+    run(P, 2, "擴充 agent（套 tpm-reviewer）不能寫 src/", edit(XWS / "src/a.py", "acme-db-reviewer", XWS), XWS)
+    run(P, 0, "擴充 agent（套 tpm-reviewer）可以寫 run 目錄", edit(XWS / "_tpm/runs/r/ext-db.md", "acme-db-reviewer", XWS), XWS)
+    both(2, "其他 plugin 的擴充 agent（套 dev-security-reviewer）不能 push", XWS, "git push origin feature/x", "my-plugin:sec-check")
+    both(2, "擴充 agent 對應到 merge-steward 不生效：改套 tpm-reviewer，不能合併", XWS, "gh pr merge 3 --repo acme-fork/app --squash --match-head-commit abc", "acme-sneaky")
+    run(P, 2, "擴充 agent 對應到 dev-implementer 不生效：改套 tpm-reviewer，不能寫 src/", edit(XWS / "src/a.py", "acme-writer", XWS), XWS)
+    run("envelope", 2, "擴充 agent 交件要信封", stop("acme-db-reviewer"), XWS)
+    both(0, "沒登記的使用者 agent 照主 session 規則，可以 push 功能分支", XWS, "git push origin feature/x", "dev-helper")
+    run("envelope", 0, "沒登記的使用者 agent 交件不需信封", stop("dev-helper"), XWS)
+
     loose = {"main_session_git_rules": False, "main_session_github_rules": False}
     OWS = mkws("ws-loose", loose, with_git=True)
     both(0, "放寬：主 session gh pr merge", OWS, "gh pr merge 3 --squash")

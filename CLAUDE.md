@@ -96,6 +96,19 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - workflow 會對以下幾點做確定性核對，不一致就回傳 `halted: true`：子計劃的範圍與相依、彙整後的子任務清單（不能默默少掉）、彙整後的驗證結果（不能漏條目或改結果，各分片要驗同一個 HEAD）。
 - 預設乾跑走不到這些分支，所以 `check_workflows.mjs` 的 `SCENARIOS` 用假回傳把它們走過一遍。改了這些流程，`SCENARIOS` 要一起改。
 
+### 使用者自己的 agent（擴充）
+
+- **設定位置**：使用者用 `/add-agent`（`plugin/skills/add-agent`）把自己的 agent 加進 plan、design、test、deliver 任一段，設定寫兩個地方：
+  - `methodology.json` 的 `extensions`：寫 name、agent、stage、instructions。
+  - `guard.config.json` 的 `extension_agents`：`{完整 agent_type: 要套用的模版角色}`。
+- **workflow 怎麼派**：四支 sdlc workflow 裡各有 `EXT`／`extJob`，把擴充 agent 和內建 agent 平行派出。`agentType` 用使用者給的原值，不加 `NS`；一律交 `findings`。
+- **守門**：
+  - `awf_config.extension_role()` 讓登記過的擴充 agent 算模版角色，套用對應角色的規則。
+  - 只能對應 `EXTENSION_ROLES`（唯讀類），其他值改套 `tpm-reviewer`。
+  - `merge_exception` 與 freeze 仍比對完整 agent_type，擴充 agent 不會因此能合併。
+- **沒登記就不內嵌**：`build.py` 遇到沒登記守門角色的擴充 agent 會拒絕內嵌（exit 1）。
+- **不開放的段**：build（有檔案所有權）與 merge（信任邊界）。
+
 ### Workflow 腳本的限制
 
 - 腳本裡不能取時間，跑到一半也不能等人輸入。日期由主 session 放進 `run_dir`；需要人決定的地方，就把 workflow 拆成兩支，例如 `sdlc-design` 和 `sdlc-design-revise`。
@@ -145,6 +158,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - 把角色名加進 `awf_config.py` 的 `RESERVED_ROLES`；需要套用 guard 時，在 `role_map` 加對應。
 - **新增 workflow**：在 `tpm-team` skill 的事件對照表加一列，並加進 `tests/smoke_init.py` 的清單。分支有乾跑走不到的，在 `check_workflows.mjs` 的 `SCENARIOS` 補情境。
 - **新增或修改 payload schema**：重跑 `build.py`；在 `golden-set/valid|invalid/` 補正例、反例，有語意規則的另補 `semantic` 反例；語意規則寫在 `schemalib.py`。
+- **改擴充 agent 機制**：四支 sdlc workflow 的 `EXT` 片段要一致；`check_workflows.mjs` 的擴充情境、`smoke_init.py` 的 `check_extensions`、`plugin/hooks/tests/run.py` 的擴充 agent 案例要一起改。
 - **新增 hook 規則**：在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的測試，Bash 與 PowerShell 各一。
 - **改 profile 格式**：`methodology.schema.json`、兩份內建 profile、`docs/自訂與擴充.md` 的欄位表要一起改。
 - **完成前**：每次都跑 `python3 tests/run_all.py`。

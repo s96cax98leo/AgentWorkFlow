@@ -88,6 +88,16 @@ function consolidationProblems(merged, c) {
   return errs
 }
 
+// 使用者加進這一段的自己的 agent（profile 的 extensions，用 /add-agent 設定）：和內建 agent 平行執行，交 findings；
+// blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
+const EXT = (MP.extensions || []).filter((e) => e.stage === 'test')
+const extJob = (e, ctx, phaseName) => () => agent(
+  `${ctx}\n\n## 派工單（擴充 agent：${e.name}）\n${e.instructions}\n` +
+  `只讀不改：不改程式、測試與 spec，不 push、不對 GitHub 寫入。詳細結果寫到 ${A.run_dir}/ext-${e.name}.md。` +
+  `payload 用 findings（lens=${e.name}）：每則附 0–1 信心與嚴重度；會擋住上線或合併的列 blocker／important（會擋住政策核准），其餘列 nit／info。`,
+  { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema: FINDINGS },
+)
+
 const shardRuns = []
 async function verify(round) {
   if (!SHARDS) {
@@ -115,6 +125,7 @@ phase('Verify')
 const jobs = [() => verify(1)]
 if (A.has_ui) jobs.push(() => agent(`${CTX}\n\n## 派工單\n設計審查 {{BRANCH_PREFIX}}${A.epic} 的畫面改動，寫 ${SPEC}/design-review.md 與 ${SPEC}/evidence/。payload 用 findings（lens=design）。`, { label: 'design-review', phase: 'Verify', agentType: NS + 'dev-design-reviewer', schema: FINDINGS }))
 if (A.has_security) jobs.push(() => agent(`${CTX}\n\n## 派工單\n安全審查 {{BRANCH_PREFIX}}${A.epic}（git diff ${A.base || 'origin/main'}...HEAD），寫 ${SPEC}/security-review.md。payload 用 findings（lens=security）。`, { label: 'security-review', phase: 'Verify', agentType: NS + 'dev-security-reviewer', schema: FINDINGS }))
+EXT.forEach((e) => jobs.push(extJob(e, `${CTX}\n驗證對象：${EPIC_DIR} 的目前 HEAD（git diff ${A.base || 'origin/main'}...HEAD），spec 在 ${SPEC}/。`, 'Verify')))
 const [first, ...reviews] = await parallel(jobs)
 
 const fixes = []

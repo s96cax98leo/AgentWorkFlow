@@ -249,6 +249,9 @@ def methodology_errors(doc: dict) -> list[str]:
             re.compile(rx)
         except re.error as e:
             errs.append(f"conventions.commit.check_regex 不是合法的正規式：{e}")
+    names = [e.get("name") for e in doc.get("extensions") or [] if isinstance(e, dict)]
+    for n in sorted({x for x in names if names.count(x) > 1}, key=str):
+        errs.append(f"extensions：name {n} 重複")
     req = doc.get("requirements") if isinstance(doc.get("requirements"), dict) else {}
     if req.get("source") == "command" and not str(req.get("command") or "").strip():
         errs.append("requirements.source=command 時要設 command")

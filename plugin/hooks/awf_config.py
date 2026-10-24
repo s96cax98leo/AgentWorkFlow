@@ -51,6 +51,9 @@ DEFAULTS = {
     # 設 false 放行主 session；但 auto_merge 啟用時主 session 一律不能合併、核准，上游與禁止的 repo 不論開關一律擋。
     "main_session_github_rules": True,
     "auto_merge": {},  # 自動合併的有條件開放；欄位與預設見 AUTO_MERGE_DEFAULTS、auto_merge()
+    # 使用者加進 workflow 的自己的 agent（methodology.json 的 extensions）：{"完整 agent_type": "套用哪個模版角色的規則"}。
+    # 登記後就算模版角色（推送、GitHub 寫入、寫入範圍照對應角色擋，信封也會驗）；只能對應 EXTENSION_ROLES。
+    "extension_agents": {},
 }
 # auto_merge 預設關閉。開放條件見 guard.py 的 merge_exception() 與 docs/自動合併信任模型.md。
 AUTO_MERGE_DEFAULTS = {
@@ -208,13 +211,31 @@ RESERVED_ROLES = frozenset({
 })
 
 
+# 擴充 agent 能套用的模版角色：只有唯讀或只寫報告的角色。合併、凍結、實作、整合、寫文件的角色不開放，
+# 對應到其他值時一律改套 tpm-reviewer（最嚴：只能寫 run 目錄）。
+EXTENSION_ROLES = frozenset({
+    "tpm-researcher", "tpm-reviewer", "tpm-skeptic",
+    "dev-verifier", "dev-pr-reviewer", "dev-security-reviewer", "dev-design-reviewer",
+})
+EXTENSION_FALLBACK = "tpm-reviewer"
+
+
+def extension_role(agent: str, cfg: dict) -> str:
+    """登記在 extension_agents 的擴充 agent 回傳要套用的模版角色名；沒登記回空字串。比對完整 agent_type。"""
+    ext = cfg.get("extension_agents")
+    if not agent or not isinstance(ext, dict) or agent not in ext:
+        return ""
+    role = role_name(str(ext.get(agent) or ""))
+    return role if role in EXTENSION_ROLES else EXTENSION_FALLBACK
+
+
 def is_team_agent(agent: str, cfg: dict) -> bool:
     """agent 是不是模版角色：傳**完整的 agent_type**（含命名空間）。
     命名空間要在 team_agent_namespaces 裡，且角色名以 team_agent_prefixes 開頭；或角色名就是 RESERVED_ROLES 之一。
     所有守門（guard-shell、guard-paths、交件信封、role_map 對應、freeze_writers、merger_role）都走這個判斷。"""
     if not agent:
         return False
-    if role_name(agent) in RESERVED_ROLES:
+    if role_name(agent) in RESERVED_ROLES or extension_role(agent, cfg):
         return True
     ns = cfg.get("team_agent_namespaces")
     ns = ns if isinstance(ns, list) and ns else [DEFAULT_NS]
@@ -222,5 +243,9 @@ def is_team_agent(agent: str, cfg: dict) -> bool:
 
 
 def team_role(agent: str, cfg: dict) -> str:
-    """模版角色回傳去掉命名空間的角色名（例如 dev-implementer），不是模版角色回空字串。"""
+    """模版角色回傳去掉命名空間的角色名（例如 dev-implementer），擴充 agent 回傳它套用的角色，都不是回空字串。"""
+    if role_name(agent) not in RESERVED_ROLES:
+        ext = extension_role(agent, cfg)
+        if ext:
+            return ext
     return role_name(agent) if is_team_agent(agent, cfg) else ""

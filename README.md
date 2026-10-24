@@ -7,6 +7,7 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 - **事件處理**：簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看，各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
 - **守門 hooks**：擋推送、寫上游、越權寫入，以及所有合併與核准路徑；每個 agent 交件時驗證 JSON 信封。
+- **加入自己的 agent**：用 `/add-agent` 把團隊自己的 agent 放進 plan、design、test、deliver 任一段，和內建 agent 平行執行，守門規則一併套用。
 
 所有文件、註解與 agent 提示都用繁體中文寫。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python，在 macOS、Linux、Windows（PowerShell）上都能執行。
 
@@ -26,8 +27,8 @@ AgentWorkFlow/
 ├── .claude-plugin/marketplace.json   # marketplace（名稱 agentworkflow）
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）
 │   ├── agents/                       # dev-*、tpm-*、網站分析組，共 22 個
-│   ├── skills/                       # tpm-team、init-workflow、team-debate、site-report 系列、design-system-template
-│   ├── commands/                     # /sdlc、/event、/brief、/demo-check
+│   ├── skills/                       # tpm-team、init-workflow、add-agent、team-debate、site-report 系列、design-system-template
+│   ├── commands/                     # /sdlc、/event、/brief、/demo-check、/add-agent
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）
 ├── scaffold/                         # init.py 複製進目標專案的內容
 │   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/、golden-set/、guard.config.json.tmpl
@@ -56,16 +57,16 @@ AgentWorkFlow/
 在 Claude Code 裡執行：
 
 ```
-/plugin marketplace add <owner>/AgentWorkFlow
+/plugin marketplace add s96cax98leo/AgentWorkFlow
 /plugin install agent-workflow@agentworkflow
 ```
 
-`<owner>/AgentWorkFlow` 換成這個 repo 在 GitHub 上的位置；要從本機 clone 安裝的話，換成 clone 的路徑。裝好後用 `/plugin` 確認 agent、skill、command 都有載入。
+repo 目前是私有的，要先被加為 collaborator，並在本機用 `gh auth login` 登入 GitHub。要從本機 clone 安裝的話，把 `s96cax98leo/AgentWorkFlow` 換成 clone 的路徑。裝好後用 `/plugin` 確認 agent、skill、command 都有載入。
 
 **2. 在目標專案套用模版**（每個專案做一次）
 
 ```bash
-git clone https://github.com/<owner>/AgentWorkFlow.git ~/tools/AgentWorkFlow
+git clone https://github.com/s96cax98leo/AgentWorkFlow.git ~/tools/AgentWorkFlow
 python3 ~/tools/AgentWorkFlow/init.py --target ~/work/my-project
 ```
 
@@ -131,6 +132,14 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 - 沒有任何 agent 能核准 PR。
 - 真正的信任邊界在伺服器端：GitHub ruleset、gate App 的 required check、CODEOWNERS。啟用前請照 [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) 的檢查清單完成設定。
 
+**加入自己的 agent**：
+- 在 Claude Code 裡跑 `/add-agent`，它會一步步問：要加在哪一段、套用哪個模版角色的守門規則、派工內容是什麼；需要的話幫你建立 agent 定義檔，最後驗證。
+- 設定寫在兩個地方：`methodology.json` 的 `extensions`，以及 `guard.config.json` 的 `extension_agents`。
+- 擴充 agent 和該段的內建 agent 平行執行，交 `findings`；它的 blocker／important 發現會擋住政策核准。
+- 只能套用唯讀類角色，不能 push、不能對 GitHub 寫入、不能合併。
+- build 段和 merge 段不開放擴充。
+- 細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈把自己的 agent 加進 workflow〉。
+
 **守門 hooks**：入口只有一個，`awf_hook.py`。
 - `guard-shell` 同時涵蓋 Bash 與 PowerShell 工具，擋推送、寫上游、推受保護分支，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - `guard-paths` 擋越權寫入。
@@ -151,6 +160,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | `/demo-check`、demo 前、彩排 | `event-demo-check` | target、run_dir |
 | 合併這個 PR | `sdlc-merge` | repo、pr、run_dir |
 | 合併後 main 紅了 | `event-post-merge` | repo、run_dir |
+| `/add-agent`、加我自己的 agent | `add-agent` skill | — |
 | 比較方案、A 還是 B | `team-debate` skill | — |
 | 分析某個網站 | `site-report` skill | 網址 |
 
@@ -246,7 +256,7 @@ init 對既有專案只新增檔案，你原本的 agent、skill、command 和�
 | [`docs/agent-協作規則.md`](docs/agent-協作規則.md) | 派工單範本、信封格式、背景 agent、驗收證據 |
 | [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) | 自動合併的防線分層、啟用前檢查清單、revert 演練 |
 | [`docs/adr-agent-auto-merge.md`](docs/adr-agent-auto-merge.md) | 自動合併的架構決策紀錄 |
-| [`docs/自訂與擴充.md`](docs/自訂與擴充.md) | 開發規範 profile、平行參數、新增 agent／skill／hook／workflow、套用到既有專案 |
+| [`docs/自訂與擴充.md`](docs/自訂與擴充.md) | 開發規範 profile、平行參數、把自己的 agent 加進 workflow、新增 agent／skill／hook／workflow、套用到既有專案 |
 | [`docs/踩坑手冊.md`](docs/踩坑手冊.md) | 實戰教訓：症狀、原因、做法 |
 | [`docs/套用範例.md`](docs/套用範例.md) | 用虛構的「示範客戶 ACME」從 init 走到 deliver |
 

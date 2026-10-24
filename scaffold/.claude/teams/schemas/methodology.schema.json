@@ -73,6 +73,20 @@
         "shard_verification": {"type": "boolean", "description": "有子計劃時，驗證是否每個子計劃派一個 dev-verifier 平行跑；預設 true"}
       }
     },
+    "extensions": {
+      "type": "array",
+      "description": "使用者自己的 agent 加進 SDLC 某一段（工作流程擴充，不是開發規範）：和該段內建的 agent 平行執行，交 findings；blocker／important 的發現會擋住政策核准。每個 agent 也要登記在 guard.config.json 的 extension_agents（build.py --check 會核對）。用 /add-agent 設定",
+      "items": {
+        "type": "object",
+        "required": ["name", "agent", "stage", "instructions"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "短名，也是 findings 的 lens 與報告檔名（ext-<name>.md）"},
+          "agent": {"type": "string", "minLength": 1, "description": "完整 agentType：專案 .claude/agents 裡的 agent 寫檔名（不含 .md）；其他 plugin 的寫 <plugin>:<agent>"},
+          "stage": {"type": "string", "enum": ["plan", "design", "test", "deliver"], "description": "加在哪一段：plan＝和調研平行、design＝和一致性檢查平行、test＝和驗證平行、deliver＝和 PR 審查平行（之後一樣經 skeptic 反駁）"},
+          "instructions": {"type": "string", "minLength": 1, "description": "派工單內容：要檢查或調研什麼、怎麼判定嚴重度"}
+        }
+      }
+    },
     "requirements": {
       "type": "object",
       "description": "需求來源；格式同 merge_gate.py 的 adapter（guard.config.json 的 requirements）。guard.config.json 沒設 path／command 時，merge_gate 讀這裡",

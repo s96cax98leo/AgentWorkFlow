@@ -81,5 +81,6 @@ init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 sc
 ## 7. 後續
 - 告訴使用者：之後要改開發規範或慣例，直接改 `.claude/teams/methodology.json`，再跑 `python3 .claude/teams/tools/build.py`；格式與新增 profile 的方式見模版的 `docs/自訂與擴充.md`〈自訂開發規範〉。
 - 安裝 plugin（若尚未）：照模版 README 的安裝段。
+- 問使用者有沒有自己的 agent 想加進 workflow（例如團隊自己的審查或調研 agent）：有的話接著跑 `/add-agent`（`add-agent` skill）幫他設定。
 - 有設計正本時，複製 plugin 的 `design-system-template` skill 成專案自己的設計系統 skill，並登記在〈專案規則〉。
 - 這些都只寫目標專案；不推送、不提交，提交由使用者決定。

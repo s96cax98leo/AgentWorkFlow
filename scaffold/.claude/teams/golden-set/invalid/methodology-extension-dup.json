@@ -1,0 +1,92 @@
+{
+ "schema": "methodology",
+ "data": {
+  "name": "acme-demo",
+  "description": "示範客戶 ACME 的 profile 範例：需求來自 issue，PR 上限 400 行、檔數不限",
+  "stages": {
+   "plan": {
+    "artifacts": [
+     "intent.md"
+    ],
+    "template": "要解決什麼、做完的樣子、不做什麼",
+    "guidance": "intent 精簡即可，引用 issue 編號與原文；待釐清問題最多 3 個。"
+   },
+   "design": {
+    "artifacts": [
+     "spec.md",
+     "plan.md"
+    ],
+    "requirement_style": "spec.md 用條列寫驗收條件，每條以 issue 編號開頭（例：「ISSUE-12：匯出按鈕下載 CSV」），可直接引用 issue 原文。",
+    "guidance": "沒有新介面或取捨時不寫 design.md；plan.md 列任務與檔案即可。"
+   },
+   "build": {
+    "test_first": false,
+    "unit_tests": "依目標 repo 慣例補單元測試；改到的邏輯至少有一個測試覆蓋。",
+    "guidance": "先實作，再由 dev-acceptance-tester 依驗收條件補驗證測試；測試要對實作的行為斷言，不能只是空跑。"
+   },
+   "test": {
+    "verification": "逐條對 spec.md 的驗收條件跑對應的測試或指令，結果填 pass／fail／not_verifiable；沒有自動化測試的條目附手動驗證步驟與結果。",
+    "guidance": "先跑目標 repo 的測試指令，再逐條核對。"
+   },
+   "deliver": {
+    "review_axes": [],
+    "guidance": "四軸審查，只留信心 ≥0.8 且未被 skeptic 推翻的發現。"
+   },
+   "merge": {
+    "guidance": "需求清單取自 issue（requirements.command），逐條對照驗證證據。"
+   }
+  },
+  "requirements": {
+   "source": "command",
+   "path": "",
+   "command": "gh issue list --repo \"$AWF_REPO\" --label accepted --state open --json number,title --jq '{requirements: [.[] | {id: (\"ISSUE-\" + (.number|tostring)), text: .title, source: \"GitHub issue\"}]}'",
+   "id_pattern": "",
+   "notes": "範例：把標了 accepted 的 issue 轉成需求清單；團隊可換成自己的腳本。"
+  },
+  "conventions": {
+   "code_style": {
+    "description": "ruff 格式化",
+    "tool": "ruff",
+    "command": "ruff format --check ."
+   },
+   "commit": {
+    "format": "格式自由：一行說清楚改了什麼；結尾署名行。",
+    "examples": {
+     "docs": "<epic> 的 intent 草稿",
+     "test": "補驗證測試：<Story>",
+     "feat": "實作 <Story>",
+     "fix": "修正 <Story> 的驗收失敗"
+    },
+    "check_regex": "^(feat|fix|docs|test|chore)(\\(.+\\))?: .+"
+   },
+   "branch": {
+    "prefix": "feature/",
+    "naming": "<prefix><epic>；子任務 <prefix><epic>--<子任務 id>。"
+   },
+   "pr_size": {
+    "max_lines": 400,
+    "max_files": null,
+    "scope": "全部改動"
+   },
+   "doc_format": {
+    "format": "Markdown",
+    "notes": "精簡為主。"
+   }
+  },
+  "extensions": [
+   {
+    "name": "db-migration",
+    "agent": "acme-db-reviewer",
+    "stage": "test",
+    "instructions": "檢查示範客戶 ACME 的 migration 能不能回滾；不能回滾列 important。"
+   },
+   {
+    "name": "db-migration",
+    "agent": "my-plugin:a11y-check",
+    "stage": "deliver",
+    "instructions": "檢查新畫面的無障礙標籤。"
+   }
+  ]
+ },
+ "semantic": true
+}

@@ -51,11 +51,21 @@ const AXES = [
   { key: 'bugs', ask: '只看這次改動引入的邏輯、邊界、回歸、併發與錯誤處理問題。' },
   { key: 'history', ask: '對改動處 git log -L／git blame，找出破壞原本設計意圖的改動。' },
 ]
+// 使用者加進這一段的自己的 agent（profile 的 extensions，用 /add-agent 設定）：和內建 agent 平行執行，交 findings；
+// blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
+const EXT = (MP.extensions || []).filter((e) => e.stage === 'deliver')
+const extJob = (e, ctx, phaseName) => () => agent(
+  `${ctx}\n\n## 派工單（擴充 agent：${e.name}）\n${e.instructions}\n` +
+  `只讀不改：不改程式、測試與 spec，不 push、不對 GitHub 寫入。詳細結果寫到 ${A.run_dir}/ext-${e.name}.md。` +
+  `payload 用 findings（lens=${e.name}）：每則附 0–1 信心與嚴重度；會擋住上線或合併的列 blocker／important（會擋住政策核准），其餘列 nit／info。`,
+  { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema: FINDINGS },
+)
 const key = (f) => `${(f.location || '').replace(/:\d+.*/, '')}|${(f.claim || '').slice(0, 40)}`
 
+// 擴充 agent 和四軸一起審，發現一樣經 skeptic 反駁
 const reviewed = await pipeline(
-  AXES,
-  (a) => agent(`${CTX}\n\n## 派工單（審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
+  [...AXES, ...EXT.map((e) => ({ key: e.name, ext: e }))],
+  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥0.8 的。`, 'Review')() : agent(`${CTX}\n\n## 派工單（審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
     { label: `review:${a.key}`, phase: 'Review', agentType: NS + 'dev-pr-reviewer', schema: FINDINGS }),
   (r, a) => {
     const fs = (r && r.payload.findings || []).filter((f) => f.confidence >= 0.8)
