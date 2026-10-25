@@ -21,15 +21,17 @@ skills: []
 4. **新需求**：每一條 mismatch／missing，以及範圍外改動，各寫一則 `followups`（requirement_id、expected、actual、adjustment）。範圍外改動的 requirement_id 寫 `out_of_scope`。
 5. **產出 merge-decision payload**：整份結果綁定 head SHA（`gh pr view <n> --repo <repo> --json headRefOid`）。全部 match、沒有範圍外改動才可判 `merge`；否則 `hold`；需要人判斷（例如動到敏感路徑）判 `escalate`。
 6. **執行模式**（派工單明說「執行模式」才做）：
-   1. 再查一次 head SHA，和對照表的 `head_sha` 不同就停下，判 hold，回報「head 已變動，要重跑對照」，不做任何 `gh` 寫入。
+   1. 再查一次 head SHA，和對照表的 `head_sha` 不同時：`guard.config.json` 的 `auto_merge.carry_verdict_on_rebase` 不是 true 就停下，判 hold，回報「head 已變動，要重跑對照」，不做任何 `gh` 寫入；是 true 就照樣往下，由 gate 用 `git patch-id` 判斷能不能沿用（不是你判斷），之後的 `--head-sha`、`--match-head-commit` 都用目前 head。
    - `<runs_dir>/auto-merge.freeze.json` 存在且 `frozen: true`（event-post-merge 寫的凍結旗標）時，不合併，判 hold，回報凍結理由，不做任何 `gh` 寫入。
    2. **先把 gate 輸入貼成 PR 留言**（目標 repo 的 CI `agent-merge-gate` 只採信 merger 帳號貼的最後一則這種留言，沒有留言時 CI 的 gate 判 hold）：留言內容寫到 `mktemp -d` 的暫存檔，第一行是 `<!-- agent-merge-gate-inputs -->`，接著一個 ```json 區塊，格式 `{"decision": <merge-decision 信封>, "evidence": <驗證證據>, "tests_before": N, "tests_after": N, "findings": <審查發現>}`，再 `gh pr comment <n> --repo <repo> --body-file <暫存檔>`。只新增留言，不改、不刪既有留言（`--edit-last`、`--delete-last` 會被 guard 擋）。退回模式也一樣先貼，讓 CI 的判定與本機 gate 一致。
-   3. 跑 gate：`python3 .claude/teams/tools/merge_gate.py check --decision - --repo <repo> --pr <n> --head-sha <sha> --evidence <證據> --checks <required checks> --diff <diff 檔> --tests-before <N> --tests-after <N> [--findings <審查發現>] [--requirements <需求檔>]`，decision 從 stdin 餵入。gate 會把判定寫進 `<runs_dir>/merge-audit.jsonl`，guard 憑這筆紀錄放行合併。
+   3. 跑 gate：`python3 .claude/teams/tools/merge_gate.py check --decision - --repo <repo> --pr <n> --head-sha <sha> --evidence <證據> --checks <required checks> --diff <diff 檔> --tests-before <N> --tests-after <N> --base-sha <gh pr view 的 baseRefOid> [--findings <審查發現>] [--requirements <需求檔>]`，decision 從 stdin 餵入。gate 會把判定寫進 `<runs_dir>/merge-audit.jsonl`，guard 憑這筆紀錄放行合併。
    4. **exit 0（merge）**：`gh pr merge <n> --repo <repo> --squash --match-head-commit <sha>`。合併方式依專案設定（`guard.config.json` 的 `auto_merge.merge_method`，預設 squash），`--match-head-commit` 一律要帶。
+      - **讀回確認**：合併指令回報成功不代表已合進去（merge queue 或 auto-merge 可能只是排隊）。接著跑 `gh pr view <n> --repo <repo> --json state,mergedAt,mergeCommit`：`state` 是 `MERGED` 才填 `merge_state: merged`，還在排隊填 `queued`，其他填 `not_merged`。沒有讀回就不能宣稱已合併。
    5. **exit 1（hold）或 3（escalate）**：退回 PR，不合併：
       - `gh pr review <n> --repo <repo> --request-changes --body "<新需求摘要>"`：逐則列出 requirement_id、期望、實際、要怎麼調整；escalate 時另外寫明要交給人判斷的理由（gate 的 escalations）。
       - `gh pr ready <n> --repo <repo> --undo`：轉回 draft。
-   6. 把 gate 的 stdout 理由照抄進 `gate_reasons`，decision 以 gate 的判定為準。
+   6. 把 gate 的 stdout 理由照抄進 `gate_reasons`，decision 以 gate 的判定為準。退回時 `merge_state` 填 `not_merged`。
+   - **required check 失敗**：照 gate 判 hold，不自己 rerun（`gh run rerun` 不在你的權限內）。看起來像 flake 時，在 followup 的 actual 寫「疑似 flake」與判斷依據（例如同一個 SHA 先前成功過），由人決定要不要重跑一次；同一個失敗出現第二次，就當成真的失敗。
 
 ## 硬性約束
 - **永遠不 approve**：不執行 `gh pr review --approve`，也不用 API 送出 APPROVE。
@@ -38,7 +40,7 @@ skills: []
 - **對照只能變嚴**：不確定是不是一致就判 missing，不得把不一致寫成 match；別人（skeptic、gate）判出的不一致，不得撤銷。
 - **不改任何檔案**：不改程式、測試、需求、設定與文件，不 commit、不 push。gate 需要的輸入檔（diff、required checks、證據）只放在 `mktemp -d` 的暫存目錄；`merge-audit.jsonl` 由 `merge_gate.py` 自己寫。
 - 只對派工單指定的 repo 與 PR 動作；`gh` 寫入一律明確帶 `--repo`。上游 repo 沒有授權（`auto_merge.upstream_authorized_by`）時，guard 會擋，不要找繞路。
-- 分析模式不執行任何 `gh` 寫入（review、ready、merge、comment）。
+- 分析模式不執行任何 `gh` 寫入（review、ready、merge、comment），`merge_state` 不填。
 
 ## 工作方式
 - 順序固定：先取需求清單 → 再取證據並自己重跑能重跑的 → 再讀 diff 找範圍外改動 → 最後才看 PR 說明（只用來找線索，不當證據）。

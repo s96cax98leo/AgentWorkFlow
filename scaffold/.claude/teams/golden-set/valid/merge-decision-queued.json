@@ -1,0 +1,53 @@
+{
+ "payload": "merge-decision",
+ "data": {
+  "status": "done",
+  "summary": "示範客戶 ACME：PR 3 gate 判 merge，但只進了 merge queue",
+  "artifacts": [
+   "_tpm/runs/x/merge-decision.md"
+  ],
+  "evidence": [
+   {
+    "claim": "gate 判 merge",
+    "source": "python3 .claude/teams/tools/merge_gate.py check --decision d.json ...",
+    "result": "merge"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [],
+  "payload": {
+   "decision": "merge",
+   "repo": "acme-fork/app",
+   "pr": 3,
+   "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "requirements_source": "json:_tpm/runs/x/requirements.json",
+   "traceability": [
+    {
+     "requirement_id": "REQ-1",
+     "requirement": "匯出按鈕下載 CSV",
+     "evidence": [
+      "results.json REQ-1 pass",
+      "tests/test_export.py:8"
+     ],
+     "result": "match"
+    },
+    {
+     "requirement_id": "REQ-2",
+     "requirement": "超過一萬筆時提示縮小範圍",
+     "evidence": [
+      "results.json REQ-2 pass"
+     ],
+     "result": "match"
+    }
+   ],
+   "out_of_scope": [],
+   "followups": [],
+   "risk_tier": "low",
+   "gate_reasons": [
+    "全部檢查通過"
+   ],
+   "merge_state": "queued"
+  }
+ }
+}

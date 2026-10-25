@@ -147,11 +147,13 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ steps.pr.outputs.pr }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         run: |
           set -uo pipefail
           OUT="$RUNNER_TEMP/gate"
           ARGS=(check --project-dir "$GITHUB_WORKSPACE" --runs-dir "$OUT/runs" --repo "$REPO" --pr "$PR" --head-sha "$HEAD_SHA"
-                --checks "$OUT/checks.json" --diff "$OUT/diff.txt")
+                --checks "$OUT/checks.json" --diff "$OUT/diff.txt" --base-sha "$BASE_SHA")
+          # --base-sha 只在 auto_merge.carry_verdict_on_rebase 開啟時用到；rebase 前的舊 commit 不在這個 checkout 裡時算不出 patch-id，一律 hold
           [ -f "$OUT/decision.json" ] && ARGS+=(--decision "$OUT/decision.json")
           [ -f "$OUT/evidence.json" ] && ARGS+=(--evidence "$OUT/evidence.json")
           [ -f "$OUT/findings.json" ] && ARGS+=(--findings "$OUT/findings.json")

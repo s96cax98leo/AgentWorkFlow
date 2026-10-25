@@ -1,0 +1,79 @@
+{
+ "payload": "merge-decision",
+ "semantic": true,
+ "data": {
+  "status": "needs_decision",
+  "summary": "示範客戶 ACME：判 hold 卻宣稱已合併（應被語意規則擋）",
+  "artifacts": [
+   "_tpm/runs/x/merge-decision.md"
+  ],
+  "evidence": [
+   {
+    "claim": "gate 判 merge",
+    "source": "python3 .claude/teams/tools/merge_gate.py check --decision d.json ...",
+    "result": "merge"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [
+   {
+    "question": "q",
+    "blocking": true,
+    "why_blocking": "w",
+    "options": [
+     {
+      "choice": "A",
+      "cost": "x"
+     },
+     {
+      "choice": "B",
+      "cost": "y"
+     }
+    ],
+    "recommendation": "A",
+    "default_applied": "none"
+   }
+  ],
+  "derived_work": [],
+  "payload": {
+   "decision": "hold",
+   "repo": "acme-fork/app",
+   "pr": 3,
+   "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "requirements_source": "json:_tpm/runs/x/requirements.json",
+   "traceability": [
+    {
+     "requirement_id": "REQ-1",
+     "requirement": "匯出按鈕下載 CSV",
+     "evidence": [
+      "results.json REQ-1 pass",
+      "tests/test_export.py:8"
+     ],
+     "result": "match"
+    },
+    {
+     "requirement_id": "REQ-2",
+     "requirement": "超過一萬筆時提示縮小範圍",
+     "evidence": [
+      "results.json REQ-2 pass"
+     ],
+     "result": "mismatch"
+    }
+   ],
+   "out_of_scope": [],
+   "followups": [
+    {
+     "requirement_id": "REQ-2",
+     "expected": "提示縮小範圍",
+     "actual": "沒有提示",
+     "adjustment": "補提示"
+    }
+   ],
+   "risk_tier": "low",
+   "gate_reasons": [
+    "全部檢查通過"
+   ],
+   "merge_state": "merged"
+  }
+ }
+}

@@ -123,7 +123,38 @@ const extScenario = (label) => ({
   name: '擴充 agent', args: {}, fakes: {}, profile: EXT_PROFILE, virtualAgents: ['acme-db-reviewer'],
   expect: (r) => (r.labels.includes(label) ? [] : [`沒有派出擴充 agent ${label}：${r.labels.join(',')}`]),
 })
+// merge：只信讀回的狀態（merge_state），gh pr merge 回報成功時可能只是進了 merge queue
+const EXEC = (state) => (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'merge', merge_state: state } })
+// 對照全部一致、skeptic 沒推翻：才會走到執行模式的合併分支
+const CONSISTENT = {
+  analyze: (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'merge', head_sha: 'abc1234',
+    traceability: [{ requirement_id: 'R1', requirement: 'x', evidence: ['e'], result: 'match' }], out_of_scope: [], followups: [] } }),
+  challenge: ENV({ verdicts: [{ target_id: 'R1', refuted: false, reason: 'ok' }, { target_id: 'out_of_scope', refuted: false, reason: 'ok' }] }),
+}
 const SCENARIOS = {
+  'sdlc-merge.js': [
+    {
+      name: '讀回已合併',
+      args: {},
+      fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },
+      expect: (r) => (r.labels.includes('execute:merge') && r.out && r.out.merged === true && !r.out.queued ? [] : [`讀回 merged 應該 merged=true：${JSON.stringify(r.out && { merged: r.out.merged, queued: r.out.queued })}`]),
+    },
+    {
+      name: '只進 merge queue',
+      args: {},
+      fakes: { ...CONSISTENT, 'execute:merge': EXEC('queued') },
+      expect: (r) => [
+        ...(r.out && r.out.merged === false && r.out.queued === true ? [] : [`排隊中不能算已合併：${JSON.stringify(r.out && { merged: r.out.merged, queued: r.out.queued })}`]),
+        ...(r.labels.includes('followup') ? ['排隊中不該產出 followup 文件'] : []),
+      ],
+    },
+    {
+      name: 'gate 判 merge 但沒讀回狀態',
+      args: {},
+      fakes: { ...CONSISTENT, 'execute:merge': (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'merge' } }) },
+      expect: (r) => (r.labels.includes('execute:merge') && r.out && r.out.merged === false ? [] : ['沒有 merge_state 不能算已合併']),
+    },
+  ],
   'sdlc-plan.js': [extScenario('ext:db')],
   'sdlc-deliver.js': [extScenario('ext:a11y')],
   'sdlc-design.js': [

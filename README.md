@@ -27,8 +27,8 @@ AgentWorkFlow/
 ├── .claude-plugin/marketplace.json   # marketplace（名稱 agentworkflow）
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）
 │   ├── agents/                       # dev-*、tpm-*、網站分析組，共 22 個
-│   ├── skills/                       # tpm-team、init-workflow、add-agent、team-debate、site-report 系列、design-system-template
-│   ├── commands/                     # /sdlc、/event、/brief、/demo-check、/add-agent
+│   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、team-debate、site-report 系列、design-system-template
+│   ├── commands/                     # /sdlc、/event、/brief、/demo-check、/add-agent、/correct
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）
 ├── scaffold/                         # init.py 複製進目標專案的內容
 │   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/、golden-set/、guard.config.json.tmpl
@@ -161,6 +161,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | 合併這個 PR | `sdlc-merge` | repo、pr、run_dir |
 | 合併後 main 紅了 | `event-post-merge` | repo、run_dir |
 | `/add-agent`、加我自己的 agent | `add-agent` skill | — |
+| `/correct`、把這個錯誤變成做不到 | `correct` skill | 錯誤描述或出處 |
 | 比較方案、A 還是 B | `team-debate` skill | — |
 | 分析某個網站 | `site-report` skill | 網址 |
 
@@ -258,6 +259,7 @@ init 對既有專案只新增檔案，你原本的 agent、skill、command 和�
 | [`docs/adr-agent-auto-merge.md`](docs/adr-agent-auto-merge.md) | 自動合併的架構決策紀錄 |
 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md) | 開發規範 profile、平行參數、把自己的 agent 加進 workflow、新增 agent／skill／hook／workflow、套用到既有專案 |
 | [`docs/踩坑手冊.md`](docs/踩坑手冊.md) | 實戰教訓：症狀、原因、做法 |
+| [`docs/參考-pstack.md`](docs/參考-pstack.md) | 參考過的外部 plugin（pstack）：差異、引進與沒引進的做法 |
 | [`docs/套用範例.md`](docs/套用範例.md) | 用虛構的「示範客戶 ACME」從 init 走到 deliver |
 
 ## 開發這個模版

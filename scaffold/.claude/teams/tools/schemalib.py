@@ -182,6 +182,8 @@ def merge_decision_errors(payload: dict) -> list[str]:
             errs.append(f"需求 {rid} 不一致或缺證據，卻沒有對應的 followup（新需求）")
     if out_of_scope and not followups:
         errs.append("有 out_of_scope 改動時要列 followups")
+    if payload.get("merge_state") in ("merged", "queued") and payload.get("decision") != "merge":
+        errs.append(f"merge_state={payload.get('merge_state')} 時 decision 必須是 merge")
     return errs
 
 

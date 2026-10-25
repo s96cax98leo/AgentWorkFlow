@@ -51,6 +51,7 @@
       }
     },
     "risk_tier": {"type": "string", "enum": ["low", "medium", "high"]},
-    "gate_reasons": {"type": "array", "items": {"type": "string"}, "description": "merge_gate.py 的判定理由（steward 跑 gate 後照抄）"}
+    "gate_reasons": {"type": "array", "items": {"type": "string"}, "description": "merge_gate.py 的判定理由（steward 跑 gate 後照抄）"},
+    "merge_state": {"type": "string", "enum": ["merged", "queued", "not_merged"], "description": "執行模式：gh pr merge 之後用 gh pr view --json state,mergedAt,mergeCommit 讀回的實際狀態。merged＝已合進去；queued＝只進了 merge queue 或 auto-merge 排隊；not_merged＝沒合進去。分析模式不填"}
   }
 }

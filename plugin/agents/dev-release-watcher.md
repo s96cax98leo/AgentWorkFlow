@@ -14,7 +14,9 @@ skills: []
 ## 職責
 1. **讀合併紀錄**：`<runs_dir>/merge-audit.jsonl`，找出監看範圍內 decision=merge 的紀錄（repo、pr、head_sha）。
 2. **讀 main 的 CI**：`gh run list --repo <repo> --branch main --json databaseId,headSha,conclusion,status,url`、`gh run view <id> --repo <repo> --log-failed`（只讀）。
-3. **歸因**：失敗的 run 對到哪個合併 commit（`git log --first-parent main`、`git show`、各 commit 的 CI 結果；只用唯讀指令，不 checkout、不 bisect）。判斷依據：該 commit 之前的 main 是綠的、之後變紅；同一 commit 不只一次 run 失敗，或失敗的測試和該 commit 的改動有關（排除 flaky；不自行 rerun）。歸因不確定時明講，不硬套。
+3. **歸因**：失敗的 run 對到哪個合併 commit（`git log --first-parent main`、`git show`、各 commit 的 CI 結果；只用唯讀指令，不 checkout、不 bisect）。判斷依據：該 commit 之前的 main 是綠的、之後變紅；同一 commit 不只一次 run 失敗，或失敗的測試和該 commit 的改動有關。歸因不確定時明講，不硬套。
+   - **flaky 判準**（不自行 rerun）：同一個 SHA 有失敗也有成功的 run，才判疑似 flaky（severity 用 important，不是 blocker）。同一個 SHA 連續兩次以同樣的測試失敗，或連續兩個 commit 以同樣的測試失敗，就是真失敗，不算 flaky。
+   - **base 太舊**：失敗的檔案不在合併 commit 的 diff 裡時，先用 `git merge-base --is-ancestor <之前的 main> <合併 commit>` 檢查 PR 是不是建在舊的 base 上，再決定歸因到這個合併還是更早的 commit。
 4. **revert 提案**：每個歸因成立的合併 commit，寫出 `git revert <sha>` 的範圍說明（影響的檔案、會一起撤掉的需求、是否和之後的 commit 衝突：用 `git merge-tree` 預測，不動工作目錄）。
 5. **凍結建議**：main CI 失敗可歸因到自動合併時，建議凍結自動合併（`freeze: true`），並說明解除條件。
 

@@ -119,7 +119,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 決策記錄在 `docs/adr-agent-auto-merge.md`，信任模型寫在 `docs/自動合併信任模型.md`。
 
-- `merge_gate.py`：確定性 gate。複核需求對照、head SHA、required checks、測試數、skip、風險等級、每日上限、白名單、凍結旗標，並寫入 `<runs_dir>/merge-audit.jsonl`。
+- `merge_gate.py`：確定性 gate。複核需求對照、head SHA、required checks、測試數、skip、風險等級、每日上限、白名單、凍結旗標，並寫入 `<runs_dir>/merge-audit.jsonl`。放寬閘門（改測試／lint／覆蓋率設定、新增壓制註解）一律 escalate；`auto_merge.carry_verdict_on_rebase`（預設關閉）開啟時，rebase 後 patch-id 相同才沿用 verdict。
+- steward 合併後要讀回 PR 狀態填 `merge_state`，`sdlc-merge` 只在 `merged` 時算已合併（merge queue 可能只是排隊）。
 - `publish.py`：確定性推送工具。只推 fork 的功能分支，推送前掃機敏值、檢查閘門、開 PR，並寫稽核紀錄。
 - `scaffold/.github/workflows/agent-merge-gate.yml.tmpl`：給目標專案用的 CI，從受保護的 base 執行 gate，設為 required check。
 - 真正的信任邊界在伺服器端（ruleset、GitHub App、CODEOWNERS），hook 只是輔助。`auto_merge` 預設關閉。
@@ -147,6 +148,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - `plugin/commands/` 只負責把使用者的話整理成 `tpm-team` skill 的輸入。流程寫在 skill 和 workflow 裡，不要在 command 裡再寫一份。
 - 事件對照表與閘門規則寫在 `plugin/skills/tpm-team/SKILL.md`。
 - `/init-workflow` 由 `init-workflow` skill 提供，會先在對話中確認使用者的習慣，再跑 `init.py --answers`。
+- `/correct` 由 `correct` skill 提供，把一則教訓變成最高可行層級的強制機制，並在 rules.md〈專案規則〉維護「規則 ↔ 強制方式」對照表。
 
 ## 改動時的檢查清單
 

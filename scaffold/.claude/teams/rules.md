@@ -60,3 +60,10 @@
 - **verify 指令**：〈例：`just verify --base origin/main`，或 `pnpm test && pytest`；integrator 合併後與 implementer commit 前都跑〉
 - **demo 環境**：〈例：compose 專案名（指令一律帶 `-p`）、測試用獨立 TMPDIR 與 `LC_ALL=en_US.UTF-8`〉
 - **其他專案特定約定**：〈例：既有定案不推翻的事項、只能由使用者自己執行的指令〉
+
+### 規則 ↔ 強制方式
+
+由 `/correct`（`correct` skill）維護：把重複出現的錯誤變成強制機制時加一列。層級：1 架構／確定性工具、2 schema／hook／lint、3 測試、4 文件；只能停在文件層的，強制方式寫「僅文件」。
+
+| 規則 | 強制方式 | 層級 | 證明擋得住的指令 |
+|---|---|---|---|

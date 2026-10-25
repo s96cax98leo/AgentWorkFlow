@@ -90,7 +90,7 @@ python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstr
 python3 .claude/teams/tools/save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間>
 ```
 
-`sdlc-merge` 的回傳：`merged`、`decision`、`followups`、`next`。`event-post-merge` 回傳 `freeze: true` 時，用 PushNotification 推播決策者（附 revert 提案路徑）；revert PR 由人決定、由人合併，凍結期間不跑合併。
+`sdlc-merge` 的回傳：`merged`、`decision`、`followups`、`next`。`event-post-merge` 回傳 `freeze: true` 時，用 PushNotification 推播決策者（附 revert 提案路徑）；revert PR 由人決定、由人合併，凍結期間不跑合併。`sdlc-merge` 產生 followup 或 `event-post-merge` 歸因出的錯誤，若同一類已出現過，收尾時建議使用者跑 `/correct`（`correct` skill），把它變成強制機制而不只是再修一次。
 
 SDLC 各段的做法（需求寫法、測試先行與否、驗證方式）與慣例（code style、commit、分支、PR 大小、文件格式）由開發規範 profile `.claude/teams/methodology.json` 決定，已由 `build.py` 內嵌進 `sdlc-*.js`；列計畫時寫出用的是哪個 profile，使用者要改做法就改這個檔再跑 `python3 .claude/teams/tools/build.py`，不要在派工時另外指定。profile 的 `extensions` 是使用者加進各段的自己的 agent（`/add-agent` 設定），列計畫時一併列出哪幾段會多派哪些擴充 agent；它們的 findings 和內建審查一樣列在閘門重點裡。`sdlc-build` 回傳的 `test_first` 表示這次走 Red（測試先行）還是 Tests（實作後補驗證測試）。
 

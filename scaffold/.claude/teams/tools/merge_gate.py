@@ -32,7 +32,7 @@ hook 與目標專案 CI 都呼叫它；只有判定 merge 時 exit 0。只用標
       --checks <required checks JSON：gh pr checks --json name,state 的輸出，或 {"名稱": "success"}> \\
       --diff <git diff base...head 的輸出檔> \\
       --tests-before N --tests-after N \\
-      [--findings <審查發現 JSON> ...] [--reviewed-sha SHA ...] \\
+      [--findings <審查發現 JSON> ...] [--reviewed-sha SHA ...] [--base-sha SHA] [--git-dir <repo>] \\
       [--requirements <路徑>] [--requirements-source json|command|spec-md] \\
       [--timestamp <ISO 8601>] [--project-dir <專案根>] [--runs-dir <目錄>] [--no-audit]
   python3 .claude/teams/tools/merge_gate.py --selftest
@@ -40,6 +40,9 @@ hook 與目標專案 CI 都呼叫它；只有判定 merge 時 exit 0。只用標
 輸出：stdout 一個 JSON（decision、reasons、escalations、followups、risk_tier…）。
 結束碼：0＝merge；1＝hold；3＝escalate；2＝參數錯誤。輸入缺漏一律判 hold（fail-closed）。
 每次判定 append 一行到 <runs_dir>/merge-audit.jsonl（runs_dir 讀 guard.config.json，和 hook 一致）。
+放寬閘門（改測試／lint／型別／覆蓋率設定、新增壓制註解）一律 escalate，要人會簽。
+auto_merge.carry_verdict_on_rebase（預設 false）開啟且有 --base-sha 時，對照／驗證／審查的 SHA 和目前 head 不同，
+gate 會自己用 git 算兩邊的 patch-id，相同才沿用 verdict（寫進 reasons 與 carried），否則照舊 hold。
 凍結旗標 auto_merge.freeze_file（預設 <runs_dir>/auto-merge.freeze.json，內容 {"frozen": true, …}）存在且 frozen 不是 false 時一律 hold，和 hook 讀同一個檔。
 """
 
@@ -81,6 +84,10 @@ SENSITIVE = [
     (r"(^|/)migrations?/", "資料庫 migration"),
     (r"(^|/)CODEOWNERS$", "CODEOWNERS"),
     (r"(^|/)(auth|oauth|authn|authz)(/|\.[a-z]+$)|(^|/)[^/]*[_-](auth|oauth)\.[a-z]+$", "auth"),
+    # 放寬閘門：改這些設定可能放寬測試、lint、型別或覆蓋率門檻，要人會簽
+    (r"(^|/)(jest|vitest|playwright|cypress)\.config\.[a-z]+$|(^|/)karma\.conf\.[a-z]+$|(^|/)(pytest\.ini|tox\.ini|\.coveragerc|codecov\.ya?ml|mypy\.ini|\.flake8|\.?ruff\.toml|\.rubocop\.yml)$"
+     r"|(^|/)\.nycrc[^/]*$|(^|/)\.eslintrc[^/]*$|(^|/)eslint\.config\.[a-z]+$|(^|/)tsconfig[^/]*\.json$|(^|/)\.golangci\.ya?ml$|(^|/)phpunit\.xml[^/]*$|(^|/)\.stylelintrc[^/]*$",
+     "測試／lint／型別／覆蓋率設定"),
 ]
 DOC = re.compile(r"(^|/)docs?/|\.(md|mdx|rst|txt|adoc)$", re.I)
 TEST = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)/|(^|/)test_[^/]+$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$", re.I)
@@ -89,6 +96,11 @@ SKIP = re.compile(
     r"\b(it|test|describe|context|suite)\.(skip|only|fixme|todo)\b|\b(xit|xdescribe|fit|fdescribe|xtest)\s*\("
     r"|@pytest\.mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail)\s*\(|@unittest\.(skip|skipIf|skipUnless|expectedFailure)\b"
     r"|\bt\.Skip(Now|f)?\s*\(|@(Disabled|Ignore)\b|\btest\.fixme\b"
+)
+# 新增的壓制註解（lint、型別、覆蓋率）：放寬檢查要人會簽
+SUPPRESS = re.compile(
+    r"eslint-disable|@ts-(ignore|nocheck|expect-error)\b|#\s*type:\s*ignore|#\s*noqa\b|pragma:\s*no\s*cover"
+    r"|(istanbul|c8)\s+ignore|//\s*nolint\b|\bNOLINT\b|@SuppressWarnings\b|rubocop:disable"
 )
 # 內建範例 adapter（spec-md）的預設 ID 樣式：行首（可帶清單符號、表格線、粗體）的 AC-1／AC1／REQ-1 之類
 DEFAULT_ID_PATTERN = r"^\s*(?:[-*+]\s+|\d+[.)]\s+|\|\s*|#+\s+)?(?:\*\*|`)?\[?([A-Z][A-Z0-9]*-?\d+)\]?(?:\*\*|`)?(?=[\s:：|.)、]|$)"
@@ -362,6 +374,22 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
     if not head:
         hold.append("缺輸入：目前 head SHA")
 
+    # rebase 後沿用 verdict（auto_merge.carry_verdict_on_rebase，預設關閉）：patch-id 由 gather() 用 git 自己算，相同才沿用
+    carry = bool(am.get("carry_verdict_on_rebase")) and bool(inp.get("base_sha"))
+    pids = inp.get("patch_ids") or {}
+    carried: list[str] = []
+
+    def sha_mismatch(old: str, when: str) -> None:
+        if carry:
+            a, b = pids.get(old), pids.get(head)
+            if a and b and a == b:
+                carried.append(f"沿用 verdict：{when} {old[:12]} → 目前 {head[:12]}（patch-id 相同）")
+                return
+            why = "patch-id 不同" if a and b else "無法計算 patch-id"
+            hold.append(f"head SHA 不符：{when} {old}，目前 {head}（{why}，不沿用）")
+        else:
+            hold.append(f"head SHA 不符：{when} {old}，目前 {head}")
+
     # 1. steward 的信封／payload：schema＋語意規則
     payload: dict = {}
     if need("decision", "steward 的 merge-decision"):
@@ -377,7 +405,7 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
         if payload.get("repo") != repo or payload.get("pr") != pr:
             hold.append(f"merge-decision 的 repo／pr（{payload.get('repo')}#{payload.get('pr')}）與這次（{repo}#{pr}）不同")
         if head and payload.get("head_sha") != head:
-            hold.append(f"head SHA 不符：對照時 {payload.get('head_sha')}，目前 {head}")
+            sha_mismatch(str(payload.get("head_sha")), "對照時")
         sd = payload.get("decision")
         if sd == "hold":
             hold.append("steward 判 hold（gate 只會更嚴，不會放寬）")
@@ -444,10 +472,10 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
         if inp.get("anti_cheat"):
             hold.append(f"反作弊檢查有發現：{inp['anti_cheat'][:5]}")
         if inp.get("evidence_commit") and head and inp["evidence_commit"] != head:
-            hold.append(f"head SHA 不符：驗證時 {inp['evidence_commit']}，目前 {head}")
+            sha_mismatch(inp["evidence_commit"], "驗證時")
     for s in inp.get("reviewed_shas") or []:
         if head and s != head:
-            hold.append(f"head SHA 不符：審查時 {s}，目前 {head}")
+            sha_mismatch(s, "審查時")
 
     # 4. required checks
     if need("checks", "required checks 狀態"):
@@ -474,6 +502,9 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
         skips = [f"{p}: {l.strip()[:80]}" for p, l in diff["added_lines"] if SKIP.search(l)]
         if skips:
             hold.append(f"新增 skip／only／fixme：{skips[:5]}")
+        sup = [f"{p}: {l.strip()[:80]}" for p, l in diff["added_lines"] if SUPPRESS.search(l)]
+        if sup:
+            esc.append(f"新增壓制註解（放寬 lint／型別／覆蓋率檢查，要人會簽）：{sup[:5]}")
         if not diff["files"]:
             hold.append("diff 是空的")
         tier, why = risk_tier(diff, am)
@@ -505,9 +536,9 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
         hold.append(f"超過每日合併上限：今天（{day}）已合併 {merged_today} 次，上限 {cap}")
 
     decision = "hold" if hold else ("escalate" if esc else "merge")
-    reasons = hold + esc if decision != "merge" else ["全部檢查通過"]
+    reasons = hold + esc if decision != "merge" else ["全部檢查通過"] + carried
     return {"decision": decision, "repo": repo, "pr": pr, "head_sha": head, "reasons": reasons,
-            "hold_reasons": hold, "escalations": esc, "followups": followups,
+            "hold_reasons": hold, "escalations": esc, "followups": followups, "carried": carried,
             "risk_tier": tier, "requirements_source": inp.get("requirements_source", ""),
             "timestamp": inp.get("timestamp"), "gate_version": GATE_VERSION}
 
@@ -531,7 +562,7 @@ def read_audit(path: Path) -> list[dict]:
 def append_audit(path: Path, result: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {k: result[k] for k in ("timestamp", "repo", "pr", "head_sha", "decision", "reasons", "risk_tier",
-                                  "followups", "requirements_source", "gate_version")}
+                                  "followups", "carried", "requirements_source", "gate_version") if k in result}
     with path.open("a", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -545,8 +576,21 @@ def _read_json(arg: str):
         raise InputError(f"讀不到 {arg}：{e}") from e
 
 
+def patch_id(git_dir: Path, base: str, sha: str) -> str | None:
+    """git diff $(merge-base base sha) sha | git patch-id --stable；任何失敗回 None（呼叫端 fail-closed）。"""
+    try:
+        def git(*args: str, data: bytes | None = None) -> bytes:
+            return subprocess.run(["git", "-C", str(git_dir), *args], input=data, capture_output=True, check=True).stdout
+        mb = git("merge-base", base, sha).decode().strip()
+        diff = git("diff", mb, sha)
+        out = git("patch-id", "--stable", data=diff).decode().split() if diff.strip() else []
+        return out[0] if out else None
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):
+        return None
+
+
 def gather(a: argparse.Namespace, cfg: dict, proj: Path) -> dict:
-    inp: dict = {"repo": a.repo, "pr": a.pr, "head_sha": a.head_sha, "reviewed_shas": a.reviewed_sha or [],
+    inp: dict = {"repo": a.repo, "pr": a.pr, "head_sha": a.head_sha, "reviewed_shas": a.reviewed_sha or [], "base_sha": a.base_sha,
                  "tests_before": a.tests_before, "tests_after": a.tests_after,
                  "timestamp": a.timestamp or datetime.now(timezone.utc).isoformat(timespec="seconds")}
     errors = []
@@ -585,6 +629,13 @@ def gather(a: argparse.Namespace, cfg: dict, proj: Path) -> dict:
 
     for fn in (dec, reqs, ev, chk, fnd, dif):
         attempt(fn)
+    am = cfg.get("auto_merge") if isinstance(cfg.get("auto_merge"), dict) else {}
+    if am.get("carry_verdict_on_rebase") and a.base_sha:
+        d = inp.get("decision")
+        p = d.get("payload") if isinstance(d, dict) and isinstance(d.get("payload"), dict) else d
+        shas = {a.head_sha, *(a.reviewed_sha or []), inp.get("evidence_commit"), p.get("head_sha") if isinstance(p, dict) else None}
+        git_dir = Path(a.git_dir).resolve() if a.git_dir else proj
+        inp["patch_ids"] = {s: patch_id(git_dir, a.base_sha, s) for s in shas if isinstance(s, str) and s}
     return inp, errors
 
 
@@ -725,6 +776,50 @@ def _selftest() -> int:
         run("改 CI 檔（.github/workflows）→ escalate", ("escalate", "hold"), files={"diff.txt": ci_diff})
         lock_diff = "diff --git a/package-lock.json b/package-lock.json\n--- a/package-lock.json\n+++ b/package-lock.json\n@@ -1 +1 @@\n-a\n+b\n"
         run("改依賴鎖檔 → escalate", ("escalate",), files={"diff.txt": lock_diff})
+        jest_diff = "diff --git a/jest.config.js b/jest.config.js\n--- a/jest.config.js\n+++ b/jest.config.js\n@@ -1 +1 @@\n-coverageThreshold: 90\n+coverageThreshold: 50\n"
+        run("改測試／覆蓋率設定（jest.config.js）→ escalate", ("escalate",), files={"diff.txt": jest_diff})
+        run("新增 # noqa → escalate", ("escalate",), files={"diff.txt": test_diff + "+import os  # noqa: F401\n"})
+        run("新增 eslint-disable → escalate", ("escalate",),
+            files={"diff.txt": test_diff.replace("+def test_csv():", "+// eslint-disable-next-line no-unused-vars")})
+        # rebase 後沿用 verdict：在暫存 git repo 做 feature commit A，main 前進後 cherry-pick 成 A2（patch 相同），另做 C（patch 不同）
+        gd = proj / "gitrepo"
+        gd.mkdir()
+
+        def git(*args: str) -> str:
+            return subprocess.run(["git", "-C", str(gd), "-c", "user.name=示範", "-c", "user.email=demo@example.com",
+                                   "-c", "commit.gpgsign=false", *args], capture_output=True, text=True, check=True).stdout.strip()
+
+        git("init", "-q")
+        (gd / "a.txt").write_text("1\n", encoding="utf-8")
+        git("add", "-A"); git("commit", "-qm", "base")
+        base0 = git("rev-parse", "HEAD")
+        (gd / "a.txt").write_text("1\n2\n", encoding="utf-8")
+        git("commit", "-qam", "A")
+        sha_a = git("rev-parse", "HEAD")
+        git("checkout", "-q", base0)
+        (gd / "b.txt").write_text("x\n", encoding="utf-8")
+        git("add", "-A"); git("commit", "-qm", "main 前進")
+        base1 = git("rev-parse", "HEAD")
+        git("cherry-pick", sha_a)
+        sha_a2 = git("rev-parse", "HEAD")
+        git("checkout", "-q", base1)
+        (gd / "a.txt").write_text("1\n3\n", encoding="utf-8")
+        git("commit", "-qam", "C")
+        sha_c = git("rev-parse", "HEAD")
+        carry_cfg = {**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "carry_verdict_on_rebase": True}}
+        rb = ["--head-sha", sha_a2, "--base-sha", base1, "--git-dir", str(gd)]
+        res = run("rebase 後 patch-id 相同、carry 開啟 → merge（沿用 verdict）", ("merge",), cfg=carry_cfg,
+                  files={"decision.json": decision(good_rows, sha=sha_a)}, args=rb)
+        good = any("沿用 verdict" in r for r in res.get("reasons") or [])
+        print(f"  [{'通過' if good else '失敗'}] 沿用 verdict 寫進 reasons（{res.get('reasons')}）")
+        ok = ok and good
+        run("rebase 後 patch-id 相同、carry 關閉 → hold", ("hold",), files={"decision.json": decision(good_rows, sha=sha_a)}, args=rb)
+        run("rebase 後 patch 不同、carry 開啟 → hold", ("hold",), cfg=carry_cfg,
+            files={"decision.json": decision(good_rows, sha=sha_a)}, args=["--head-sha", sha_c, "--base-sha", base1, "--git-dir", str(gd)])
+        run("carry 開啟但沒給 base → hold", ("hold",), cfg=carry_cfg,
+            files={"decision.json": decision(good_rows, sha=sha_a)}, args=["--head-sha", sha_a2, "--git-dir", str(gd)])
+        run("carry 開啟但舊 commit 不存在（算不出 patch-id）→ hold", ("hold",), cfg=carry_cfg,
+            files={"decision.json": decision(good_rows, sha="d" * 40)}, args=rb)
         run("required check 失敗 → hold", ("hold",), files={"checks.json": [{"name": "ci", "state": "FAILURE"}]})
         run("驗證有 anti_cheat 發現 → hold", ("hold",),
             files={"evidence.json": {"commit": SHA, "anti_cheat": ["tests/test_export.py:3 斷言被放寬"], "results": good_ev}})
@@ -786,6 +881,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--pr", required=True, type=int)
     c.add_argument("--head-sha", required=True, help="目前 PR 的 head commit")
     c.add_argument("--reviewed-sha", action="append", help="審查／驗證當下的 head（可重複）")
+    c.add_argument("--base-sha", help="PR 的 base commit；auto_merge.carry_verdict_on_rebase 開啟時用來算 patch-id，判斷 rebase 後能不能沿用 verdict")
+    c.add_argument("--git-dir", help="算 patch-id 用的 git repo（預設專案根）")
     c.add_argument("--evidence", help="正規化證據 [{requirement_id,result,evidence}]，或 criteria 信封")
     c.add_argument("--requirements", help="需求清單路徑（覆蓋 guard.config.json 的 requirements.path）")
     c.add_argument("--requirements-source", choices=sorted(ADAPTERS), help="覆蓋 requirements.source")
