@@ -5,5 +5,11 @@
   "author": {
     "name": "AgentWorkFlow"
   },
-  "keywords": ["sdlc", "agent-team", "hooks", "workflow"]
+  "license": "MIT",
+  "keywords": [
+    "sdlc",
+    "agent-team",
+    "hooks",
+    "workflow"
+  ]
 }

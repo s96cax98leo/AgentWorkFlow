@@ -37,6 +37,7 @@ AgentWorkFlow/
 │   ├── CLAUDE.md.tmpl、.mcp.json.tmpl
 │   └── _runs/                        # run 目錄說明
 ├── init.py                           # 套用模版（互動問答或讀設定檔）
+├── LICENSE                           # MIT
 ├── workflow.config.example           # 佔位符的值
 ├── docs/                             # 說明文件
 └── tests/                            # 去客戶化掃描、init 煙霧測試、全部測試入口
@@ -279,3 +280,7 @@ CI（`.github/workflows/ci.yml`）在 ubuntu、macos、windows（pwsh）三個�
 範例一律用虛構的「示範客戶 ACME」。
 
 給 Claude Code 的開發規則寫在 [`CLAUDE.md`](CLAUDE.md)。
+
+## 授權
+
+MIT，見 [`LICENSE`](LICENSE)。
