@@ -60,7 +60,7 @@ AgentWorkFlow/
 /plugin install agent-workflow@agentworkflow
 ```
 
-repo 目前是私有的，要先被加為 collaborator，並在本機用 `gh auth login` 登入 GitHub。要從本機 clone 安裝的話，把 `s96cax98leo/AgentWorkFlow` 換成 clone 的路徑。裝好後用 `/plugin` 確認 agent、skill、command 都有載入。
+repo 是公開的，不需要登入 GitHub。要從本機 clone 安裝的話，把 `s96cax98leo/AgentWorkFlow` 換成 clone 的路徑。裝好後用 `/plugin` 確認 agent、skill、command 都有載入。
 
 **2. 在目標專案套用模版**（每個專案做一次）
 

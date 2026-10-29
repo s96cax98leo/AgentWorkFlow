@@ -4,7 +4,7 @@
     "name": "AgentWorkFlow"
   },
   "metadata": {
-    "description": "AgentWorkFlow 本機 marketplace：AI-native SDLC、事件處理與網站分析的 agent team 模版",
+    "description": "AgentWorkFlow marketplace：AI-native SDLC、事件處理與網站分析的 agent team 模版",
     "version": "0.1.0"
   },
   "plugins": [
