@@ -50,7 +50,7 @@ python3 .claude/teams/tools/publish.py --selftest                               
 
 在 repo 內也可以直接驗 scaffold，例如 `python3 scaffold/.claude/teams/tools/build.py --check`，路徑會依檔案位置推算。
 
-計畫型的工作用可驗證 checklist：`python3 scaffold/.claude/teams/tools/checklist.py check <checklist.md> [--id <前綴>] [--write]`。打勾以驗證指令的實際執行結果為準，範例見 `plans/auto-merge/checklist.md`。
+計畫型的工作用可驗證 checklist：`python3 scaffold/.claude/teams/tools/checklist.py check <checklist.md> [--id <前綴>] [--write]`。打勾以驗證指令的實際執行結果為準。checklist 放在根目錄的 `plans/`（本機，不進版控）。
 
 ## 架構
 

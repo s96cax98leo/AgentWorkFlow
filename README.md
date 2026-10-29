@@ -39,7 +39,6 @@ AgentWorkFlow/
 ├── init.py                           # 套用模版（互動問答或讀設定檔）
 ├── workflow.config.example           # 佔位符的值
 ├── docs/                             # 說明文件
-├── plans/                            # 可驗證 checklist 的實例
 └── tests/                            # 去客戶化掃描、init 煙霧測試、全部測試入口
 ```
 

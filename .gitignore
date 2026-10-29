@@ -27,3 +27,6 @@ tests/scrub_terms.local.txt
 .venv/
 node_modules/
 *.log
+
+# 計畫與可驗證 checklist（本機工作紀錄），不進版控
+/plans/
