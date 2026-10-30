@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """串起所有測試：去客戶化掃描 → init 煙霧測試（含暫存專案裡的 golden-set、build.py --check、
-check_workflows.mjs、check_agents.py、--hooks project）→ plugin hook 測試 → 設計系統 token 掃描器。
+check_workflows.mjs、check_agents.py、--hooks project）→ plugin hook 測試 → OpenSpec 閘門、核准接線與需求清單（tests/openspec/，回放錄好的 CLI 輸出）→ 設計系統 token 掃描器。
 
 用法：python3 tests/run_all.py   （Windows：py -3 tests/run_all.py 或 python tests/run_all.py）
 任何一項失敗，最後以 1 退出；每一項都會跑完，方便一次看到所有問題。只用標準庫。
@@ -48,6 +48,9 @@ def main() -> int:
         ("去客戶化掃描", [PY, str(ROOT / "tests" / "scrub_check.py")]),
         ("init 煙霧測試", [PY, str(ROOT / "tests" / "smoke_init.py")]),
         ("hook 測試", [PY, str(ROOT / "plugin" / "hooks" / "tests" / "run.py")]),
+        ("OpenSpec 閘門（spec_gate.py）", [PY, str(ROOT / "tests" / "openspec" / "test_spec_gate.py")]),
+        ("OpenSpec 核准接線（save_run.py approve）", [PY, str(ROOT / "tests" / "openspec" / "test_save_run_gate.py")]),
+        ("OpenSpec 需求清單（openspec-reqs.mjs）", [PY, str(ROOT / "tests" / "openspec" / "test_openspec_reqs.py")]),
         ("check-tokens 掃描器", None),
     ]
     results, status = [], 0

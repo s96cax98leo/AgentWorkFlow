@@ -1,0 +1,87 @@
+{
+  "name": "openspec",
+  "description": "OpenSpec profile（選用，預設不啟用）：spec 文件是 OpenSpec change（openspec/changes/<epic>/），需求寫成 SHALL 加 Scenario，測試先行；各段核准前由 tools/spec_gate.py 以 OpenSpec CLI（1.15.x）確定性判定能否過關，合併後用 event-spec-archive 在獨立分支歸檔。",
+  "spec_engine": "openspec",
+  "stages": {
+    "plan": {
+      "artifacts": ["proposal.md"],
+      "template": "OpenSpec 的 proposal 格式：## Why（50 字以上）、## What Changes、## Capabilities（New／Modified）、## Impact；範本以 openspec instructions proposal --change <epic> --json 的 template 為準",
+      "guidance": "先在 epic worktree 執行 openspec new change <epic>（epic 名稱只用 ASCII 的 kebab-case，同時是 OpenSpec 的 change id），再寫 proposal.md。這一段只寫 proposal，不寫 specs、design、tasks；閘門只看 openspec status 的 proposal 是否 done，還不跑 validate。"
+    },
+    "design": {
+      "artifacts": ["specs/", "design.md", "tasks.md"],
+      "requirement_style": "specs/<capability>/spec.md 的 delta 用 ## ADDED／MODIFIED／REMOVED／RENAMED Requirements。每個 Requirement 只有一個英文 SHALL（其餘文字用專案的輸出語言），至少一個 #### Scenario；Scenario 用 - **WHEN** …／- **THEN** …，前提用 - **GIVEN** …，異常另寫一個 Scenario。新 capability 的 delta 開頭要有 50 字以上的 ## Purpose（archive 時才不會寫成 TBD 佔位，閘門與 archive 後的 validate --specs --strict 都會擋）。openspec/specs/ 已有同名 Requirement 時用 MODIFIED 並寫出完整的新版本。",
+      "guidance": "每個子計劃對應一個 capability。AWF 自己的檔案（progress、verifier、outline、子計劃）放 change 底下的 awf/，OpenSpec 會忽略它。tasks.md 每一項都標子任務 id，例如 - [ ] 2.1 [t1] 實作匯出；子任務 id 的集合要和 subtasks payload 相同。寫完跑 openspec validate <epic> --strict，閘門要 valid、status 的 isPlanningComplete=true、instructions apply 的 state=ready。"
+    },
+    "build": {
+      "test_first": true,
+      "unit_tests": "單元測試由實作者以 TDD（紅燈 → 綠燈 → 重構）撰寫。",
+      "guidance": "依 openspec instructions apply --change <epic> --json 判斷能不能開始（state=ready）。驗收測試先寫、確認以預期的理由失敗並合進整合分支，才開始實作；實作者不得修改驗收測試。完成一項就勾 tasks.md 的對應項目；閘門要 progress.remaining=0，且每項都帶 [子任務 id]。"
+    },
+    "test": {
+      "verification": "每個 Scenario 一筆 criteria，id＝scenarioKey（<capability>/<slug(Requirement)>/<slug(Scenario)>，和 node .claude/teams/tools/openspec-reqs.mjs <epic> 輸出的 id 相同），在目前 HEAD 判 pass／fail／not_verifiable，並對 diff 做反作弊檢查。另跑 /opsx:verify，把完整報告存到 openspec/changes/<epic>/awf/opsx-verify.md，再跑 openspec validate <epic> --strict。",
+      "guidance": "criteria 的 id 集合要和 scenarioKey 集合完全相同（不能多、不能少），全部 pass、anti_cheat 為空、/opsx:verify 的 Final Assessment 沒有 critical issue 也沒有略過的檢查，閘門才放行。"
+    },
+    "deliver": {
+      "review_axes": [],
+      "guidance": "四軸審查（standards、spec、bugs、history），只留信心 ≥0.8 且未被 skeptic 推翻的發現。"
+    },
+    "merge": {
+      "guidance": "需求清單由 openspec-reqs.mjs 從 delta 展開（每個 Scenario 一筆），逐條對照驗證證據，全部一致且 merge_gate.py 判 merge 才合併。不要在原 PR 加 archive 的 commit；合併後另跑 event-spec-archive。"
+    }
+  },
+  "parallelism": {
+    "split_threshold": 8,
+    "max_sub_plans": 4,
+    "shard_verification": true
+  },
+  "spec_layout": {
+    "root": "openspec/changes/{epic}",
+    "intent": "proposal.md",
+    "spec": "specs",
+    "plan": "tasks.md",
+    "progress": "awf/progress.md",
+    "verifier": "awf/verifier.md",
+    "verifier_shard": "awf/verifier-{shard}.md",
+    "outline": "awf/outline.md",
+    "sub_dir": "awf/sub",
+    "templates": "openspec/templates"
+  },
+  "requirements": {
+    "source": "command",
+    "path": "",
+    "command": "node .claude/teams/tools/openspec-reqs.mjs",
+    "id_pattern": "",
+    "notes": "openspec-reqs.mjs 讀 openspec show <epic> --json --deltas-only --type change，每個 Scenario 展開成一筆 {id: scenarioKey, text, source}。epic 由環境變數 AWF_EPIC 帶入：跑 merge_gate.py 前先設 AWF_EPIC=<epic>（沒設就 exit 1，gate 判 hold）。openspec/templates/ 不存在時，範本用 openspec instructions <artifact> --change <epic> --json 的 template。"
+  },
+  "conventions": {
+    "code_style": {
+      "description": "照目標 repo 既有的 linter／formatter 設定（CLAUDE.md、設定檔）；新增程式碼不得新增 lint 錯誤。",
+      "tool": null,
+      "command": null
+    },
+    "commit": {
+      "format": "Conventional Commits：<type>(<scope>): <摘要>，scope 放 Story ID（文件類放 epic）；結尾署名行。",
+      "examples": {
+        "docs": "docs(<epic>): proposal 草稿",
+        "test": "test(<Story>): 驗收測試",
+        "feat": "feat(<Story>): 實作",
+        "fix": "fix(<Story>): 修正驗收失敗"
+      },
+      "check_regex": null
+    },
+    "branch": {
+      "prefix": "feature/",
+      "naming": "epic 分支 <prefix><epic>；子任務分支 <prefix><epic>--<子任務 id>；合併後的歸檔分支 chore/openspec-archive-<epic>。"
+    },
+    "pr_size": {
+      "max_lines": 300,
+      "max_files": 15,
+      "scope": "只算修改既有檔（git diff --numstat --diff-filter=M）；超過時建議拆成依序可合的小 PR。"
+    },
+    "doc_format": {
+      "format": "Markdown",
+      "notes": "openspec/changes/<epic>/ 下的 proposal、specs、design、tasks 照 OpenSpec 格式（openspec instructions <artifact> --json 的 template）；AWF 自己的文件放 awf/。"
+    }
+  }
+}

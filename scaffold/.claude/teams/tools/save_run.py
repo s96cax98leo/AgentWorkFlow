@@ -13,12 +13,17 @@ run 目錄：{{RUNS_DIR}}/<YYYYMMDD>-<事件>-<短名>/
         政策核准會讀 <stage>.json 的實際內容（policy_violations）：verifier 有不是 pass 的條目、反作弊有發現、
         任何 blocking 待決問題或 blocker／important 發現、回傳標了 halted，都不能政策核准，要交人。
         回傳物件帶 halted（流程中斷）時，stage 一律記成 blocked。
+        profile 設 spec_engine=openspec 時，上面的檢查都過了之後再跑 spec_gate.py（核准 test 時連 build 一起跑），
+        不過關不能核准，閘門輸出存成 <run_dir>/spec-gate-<段>.json。這時另接受
+        --change <change id>（預設 run.json 的 epic）、--cwd <OpenSpec 專案根>、--verify <opsx:verify 報告>。
     python3 save_run.py status <run_dir>
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -97,6 +102,52 @@ def policy_violations(stage: str, result) -> list[str]:
     return errs
 
 
+# OpenSpec 閘門（spec_engine=openspec 時）：核准這些段之前先跑 spec_gate.py。build 段沒有人工閘門，
+# 所以核准 test 時也一併跑 build 的閘門（tasks 沒勾完、沒標子任務 id 就不能進 deliver）。
+SPEC_GATED = {"plan": ["plan"], "design": ["design"], "build": ["build"], "test": ["build", "test"]}
+
+
+def spec_engine() -> str:
+    """profile（.claude/teams/methodology.json）的 spec_engine；沒有檔案、讀不到或沒設時是 awf-native（行為和以前相同）。"""
+    try:
+        prof = json.loads((Path(__file__).resolve().parent.parent / "methodology.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "awf-native"
+    return str(prof.get("spec_engine") or "awf-native") if isinstance(prof, dict) else "awf-native"
+
+
+def spec_gates(run: Path, data: dict, stage: str, argv: list[str]) -> list[str]:
+    """跑該段的 spec_gate.py，輸出存成 <run>/spec-gate-<段>.json；回傳不能核准的理由（空清單＝過關）。
+    change id 取 --change，沒有時用 run.json 的 epic；OpenSpec 專案根取 --cwd，沒有時用 epic worktree（.worktrees/<id>）或專案根。"""
+    change = opt(argv, "--change") or str(data.get("epic") or "")
+    if not change:
+        return ["openspec 模式要指定 change id（--change，或 run.json 的 epic）"]
+    proj = Path(__file__).resolve().parents[3]
+    cwd = opt(argv, "--cwd") or str(proj / ".worktrees" / change if (proj / ".worktrees" / change).is_dir() else proj)
+    errs = []
+    for g in SPEC_GATED[stage]:
+        cmd = [sys.executable, str(Path(__file__).resolve().parent / "spec_gate.py"), g, "--change", change, "--cwd", cwd]
+        if g == "build":
+            cmd += ["--subtasks", str(run / "design.json")]
+        if g == "test":
+            cmd += ["--criteria", str(run / "test.json")] + (["--verify", opt(argv, "--verify")] if opt(argv, "--verify") else [])
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           env={**os.environ, "PYTHONUTF8": "1"})
+        try:
+            out = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            return [f"spec_gate {g} 沒有輸出 JSON（exit {r.returncode}）：{r.stderr.strip()[-300:]}"]
+        (run / f"spec-gate-{g}.json").write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        failed = "、".join(c.get("id", "?") for c in out.get("checks") or [] if not c.get("pass"))
+        if r.returncode == 2:
+            errs.append(f"spec_gate {g} 無法執行：{failed}（{(out.get('checks') or [{}])[0].get('detail', '')}）")
+        elif r.returncode != 0 or not out.get("pass"):
+            errs.append(f"spec_gate {g} 未過：{failed}")
+        if errs:
+            break
+    return errs
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
@@ -170,7 +221,14 @@ def main(argv: list[str]) -> int:
             for e in errs:
                 print(f"不能核准：{e}", file=sys.stderr)
             return 1
-        st["approved"] = {"by": by, "at": at, "note": note, "kind": "policy" if by == "policy" else "human"}
+        # OpenSpec 閘門：只有 profile 設 spec_engine=openspec 才跑，放在既有檢查之後（既有錯誤的訊息與 exit code 不變）
+        if spec_engine() == "openspec" and stage in SPEC_GATED:
+            errs = spec_gates(run, data, stage, argv)
+            if errs:
+                for e in errs:
+                    print(f"不能核准：{e}", file=sys.stderr)
+                return 1
+        st["approved"] ={"by": by, "at": at, "note": note, "kind": "policy" if by == "policy" else "human"}
         dump(run, data)
         print(f"{stage} 已記錄核准：{by} @ {at}")
         return 0

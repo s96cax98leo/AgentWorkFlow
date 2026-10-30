@@ -85,7 +85,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - `requirements`：需求來源。
   - `conventions`：慣例。
   - `parallelism`：選填的工作流程參數。
-- 內建兩份：`methodologies/default.json`（現行做法）與 `lightweight.json`。init 問答或 `--answers` 的結果會合併成專案的 `.claude/teams/methodology.json`。
+- 內建三份：`methodologies/default.json`（現行做法）、`lightweight.json`，以及選用的 `openspec.json`（`spec_engine=openspec`：`save_run.py approve` 先跑 `tools/spec_gate.py`，需求清單由 `tools/openspec-reqs.mjs` 展開；測試在 `tests/openspec/`，用回放的 CLI 輸出，`AWF_OPENSPEC_REAL=1` 改用真 CLI）。init 問答或 `--answers` 的結果會合併成專案的 `.claude/teams/methodology.json`。
 - 需求來源 adapter（json、command，以及 spec-md 範例）和 `merge_gate.py` 共用。`guard.config.json` 的 `requirements` 有設時以它為準。
 
 ### 平行處理

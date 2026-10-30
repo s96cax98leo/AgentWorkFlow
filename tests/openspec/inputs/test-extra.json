@@ -1,0 +1,48 @@
+{
+ "stage": "test",
+ "verifier": {
+  "status": "done",
+  "summary": "示範客戶 ACME 的驗證結果",
+  "artifacts": [],
+  "evidence": [],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [],
+  "payload": {
+   "commit": "0000000000000000000000000000000000000000",
+   "scope_covered": "全部",
+   "scope_skipped": "none",
+   "criteria": [
+    {
+     "id": "demo-cap/匯出報表/正常匯出",
+     "criterion": "demo-cap/匯出報表/正常匯出",
+     "command": "pytest -k export",
+     "result": "pass",
+     "evidence": "tests/test_export.py 通過"
+    },
+    {
+     "id": "demo-cap/匯出報表/磁碟已滿",
+     "criterion": "demo-cap/匯出報表/磁碟已滿",
+     "command": "pytest -k export",
+     "result": "pass",
+     "evidence": "tests/test_export.py 通過"
+    },
+    {
+     "id": "demo-cap/匯出紀錄/寫入紀錄",
+     "criterion": "demo-cap/匯出紀錄/寫入紀錄",
+     "command": "pytest -k export",
+     "result": "pass",
+     "evidence": "tests/test_export.py 通過"
+    },
+    {
+     "id": "misc/extra",
+     "criterion": "misc/extra",
+     "command": "pytest -k export",
+     "result": "pass",
+     "evidence": "tests/test_export.py 通過"
+    }
+   ],
+   "anti_cheat": []
+  }
+ }
+}

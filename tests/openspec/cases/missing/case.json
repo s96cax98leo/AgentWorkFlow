@@ -1,0 +1,17 @@
+{
+ "change": "nope",
+ "create": false,
+ "commands": [
+  [
+   "--version"
+  ],
+  [
+   "show",
+   "nope",
+   "--json",
+   "--deltas-only",
+   "--type",
+   "change"
+  ]
+ ]
+}

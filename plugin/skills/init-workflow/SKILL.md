@@ -32,7 +32,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 
 | 項目 | 要問的 | 預設 | 答案檔鍵 |
 |---|---|---|---|
-| 開發規範 | 用哪個 profile 當基礎（default：spec 驅動、測試先行；lightweight：需求來自 issue、不強制測試先行；或使用者自己的 profile JSON） | `default` | `methodology` |
+| 開發規範 | 用哪個 profile 當基礎（default：spec 驅動、測試先行；lightweight：需求來自 issue、不強制測試先行；openspec：spec 交給 OpenSpec、核准前跑 spec_gate；或使用者自己的 profile JSON） | `default` | `methodology` |
 | 測試時機 | build 段要不要先寫會失敗的測試再實作 | 依 profile | `test_first` |
 | code style | 用什麼工具、提交前跑什麼檢查指令 | 照 repo 既有設定 | `code_style` |
 | commit | commit 格式說明、範例、要不要用 regex 檢查標題 | 依 profile | `commit` |

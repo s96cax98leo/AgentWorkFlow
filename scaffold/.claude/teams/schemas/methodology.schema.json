@@ -90,6 +90,11 @@
         "templates": {"type": "string", "minLength": 1, "description": "文件範本目錄（相對於 repo 或 epic worktree）；預設 specs/_templates"}
       }
     },
+    "spec_engine": {
+      "type": "string",
+      "enum": ["awf-native", "openspec"],
+      "description": "工作流程參數（選填）：spec 文件由誰管理。省略＝awf-native（模版原本的做法）。openspec＝OpenSpec change：save_run.py approve 核准 plan、design、build、test 前先跑 tools/spec_gate.py，不過關不能核准；合併後用 event-spec-archive 歸檔"
+    },
     "extensions": {
       "type": "array",
       "description": "使用者自己的 agent 加進 SDLC 某一段（工作流程擴充，不是開發規範）：和該段內建的 agent 平行執行，交 findings；blocker／important 的發現會擋住政策核准。每個 agent 也要登記在 guard.config.json 的 extension_agents（build.py --check 會核對）。用 /add-agent 設定",

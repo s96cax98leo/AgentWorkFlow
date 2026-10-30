@@ -116,7 +116,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 
 **交件信封**：每個 `dev-*`／`tpm-*` agent 都用 JSON 信封交件，欄位是 status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload。成果寫成檔案，信封只放路徑。hook 會驗證信封，不合格就交不出去。
 
-**開發規範 profile**：各段的做法和專案慣例寫在目標專案的 `.claude/teams/methodology.json`。內建兩份：`default`（spec 驅動、測試先行、Conventional Commits）與 `lightweight`（需求來自 issue、實作後才補測試、格式自由）。要換做法，改這個檔後跑 `build.py`。
+**開發規範 profile**：各段的做法和專案慣例寫在目標專案的 `.claude/teams/methodology.json`。內建三份：`default`（spec 驅動、測試先行、Conventional Commits）、`lightweight`（需求來自 issue、實作後才補測試、格式自由），以及選用的 `openspec`（spec 文件交給 OpenSpec，核准前由 `spec_gate.py` 確定性判定，預設不啟用）。要換做法，改這個檔後跑 `build.py`。
 
 **平行處理**：觸發條件寫在 profile 的 `parallelism`：
 - `split_threshold`：預估子任務超過幾個就拆子計劃，預設 8。

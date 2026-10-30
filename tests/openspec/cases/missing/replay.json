@@ -1,0 +1,12 @@
+{
+ "--version": {
+  "stdout": "1.15.0\n",
+  "stderr": "",
+  "exit": 0
+ },
+ "show nope --json --deltas-only --type change": {
+  "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"show_error\",\n      \"message\": \"Change \\\"nope\\\" not found at <root>/openspec/changes/nope/proposal.md\"\n    }\n  ]\n}\n",
+  "stderr": "",
+  "exit": 1
+ }
+}

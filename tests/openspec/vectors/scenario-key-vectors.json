@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "description": "scenarioKey＝<capability 路徑>/<slug(Requirement)>/<slug(Scenario)> 的共用測試向量（openspec-reqs.mjs 與其他語言的實作共用同一份，避免 slug 規則飄移）。slug：NFKC → 小寫 → 非 \\p{L}\\p{N} 的連續字元換成 - → 去頭尾 - → 截斷 64 個 code point 並再去尾 -。",
+  "slug": [
+    {
+      "id": "zh-plain",
+      "input": "匯出報表",
+      "expected": "匯出報表"
+    },
+    {
+      "id": "en-words",
+      "input": "Login Flow",
+      "expected": "login-flow"
+    },
+    {
+      "id": "fullwidth-latin-space-paren",
+      "input": "ＡＰＩ　逾時（60 秒）",
+      "expected": "api-逾時-60-秒"
+    },
+    {
+      "id": "en-punct-paren",
+      "input": "Wrong password (3 times)",
+      "expected": "wrong-password-3-times"
+    },
+    {
+      "id": "zh-en-mixed",
+      "input": "每條 Requirement 恰好一個 SHALL",
+      "expected": "每條-requirement-恰好一個-shall"
+    },
+    {
+      "id": "emoji",
+      "input": "部署 🚀 完成",
+      "expected": "部署-完成"
+    },
+    {
+      "id": "only-punct-fullwidth",
+      "input": "？！",
+      "expected": ""
+    },
+    {
+      "id": "only-space",
+      "input": "   ",
+      "expected": ""
+    },
+    {
+      "id": "edge-punct",
+      "input": "--Hello, World!--",
+      "expected": "hello-world"
+    },
+    {
+      "id": "fullwidth-digits",
+      "input": "第１２３號",
+      "expected": "第123號"
+    },
+    {
+      "id": "zh-fullwidth-paren",
+      "input": "逾時（60 秒）",
+      "expected": "逾時-60-秒"
+    },
+    {
+      "id": "zh-space",
+      "input": "逾時 60 秒",
+      "expected": "逾時-60-秒"
+    },
+    {
+      "id": "underscore",
+      "input": "snake_case_name",
+      "expected": "snake-case-name"
+    },
+    {
+      "id": "latin-accents",
+      "input": "Café Ünïcode",
+      "expected": "café-ünïcode"
+    },
+    {
+      "id": "halfwidth-katakana",
+      "input": "ｶﾀｶﾅ",
+      "expected": "カタカナ"
+    },
+    {
+      "id": "roman-numeral-compat",
+      "input": "Ⅻ章",
+      "expected": "xii章"
+    },
+    {
+      "id": "too-long-ascii",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "too-long-trailing-dash",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bcd",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "too-long-zh",
+      "input": "測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測",
+      "expected": "測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測測"
+    },
+    {
+      "id": "mixed-separators",
+      "input": "a — b / c",
+      "expected": "a-b-c"
+    },
+    {
+      "id": "newline-tab",
+      "input": "第一行\n第二行\t結尾",
+      "expected": "第一行-第二行-結尾"
+    },
+    {
+      "id": "version-dots",
+      "input": "v1.2.3 版本",
+      "expected": "v1-2-3-版本"
+    },
+    {
+      "id": "compat-unit",
+      "input": "重量㎏",
+      "expected": "重量kg"
+    },
+    {
+      "id": "cjk-quotes",
+      "input": "「規則」",
+      "expected": "規則"
+    },
+    {
+      "id": "backtick-code",
+      "input": "`SHALL_COUNT` 錯誤",
+      "expected": "shall-count-錯誤"
+    }
+  ],
+  "scenarioKey": [
+    {
+      "id": "zh",
+      "capability": "demo-cap",
+      "requirement": "匯出報表",
+      "scenario": "磁碟已滿",
+      "expected": "demo-cap/匯出報表/磁碟已滿"
+    },
+    {
+      "id": "nested-cap",
+      "capability": "identity/user-auth",
+      "requirement": "Login Flow",
+      "scenario": "Wrong password (3 times)",
+      "expected": "identity/user-auth/login-flow/wrong-password-3-times"
+    },
+    {
+      "id": "mixed",
+      "capability": "spec-authoring-rules",
+      "requirement": "slug 演算法",
+      "scenario": "全形與標點",
+      "expected": "spec-authoring-rules/slug-演算法/全形與標點"
+    },
+    {
+      "id": "deep-nested-cap",
+      "capability": "platform/desktop/ipc",
+      "requirement": "IPC 頻道",
+      "scenario": "未知頻道",
+      "expected": "platform/desktop/ipc/ipc-頻道/未知頻道"
+    },
+    {
+      "id": "empty-scenario-slug",
+      "capability": "demo-cap",
+      "requirement": "匯出報表",
+      "scenario": "？！",
+      "expected": "demo-cap/匯出報表/"
+    }
+  ],
+  "collisions": [
+    {
+      "id": "zh-paren",
+      "a": "逾時 60 秒",
+      "b": "逾時（60 秒）",
+      "slug": "逾時-60-秒"
+    },
+    {
+      "id": "case-dash",
+      "a": "Login Flow",
+      "b": "login-flow",
+      "slug": "login-flow"
+    },
+    {
+      "id": "dot-space",
+      "a": "A.B",
+      "b": "a b",
+      "slug": "a-b"
+    }
+  ]
+}
