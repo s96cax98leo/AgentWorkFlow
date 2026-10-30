@@ -96,7 +96,7 @@
   - 合併只放行 `auto_merge.merger_role`（預設 `agent-workflow:dev-merge-steward`），而且必須全部符合：在白名單內、帶 `--match-head-commit`、merge-audit 有相同 SHA 的 merge 紀錄、沒有凍結；上游 repo 另外要有 `upstream_authorized_by`。
   - 真正的信任邊界在伺服器端（ruleset、gate App 的 required check、CODEOWNERS）。
 - **角色寫入範圍**：
-  - tpm-writer：`writer_dirs` 與 repo 的 `specs/<epic>/*.md`。
+  - tpm-writer：`writer_dirs` 與 repo 的 `specs/<epic>/*.md`；`methodology.json` 設了 `spec_layout.root` 時，另放行該目錄底下任一層的 `*.md`（讀不到或格式不對時等於沒設）。
   - 其他 tpm-*：`runs_dir`。
   - dev-*：`repos_dir`（空字串＝工作區本身，`.claude/` 除外）與 `runs_dir`。
 - **轉呼叫目標 repo 的 guard**：目標 repo 或 worktree 有自己的 `guard-git`、`guard-paths` 時會轉呼叫，先找 `.py`，再找 bash 腳本。

@@ -573,6 +573,48 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     run(E, 2, "TaskCompleted 找不到產出", tc("output: _tpm/runs/x/none.json"))
     run(E, 2, "TaskCompleted 沒寫 output", tc("_tpm/runs/x 方案一"))
 
+    # ------------------------------------------------------------ spec_layout：tpm-writer 依 profile 的 spec_layout.root 多放行一條路徑
+    # 原規則（repo 的 specs/<epic>/*.md）不變，新規則以 OR 加上；methodology.json 讀不到或格式不對時等於沒設定（只會更嚴）
+    LAYOUT_CFG = {"repos_dir": "repos", "writer_dirs": ["_tpm/runs", "_tpm/briefs", "docs"]}
+    OPENSPEC = json.dumps({"name": "x", "spec_layout": {"root": "openspec/changes/{epic}", "intent": "proposal.md"}})
+
+    def layout_ws(name: str, methodology: str | None) -> Path:
+        w = mkws(name, LAYOUT_CFG)
+        if methodology is not None:
+            (w / ".claude" / "teams" / "methodology.json").write_text(methodology, encoding="utf-8")
+        return w
+
+    def writer(want: int, name: str, w: Path, rel: str, needle: str | None = None, exact: str | None = None) -> None:
+        r = hook(P, edit(w / rel, "agent-workflow:tpm-writer", w), w)
+        err = r.stderr.decode("utf-8", "replace").strip()
+        good = r.returncode == want and (needle is None or needle in err) and (exact is None or err == exact)
+        check(f"{P}：spec_layout：{name}", True, good, f"exit={r.returncode} {err}")
+
+    LWS = layout_ws("ws-layout", OPENSPEC)
+    ROOT_NOTE = "spec_layout 另放行 openspec/changes/<epic>/ 底下的 *.md"
+    writer(0, "設定後 tpm-writer 可寫 openspec/changes/add-x/proposal.md", LWS, "repos/app/openspec/changes/add-x/proposal.md")
+    writer(2, "設定後仍擋 openspec/config.yaml，訊息附 spec_layout 根目錄", LWS, "repos/app/openspec/config.yaml", ROOT_NOTE)
+    writer(2, "設定後仍擋 openspec/specs/x/spec.md（現行規格只由 archive 改），訊息附 spec_layout 根目錄", LWS, "repos/app/openspec/specs/x/spec.md", ROOT_NOTE)
+    writer(0, "設定後 worktree 裡多層的 delta 也放行", LWS, "repos/app/.worktrees/w1/openspec/changes/add-x/specs/cap/spec.md")
+    writer(0, "設定後原本的 specs/<epic>/*.md 照舊放行", LWS, "repos/app/specs/demo-x/spec.md")
+    writer(2, "設定後 change 目錄的非 .md 仍擋", LWS, "repos/app/openspec/changes/add-x/.openspec.yaml")
+    writer(2, "設定後 repo 外（工作區根目錄）的同名路徑仍擋", LWS, "openspec/changes/add-x/proposal.md")
+    # 未設定與各種讀取失敗：判定與訊息和改動前一字不差
+    OLD_MSG = ("已被 agent-workflow hook 擋下：tpm-writer 只能寫 _tpm/runs/、_tpm/briefs/、docs/ 與 repo 的 specs/<epic>/*.md"
+               "（repos/app/openspec/changes/add-x/proposal.md）（規則：.claude/teams/rules.md；設定：.claude/teams/guard.config.json）")
+    for i, (name, meth) in enumerate((
+        ("沒有 methodology.json", None),
+        ("methodology.json 沒有 spec_layout", json.dumps({"name": "x"})),
+        ("methodology.json 不是 JSON", "{壞掉"),
+        ("spec_layout 不是物件", json.dumps({"spec_layout": "openspec/changes/{epic}"})),
+        ("spec_layout.root 不是字串", json.dumps({"spec_layout": {"root": 3}})),
+        ("spec_layout.root 含 ..", json.dumps({"spec_layout": {"root": "../openspec/changes/{epic}"}})),
+        ("spec_layout.root 是絕對路徑", json.dumps({"spec_layout": {"root": "/openspec/changes/{epic}"}})),
+    )):
+        w = layout_ws(f"ws-layout-{i}", meth)
+        writer(2, f"{name}：openspec 路徑照舊擋、訊息不變", w, "repos/app/openspec/changes/add-x/proposal.md", exact=OLD_MSG)
+        writer(0, f"{name}：specs/<epic>/*.md 照舊放行", w, "repos/app/specs/demo-x/spec.md")
+
     # ------------------------------------------------------------ 入口本身：出錯時不能回 0，也不能冒充 2
     # （守門類 hook 註冊時設 onFailure: block，所以「非 0 非 2」會被 Claude Code 當成失敗而擋下）
     for mode in ("guard-shell", "guard-paths"):
