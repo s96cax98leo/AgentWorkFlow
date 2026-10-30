@@ -157,7 +157,7 @@ return {
   followup_docs: followupDocs,
   record,
   next: merged
-    ? '已合併。之後跑 event-post-merge 監看 main 的 CI。'
+    ? '已合併。之後跑 event-post-merge 監看 main 的 CI。' + (MP.spec_engine === 'openspec' ? '之後跑 event-spec-archive 歸檔 OpenSpec change。' : '')
     : queued
     ? `已進 merge queue，還沒合進去。不要重派合併；之後用 gh pr view ${N} --repo ${GH} --json state 確認，合進去後再跑 event-post-merge。`
     : `未合併，PR 已退回並轉回 draft。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走 event-reqs-change；實作要補的回到 SDLC 對應段落（通常是 sdlc-build → sdlc-test → sdlc-deliver），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,

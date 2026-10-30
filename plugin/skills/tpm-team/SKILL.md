@@ -42,6 +42,7 @@ argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 
 | design 段被退回要改 | 設計修訂 | `sdlc-design-revise` | repo、epic、run_dir、decisions、issues |
 | 合併這個 PR、PR 開好了要合 | 合併（SDLC 合併段） | `sdlc-merge` | repo、pr、run_dir（可加 gh_repo、base、epic、evidence、requirements、findings、tests_before、tests_after） |
 | 合併後、main 紅了是不是合併造成的 | 合併後監看 | `event-post-merge` | repo、run_dir（可加 gh_repo、merge_sha、since） |
+| 合併後歸檔 OpenSpec change（profile 的 spec_engine=openspec） | 合併後歸檔 | `event-spec-archive` | repo、run_dir、change、merge（sdlc-merge 的回傳）、post_merge（event-post-merge 的回傳）（可加 pr、gh_repo、base） |
 
 - 判斷不出來、或 args 缺漏時，用 AskUserQuestion 問（選項式），不要猜。
 - **先列計畫給使用者看**：事件、workflow、args、預計開幾個 agent、不可逆的動作，經使用者核准才執行。這是硬規則「先 plan、後動手」。
@@ -90,7 +91,7 @@ python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstr
 python3 .claude/teams/tools/save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間>
 ```
 
-`sdlc-merge` 的回傳：`merged`、`decision`、`followups`、`next`。`event-post-merge` 回傳 `freeze: true` 時，用 PushNotification 推播決策者（附 revert 提案路徑）；revert PR 由人決定、由人合併，凍結期間不跑合併。`sdlc-merge` 產生 followup 或 `event-post-merge` 歸因出的錯誤，若同一類已出現過，收尾時建議使用者跑 `/correct`（`correct` skill），把它變成強制機制而不只是再修一次。
+`sdlc-merge` 的回傳：`merged`、`decision`、`followups`、`next`。openspec profile 下已合併時，`next` 會提示接著跑 `event-spec-archive`：要在 `event-post-merge` 回傳 `ok: true` 之後才跑；它回傳 `halted` 與錯誤碼（`ARCHIVE_TASKS_INCOMPLETE` 等）時分支保留現場，照 `next` 交人處理；回傳 `ok: true` 時只產出 PR 草稿（`<run_dir>/archive-pr.md`），**開 PR 前要使用者同意，合併由使用者做**。`event-post-merge` 回傳 `freeze: true` 時，用 PushNotification 推播決策者（附 revert 提案路徑）；revert PR 由人決定、由人合併，凍結期間不跑合併。`sdlc-merge` 產生 followup 或 `event-post-merge` 歸因出的錯誤，若同一類已出現過，收尾時建議使用者跑 `/correct`（`correct` skill），把它變成強制機制而不只是再修一次。
 
 SDLC 各段的做法（需求寫法、測試先行與否、驗證方式）與慣例（code style、commit、分支、PR 大小、文件格式）由開發規範 profile `.claude/teams/methodology.json` 決定，已由 `build.py` 內嵌進 `sdlc-*.js`；列計畫時寫出用的是哪個 profile，使用者要改做法就改這個檔再跑 `python3 .claude/teams/tools/build.py`，不要在派工時另外指定。profile 的 `extensions` 是使用者加進各段的自己的 agent（`/add-agent` 設定），列計畫時一併列出哪幾段會多派哪些擴充 agent；它們的 findings 和內建審查一樣列在閘門重點裡。`sdlc-build` 回傳的 `test_first` 表示這次走 Red（測試先行）還是 Tests（實作後補驗證測試）。
 

@@ -160,6 +160,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | `/demo-check`、demo 前、彩排 | `event-demo-check` | target、run_dir |
 | 合併這個 PR | `sdlc-merge` | repo、pr、run_dir |
 | 合併後 main 紅了 | `event-post-merge` | repo、run_dir |
+| 合併後歸檔 OpenSpec change（openspec profile） | `event-spec-archive` | repo、run_dir、change、merge、post_merge |
 | `/add-agent`、加我自己的 agent | `add-agent` skill | — |
 | `/correct`、把這個錯誤變成做不到 | `correct` skill | 錯誤描述或出處 |
 | 比較方案、A 還是 B | `team-debate` skill | — |

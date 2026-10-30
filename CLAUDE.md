@@ -60,7 +60,7 @@ python3 .claude/teams/tools/publish.py --selftest                               
   - plan、design、test、deliver 之間有核准閘門，用 `save_run.py approve` 記錄。`--by policy` 會讀信封的實際內容（`policy_violations`），不只看 status。
   - `dev-merge-steward`：可信任的合併 agent。逐條對照需求與驗證證據（綁 head SHA），一致而且 `merge_gate.py` 通過才合併；不一致就產出 followup 新需求並退回 PR（request-changes、轉 draft）。沒有 Edit／Write，永遠不 approve。
   - `dev-release-watcher`：合併後監看，歸因失敗，產出 revert 提案與凍結建議，只讀。
-- **`tpm-*`（6 個）**：事件處理，對應 `event-*.js`（包括 `event-post-merge.js`）。
+- **`tpm-*`（6 個）**：事件處理，對應 `event-*.js`（包括 `event-post-merge.js`；`event-spec-archive.js` 只在 profile 的 `spec_engine=openspec` 時用，合併後在獨立分支歸檔 OpenSpec change）。
 - **網站分析組（6 個）**：tech-architect、infra-analyst、biz-analyst、perf-auditor、competitor-scout、lead-synthesizer。由 skills 驅動，**不交信封**，也不受角色寫入範圍限制。
 
 ### 交件信封

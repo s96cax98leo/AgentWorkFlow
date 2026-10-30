@@ -65,6 +65,7 @@
   - `plan-outline`：要不要拆子計劃。
   - `findings`、`verdicts`、`criteria`、`build-result`、`items`、`docs`。
   - `merge-decision`：steward 的需求對照表。
+  - `spec-archive`：event-spec-archive 的歸檔紀錄（分支、tasks 進度、CLI 原始輸出、diff 範圍）。
 - **強制方式**：
   - Workflow 裡用 `agent({agentType, schema})` 派出：schema 由 `build.py` 從 `schemas/` 內嵌，驗證失敗會自動重試。
   - 用 Agent 工具派出：回報最後要附一個 ```json 區塊，`awf_hook.py envelope` 會在 SubagentStop 檢查。

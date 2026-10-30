@@ -1,0 +1,48 @@
+{
+  "$id": "spec-archive",
+  "title": "OpenSpec 歸檔的執行紀錄：分支、tasks 進度、CLI 原始輸出、diff 範圍（event-spec-archive 依它做確定性判定）",
+  "type": "object",
+  "required": ["change", "branch", "branch_exists", "pr_head_sha", "progress", "unchecked", "steps", "diff_files"],
+  "properties": {
+    "change": {"type": "string", "minLength": 1, "description": "OpenSpec change id（同 epic）"},
+    "branch": {"type": "string", "minLength": 1, "description": "歸檔分支，chore/openspec-archive-<change>"},
+    "branch_exists": {"type": "boolean", "description": "準備步驟開分支前，本機或 origin 是否已有同名分支（true 時不覆寫、不建立）"},
+    "base_sha": {"type": "string", "description": "分支起點：origin/main 的 SHA"},
+    "pr_head_sha": {"type": "string", "description": "原功能 PR 讀回的 head SHA（gh pr view <pr> --json headRefOid）"},
+    "progress": {
+      "type": "object",
+      "required": ["total", "complete", "remaining"],
+      "description": "openspec instructions apply --change <id> --json 的 progress 原值",
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "complete": {"type": "integer", "minimum": 0},
+        "remaining": {"type": "integer", "minimum": 0}
+      }
+    },
+    "unchecked": {
+      "type": "array",
+      "description": "instructions apply 的 tasks 裡 done=false 的項目（line、description 照抄）",
+      "items": {
+        "type": "object",
+        "required": ["line", "description"],
+        "properties": {"line": {"type": "integer"}, "description": {"type": "string"}}
+      }
+    },
+    "steps": {
+      "type": "array",
+      "description": "依序執行的 CLI 步驟；準備步驟填空陣列。stdout 照抄原文（JSON 字串），不要摘要",
+      "items": {
+        "type": "object",
+        "required": ["name", "command", "exit", "stdout"],
+        "properties": {
+          "name": {"type": "string", "enum": ["archive", "validate_specs", "validate_archived"]},
+          "command": {"type": "string"},
+          "exit": {"type": "integer"},
+          "stdout": {"type": "string"}
+        }
+      }
+    },
+    "commit": {"type": "string", "description": "歸檔 commit 的 SHA（沒有 commit 時省略）"},
+    "diff_files": {"type": "array", "items": {"type": "string"}, "description": "git diff --name-only origin/main...HEAD 的輸出；準備步驟填空陣列"}
+  }
+}

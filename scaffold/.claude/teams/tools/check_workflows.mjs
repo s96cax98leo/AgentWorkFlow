@@ -131,6 +131,98 @@ const CONSISTENT = {
     traceability: [{ requirement_id: 'R1', requirement: 'x', evidence: ['e'], result: 'match' }], out_of_scope: [], followups: [] } }),
   challenge: ENV({ verdicts: [{ target_id: 'R1', refuted: false, reason: 'ok' }, { target_id: 'out_of_scope', refuted: false, reason: 'ok' }] }),
 }
+const MERGED_NEXT = '已合併。之後跑 event-post-merge 監看 main 的 CI。'
+// event-spec-archive：合併後在獨立分支跑 openspec archive；每個中止條件都要回傳對應的錯誤碼，且不往下走
+const ARCH = (over = {}) => ENV({ change: 'x', branch: 'chore/openspec-archive-x', branch_exists: false, base_sha: 'abc', pr_head_sha: 'abc1234',
+  progress: { total: 2, complete: 2, remaining: 0 }, unchecked: [], steps: [], diff_files: [], ...over })
+const STEP = (name, exit, stdout) => ({ name, command: `openspec ${name}`, exit, stdout: JSON.stringify(stdout) })
+const VALID_OK = { items: [{ id: 'demo-cap', type: 'spec', valid: true, issues: [] }], summary: { totals: { items: 1, passed: 1, failed: 0 } }, version: '1.0' }
+const ARCHIVED = (over = {}) => ARCH({
+  steps: [STEP('archive', 0, { archive: { change: 'x', archivedAs: '2026-11-01-x', specsUpdated: true, totals: { added: 2, modified: 0, removed: 0, renamed: 0 } } }),
+    STEP('validate_specs', 0, VALID_OK), STEP('validate_archived', 0, VALID_OK)],
+  commit: 'def5678', diff_files: ['openspec/specs/demo-cap/spec.md', 'openspec/changes/archive/2026-11-01-x/proposal.md', 'openspec/changes/x/proposal.md'], ...over })
+const MERGED_OK = { merge: { stage: 'merge', merged: true, queued: false, head_sha: 'abc1234' }, post_merge: { event: 'post-merge', ok: true } }
+const halt = (code, extra = (r) => []) => (r) => [
+  ...(r.out && r.out.halted === true && r.out.code === code ? [] : [`應該 halted、code=${code}：${JSON.stringify(r.out && { halted: r.out.halted, code: r.out.code, reason: r.out.reason })}`]),
+  ...(r.labels.includes('pr-draft') ? ['中止時不該產生 PR 草稿'] : []),
+  ...extra(r),
+]
+const ARCHIVE_SCENARIOS = [
+  {
+    name: '只進了 merge queue',
+    args: { ...MERGED_OK, merge: { stage: 'merge', merged: false, queued: true, head_sha: 'abc1234' } },
+    profile: { spec_engine: 'openspec' }, fakes: {},
+    expect: (r) => (r.out && r.out.halted === true && r.out.reason === '尚未合併' && !r.labels.length ? [] : [`未合併應該停下且不派 agent：${JSON.stringify(r.out)}；${r.labels}`]),
+  },
+  {
+    name: 'post-merge 有問題',
+    args: { ...MERGED_OK, post_merge: { event: 'post-merge', ok: false, freeze: true } },
+    profile: { spec_engine: 'openspec' }, fakes: {},
+    expect: (r) => (r.out && r.out.halted === true && r.out.reason === 'main 的 CI 有問題，先處理 revert' && !r.labels.length ? [] : [`post-merge 不 ok 應該停下：${JSON.stringify(r.out)}`]),
+  },
+  {
+    name: 'tasks 未勾完',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH({ progress: { total: 2, complete: 1, remaining: 1 }, unchecked: [{ line: 4, description: '1.2 [st-2] 實作匯出' }] }) },
+    expect: halt('ARCHIVE_TASKS_INCOMPLETE', (r) => [
+      ...(r.labels.includes('archive') ? ['tasks 沒勾完不能跑 archive'] : []),
+      ...(JSON.stringify(r.out.detail || '').includes('"line":4') ? [] : ['detail 要列出未勾 task 的行號']),
+    ]),
+  },
+  {
+    name: 'archive 後 Purpose 是佔位文字',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH(), archive: ARCHIVED({ steps: [
+      STEP('archive', 0, { archive: { change: 'x', archivedAs: '2026-11-01-x' } }),
+      STEP('validate_specs', 1, { items: [{ id: 'demo-cap', type: 'spec', valid: false, issues: [{ level: 'WARNING', path: 'demo-cap/spec.md', message: 'Purpose section is too brief (less than 50 characters)' }] }], summary: { totals: { items: 1, passed: 0, failed: 1 } } }),
+      STEP('validate_archived', 0, VALID_OK)] }) },
+    expect: halt('ARCHIVE_VALIDATE_FAILED', (r) => [
+      ...(JSON.stringify(r.out.detail || '').includes('Purpose section is too brief') ? [] : ['detail 要帶 issue 原文']),
+      ...(r.out.branch === 'chore/openspec-archive-x' ? [] : ['要回報保留的分支']),
+    ]),
+  },
+  {
+    name: 'diff 越界',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH(), archive: ARCHIVED({ diff_files: ['openspec/specs/demo-cap/spec.md', 'apps/desktop/src/main.ts'] }) },
+    expect: halt('ARCHIVE_DIFF_OUT_OF_SCOPE', (r) => (JSON.stringify(r.out.detail || '').includes('apps/desktop/src/main.ts') ? [] : ['要列出越界檔案'])),
+  },
+  {
+    name: '分支已存在',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH({ branch_exists: true }) },
+    expect: halt('ARCHIVE_BRANCH_EXISTS', (r) => (r.labels.includes('archive') ? ['分支已存在不能往下跑 archive'] : [])),
+  },
+  {
+    name: '同一天已歸檔過',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH(), archive: ARCHIVED({ steps: [STEP('archive', 1, { archive: null, status: [{ severity: 'error', code: 'archive_target_exists', message: "Archive '2026-11-01-x' already exists." }] })], diff_files: [] }) },
+    expect: halt('ARCHIVE_TARGET_EXISTS'),
+  },
+  {
+    name: 'archive 指令失敗',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH(), archive: ARCHIVED({ steps: [STEP('archive', 1, { archive: null, status: [{ severity: 'error', code: 'archive_error', message: 'x' }] })], diff_files: [] }) },
+    expect: halt('ARCHIVE_CLI_FAILED'),
+  },
+  {
+    name: '原 PR 的 head 變了',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH(), archive: ARCHIVED({ pr_head_sha: 'fff0000' }) },
+    expect: halt('ARCHIVE_PR_HEAD_CHANGED'),
+  },
+  {
+    name: '全部通過產生 PR 草稿',
+    args: MERGED_OK, profile: { spec_engine: 'openspec' },
+    fakes: { prepare: ARCH(), archive: ARCHIVED() },
+    expect: (r) => (r.out && r.out.ok === true && !r.out.halted && ['prepare', 'archive', 'pr-draft'].every((l) => r.labels.includes(l)) ? [] : [`應該走完並產生 PR 草稿：${JSON.stringify(r.out && { ok: r.out.ok, halted: r.out.halted, code: r.out.code })}；${r.labels}`]),
+  },
+  {
+    name: '不是 openspec profile',
+    args: MERGED_OK, profile: { spec_engine: 'awf-native' }, fakes: {},
+    expect: (r) => (r.out && r.out.halted === true && r.out.code === 'ARCHIVE_NOT_OPENSPEC' && !r.labels.length ? [] : [`非 openspec profile 應該停下：${JSON.stringify(r.out)}`]),
+  },
+]
 const SCENARIOS = {
   'sdlc-merge.js': [
     {
@@ -154,7 +246,22 @@ const SCENARIOS = {
       fakes: { ...CONSISTENT, 'execute:merge': (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'merge' } }) },
       expect: (r) => (r.labels.includes('execute:merge') && r.out && r.out.merged === false ? [] : ['沒有 merge_state 不能算已合併']),
     },
+    {
+      name: 'next：非 openspec profile 不變',
+      args: {},
+      profile: { spec_engine: 'awf-native' },
+      fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },
+      expect: (r) => (r.out && r.out.next === MERGED_NEXT ? [] : [`next 應該是原句：${r.out && r.out.next}`]),
+    },
+    {
+      name: 'next：openspec profile 提示 archive',
+      args: {},
+      profile: { spec_engine: 'openspec' },
+      fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },
+      expect: (r) => (r.out && r.out.next === `${MERGED_NEXT}之後跑 event-spec-archive 歸檔 OpenSpec change。` ? [] : [`next 應該在原句後附加 archive 提示：${r.out && r.out.next}`]),
+    },
   ],
+  'event-spec-archive.js': ARCHIVE_SCENARIOS,
   'sdlc-plan.js': [extScenario('ext:db')],
   'sdlc-deliver.js': [extScenario('ext:a11y')],
   'sdlc-design.js': [

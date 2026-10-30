@@ -18,6 +18,7 @@ $ARGUMENTS
    | 會議、逐字稿 | `event-meeting` |
    | 審 PR／分支 | `event-pr-review` |
    | 合併後監看、main 紅了是不是合併造成 | `event-post-merge` |
+   | 合併後歸檔 OpenSpec change | `event-spec-archive` |
    | 合併已開好的 PR | `sdlc-merge`（SDLC 合併段，見 `/sdlc`） |
    | 需求更新 | `event-reqs-change` |
    | 決策者定案 | `event-decision` |

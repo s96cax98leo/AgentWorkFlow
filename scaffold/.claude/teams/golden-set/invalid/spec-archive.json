@@ -1,0 +1,44 @@
+{
+ "payload": "spec-archive",
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "openspec archive",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [],
+  "payload": {
+   "change": "add-export",
+   "branch": "chore/openspec-archive-add-export",
+   "branch_exists": false,
+   "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "pr_head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "progress": {
+    "total": 2,
+    "complete": 2,
+    "remaining": 0
+   },
+   "unchecked": [],
+   "steps": [
+    {
+     "name": "publish",
+     "command": "openspec publish",
+     "exit": 0,
+     "stdout": ""
+    }
+   ],
+   "commit": "cccccccccccccccccccccccccccccccccccccccc",
+   "diff_files": [
+    "openspec/specs/export/spec.md"
+   ]
+  }
+ },
+ "semantic": false
+}
