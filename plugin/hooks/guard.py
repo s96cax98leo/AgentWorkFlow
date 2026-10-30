@@ -40,7 +40,6 @@ CFG = awf_config.load()
 WORKSPACE = awf_config.workspace()
 RUNS = CFG["runs_dir"] + "/" if CFG["runs_dir"] else ""
 REPOS = CFG["repos_dir"] + "/" if CFG["repos_dir"] else ""
-SPEC_ROOTS = awf_config.spec_layout_roots()  # 開發規範 profile 的 spec_layout.root；沒設或讀不到＝[]
 SLUG = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
@@ -952,16 +951,6 @@ def spec_doc_pattern() -> re.Pattern:
     return re.compile(rf"^{repo}(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$")
 
 
-def spec_layout_pattern() -> re.Pattern | None:
-    """由 spec_layout.root 推導的放行規則，以 OR 加在 spec_doc_pattern 之外（原規則不動）。沒設定時回 None。
-    {epic} 換成一層目錄；root 底下任一層的 *.md 都放行（OpenSpec 的 delta 在 specs/<capability>/spec.md）。"""
-    if not SPEC_ROOTS:
-        return None
-    repo = rf"{re.escape(REPOS)}[^/]+/" if REPOS else ""
-    roots = "|".join("[^/]+".join(re.escape(part) for part in r.split("{epic}")) for r in SPEC_ROOTS)
-    return re.compile(rf"^{repo}(?:\.worktrees/[^/]+/)?(?:{roots})/(?:[^/]+/)*[^/]+\.md$")
-
-
 def writes_freeze(data: dict) -> bool:
     """freeze_writers 用 Write 寫入的內容是 {"frozen": true, …}（只能凍結，不能解凍；Edit／NotebookEdit 一律不算）。"""
     a = data.get("agent_type") or ""
@@ -998,13 +987,9 @@ def check_paths(data: dict) -> None:
     elif prot and CFG["_configured"] and (prot in AUDIT_FILES or (prot == "guard.config.json" and AM["enabled"])):
         block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
     if role == "tpm-writer":
-        layout = spec_layout_pattern()
-        ok = rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None
-                                  or (layout is not None and layout.match(rel) is not None))
+        ok = rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None)
         if not ok:
-            # 沒設 spec_layout 時 note 是空字串，訊息和原本一字不差
-            note = "（spec_layout 另放行 " + "、".join(r.replace("{epic}", "<epic>") + "/ 底下的 *.md" for r in SPEC_ROOTS) + "）" if SPEC_ROOTS else ""
-            block(f"tpm-writer 只能寫 {'、'.join(CFG['writer_dirs'])} 與 repo 的 specs/<epic>/*.md{note}（{rel or fp}）")
+            block(f"tpm-writer 只能寫 {'、'.join(CFG['writer_dirs'])} 與 repo 的 specs/<epic>/*.md（{rel or fp}）")
     elif role.startswith("tpm-"):
         if not (rel is not None and RUNS and rel.startswith(RUNS)):
             block(f"{agent} 只能寫 {RUNS or 'run 目錄'}（{rel or fp}）")

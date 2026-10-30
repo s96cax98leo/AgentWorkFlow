@@ -12,7 +12,7 @@
         "required": ["path", "kind", "audience"],
         "properties": {
           "path": {"type": "string"},
-          "kind": {"type": "string", "enum": ["intent", "design", "spec", "plan", "progress", "verifier", "design_review", "security_review", "adr", "exec_record", "research", "for_owner", "pr_description", "meeting_summary", "proposal", "tasks", "other"]},
+          "kind": {"type": "string", "enum": ["intent", "design", "spec", "plan", "progress", "verifier", "design_review", "security_review", "adr", "exec_record", "research", "for_owner", "pr_description", "meeting_summary", "other"]},
           "audience": {"type": "string", "enum": ["internal", "owner", "external", "agents"]},
           "notes": {"type": "string"}
         }

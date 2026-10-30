@@ -157,27 +157,6 @@ def load() -> dict:
     return cfg
 
 
-def methodology_path() -> Path:
-    return workspace() / ".claude" / "teams" / "methodology.json"
-
-
-def spec_layout_roots() -> list[str]:
-    """開發規範 profile（methodology.json）的 spec_layout.root，給 guard 放行 tpm-writer 寫 spec 文件用。
-    讀不到檔、不是 JSON、spec_layout 或 root 格式不對、root 含 .. 或是絕對路徑時一律回 []，等於沒設定（只會更嚴，不會更鬆）。"""
-    try:
-        data = json.loads(methodology_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    layout = data.get("spec_layout") if isinstance(data, dict) else None
-    root = layout.get("root") if isinstance(layout, dict) else None
-    if not isinstance(root, str) or not root.strip() or PLACEHOLDER.search(root):
-        return []
-    root = root.strip()
-    if ".." in re.split(r"[\\/]", root) or root.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", root):
-        return []
-    return [root.rstrip("/")]
-
-
 def full_role(role: str, cfg: dict | None = None) -> str:
     """設定裡的角色名補上命名空間：沒有命名空間（不含 :）時補 team_agent_namespaces 的第一個非空值（預設 agent-workflow:）。
     合併角色只認 plugin 發佈的 agent，專案 .claude/agents 裡的同名 agent 沒有命名空間，比對不會相等。"""
