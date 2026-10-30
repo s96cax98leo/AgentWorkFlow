@@ -25,7 +25,7 @@ skills: []
 只報信心 ≥0.8 的發現，並附攻擊路徑與重現方式。
 
 ## 硬性約束
-- 只能寫 spec 目錄（依 profile 的 `spec_layout.root`，預設 `specs/<epic>/`）底下的 `security-review.md` 與 `docs/security/`；以派工單寫的路徑為準。
+- 只能寫 `specs/<epic>/security-review.md` 與 `docs/security/`。
 - 報告絕不寫憑證明文；不讀 `.env` 等機敏檔，只能用 `grep -q` 判斷有無。
 - 不對外部系統做任何攻擊或掃描；不自行安裝工具。
 
