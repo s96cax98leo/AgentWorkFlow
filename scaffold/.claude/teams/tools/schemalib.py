@@ -1,7 +1,7 @@
 """agent team 的 schema 工具：載入、組合（信封＋payload）、驗證。
 
 只支援 schemas/ 用到的 JSON Schema 關鍵字（type（可為陣列，含 null）、properties、required、enum、items、
-minItems、minLength、minimum、maximum），所以 hook 不必依賴第三方套件；
+minItems、minLength、minimum、maximum、additionalProperties: false），所以 hook 不必依賴第三方套件；
 golden-set/run.py 會拿官方 jsonschema 套件交叉比對，確保判斷一致。
 
 獨立文件（不是信封 payload，例如開發規範 profile methodology）用 check_doc 驗。
@@ -108,6 +108,10 @@ def validate(data, schema: dict, path: str = "$") -> list[str]:
         for key, sub in schema.get("properties", {}).items():
             if key in data:
                 errs.extend(validate(data[key], sub, f"{path}.{key}"))
+        if schema.get("additionalProperties") is False:
+            for key in data:
+                if key not in schema.get("properties", {}):
+                    errs.append(f"{path}.{key}：不允許的欄位")
     if isinstance(data, list):
         if "minItems" in schema and len(data) < schema["minItems"]:
             errs.append(f"{path}：至少要 {schema['minItems']} 項")
@@ -257,6 +261,11 @@ def methodology_errors(doc: dict) -> list[str]:
     req = doc.get("requirements") if isinstance(doc.get("requirements"), dict) else {}
     if req.get("source") == "command" and not str(req.get("command") or "").strip():
         errs.append("requirements.source=command 時要設 command")
+    layout = doc.get("spec_layout") if isinstance(doc.get("spec_layout"), dict) else {}
+    for k, v in layout.items():
+        # 路徑不能逃出 repo：含 .. 片段、以 / 或 \ 開頭、或 Windows 磁碟代號開頭都拒絕
+        if isinstance(v, str) and (".." in re.split(r"[\\/]", v) or v.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", v)):
+            errs.append(f"spec_layout.{k} 不能含 .. 或絕對路徑")
     pat = req.get("id_pattern")
     if isinstance(pat, str) and pat:
         try:

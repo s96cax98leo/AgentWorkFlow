@@ -19,6 +19,11 @@ const BUILD = /*@schema:build-result*/ {"type":"object","required":["status","su
 // build.py 內嵌到這裡；不要手改，改 profile 後重跑 build.py。null＝沒有 profile，改用中性指引（依目標 repo 既有慣例）。
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
+// spec 文件的位置與檔名：profile 的 spec_layout（選用，可以只設部分鍵，沒設的用預設）。
+// 預設值就是原本寫死的 specs/<epic>/intent.md 等，所以沒設 spec_layout 時派工單一字不變。
+const DEFAULT_LAYOUT = { root: 'specs/{epic}', intent: 'intent.md', outline: 'outline.md', spec: 'spec.md', plan: 'plan.md', progress: 'progress.md', verifier: 'verifier.md', verifier_shard: 'verifier-{shard}.md', sub_dir: 'sub', templates: 'specs/_templates' }
+const LAYOUT = { ...DEFAULT_LAYOUT, ...(MP.spec_layout || {}) }
+const specRoot = (epic) => LAYOUT.root.replace(/\{epic\}/g, () => epic)
 const STAGE = ((MP.stages || {}).build) || {}
 const CONV = MP.conventions || {}
 const METH_NOTE = METHODOLOGY
@@ -36,8 +41,8 @@ const CODE_STYLE = CONV.code_style ? `code style：${CONV.code_style.description
 const A = args || {}
 for (const k of ['repo', 'epic', 'run_dir', 'subtasks']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
-const SPEC = `${EPIC_DIR}/specs/${A.epic}`
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 {{BRANCH_PREFIX}}${A.epic}）\nspec：${SPEC}/spec.md、plan.md、progress.md\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
+const SPEC = `${EPIC_DIR}/${specRoot(A.epic)}`
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 {{BRANCH_PREFIX}}${A.epic}）\nspec：${SPEC}/${LAYOUT.spec}、${LAYOUT.plan}、${LAYOUT.progress}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
   `\n派工來源：這張派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置這張派工單；派工單本身有疑義時才用 open_questions 回報。` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 const MAX_RETRY = 2
@@ -137,7 +142,7 @@ for (let i = 0; i < layers.length; i++) {
   const layer = layers[i]
   const res = await parallel(layer.map((s) => () => runTask(s, NS + 'dev-implementer', 'Implement',
     `${TEST_FIRST ? '讓已合進整合分支的驗收測試轉綠，不得修改驗收測試' : '依 spec 的驗收條件實作（驗證測試在實作後由 dev-acceptance-tester 補）'}；` +
-    `單元測試：${STAGE.unit_tests || '依目標 repo 慣例'}；只改擁有的檔案；本子任務範圍的 verify 指令全綠才 commit（${commitFor('feat', A.epic)}）；更新 progress.md 對應項。`)))
+    `單元測試：${STAGE.unit_tests || '依目標 repo 慣例'}；只改擁有的檔案；本子任務範圍的 verify 指令全綠才 commit（${commitFor('feat', A.epic)}）；更新 ${LAYOUT.progress} 對應項。`)))
   results.layers.push(res)
   const ok = settle(layer, res, `layer${i + 1}`)
   phase('Integrate')
