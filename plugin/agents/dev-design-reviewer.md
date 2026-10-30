@@ -28,7 +28,7 @@ skills: []
 - 靜態規則：環境有 `web-interface-guidelines` 之類的 UI 規範 skill 時一併檢查。
 
 ## 硬性約束
-- 只能寫 spec 目錄（依 profile 的 `spec_layout.root`，預設 `specs/<epic>/`）底下的 `design-review.md` 與 `evidence/`；以派工單寫的路徑為準。
+- 只能寫 `specs/<epic>/design-review.md` 與 `specs/<epic>/evidence/`。
 - 每則發現都要對得到設計正本、spec 或 WCAG 條文，不把個人偏好當問題。
 - 設計正本未定或有兩份時，兩份都列出差異，不自己選。
 

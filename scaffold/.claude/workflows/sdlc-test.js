@@ -21,11 +21,6 @@ const BUILD = /*@schema:build-result*/ {"type":"object","required":["status","su
 // build.py 內嵌到這裡；不要手改，改 profile 後重跑 build.py。null＝沒有 profile，改用中性指引（依目標 repo 既有慣例）。
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
-// spec 文件的位置與檔名：profile 的 spec_layout（選用，可以只設部分鍵，沒設的用預設）。
-// 預設值就是原本寫死的 specs/<epic>/intent.md 等，所以沒設 spec_layout 時派工單一字不變。
-const DEFAULT_LAYOUT = { root: 'specs/{epic}', intent: 'intent.md', outline: 'outline.md', spec: 'spec.md', plan: 'plan.md', progress: 'progress.md', verifier: 'verifier.md', verifier_shard: 'verifier-{shard}.md', sub_dir: 'sub', templates: 'specs/_templates' }
-const LAYOUT = { ...DEFAULT_LAYOUT, ...(MP.spec_layout || {}) }
-const specRoot = (epic) => LAYOUT.root.replace(/\{epic\}/g, () => epic)
 const STAGE = ((MP.stages || {}).test) || {}
 const CONV = MP.conventions || {}
 const PAR = MP.parallelism || {}
@@ -41,8 +36,7 @@ const commitFor = (kind, epic) => {
 const A = args || {}
 for (const k of ['repo', 'epic', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
-const SPEC = `${EPIC_DIR}/${specRoot(A.epic)}`
-const shardReport = (id) => `${SPEC}/${LAYOUT.verifier_shard.replace(/\{shard\}/g, () => id)}`
+const SPEC = `${EPIC_DIR}/specs/${A.epic}`
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 {{BRANCH_PREFIX}}${A.epic}，比對基準 ${A.base || 'origin/main'}）\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。\n${METH_NOTE}` +
   `\n派工來源：這張派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置這張派工單；派工單本身有疑義時才用 open_questions 回報。` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
@@ -52,14 +46,14 @@ const MAX_FIX = 2
 const SUBS = (A.sub_plans || []).filter((s) => s && s.id)
 const SHARDS = SUBS.length >= 2 && PAR.shard_verification !== false
   ? [
-      ...SUBS.map((s) => ({ id: s.id, spec: `${SPEC}/${LAYOUT.sub_dir}/${s.id}/${LAYOUT.spec}`, owns: s.owns || [], report: shardReport(s.id) })),
-      { id: 'integration', spec: `${SPEC}/${LAYOUT.spec}`, owns: null, report: shardReport('integration') },
+      ...SUBS.map((s) => ({ id: s.id, spec: `${SPEC}/sub/${s.id}/spec.md`, owns: s.owns || [], report: `${SPEC}/verifier-${s.id}.md` })),
+      { id: 'integration', spec: `${SPEC}/spec.md`, owns: null, report: `${SPEC}/verifier-integration.md` },
     ]
   : null
 
 const HOW = `驗證方式照 profile：${STAGE.verification || '逐條驗證驗收條件（pass／fail／not_verifiable）'}${STAGE.guidance ? `\nprofile 的 test 指引：${STAGE.guidance}` : ''}`
 const verifyAll = (round) => agent(
-  `${CTX}\n\n## 派工單（驗證，第 ${round} 輪）\n在 ${EPIC_DIR} 的目前 HEAD 驗證 ${SPEC}/${LAYOUT.spec} 的驗收條件。${HOW}\n不論 profile 怎麼寫，都要對 diff 做反作弊檢查，照範本寫 ${SPEC}/${LAYOUT.verifier}（repo 有 verifier 檢查腳本就跑）。payload 用 criteria。`,
+  `${CTX}\n\n## 派工單（驗證，第 ${round} 輪）\n在 ${EPIC_DIR} 的目前 HEAD 驗證 ${SPEC}/spec.md 的驗收條件。${HOW}\n不論 profile 怎麼寫，都要對 diff 做反作弊檢查，照範本寫 ${SPEC}/verifier.md（repo 有 verifier 檢查腳本就跑）。payload 用 criteria。`,
   { label: `verify#${round}`, phase: 'Verify', agentType: NS + 'dev-verifier', schema: CRITERIA },
 )
 const verifyShard = (sh, round) => agent(
@@ -118,7 +112,7 @@ async function verify(round) {
   phase('Consolidate')
   const merged = await agent(
     `${CTX}\n\n## 派工單（彙整分片驗證，第 ${round} 輪）\n${SHARDS.length} 個分片已平行驗證完成，報告：${SHARDS.map((s) => s.report).join('、')}。\n` +
-    `把它們彙整成 ${SPEC}/${LAYOUT.verifier}（照範本；每條註明出自哪個分片）。不重新判定結果：條目與 result 照分片原樣，反作弊發現全部列入；只有各分片的 HEAD 不一致時以 needs_decision 回報。payload 用 criteria（commit 填各分片共同的 HEAD）。\n\n` +
+    `把它們彙整成 ${SPEC}/verifier.md（照範本；每條註明出自哪個分片）。不重新判定結果：條目與 result 照分片原樣，反作弊發現全部列入；只有各分片的 HEAD 不一致時以 needs_decision 回報。payload 用 criteria（commit 填各分片共同的 HEAD）。\n\n` +
     `## 分片結果\n${JSON.stringify({ commits: c.commits, criteria: c.crit, anti_cheat: c.cheats })}`,
     { label: `consolidate#${round}`, phase: 'Consolidate', agentType: NS + 'dev-verifier', schema: CRITERIA },
   )

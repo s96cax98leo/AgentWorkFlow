@@ -20,11 +20,6 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 // build.py 內嵌到這裡；不要手改，改 profile 後重跑 build.py。null＝沒有 profile，改用中性指引（依目標 repo 既有慣例）。
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
-// spec 文件的位置與檔名：profile 的 spec_layout（選用，可以只設部分鍵，沒設的用預設）。
-// 預設值就是原本寫死的 specs/<epic>/intent.md 等，所以沒設 spec_layout 時派工單一字不變。
-const DEFAULT_LAYOUT = { root: 'specs/{epic}', intent: 'intent.md', outline: 'outline.md', spec: 'spec.md', plan: 'plan.md', progress: 'progress.md', verifier: 'verifier.md', verifier_shard: 'verifier-{shard}.md', sub_dir: 'sub', templates: 'specs/_templates' }
-const LAYOUT = { ...DEFAULT_LAYOUT, ...(MP.spec_layout || {}) }
-const specRoot = (epic) => LAYOUT.root.replace(/\{epic\}/g, () => epic)
 const STAGE = ((MP.stages || {}).deliver) || {}
 const CONV = MP.conventions || {}
 const METH_NOTE = METHODOLOGY
@@ -52,7 +47,7 @@ const AXES = [
       ? `另外量 PR 大小（profile 的上限：${[PR_SIZE.max_lines ? `${PR_SIZE.max_lines} 行` : '', PR_SIZE.max_files ? `${PR_SIZE.max_files} 個檔` : ''].filter(Boolean).join('或')}；量法：${PR_SIZE.scope || `git diff --numstat ${BASE}...HEAD`}），超過就列一則 important，建議拆成依序可合的小 PR。`
       : 'profile 沒有設 PR 大小上限，不檢查 PR 大小。') +
     ((STAGE.review_axes || []).length ? `\nprofile 補充的審查重點：${STAGE.review_axes.join('；')}` : '') },
-  { key: 'spec', ask: `Spec：對照 ${specRoot(A.epic)}/${LAYOUT.spec} 的驗收條件與影響系統表，找缺漏、多做、做錯；每則引用 spec 原文（quote）。` },
+  { key: 'spec', ask: `Spec：對照 specs/${A.epic}/spec.md 的驗收條件與影響系統表，找缺漏、多做、做錯；每則引用 spec 原文（quote）。` },
   { key: 'bugs', ask: '只看這次改動引入的邏輯、邊界、回歸、併發與錯誤處理問題。' },
   { key: 'history', ask: '對改動處 git log -L／git blame，找出破壞原本設計意圖的改動。' },
 ]
@@ -91,7 +86,7 @@ log(`保留 ${kept.length} 則；被 skeptic 推翻 ${dropped} 則`)
 
 phase('Write')
 const docs = await agent(
-  `${CTX}\n\n## 派工單\n1. 照目標 repo 的 .github/pull_request_template.md 寫 PR 說明草稿到 ${A.run_dir}/pr-description.md（驗證欄引用 ${specRoot(A.epic)}/${LAYOUT.verifier}）。\n2. 寫執行紀錄到 ${A.run_dir}/執行紀錄.md（產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作（不編號））。\n3. 審查發現（已通過 skeptic）：${JSON.stringify(kept)}\n4. 兩份都跑 python3 .claude/teams/tools/check_rules.py，並對 ${A.repo} 跑 --git ${A.repo} ${BASE}..{{BRANCH_PREFIX}}${A.epic} 檢查 commit（署名行${COMMIT.check_regex ? '，以及 profile 的 commit 標題格式' : ''}），修到通過；commit 不符時只回報，不改寫歷史。payload 用 docs，rule_check 填結果。`,
+  `${CTX}\n\n## 派工單\n1. 照目標 repo 的 .github/pull_request_template.md 寫 PR 說明草稿到 ${A.run_dir}/pr-description.md（驗證欄引用 specs/${A.epic}/verifier.md）。\n2. 寫執行紀錄到 ${A.run_dir}/執行紀錄.md（產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作（不編號））。\n3. 審查發現（已通過 skeptic）：${JSON.stringify(kept)}\n4. 兩份都跑 python3 .claude/teams/tools/check_rules.py，並對 ${A.repo} 跑 --git ${A.repo} ${BASE}..{{BRANCH_PREFIX}}${A.epic} 檢查 commit（署名行${COMMIT.check_regex ? '，以及 profile 的 commit 標題格式' : ''}），修到通過；commit 不符時只回報，不改寫歷史。payload 用 docs，rule_check 填結果。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
 )
 
