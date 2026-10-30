@@ -16,7 +16,7 @@
           "type": "object",
           "required": ["artifacts", "guidance"],
           "properties": {
-            "artifacts": {"type": "array", "items": {"type": "string"}, "description": "這一段的產出文件（檔名，放在 specs/<epic>/）"},
+            "artifacts": {"type": "array", "items": {"type": "string"}, "description": "這一段的產出文件（檔名，放在 spec_layout.root，預設 specs/<epic>/）"},
             "template": {"type": "string", "description": "沒有專案範本時的格式說明"},
             "guidance": {"type": "string"}
           }
@@ -71,6 +71,23 @@
         "split_threshold": {"type": "integer", "minimum": 2, "description": "預估子任務數超過這個值（或有多個可獨立交付的區塊）就拆成子計劃；預設 8"},
         "max_sub_plans": {"type": "integer", "minimum": 2, "description": "子計劃數上限（同時也是平行規劃與分片驗證的 agent 數上限）；預設 4"},
         "shard_verification": {"type": "boolean", "description": "有子計劃時，驗證是否每個子計劃派一個 dev-verifier 平行跑；預設 true"}
+      }
+    },
+    "spec_layout": {
+      "type": "object",
+      "description": "工作流程參數（選填）：spec 文件的位置與檔名，例如把文件寫進 OpenSpec 的 openspec/changes/{epic}/。可以只設部分鍵，沒設的用預設值；整個省略時 workflow 的派工單與現在完全相同。值不能含 .. 或是絕對路徑（build.py 會拒絕）",
+      "additionalProperties": false,
+      "properties": {
+        "root": {"type": "string", "minLength": 1, "description": "epic 文件目錄（相對於 repo 或 epic worktree），{epic} 換成 epic 名稱；預設 specs/{epic}"},
+        "intent": {"type": "string", "minLength": 1, "description": "intent 文件（相對於 root）；預設 intent.md"},
+        "outline": {"type": "string", "minLength": 1, "description": "拆子計劃時的大綱（相對於 root）；預設 outline.md"},
+        "spec": {"type": "string", "minLength": 1, "description": "spec 文件或資料夾（相對於 root）；預設 spec.md"},
+        "plan": {"type": "string", "minLength": 1, "description": "plan 文件（相對於 root）；預設 plan.md"},
+        "progress": {"type": "string", "minLength": 1, "description": "progress 文件（相對於 root）；預設 progress.md"},
+        "verifier": {"type": "string", "minLength": 1, "description": "驗證報告（相對於 root）；預設 verifier.md"},
+        "verifier_shard": {"type": "string", "minLength": 1, "description": "分片驗證報告（相對於 root），{shard} 換成分片 id；預設 verifier-{shard}.md"},
+        "sub_dir": {"type": "string", "minLength": 1, "description": "子計劃目錄（相對於 root），底下每個子計劃一個 <id>/；預設 sub"},
+        "templates": {"type": "string", "minLength": 1, "description": "文件範本目錄（相對於 repo 或 epic worktree）；預設 specs/_templates"}
       }
     },
     "extensions": {

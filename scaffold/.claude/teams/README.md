@@ -25,7 +25,7 @@
 | 段 | workflow | 做什麼 | 結束時 |
 |---|---|---|---|
 | plan | `sdlc-plan` | 4 個 researcher 平行調研 → spec-author 寫 intent（需求能拆時附「範圍切分建議」）→ skeptic 挑錯 | 閘門：核准 intent |
-| design | `sdlc-design` | spec-author 出大綱（`plan-outline`）判斷規模。<br>・不拆：一人寫 spec、plan 與子任務。<br>・拆：每個子計劃一個 spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，再由一人彙整、核對介面與檔案所有權並 commit。<br>最後 skeptic 平行檢查一致性 | 閘門：核准 spec＋plan（要修改時跑 `sdlc-design-revise`） |
+| design | `sdlc-design` | spec-author 出大綱（`plan-outline`）判斷規模。<br>・不拆：一人寫 spec、plan 與子任務。<br>・拆：每個子計劃一個 spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`（位置依 `spec_layout`），再由一人彙整、核對介面與檔案所有權並 commit。<br>最後 skeptic 平行檢查一致性 | 閘門：核准 spec＋plan（要修改時跑 `sdlc-design-revise`） |
 | build | `sdlc-build` | 依 profile 決定先寫測試或後補測試。<br>子任務依相依分層，同一層各自開 worktree 平行實作，每層由 integrator 合併 | 中斷（halted）時交人 |
 | test | `sdlc-test` | verifier 逐條驗收並做反作弊檢查；有子計劃時每個子計劃一個 verifier，另加一個整合分片，平行驗證後彙整成 `verifier.md`。<br>設計審查、安全審查同時進行。<br>失敗就修正，最多 2 輪；失敗分散在多個子計劃時平行修正，再合併 | 閘門：確認驗證結果 |
 | deliver | `sdlc-deliver` | pr-reviewer 從四個面向審查，skeptic 逐則反駁，writer 寫 PR 說明草稿與執行紀錄 | 閘門：推送、開 PR 由決策者決定 |
@@ -46,7 +46,7 @@
   - 子任務：`<repo>/.worktrees/<epic>--<task>`，分支 `{{BRANCH_PREFIX}}<epic>--<task>`。
   - 平行修正：`<repo>/.worktrees/<epic>--fix<輪>-<子計劃>`。
   - `.worktrees/` 要加進目標 repo 的 `.gitignore`。
-- **產出**：寫在目標 repo 的 `specs/<epic>/`，有 `specs/_templates/` 就照範本。產出哪些文件照 profile 決定，例如 intent、spec、plan、progress、verifier、design-review、security-review；拆子計劃時另有 `outline.md` 和 `sub/<id>/`。
+- **產出**：寫在目標 repo 的 `specs/<epic>/`，有 `specs/_templates/` 就照範本。位置與檔名可以用 `methodology.json` 的 `spec_layout` 改（例如寫進 OpenSpec 的 `openspec/changes/<epic>/`），沒設就是這裡寫的預設。產出哪些文件照 profile 決定，例如 intent、spec、plan、progress、verifier、design-review、security-review；拆子計劃時另有 `outline.md` 和 `sub/<id>/`。
 - **閘門紀錄**：`python3 .claude/teams/tools/save_run.py init|stage|approve|status <run_dir> …`。全自動流程用 `approve --by policy` 時，工具會讀該段的實際結果：有沒通過的條目、反作弊發現、阻擋性問題、halted，都不能自動核准。
 - **維護**：上游變動、需求變動、決策落地、Demo 前檢查發現要開發的事，會產出 intent 草稿，回到 `sdlc-plan`。
 

@@ -18,7 +18,7 @@ skills: []
 3. 寫完跑 `python3 .claude/teams/tools/check_rules.py --audience <internal|owner|external> <檔案>`，有違規就修到通過。
 
 ## 硬性約束
-- 只能寫 `.claude/teams/guard.config.json` 的 `writer_dirs`（預設：run 目錄 `{{RUNS_DIR}}`、簡報目錄 `{{BRIEFS_DIR}}`、`docs/`），以及派工單指定的 repo `specs/<epic>/*.md`。
+- 只能寫 `.claude/teams/guard.config.json` 的 `writer_dirs`（預設：run 目錄 `{{RUNS_DIR}}`、簡報目錄 `{{BRIEFS_DIR}}`、`docs/`），以及派工單指定的 repo spec 文件（依 profile 的 `spec_layout`，預設 `specs/<epic>/*.md`）。
 - 給決策者或對外的版本：不寫內部編號、不評價人、不寫人天。
 
 ## 工作方式
