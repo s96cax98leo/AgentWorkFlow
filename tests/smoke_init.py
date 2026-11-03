@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
-WORKFLOWS = ("sdlc-plan", "sdlc-design", "sdlc-design-revise", "sdlc-build", "sdlc-test", "sdlc-deliver", "sdlc-merge",
+WORKFLOWS = ("sdlc-plan", "sdlc-design", "sdlc-design-revise", "sdlc-build", "sdlc-sync", "sdlc-test", "sdlc-deliver", "sdlc-merge",
              "event-brief", "event-upstream", "event-meeting", "event-pr-review", "event-reqs-change", "event-decision", "event-demo-check", "event-post-merge")
 REQUIRED = [
     "CLAUDE.md",
@@ -44,6 +44,7 @@ REQUIRED = [
     ".claude/teams/golden-set/run.py",
     ".claude/teams/tools/merge_gate.py",
     ".claude/teams/tools/publish.py",
+    ".claude/teams/tools/sync_branch.py",
     ".claude/teams/methodology.json",
     ".claude/teams/schemas/methodology.schema.json",
     ".claude/teams/methodologies/default.json",
@@ -189,6 +190,11 @@ def check_tools(target: Path) -> None:
         ok(f"publish.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("publish.py --selftest 失敗：", r.stdout + r.stderr)
     else:
         bad("缺 .claude/teams/tools/publish.py")
+    if (target / ".claude/teams/tools/sync_branch.py").is_file():
+        r = run([PY, ".claude/teams/tools/sync_branch.py", "--selftest"], cwd=target)
+        ok(f"sync_branch.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("sync_branch.py --selftest 失敗：", r.stdout + r.stderr)
+    else:
+        bad("缺 .claude/teams/tools/sync_branch.py")
     # plugin 安裝模式：agent 在模版的 plugin/agents，不在專案 .claude/agents
     if (target / ".claude/teams/tools/check_agents.py").is_file():
         r = run([PY, ".claude/teams/tools/check_agents.py", "--plugin-dir", str(ROOT / "plugin")], cwd=target)
@@ -233,6 +239,7 @@ ANSWERS = {
     "code_style": {"description": "提交前跑 ruff", "tool": "ruff", "command": "ruff format --check ."},
     "commit": {"format": "<type>: <摘要>（示範客戶 ACME 的慣例）", "examples": {"feat": "feat: <Story> 實作"}, "check_regex": "^(feat|fix|docs|test|chore): .+"},
     "branch_prefix": "feat/",
+    "sync_strategy": "transit",
     "pr_size": {"max_lines": 400, "max_files": None},
     "doc_format": "Markdown",
     "main_session_push_merge": True,
@@ -253,10 +260,11 @@ def check_answers_methodology(target: Path) -> None:
         "code_style.command": conv.get("code_style", {}).get("command") == "ruff format --check .",
         "commit.check_regex": conv.get("commit", {}).get("check_regex") == ANSWERS["commit"]["check_regex"],
         "branch.prefix": conv.get("branch", {}).get("prefix") == "feat/",
+        "sync.strategy": conv.get("sync", {}).get("strategy") == "transit",
         "pr_size": conv.get("pr_size", {}).get("max_lines") == 400 and conv.get("pr_size", {}).get("max_files") is None,
     }
     miss = [k for k, v in want.items() if not v]
-    ok("答案檔寫進 methodology.json（profile、code style、commit、分支、PR 大小）") if not miss else bad(f"methodology.json 沒套用答案：{miss}")
+    ok("答案檔寫進 methodology.json（profile、code style、commit、分支、同步策略、PR 大小）") if not miss else bad(f"methodology.json 沒套用答案：{miss}")
     gcfg = json.loads((target / ".claude/teams/guard.config.json").read_text(encoding="utf-8"))
     loose = gcfg.get("main_session_git_rules") is False and gcfg.get("main_session_github_rules") is False
     ok("main_session_push_merge=true：主 session 的 git／GitHub 限制放寬") if loose else bad(f"答案檔的 main_session_push_merge 沒套用：{gcfg.get('main_session_git_rules')}, {gcfg.get('main_session_github_rules')}")

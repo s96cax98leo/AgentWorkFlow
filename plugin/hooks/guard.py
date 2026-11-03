@@ -172,7 +172,7 @@ def under_forbidden(path: Path) -> str | None:
 # ---------------------------------------------------------------- Bash
 GH_WRITE = re.compile(
     r"\bgh\s+(?:"
-    r"pr\s+(?:create|comment|review|merge|edit|close|reopen|ready|lock|unlock)|"
+    r"pr\s+(?:create|comment|review|merge|edit|close|reopen|ready|lock|unlock|update-branch)|"  # update-branch 在伺服器端改寫 PR 分支
     r"issue\s+(?:create|comment|edit|close|reopen|delete|lock|transfer)|"
     r"release\s+(?:create|edit|delete|upload)|"
     r"repo\s+(?:edit|delete|rename|archive|sync|create|fork)|"

@@ -61,6 +61,10 @@
       "prefix": "feature/",
       "naming": "<prefix><epic>；子任務 <prefix><epic>--<子任務 id>。"
     },
+    "sync": {
+      "strategy": "auto",
+      "transit_naming": "merge/<短名>-into-<base>-<YYYYMMDD>"
+    },
     "pr_size": {
       "max_lines": null,
       "max_files": null,

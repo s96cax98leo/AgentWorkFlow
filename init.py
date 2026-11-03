@@ -163,6 +163,10 @@ def _int_or_none(v, what: str):
     return n if n > 0 else None
 
 
+# 分支怎麼跟上 base（methodology conventions.sync.strategy；schema 同一組值）
+SYNC_STRATEGIES = ("auto", "rebase", "merge", "transit")
+
+
 def apply_answers(profile: dict, ans: dict) -> dict:
     """把使用者的回答（答案檔或互動）套進 profile。只改回答到的項目，其餘沿用 profile。"""
     prof = json.loads(json.dumps(profile))
@@ -181,6 +185,11 @@ def apply_answers(profile: dict, ans: dict) -> dict:
         conv.setdefault("commit", {})["check_regex"] = ans["commit_regex"] or None
     if "branch_prefix" in ans and ans["branch_prefix"]:
         conv.setdefault("branch", {})["prefix"] = str(ans["branch_prefix"])
+    if ans.get("sync_strategy"):
+        st = str(ans["sync_strategy"])
+        if st not in SYNC_STRATEGIES:
+            die(f"sync_strategy 要是 {'、'.join(SYNC_STRATEGIES)} 其中之一（收到 {st!r}）")
+        conv.setdefault("sync", {})["strategy"] = st
     if "pr_size" in ans:
         ps = ans["pr_size"] or {}
         conv["pr_size"] = deep_merge(conv.get("pr_size", {}), {
@@ -225,6 +234,9 @@ def ask_methodology(default_name: str, branch_prefix: str) -> tuple[str, dict]:
         ans["commit_regex"] = rx or None
     bp = ask("分支前綴", branch_prefix or conv.get("branch", {}).get("prefix", "feature/"))
     ans["branch_prefix"] = bp
+    st = ask("分支落後 main 時怎麼跟上（auto＝依情況選 rebase／merge／中轉分支；也可固定 rebase、merge、transit）", conv.get("sync", {}).get("strategy", "auto"))
+    if st != conv.get("sync", {}).get("strategy", "auto"):
+        ans["sync_strategy"] = st
     ps = conv.get("pr_size", {})
     ml = ask("PR 大小上限：行數（0 ＝不限）", str(ps.get("max_lines") or 0))
     mf = ask("PR 大小上限：檔案數（0 ＝不限）", str(ps.get("max_files") or 0))

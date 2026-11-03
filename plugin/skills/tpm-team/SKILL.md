@@ -1,6 +1,6 @@
 ---
 name: tpm-team
-description: TPM agent team 的入口。開發需求一律走 AI-native SDLC（plan → design → build → test → deliver → merge，段與段之間由人核准；merge 由可信任的合併 agent 對照需求後執行）；其他事件平行處理後產出文件。使用者說「開發這個需求」「照簡報做某個任務編號」「跑簡報」「上游有新 PR／main 動了／CI 紅了」「整理這場會議」「審這個 PR／分支」「合併這個 PR」「合併後 main 紅了」「需求更新了」「決策者決定了 X」「demo 前檢查」「用 agent team 處理」時使用。
+description: TPM agent team 的入口。開發需求一律走 AI-native SDLC（plan → design → build → sync → test → deliver → merge，段與段之間由人核准；merge 由可信任的合併 agent 對照需求後執行）；其他事件平行處理後產出文件。使用者說「開發這個需求」「照簡報做某個任務編號」「跑簡報」「上游有新 PR／main 動了／CI 紅了」「整理這場會議」「審這個 PR／分支」「合併這個 PR」「合併後 main 紅了」「需求更新了」「決策者決定了 X」「demo 前檢查」「用 agent team 處理」時使用。
 argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 <任務編號>」「審 feature/x」>
 ---
 
@@ -30,7 +30,7 @@ argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 
 
 | 使用者說的 | 事件 | workflow | 必要 args |
 |---|---|---|---|
-| 開發、實作、照 Story／需求做 | 需求開發（SDLC） | `sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge` | repo、epic、requirement、base、run_dir |
+| 開發、實作、照 Story／需求做 | 需求開發（SDLC） | `sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge` | repo、epic、requirement、base、run_dir |
 | 跑簡報、照 `{{TASK_ID_PREFIX}}xxxx` 做 | 簡報 | `event-brief`（裡面的程式子任務再走 SDLC） | brief、run_dir |
 | 上游、main 前進、CI 失敗 | 上游變動 | `event-upstream` | what、repo、run_dir |
 | 會議、逐字稿 | 會議 | `event-meeting` | source、run_dir |
@@ -40,6 +40,7 @@ argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 
 | demo 前、彩排 | Demo 前檢查 | `event-demo-check` | target、run_dir（可加 script、date） |
 | 要比較 ≥3 個方案、要給決策者選 | 方案辯論 | `team-debate` skill | — |
 | design 段被退回要改 | 設計修訂 | `sdlc-design-revise` | repo、epic、run_dir、decisions、issues |
+| 分支落後 main、PR 有衝突、要跟上 main | 跟上 base（SDLC 同步段） | `sdlc-sync` | repo、epic、run_dir（可加 base、branch、strategy、date、pr） |
 | 合併這個 PR、PR 開好了要合 | 合併（SDLC 合併段） | `sdlc-merge` | repo、pr、run_dir（可加 gh_repo、base、epic、evidence、requirements、findings、tests_before、tests_after） |
 | 合併後、main 紅了是不是合併造成的 | 合併後監看 | `event-post-merge` | repo、run_dir（可加 gh_repo、merge_sha、since） |
 
@@ -76,7 +77,8 @@ python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstr
 |---|---|---|
 | plan | 把 intent.md 的重點與 skeptic 的質疑列給使用者 | 使用者核准 intent。要送上游的需求，intent 要 `{{DECISION_OWNER}}` 核准，並記錄由誰核准 |
 | design | 把 spec 的驗收條件、子任務與相依圖、analyze 的發現列給使用者；有拆子計劃時一併列出子計劃（範圍、相依）與拆的理由 | 使用者核准 spec＋plan（退回時走 `sdlc-design-revise`） |
-| build | 沒有閘門，直接進 test。halted 時停下交人 | — |
+| build | 沒有閘門，直接進 sync。halted 時停下交人 | — |
+| sync | 沒有閘門。列出選到的策略（none、rebase、merge、transit）與理由；transit 時列出衝突檔與分類。halted 時停下交人 | strategy 不是 none 時 head 已變，test 要驗同步後的 head；回傳 `head_branch` 和原分支不同（走了中轉分支）時，之後的 `sdlc-test`、`sdlc-deliver` 都帶 `branch=<head_branch>` |
 | test | 列出 pass／fail／not_verifiable 與審查發現 | 使用者確認結果（fail 或 not_verifiable 要人決定） |
 | deliver | 列出審查發現、PR 說明草稿、執行紀錄 | **推 fork、開 PR 要使用者當下同意**；寫入上游要另外再同意一次；agent 不核准 |
 | merge | 列出需求對照表、skeptic 判出的不一致、gate 理由；未合併時列出新需求文件（`<run_dir>/followups/`） | 進入 merge 段要使用者同意（guard.config.json 的 `auto_merge` 要已啟用）。只有 `dev-merge-steward` 能合併，而且要 `merge_gate.py` 判 merge；不一致時 PR 已退回，新需求走 `event-reqs-change`（需求要改）或回到 SDLC 對應段落（實作要補），修好後重跑 `sdlc-merge`。合併後跑 `event-post-merge` |
@@ -90,7 +92,7 @@ python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstr
 python3 .claude/teams/tools/save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間>
 ```
 
-`sdlc-merge` 的回傳：`merged`、`decision`、`followups`、`next`。`event-post-merge` 回傳 `freeze: true` 時，用 PushNotification 推播決策者（附 revert 提案路徑）；revert PR 由人決定、由人合併，凍結期間不跑合併。`sdlc-merge` 產生 followup 或 `event-post-merge` 歸因出的錯誤，若同一類已出現過，收尾時建議使用者跑 `/correct`（`correct` skill），把它變成強制機制而不只是再修一次。
+`sdlc-merge` 的回傳：`merged`、`decision`、`followups`、`next`。回傳 `needs_sync: true`（PR 落後 base 或有衝突）時沒有退回 PR，照 `next` 走：`sdlc-sync`（args 加 `pr`）→ `sdlc-test` → 走了中轉分支就用 `publish.py --supersedes <原 PR>` 推中轉分支、開新 PR（原 PR 經使用者同意後再關閉）→ 再跑 `sdlc-merge`。`event-post-merge` 回傳 `freeze: true` 時，用 PushNotification 推播決策者（附 revert 提案路徑）；revert PR 由人決定、由人合併，凍結期間不跑合併。`sdlc-merge` 產生 followup 或 `event-post-merge` 歸因出的錯誤，若同一類已出現過，收尾時建議使用者跑 `/correct`（`correct` skill），把它變成強制機制而不只是再修一次。
 
 SDLC 各段的做法（需求寫法、測試先行與否、驗證方式）與慣例（code style、commit、分支、PR 大小、文件格式）由開發規範 profile `.claude/teams/methodology.json` 決定，已由 `build.py` 內嵌進 `sdlc-*.js`；列計畫時寫出用的是哪個 profile，使用者要改做法就改這個檔再跑 `python3 .claude/teams/tools/build.py`，不要在派工時另外指定。profile 的 `extensions` 是使用者加進各段的自己的 agent（`/add-agent` 設定），列計畫時一併列出哪幾段會多派哪些擴充 agent；它們的 findings 和內建審查一樣列在閘門重點裡。`sdlc-build` 回傳的 `test_first` 表示這次走 Red（測試先行）還是 Tests（實作後補驗證測試）。
 

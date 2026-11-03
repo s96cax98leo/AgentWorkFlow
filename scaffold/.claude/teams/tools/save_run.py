@@ -25,7 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import schemalib  # noqa: E402
 
-SDLC = ["plan", "design", "build", "test", "deliver", "merge"]
+# sync（跟上 base）在 build 與 test 之間，沒有人工閘門：之後的 test 會重新驗證同步後的 head
+SDLC = ["plan", "design", "build", "sync", "test", "deliver", "merge"]
 # merge 段不設人工閘門：合併與否由確定性的 merge_gate.py 判定（gate 紀錄寫進 merge-audit.jsonl，hook 憑它放行），
 # 它前面的 deliver 段仍要核准。
 GATED = {"plan", "design", "test", "deliver"}
@@ -159,8 +160,10 @@ def main(argv: list[str]) -> int:
                 errs.append(f"找不到 {f.name}，政策核准要讀該段的實際結果")
             else:
                 errs += [f"政策判定：{e}" for e in policy_violations(stage, json.loads(f.read_text(encoding="utf-8")))]
-        if stage in SDLC and SDLC.index(stage) > 0:
-            prev = SDLC[SDLC.index(stage) - 1]
+        # 前一段取 run.json 裡實際有的段（加 sync 段之前建立的 run 沒有 sync）
+        earlier = [s for s in SDLC[:SDLC.index(stage)] if s in data["stages"]] if stage in SDLC else []
+        if earlier:
+            prev = earlier[-1]
             ps = data["stages"].get(prev, {})
             if ps.get("status") != "done":
                 errs.append(f"前一段 {prev} 還沒 done")

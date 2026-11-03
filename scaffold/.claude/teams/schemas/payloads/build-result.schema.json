@@ -21,6 +21,7 @@
         }
       }
     },
+    "sync": {"type": "object", "description": "sdlc-sync 才填：照抄 sync_branch.py 的輸出", "required": ["strategy", "conflicts"], "properties": {"strategy": {"type": "string", "enum": ["none", "rebase", "merge", "transit"]}, "behind": {"type": "integer", "minimum": 0}, "published": {"type": "boolean"}, "conflicts": {"type": "array", "items": {"type": "string"}, "description": "plan 預測的衝突檔"}, "transit_branch": {"type": ["string", "null"]}, "head_branch": {"type": "string"}, "head_sha": {"type": "string"}, "halted": {"type": "boolean"}, "reason": {"type": "string"}}},
     "conflicts": {"type": "array", "items": {"type": "object", "required": ["file", "kind", "resolution"], "properties": {"file": {"type": "string"}, "kind": {"type": "string", "enum": ["mechanical", "seam", "judgement", "implicit_compile", "implicit_behavior", "generated"]}, "resolution": {"type": "string"}}}}
   }
 }

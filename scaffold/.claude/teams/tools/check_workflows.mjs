@@ -131,8 +131,48 @@ const CONSISTENT = {
     traceability: [{ requirement_id: 'R1', requirement: 'x', evidence: ['e'], result: 'match' }], out_of_scope: [], followups: [] } }),
   challenge: ENV({ verdicts: [{ target_id: 'R1', refuted: false, reason: 'ok' }, { target_id: 'out_of_scope', refuted: false, reason: 'ok' }] }),
 }
+// sync：plan 的策略決定走哪條路；中轉分支回報的衝突檔要和 plan 預測的一致
+const SYNC_PLAN = (sync) => ENV({ task_id: 'sync-plan', branch: 'feature/demo', commits: [], files_changed: [], tests: [], sync })
+const SYNC_APPLY = (sync, conflicts = []) => ENV({ task_id: 'sync', branch: sync.head_branch, commits: ['abc merge'], files_changed: [], tests: [{ command: 'verify', result: 'pass' }], conflicts, sync })
+const TRANSIT = { strategy: 'transit', behind: 3, published: true, conflicts: ['src/a.ts'], transit_branch: 'merge/demo-into-main-20261012' }
 const SCENARIOS = {
+  'sdlc-sync.js': [
+    {
+      name: '已跟上',
+      fakes: { plan: SYNC_PLAN({ strategy: 'none', behind: 0, conflicts: [] }) },
+      expect: (r) => (r.out && r.out.strategy === 'none' && !r.out.halted && !r.labels.some((l) => l.startsWith('apply')) ? [] : [`已跟上不該執行：${JSON.stringify(r.out && { strategy: r.out.strategy, halted: r.out.halted })}`]),
+    },
+    {
+      name: '已推送、沒衝突：merge',
+      fakes: { plan: SYNC_PLAN({ strategy: 'merge', behind: 2, published: true, conflicts: [] }), 'apply:merge': SYNC_APPLY({ strategy: 'merge', conflicts: [], head_branch: 'feature/demo-999-sample', head_sha: 'a'.repeat(40) }) },
+      expect: (r) => (r.out && r.out.strategy === 'merge' && !r.out.halted && /重跑 sdlc-test/.test(r.out.next || '') ? [] : [`merge 後要提示重跑 sdlc-test：${JSON.stringify(r.out && { halted: r.out.halted, next: r.out.next })}`]),
+    },
+    {
+      name: '有衝突：transit',
+      fakes: { plan: SYNC_PLAN(TRANSIT), 'apply:transit': SYNC_APPLY({ ...TRANSIT, head_branch: TRANSIT.transit_branch, head_sha: 'b'.repeat(40) }, [{ file: 'src/a.ts', kind: 'seam', resolution: 'x' }]) },
+      expect: (r) => (r.out && !r.out.halted && r.out.head_branch === TRANSIT.transit_branch && /publish\.py/.test(r.out.next || '') && /--supersedes 1/.test(r.out.next || '') ? [] : [`transit 要換 head_branch 並提示開新 PR：${JSON.stringify(r.out && { halted: r.out.halted, head_branch: r.out.head_branch, next: r.out.next, why: r.out.halt_reason })}`]),
+    },
+    {
+      name: '中轉分支多解了沒預測的檔',
+      fakes: { plan: SYNC_PLAN(TRANSIT), 'apply:transit': SYNC_APPLY({ ...TRANSIT, head_branch: TRANSIT.transit_branch }, [{ file: 'src/a.ts', kind: 'seam', resolution: 'x' }, { file: 'src/other.ts', kind: 'mechanical', resolution: 'x' }]) },
+      expect: (r) => (r.out && r.out.halted === true && /不一致/.test(r.out.halt_reason || '') ? [] : ['衝突清單和 plan 不一致時要 halted']),
+    },
+    {
+      name: '固定 rebase 但已推送：工具停下',
+      fakes: { plan: (base) => ({ ...SYNC_PLAN({ strategy: 'rebase', behind: 1, published: true, conflicts: [], halted: true, reason: '已推送的分支 rebase 要 force push' })(base), status: 'needs_decision' }) },
+      expect: (r) => (r.out && r.out.halted === true && !r.labels.some((l) => l.startsWith('apply')) ? [] : ['plan halted 時不能執行']),
+    },
+  ],
   'sdlc-merge.js': [
+    {
+      name: 'PR 落後 base：先同步',
+      args: {},
+      fakes: { analyze: (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'hold', needs_sync: true } }) },
+      expect: (r) => [
+        ...(r.out && r.out.needs_sync === true && r.out.merged === false && /sdlc-sync/.test(r.out.next || '') ? [] : ['needs_sync 要回傳 needs_sync=true 並指向 sdlc-sync']),
+        ...(r.labels.some((l) => l.startsWith('execute') || l === 'challenge') ? [`needs_sync 不能進挑戰或執行：${r.labels.join(',')}`] : []),
+      ],
+    },
     {
       name: '讀回已合併',
       args: {},

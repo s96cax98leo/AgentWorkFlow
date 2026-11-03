@@ -1,5 +1,5 @@
 ---
-description: 啟動需求開發的 AI-native SDLC（plan → design → build → test → deliver → merge，段與段之間由人核准；merge 由可信任的合併 agent 對照需求後執行）
+description: 啟動需求開發的 AI-native SDLC（plan → design → build → sync → test → deliver → merge，段與段之間由人核准；merge 由可信任的合併 agent 對照需求後執行）
 argument-hint: <需求描述或需求檔路徑；可附 repo、epic、base>
 ---
 

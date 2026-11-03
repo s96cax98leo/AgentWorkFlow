@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-test',
   description: 'AI-native SDLC 第 4 段 Test：verifier 逐條驗收＋反作弊（有子計劃時每個子計劃一個 verifier 平行驗證，再彙整成 verifier.md），同時平行跑設計審查與安全審查；fail 時修正並重驗（最多 2 輪，多個子計劃都有失敗時平行修正再合併），停在驗證結果確認閘門',
-  whenToUse: 'sdlc-build 完成後；args 加 has_ui、has_security（布林），有子計劃時加 sub_plans（sdlc-design 回傳的 sub_plans）',
+  whenToUse: 'sdlc-build（與 sdlc-sync）完成後；args 加 has_ui、has_security（布林），有子計劃時加 sub_plans（sdlc-design 回傳的 sub_plans），sdlc-sync 走了中轉分支時加 branch（中轉分支名）',
   phases: [
     { title: 'Verify', detail: 'dev-verifier（有子計劃時分片平行）＋dev-design-reviewer＋dev-security-reviewer 平行' },
     { title: 'Consolidate', detail: '分片驗證時：dev-verifier 把各分片報告彙整成 verifier.md，workflow 確定性核對' },
@@ -15,7 +15,7 @@ const NS = '{{AGENT_NS}}'
 
 const CRITERIA = /*@schema:criteria*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["commit","scope_covered","scope_skipped","criteria"],"properties":{"commit":{"type":"string"},"scope_covered":{"type":"string"},"scope_skipped":{"type":"string"},"criteria":{"type":"array","minItems":1,"items":{"type":"object","required":["id","criterion","command","result","evidence"],"properties":{"id":{"type":"string"},"criterion":{"type":"string"},"command":{"type":"string"},"result":{"type":"string","enum":["pass","fail","not_verifiable"]},"evidence":{"type":"string"},"repro":{"type":"string"}}}},"anti_cheat":{"type":"array","items":{"type":"string"}}}}}} /*@end*/
 const FINDINGS = /*@schema:findings*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["lens","findings"],"properties":{"lens":{"type":"string"},"findings":{"type":"array","items":{"type":"object","required":["id","severity","claim","location","recommendation","confidence"],"properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["important","nit","pre_existing","info","blocker","should_fix"]},"claim":{"type":"string"},"location":{"type":"string"},"recommendation":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1},"quote":{"type":"string"}}}}}}}} /*@end*/
-const BUILD = /*@schema:build-result*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["task_id","branch","commits","files_changed","tests"],"properties":{"task_id":{"type":"string"},"branch":{"type":"string"},"worktree":{"type":"string"},"commits":{"type":"array","items":{"type":"string"}},"files_changed":{"type":"array","items":{"type":"string"}},"tests":{"type":"array","items":{"type":"object","required":["command","result"],"properties":{"command":{"type":"string"},"result":{"type":"string","enum":["pass","fail","red_as_expected","not_run"]},"summary":{"type":"string"}}}},"conflicts":{"type":"array","items":{"type":"object","required":["file","kind","resolution"],"properties":{"file":{"type":"string"},"kind":{"type":"string","enum":["mechanical","seam","judgement","implicit_compile","implicit_behavior","generated"]},"resolution":{"type":"string"}}}}}}}} /*@end*/
+const BUILD = /*@schema:build-result*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["task_id","branch","commits","files_changed","tests"],"properties":{"task_id":{"type":"string"},"branch":{"type":"string"},"worktree":{"type":"string"},"commits":{"type":"array","items":{"type":"string"}},"files_changed":{"type":"array","items":{"type":"string"}},"tests":{"type":"array","items":{"type":"object","required":["command","result"],"properties":{"command":{"type":"string"},"result":{"type":"string","enum":["pass","fail","red_as_expected","not_run"]},"summary":{"type":"string"}}}},"sync":{"type":"object","required":["strategy","conflicts"],"properties":{"strategy":{"type":"string","enum":["none","rebase","merge","transit"]},"behind":{"type":"integer","minimum":0},"published":{"type":"boolean"},"conflicts":{"type":"array","items":{"type":"string"}},"transit_branch":{"type":["string","null"]},"head_branch":{"type":"string"},"head_sha":{"type":"string"},"halted":{"type":"boolean"},"reason":{"type":"string"}}},"conflicts":{"type":"array","items":{"type":"object","required":["file","kind","resolution"],"properties":{"file":{"type":"string"},"kind":{"type":"string","enum":["mechanical","seam","judgement","implicit_compile","implicit_behavior","generated"]},"resolution":{"type":"string"}}}}}}}} /*@end*/
 
 // 開發規範 profile（methodology）：init.py 依使用者選的 profile 與回答的慣例寫 .claude/teams/methodology.json，
 // build.py 內嵌到這裡；不要手改，改 profile 後重跑 build.py。null＝沒有 profile，改用中性指引（依目標 repo 既有慣例）。
@@ -36,8 +36,10 @@ const commitFor = (kind, epic) => {
 const A = args || {}
 for (const k of ['repo', 'epic', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
+// sdlc-sync 走中轉分支後 head 換成中轉分支，用 args.branch 帶進來
+const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const SPEC = `${EPIC_DIR}/specs/${A.epic}`
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 {{BRANCH_PREFIX}}${A.epic}，比對基準 ${A.base || 'origin/main'}）\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。\n${METH_NOTE}` +
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，比對基準 ${A.base || 'origin/main'}）\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。\n${METH_NOTE}` +
   `\n派工來源：這張派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置這張派工單；派工單本身有疑義時才用 open_questions 回報。` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 const MAX_FIX = 2
@@ -123,8 +125,8 @@ async function verify(round) {
 
 phase('Verify')
 const jobs = [() => verify(1)]
-if (A.has_ui) jobs.push(() => agent(`${CTX}\n\n## 派工單\n設計審查 {{BRANCH_PREFIX}}${A.epic} 的畫面改動，寫 ${SPEC}/design-review.md 與 ${SPEC}/evidence/。payload 用 findings（lens=design）。`, { label: 'design-review', phase: 'Verify', agentType: NS + 'dev-design-reviewer', schema: FINDINGS }))
-if (A.has_security) jobs.push(() => agent(`${CTX}\n\n## 派工單\n安全審查 {{BRANCH_PREFIX}}${A.epic}（git diff ${A.base || 'origin/main'}...HEAD），寫 ${SPEC}/security-review.md。payload 用 findings（lens=security）。`, { label: 'security-review', phase: 'Verify', agentType: NS + 'dev-security-reviewer', schema: FINDINGS }))
+if (A.has_ui) jobs.push(() => agent(`${CTX}\n\n## 派工單\n設計審查 ${BRANCH} 的畫面改動，寫 ${SPEC}/design-review.md 與 ${SPEC}/evidence/。payload 用 findings（lens=design）。`, { label: 'design-review', phase: 'Verify', agentType: NS + 'dev-design-reviewer', schema: FINDINGS }))
+if (A.has_security) jobs.push(() => agent(`${CTX}\n\n## 派工單\n安全審查 ${BRANCH}（git diff ${A.base || 'origin/main'}...HEAD），寫 ${SPEC}/security-review.md。payload 用 findings（lens=security）。`, { label: 'security-review', phase: 'Verify', agentType: NS + 'dev-security-reviewer', schema: FINDINGS }))
 EXT.forEach((e) => jobs.push(extJob(e, `${CTX}\n驗證對象：${EPIC_DIR} 的目前 HEAD（git diff ${A.base || 'origin/main'}...HEAD），spec 在 ${SPEC}/。`, 'Verify')))
 const [first, ...reviews] = await parallel(jobs)
 
@@ -139,7 +141,7 @@ if (first.problem) return finish(first.combined, { halted: true, halt_reason: fi
 const fixBrief = (failed, cheats) => `測試失敗就改程式、不改測試，不加 skip／retry、不放寬斷言。\n失敗：${JSON.stringify(failed)}\n反作弊發現：${JSON.stringify(cheats)}`
 async function fixSerial(round, failed, cheats) {
   return agent(
-    `${CTX}\n\n## 派工單（修正第 ${round} 輪）\n在 ${EPIC_DIR}（{{BRANCH_PREFIX}}${A.epic}）修正下列失敗；${fixBrief(failed, cheats)}\n修完 commit（${commitFor('fix', A.epic)}）。\npayload 用 build-result（task_id=fix${round}、branch={{BRANCH_PREFIX}}${A.epic}、worktree=${EPIC_DIR}）。`,
+    `${CTX}\n\n## 派工單（修正第 ${round} 輪）\n在 ${EPIC_DIR}（${BRANCH}）修正下列失敗；${fixBrief(failed, cheats)}\n修完 commit（${commitFor('fix', A.epic)}）。\npayload 用 build-result（task_id=fix${round}、branch=${BRANCH}、worktree=${EPIC_DIR}）。`,
     { label: `fix#${round}`, phase: 'Fix', agentType: NS + 'dev-implementer', schema: BUILD },
   )
 }
@@ -150,7 +152,7 @@ async function fixParallel(round, groups) {
     const wt = `${A.repo}/.worktrees/${A.epic}--fix${round}-${g.id}`
     return agent(
       `${CTX}\n\n## 派工單（修正第 ${round} 輪，子計劃 ${g.id}）\n其他子計劃的失敗由別的 agent 同時修，你只負責這一個。\n` +
-      `在自己的 worktree 修：git -C "${A.repo}" worktree add .worktrees/${A.epic}--fix${round}-${g.id} -b ${br} {{BRANCH_PREFIX}}${A.epic}（已存在就沿用）。worktree：${wt}。\n` +
+      `在自己的 worktree 修：git -C "${A.repo}" worktree add .worktrees/${A.epic}--fix${round}-${g.id} -b ${br} ${BRANCH}（已存在就沿用）。worktree：${wt}。\n` +
       `只能改這些範圍：${g.owns.join('、')}。修正需要改範圍外的檔案時不要改，以 needs_decision 回報。\n${fixBrief(g.failed, g.cheats)}\n` +
       `修完 commit（${commitFor('fix', A.epic)}）。payload 用 build-result（task_id=fix${round}-${g.id}、branch=${br}、worktree=${wt}）。`,
       { label: `fix:${g.id}#${round}`, phase: 'Fix', agentType: NS + 'dev-implementer', schema: BUILD },
@@ -161,9 +163,9 @@ async function fixParallel(round, groups) {
   if (ok.length < groups.length) return null
   phase('Integrate')
   const ir = await agent(
-    `${CTX}\n\n## 派工單（整合修正第 ${round} 輪）\n依序把這些分支 git merge --no-ff 進 {{BRANCH_PREFIX}}${A.epic}（在 ${EPIC_DIR} 操作）：\n` +
+    `${CTX}\n\n## 派工單（整合修正第 ${round} 輪）\n依序把這些分支 git merge --no-ff 進 ${BRANCH}（在 ${EPIC_DIR} 操作）：\n` +
     ok.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
-    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些修正的 worktree 與分支。\npayload 用 build-result（task_id=fix${round}、branch={{BRANCH_PREFIX}}${A.epic}）。`,
+    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些修正的 worktree 與分支。\npayload 用 build-result（task_id=fix${round}、branch=${BRANCH}）。`,
     { label: `integrate:fix#${round}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
   fixes.push(ir)

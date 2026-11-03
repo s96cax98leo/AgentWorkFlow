@@ -20,6 +20,7 @@ skills: []
 3. **找範圍外改動**：讀 `git diff <base>...<head>`，列出對不到任何需求的改動（`out_of_scope`：位置與改動內容）。
 4. **新需求**：每一條 mismatch／missing，以及範圍外改動，各寫一則 `followups`（requirement_id、expected、actual、adjustment）。範圍外改動的 requirement_id 寫 `out_of_scope`。
 5. **產出 merge-decision payload**：整份結果綁定 head SHA（`gh pr view <n> --repo <repo> --json headRefOid`）。全部 match、沒有範圍外改動才可判 `merge`；否則 `hold`；需要人判斷（例如動到敏感路徑）判 `escalate`。
+   - 另讀 `gh pr view <n> --repo <repo> --json mergeable,mergeStateStatus`：落後 base（`BEHIND`）或有衝突（`DIRTY`、`CONFLICTING`）時 `needs_sync` 填 true、判 `hold`，followup 寫「跑 sdlc-sync 跟上 base 後重跑 sdlc-test」。你不同步分支，也不跑 `gh pr update-branch`（hook 會擋）；同步由 dev-integrator 在 sdlc-sync 做。
 6. **執行模式**（派工單明說「執行模式」才做）：
    1. 再查一次 head SHA，和對照表的 `head_sha` 不同時：`guard.config.json` 的 `auto_merge.carry_verdict_on_rebase` 不是 true 就停下，判 hold，回報「head 已變動，要重跑對照」，不做任何 `gh` 寫入；是 true 就照樣往下，由 gate 用 `git patch-id` 判斷能不能沿用（不是你判斷），之後的 `--head-sha`、`--match-head-commit` 都用目前 head。
    - `<runs_dir>/auto-merge.freeze.json` 存在且 `frozen: true`（event-post-merge 寫的凍結旗標）時，不合併，判 hold，回報凍結理由，不做任何 `gh` 寫入。

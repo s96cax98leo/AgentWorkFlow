@@ -34,6 +34,13 @@
 │ Integrate：每層結束 dev-integrator 依序合併、跑驗證、清 worktree   │
 └──────────────────────────────┬──────────────────────────────┘
                                ▼（沒有閘門；halted 就停下交人）
+┌───────────────────────── sdlc-sync ─────────────────────────┐
+│ dev-integrator：sync_branch.py plan 選策略 → apply              │
+│   已跟上：不動｜沒推送且沒衝突：rebase｜已推送且沒衝突：merge main │
+│   有衝突：從 main 開中轉分支，把分支 merge 進來解衝突              │
+│ workflow 核對衝突清單；head 變了就由 test 重新驗證                 │
+└──────────────────────────────┬──────────────────────────────┘
+                               ▼（沒有閘門；halted 就停下交人）
 ┌───────────────────────── sdlc-test ─────────────────────────┐
 │ 平行：dev-verifier｜dev-design-reviewer（有畫面）｜              │
 │       dev-security-reviewer（有安全面）                         │
@@ -97,6 +104,21 @@
 | 重試 | 每個子任務 `blocked` 時最多重派 2 次，並附上一輪的結果；`needs_decision` 不重試，直接交人 |
 | 停止 | 任何一層有子任務沒完成就 halted，停下交人，不往下一層走 |
 | 閘門 | 沒有，直接進 test |
+
+### 同步段（`sdlc-sync`）
+
+build 完、test 前跑一次；merge 段因 PR 落後 base 或有衝突回傳 `needs_sync` 時再跑。策略由確定性工具 `sync_branch.py` 決定，不是 agent 決定，profile 的 `conventions.sync.strategy` 可以固定成其中一種：
+
+| 情況 | auto 選的策略 | 做法 |
+|---|---|---|
+| 已跟上 base | none | 不動 |
+| 沒推送過、沒衝突 | rebase | 先留 `refs/backup/<分支>-<日期>`，再 rebase 到 base；歷史線性，不需要 force push |
+| 已推送過、沒衝突 | merge | 把 base `merge --no-ff` 進分支；已推送的分支 rebase 要 force push，hook 一律擋 |
+| 有衝突（`git merge-tree` 預測） | transit | 從 base 開中轉分支（預設 `merge/<短名>-into-<base>-<YYYYMMDD>`），把分支 merge 進來，在中轉分支上解衝突並分類；`check-transit` 擋殘留衝突標記與「解衝突時順便改了別的檔」；之後用 `publish.py --supersedes <原 PR>` 開 PR 取代原 PR，由 steward 照常走 merge gate |
+
+- 固定策略做不到時（例如固定 rebase 但分支已推送、固定 merge 但有衝突）一律停下交人，不自動換策略。
+- 只要策略不是 none，head 就變了；驗證證據綁 head SHA，所以一定要重跑 `sdlc-test`。走了中轉分支時，之後的 `sdlc-test`、`sdlc-deliver` 用 `branch` arg 帶中轉分支名。
+- 中轉分支併到 main 的最後一步一定經過 PR：任何人都不能直接 push main。
 
 ### 第 4 段 Test（`sdlc-test`）
 

@@ -11,7 +11,7 @@
 
 ## 先 plan、後動手
 - 任何任務先列出計畫、模糊點與假設，確認後才動手。
-- 需求開發依序走：`sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge`。
+- 需求開發依序走：`sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge`。
 - plan、design、test、deliver 四個閘門都要 {{DECISION_OWNER}} 核准。用 `python3 .claude/teams/tools/save_run.py approve` 記錄，並在對話裡列出重點，不能只依賴工具狀態。
 - {{DECISION_OWNER}} 的回覆照字面讀：「調整」不是「核准」，附帶的意見要先處理。
 - workflow 回傳 `halted: true` 時，停下來交給 {{DECISION_OWNER}}，不要自行重跑繞過。

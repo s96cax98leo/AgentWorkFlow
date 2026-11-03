@@ -46,6 +46,7 @@ python3 .claude/teams/tools/check_agents.py --plugin-dir <AgentWorkFlow>/plugin 
 uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py              # schema 正反例
 python3 .claude/teams/tools/merge_gate.py --selftest                                       # 確定性 merge gate
 python3 .claude/teams/tools/publish.py --selftest                                          # 確定性推送工具
+python3 .claude/teams/tools/sync_branch.py --selftest                                      # 跟上 base 的確定性工具
 ```
 
 在 repo 內也可以直接驗 scaffold，例如 `python3 scaffold/.claude/teams/tools/build.py --check`，路徑會依檔案位置推算。
@@ -56,10 +57,11 @@ python3 .claude/teams/tools/publish.py --selftest                               
 
 ### agent（`plugin/agents/`，共 22 個）
 
-- **`dev-*`（10 個）**：AI-native SDLC，依序 plan → design → build → test → deliver → merge，各段對應一支 `sdlc-*.js`。
+- **`dev-*`（10 個）**：AI-native SDLC，依序 plan → design → build → sync → test → deliver → merge，各段對應一支 `sdlc-*.js`。
   - plan、design、test、deliver 之間有核准閘門，用 `save_run.py approve` 記錄。`--by policy` 會讀信封的實際內容（`policy_violations`），不只看 status。
   - `dev-merge-steward`：可信任的合併 agent。逐條對照需求與驗證證據（綁 head SHA），一致而且 `merge_gate.py` 通過才合併；不一致就產出 followup 新需求並退回 PR（request-changes、轉 draft）。沒有 Edit／Write，永遠不 approve。
   - `dev-release-watcher`：合併後監看，歸因失敗，產出 revert 提案與凍結建議，只讀。
+  - `sdlc-sync`（dev-integrator 執行）：build 之後、test 之前，以及 merge 因 PR 落後或衝突判 hold（`needs_sync`）之後跑。由 `sync_branch.py` 決定策略（profile 的 `conventions.sync`，預設 auto：已跟上不動、沒推送且沒衝突 rebase、已推送且沒衝突 merge base、有衝突走中轉分支）。中轉分支從 base 開、把分支 merge 進來解衝突，`check-transit` 擋殘留衝突標記與夾帶改動，workflow 核對回報的衝突檔與預測一致；之後用 `publish.py --supersedes` 開 PR 取代原 PR。head 變了一律重跑 `sdlc-test`，後續各段用 `branch` arg 帶中轉分支名。
 - **`tpm-*`（6 個）**：事件處理，對應 `event-*.js`（包括 `event-post-merge.js`）。
 - **網站分析組（6 個）**：tech-architect、infra-analyst、biz-analyst、perf-auditor、competitor-scout、lead-synthesizer。由 skills 驅動，**不交信封**，也不受角色寫入範圍限制。
 

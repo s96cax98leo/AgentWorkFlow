@@ -6,7 +6,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 
 # 套用 AgentWorkFlow（init-workflow）
 
-模版只管工作流程（plan → design → build → test → deliver → merge 與閘門）；開發規範與慣例由使用者決定，寫進專案的開發規範 profile（`.claude/teams/methodology.json`）。所以**先問使用者的習慣，再寫設定**，不要直接套預設值。
+模版只管工作流程（plan → design → build → sync → test → deliver → merge 與閘門）；開發規範與慣例由使用者決定，寫進專案的開發規範 profile（`.claude/teams/methodology.json`）。所以**先問使用者的習慣，再寫設定**，不要直接套預設值。
 
 使用者給的目標路徑：$ARGUMENTS（沒給就用目前工作目錄）。
 
@@ -37,6 +37,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 | code style | 用什麼工具、提交前跑什麼檢查指令 | 照 repo 既有設定 | `code_style` |
 | commit | commit 格式說明、範例、要不要用 regex 檢查標題 | 依 profile | `commit` |
 | 分支 | epic 與子任務分支的前綴 | `feature/` | `branch_prefix` |
+| 跟上 main | 分支落後 main 時怎麼跟上：`auto`（依情況選 rebase、merge 或中轉分支）、固定 `rebase`、`merge` 或 `transit` | `auto` | `sync_strategy` |
 | PR 大小 | 上限行數、檔案數（可以不限） | 依 profile | `pr_size` |
 | 文件格式 | specs 等文件用什麼格式 | `Markdown` | `doc_format` |
 | 需求來源 | 需求從哪裡來（spec 檔、需求 JSON、issue 轉出的指令），merge 段的 gate 也用它 | 依 profile | `requirements` |
@@ -61,6 +62,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 - `pr_size` 的值寫 `null` 或 `0` 表示不限，deliver 段就不檢查 PR 大小。
 - 要改 profile 其他欄位（例如某一段的指引文字）用 `overrides`，內容會深層合併進 profile。
 - 分支前綴會同時改 `BRANCH_PREFIX`，並加進 `ALLOWED_BRANCH_PREFIXES`。
+- `sync_strategy` 是 `auto` 或 `transit` 時會用到中轉分支（預設前綴 `merge/`），`ALLOWED_BRANCH_PREFIXES` 要保留它。
 
 ## 5. 跑 init
 `python3 <模版根目錄>/init.py --target <目標專案> --config <目標專案>/workflow.config --answers <答案檔>`（Windows 用 `py -3` 或 `python`）。執行前把指令列給使用者看。可選參數：

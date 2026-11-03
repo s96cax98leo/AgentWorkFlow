@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-deliver',
   description: 'AI-native SDLC 第 5 段 Deploy：四軸平行審查 → 每則發現由 skeptic 反駁 → 只留信心 ≥0.8 且未被推翻的 → 寫 PR 說明草稿與執行紀錄；推送與開 PR 由使用者決定',
-  whenToUse: 'sdlc-test 的結果確認之後',
+  whenToUse: 'sdlc-test 的結果確認之後；sdlc-sync 走了中轉分支時 args 加 branch（中轉分支名）',
   phases: [
     { title: 'Review', detail: 'dev-pr-reviewer 四軸平行（standards、spec、bugs、history）' },
     { title: 'Verify', detail: 'tpm-skeptic 逐則反駁' },
@@ -36,8 +36,10 @@ const COMMIT = CONV.commit || {}
 const A = args || {}
 for (const k of ['repo', 'epic', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
+// sdlc-sync 走中轉分支後 head 換成中轉分支，用 args.branch 帶進來
+const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const BASE = A.base || 'origin/main'
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 {{BRANCH_PREFIX}}${A.epic}，基準 ${BASE}）\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。只留建議：不 approve、不 merge、不 comment、不 push。\n${METH_NOTE}${STAGE.guidance ? `\nprofile 的 deliver 指引：${STAGE.guidance}` : ''}` +
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，基準 ${BASE}）\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。只留建議：不 approve、不 merge、不 comment、不 push。\n${METH_NOTE}${STAGE.guidance ? `\nprofile 的 deliver 指引：${STAGE.guidance}` : ''}` +
   `\n派工來源：這張派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置這張派工單；派工單本身有疑義時才用 open_questions 回報。` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 
@@ -86,7 +88,7 @@ log(`保留 ${kept.length} 則；被 skeptic 推翻 ${dropped} 則`)
 
 phase('Write')
 const docs = await agent(
-  `${CTX}\n\n## 派工單\n1. 照目標 repo 的 .github/pull_request_template.md 寫 PR 說明草稿到 ${A.run_dir}/pr-description.md（驗證欄引用 specs/${A.epic}/verifier.md）。\n2. 寫執行紀錄到 ${A.run_dir}/執行紀錄.md（產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作（不編號））。\n3. 審查發現（已通過 skeptic）：${JSON.stringify(kept)}\n4. 兩份都跑 python3 .claude/teams/tools/check_rules.py，並對 ${A.repo} 跑 --git ${A.repo} ${BASE}..{{BRANCH_PREFIX}}${A.epic} 檢查 commit（署名行${COMMIT.check_regex ? '，以及 profile 的 commit 標題格式' : ''}），修到通過；commit 不符時只回報，不改寫歷史。payload 用 docs，rule_check 填結果。`,
+  `${CTX}\n\n## 派工單\n1. 照目標 repo 的 .github/pull_request_template.md 寫 PR 說明草稿到 ${A.run_dir}/pr-description.md（驗證欄引用 specs/${A.epic}/verifier.md）。\n2. 寫執行紀錄到 ${A.run_dir}/執行紀錄.md（產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作（不編號））。\n3. 審查發現（已通過 skeptic）：${JSON.stringify(kept)}\n4. 兩份都跑 python3 .claude/teams/tools/check_rules.py，並對 ${A.repo} 跑 --git ${A.repo} ${BASE}..${BRANCH} 檢查 commit（署名行${COMMIT.check_regex ? '，以及 profile 的 commit 標題格式' : ''}），修到通過；commit 不符時只回報，不改寫歷史。payload 用 docs，rule_check 填結果。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
 )
 

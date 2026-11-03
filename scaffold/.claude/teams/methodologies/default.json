@@ -59,7 +59,11 @@
     },
     "branch": {
       "prefix": "feature/",
-      "naming": "epic 分支 <prefix><epic>；子任務分支 <prefix><epic>--<子任務 id>；解衝突用 merge/<短名>-into-<整合分支>-<YYYYMMDD>。"
+      "naming": "epic 分支 <prefix><epic>；子任務分支 <prefix><epic>--<子任務 id>；子任務合進整合分支有衝突時用 merge/<短名>-into-<整合分支>-<YYYYMMDD>。"
+    },
+    "sync": {
+      "strategy": "auto",
+      "transit_naming": "merge/<短名>-into-<base>-<YYYYMMDD>"
     },
     "pr_size": {
       "max_lines": 300,

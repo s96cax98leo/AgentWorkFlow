@@ -155,6 +155,15 @@
             "format": {"type": "string", "minLength": 1},
             "notes": {"type": "string"}
           }
+        },
+        "sync": {
+          "type": "object",
+          "description": "選填：分支怎麼跟上 base（sdlc-sync 與 sync_branch.py 讀它）。沒寫＝auto",
+          "properties": {
+            "strategy": {"enum": ["auto", "rebase", "merge", "transit"], "description": "auto＝已跟上不動；未推送且無衝突 rebase；已推送且無衝突把 base merge 進來；有衝突走中轉分支。固定值遇到做不到的情況一律停下交人"},
+            "transit_naming": {"type": "string", "minLength": 1, "description": "中轉分支命名，可用 <短名>、<base>、<YYYYMMDD>；前綴要在 guard.config 的 allowed_branch_prefixes 裡"}
+          },
+          "additionalProperties": false
         }
       }
     }

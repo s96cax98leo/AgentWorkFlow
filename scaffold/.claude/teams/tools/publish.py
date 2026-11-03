@@ -12,13 +12,14 @@ hook 會擋 tpm-*／dev-* 執行這支；主 session 呼叫時 hook 只看到「
   4. 依政策判定能不能推：--run 的 run.json 裡該段（預設 deliver）要 done 且已核准，前面有閘門的段也都要已核准；
      核准是 --by policy 時，重跑 save_run.policy_violations 讀該段實際結果，有任何違規就拒絕。
   5. git push <remote> refs/heads/<分支>:refs/heads/<分支>，再 gh pr create --repo <fork>。
+     有 --supersedes N 時，PR 說明末尾加一行「取代 #N」；舊 PR 由人關閉，本工具不執行 gh pr close。
   6. 每次執行（含拒絕、dry-run）append 一行到 <runs_dir>/publish-audit.jsonl。
 
 用法（在已 init 的專案根目錄）：
   python3 .claude/teams/tools/publish.py push --repo-dir <目標 repo 目錄> --branch feature/x \\
       --run <run_dir> --title "<PR 標題>" --body-file <PR 說明檔> \\
       [--base main] [--remote origin] [--stage deliver] [--draft] [--no-pr] [--dry-run] \\
-      [--secrets-file <機敏值清單，一行一個>] [--project-dir <專案根>]
+      [--secrets-file <機敏值清單，一行一個>] [--supersedes <舊 PR 編號>] [--project-dir <專案根>]
   python3 .claude/teams/tools/publish.py --selftest     # 用假的 git push 與 gh，不連網、不真的推送
 
 結束碼：0＝已推送（或 dry-run 檢查全過）；1＝拒絕或推送／開 PR 失敗；2＝參數錯誤。
@@ -206,6 +207,20 @@ def check_policy(run_dir: Path | None, stage: str) -> str:
 
 
 # ------------------------------------------------------------------ 主流程
+def supersedes_line(n: int) -> str:
+    return f"取代 #{n}（原 PR 由人關閉；本工具不關閉）"
+
+
+def positive_int(v: str) -> int:
+    try:
+        n = int(v)
+    except ValueError:
+        n = 0
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"要是正整數：{v!r}")
+    return n
+
+
 def append_audit(proj: Path, cfg: dict, rec: dict) -> Path:
     d = Path(cfg["runs_dir"])
     path = (d if d.is_absolute() else proj / d) / "publish-audit.jsonl"
@@ -222,7 +237,8 @@ def publish(a: argparse.Namespace) -> tuple[int, dict]:
     run_dir = Path(a.run).resolve() if a.run else None
     rec = {"timestamp": a.timestamp or datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "repo": cfg["fork_repo"], "branch": a.branch, "base": a.base, "head_sha": "", "run": str(run_dir or ""),
-           "stage": a.stage, "decision": "refused", "reasons": [], "pr_url": "", "dry_run": bool(a.dry_run)}
+           "stage": a.stage, "decision": "refused", "reasons": [], "pr_url": "", "dry_run": bool(a.dry_run),
+           "supersedes": getattr(a, "supersedes", None)}
     code = 1
     try:
         check_target(cfg, a.branch, a.base)
@@ -261,11 +277,24 @@ def publish(a: argparse.Namespace) -> tuple[int, dict]:
                 raise Refused(f"git push 失敗：{p.stderr.strip()[-300:]}")
             rec["decision"] = "pushed"
             if not a.no_pr:
+                body_file = Path(a.body_file).resolve()
+                tmp_body = None
+                if rec["supersedes"]:
+                    text = body_file.read_text(encoding="utf-8").rstrip("\n")
+                    text += f"\n\n{supersedes_line(rec['supersedes'])}\n"
+                    fd, name = tempfile.mkstemp(prefix="publish-body-", suffix=".md")
+                    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(text)
+                    tmp_body = body_file = Path(name)
                 argv = [*GH, "pr", "create", "--repo", cfg["fork_repo"], "--base", a.base, "--head", a.branch,
-                        "--title", a.title, "--body-file", str(Path(a.body_file).resolve())]
+                        "--title", a.title, "--body-file", str(body_file)]
                 if a.draft:
                     argv.append("--draft")
-                g = run(argv, cwd=repo)
+                try:
+                    g = run(argv, cwd=repo)
+                finally:
+                    if tmp_body:
+                        tmp_body.unlink(missing_ok=True)
                 if g.returncode:
                     raise Refused(f"已推送，但 gh pr create 失敗：{g.stderr.strip()[-300:]}")
                 rec["pr_url"] = (g.stdout.strip().splitlines() or [""])[-1]
@@ -287,7 +316,11 @@ if "push" in args:
 sys.exit(subprocess.run(["git", *args]).returncode)
 '''
 FAKE_GH = r'''import sys
-open(sys.argv[0] + ".log", "a", encoding="utf-8").write(" ".join(sys.argv[1:]) + "\n")
+args = sys.argv[1:]
+open(sys.argv[0] + ".log", "a", encoding="utf-8").write(" ".join(args) + "\n")
+if "--body-file" in args:
+    body = open(args[args.index("--body-file") + 1], encoding="utf-8").read()
+    open(sys.argv[0] + ".body", "w", encoding="utf-8").write(body)
 print("https://github.com/acme-fork/app/pull/7")
 '''
 
@@ -373,7 +406,8 @@ def _selftest() -> int:
             nonlocal ok
             args = {"repo_dir": str(repo), "branch": "feature/export", "run": str(good_run), "title": "docs: 匯出說明",
                     "body_file": str(body), "base": "main", "remote": "origin", "stage": "deliver", "draft": False,
-                    "no_pr": False, "dry_run": False, "secrets_file": None, "project_dir": str(proj), "timestamp": "2026-10-24T09:00:00+00:00"}
+                    "no_pr": False, "dry_run": False, "secrets_file": None, "supersedes": None, "project_dir": str(proj),
+                    "timestamp": "2026-10-24T09:00:00+00:00"}
             args.update(kw)
             code, rec = publish(argparse.Namespace(**args))
             good = rec["decision"] == want and (code == 0) == (want in ("published", "dry-run", "pushed"))
@@ -397,6 +431,14 @@ def _selftest() -> int:
                 and "pr create --repo acme-fork/app" in ghlog and rec["pr_url"].endswith("/pull/7"))
         print(f"  [{'通過' if good else '失敗'}] push 只推該分支、不 force；gh pr create 明確寫 --repo fork")
         ok = ok and good
+        Path(str(fh) + ".log").unlink(missing_ok=True)
+        rec = case("--supersedes 12 → 推送並開 PR", "published", supersedes=12)
+        ghlog = Path(str(fh) + ".log").read_text(encoding="utf-8")
+        sent = Path(str(fh) + ".body").read_text(encoding="utf-8")
+        good = ("取代 #12" in sent and sent.startswith("示範 PR 說明") and "pr close" not in ghlog
+                and str(body) not in ghlog and rec["supersedes"] == 12 and "取代" not in body.read_text(encoding="utf-8"))
+        print(f"  [{'通過' if good else '失敗'}] PR 說明含「取代 #12」、原說明檔不動、沒有執行 gh pr close")
+        ok = ok and good
         case("推到受保護分支 main → 拒絕", "refused", branch="main")
         case("分支前綴不合規（wip/）→ 拒絕", "refused", branch="wip/x")
         case("remote 指向上游 → 拒絕", "refused", remote="upstream")
@@ -417,7 +459,7 @@ def _selftest() -> int:
         audit = proj / "_tpm/runs/publish-audit.jsonl"
         recs = [json.loads(l) for l in audit.read_text(encoding="utf-8").splitlines() if l.strip()]
         need = {"timestamp", "repo", "branch", "base", "head_sha", "run", "stage", "decision", "reasons", "pr_url"}
-        good = len(recs) == 11 and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
+        good = len(recs) == 12 and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
         print(f"  [{'通過' if good else '失敗'}] publish-audit.jsonl 每次執行都有一行、欄位齊全（{len(recs)} 行）")
         ok = ok and good
     GIT, GH = ["git"], ["gh"]
@@ -449,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--no-pr", action="store_true", help="只推分支，不開 PR")
     c.add_argument("--dry-run", action="store_true", help="只做檢查，不推送、不開 PR")
     c.add_argument("--secrets-file", help="機敏值清單（一行一個，逐字比對；只報有／沒有）")
+    c.add_argument("--supersedes", type=positive_int, help="這個 PR 取代的舊 PR 編號；只在說明加一行，不關閉舊 PR")
     c.add_argument("--project-dir", help="專案根目錄（預設 CLAUDE_PROJECT_DIR，或本檔所在專案）")
     c.add_argument("--timestamp", help="ISO 8601；預設系統時間（UTC）")
     a = p.parse_args(argv)

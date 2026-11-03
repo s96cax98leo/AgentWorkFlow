@@ -2,7 +2,7 @@
 
 AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以套用到任何專案。它只規定**工作流程**：怎麼拆工、怎麼平行處理、在哪裡停下來讓人核准、用什麼格式交件、誰能合併 PR。開發規範（TDD、DDD、spec 驅動……）和慣例（code style、commit 格式、分支命名、PR 大小、文件格式）都由使用者自己定義。
 
-- **AI-native SDLC**：開發需求依序走 plan → design → build → test → deliver → merge 六段。前四段之間有核准閘門；計劃太大會拆成子計劃平行規劃，沒有相依的子任務會平行實作與驗證，最後再合併。
+- **AI-native SDLC**：開發需求依序走 plan → design → build → sync → test → deliver → merge 七段。plan、design、test、deliver 之後有核准閘門；sync 會依情況選 rebase、merge 或中轉分支讓分支跟上 main；計劃太大會拆成子計劃平行規劃，沒有相依的子任務會平行實作與驗證，最後再合併。
 - **可信任的合併 agent**：`dev-merge-steward` 逐條對照需求與驗證證據，一致而且確定性 gate 通過才合併；不一致就開新需求、退回 PR。這個功能預設關閉。
 - **事件處理**：簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看，各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
@@ -104,6 +104,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | 1 plan | `sdlc-plan` | 4 個 researcher 平行調研，spec-author 寫 `intent.md`，skeptic 挑錯 | 閘門：核准 intent |
 | 2 design | `sdlc-design` | 先出大綱判斷規模；太大就拆成子計劃，由多個 spec-author 平行規劃再彙整。產出 spec、plan、子任務與檔案所有權，skeptic 平行檢查一致性 | 閘門：核准 spec＋plan（要修改時走 `sdlc-design-revise`） |
 | 3 build | `sdlc-build` | 依 profile 決定先寫測試或後補測試；子任務依相依分層，同一層各自開 worktree 平行實作，每層由 integrator 合併 | 中斷時交人 |
+| 3.5 sync | `sdlc-sync` | `sync_branch.py` 決定怎麼跟上 main：已跟上不動；沒推送過且沒衝突用 rebase；已推送且沒衝突把 main merge 進來；有衝突從 main 開中轉分支，在上面解衝突，之後開 PR 取代原 PR。策略可在 profile 的 `conventions.sync` 固定 | 中斷時交人；head 變了就由 test 重新驗證 |
 | 4 test | `sdlc-test` | verifier 逐條驗收並做反作弊檢查（有子計劃時分片平行驗證），視需要加設計與安全審查；失敗就修正，最多 2 輪，可平行修正 | 閘門：確認驗證結果 |
 | 5 deliver | `sdlc-deliver` | 從四個面向審查 PR，skeptic 逐則反駁，寫 PR 說明草稿與執行紀錄 | 閘門：推送、開 PR 由你當下決定 |
 | 6 merge | `sdlc-merge` | 啟用 auto_merge 時，steward 對照需求與證據，`merge_gate.py` 判定能不能合併 | 合併後跑 `event-post-merge` 監看 |
@@ -150,7 +151,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 
 | 你說的 | workflow 或 skill | 必要參數 |
 |---|---|---|
-| `/sdlc <需求>`、開發、實作 | `sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge` | repo、epic、requirement、base、run_dir |
+| `/sdlc <需求>`、開發、實作 | `sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge` | repo、epic、requirement、base、run_dir |
 | `/brief <簡報>`、照任務單做 | `event-brief`（程式子任務轉進 SDLC） | brief、run_dir |
 | 上游有新 PR、main 前進、CI 紅了 | `event-upstream` | what、repo、run_dir |
 | 整理會議、逐字稿 | `event-meeting` | source、run_dir |
@@ -158,6 +159,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | 需求更新了 | `event-reqs-change` | change、run_dir |
 | 某某決定了、定案 | `event-decision` | decision、run_dir |
 | `/demo-check`、demo 前、彩排 | `event-demo-check` | target、run_dir |
+| 分支落後 main、PR 有衝突 | `sdlc-sync` | repo、epic、run_dir |
 | 合併這個 PR | `sdlc-merge` | repo、pr、run_dir |
 | 合併後 main 紅了 | `event-post-merge` | repo、run_dir |
 | `/add-agent`、加我自己的 agent | `add-agent` skill | — |
