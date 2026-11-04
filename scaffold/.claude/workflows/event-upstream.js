@@ -20,8 +20,47 @@ const A = args || {}
 for (const k of ['what', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `事件：${A.what}\n我方 fork：${A.repo}\nrun 目錄：${A.run_dir}\n全程唯讀：不對上游做任何寫入，不切換 fork 主工作目錄的分支（用 git fetch 到唯讀 ref、git merge-tree 預測）。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 // 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。
+// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
+// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留），同一 target_id 只要有一則 refuted 就算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const anyRefuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !anyRefuted.has(i.id)
+    : (i) => last.has(i.id) && !last.get(i.id).refuted
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
 const missing = []
-const halt = (stage, extra = {}) => ({ event: 'upstream', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
+const halt = (stage, extra = {}) => haltMissing({ event: 'upstream' }, stage, missing, extra)
 // 規則 12：給決策者的文件要過 check_rules --audience owner；writer 沒回報或沒過就 halted 交人
 const ruleCheck = (d) => {
   const rc = String(d.payload.rule_check || '').trim()
@@ -57,13 +96,11 @@ analyzed.forEach((r, i) => {
 if (missing.length) return halt('analyze', { before, claims })
 
 phase('Challenge')
-const challenge = claims.length ? await agent(`${CTX}\n\n## 派工單\n逐則反駁（重跑唯讀指令查證），不確定判 refuted=true。每則都要判，target_id 照抄發現的 id（含角度前綴，例如 conflict:f1）：\n${JSON.stringify(claims)}`,
-  { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-if (claims.length && !challenge) { missing.push('challenge'); return halt('challenge', { before, claims }) }
+const judged = await challengeList(claims, { prompt: `${CTX}\n\n## 派工單\n逐則反駁（重跑唯讀指令查證），不確定判 refuted=true。每則都要判，target_id 照抄發現的 id（含角度前綴，例如 conflict:f1）：\n${JSON.stringify(claims)}`,
+  agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing })
+if (judged.lacking) return halt('challenge', { before, claims })
 // skeptic 沒判到的發現當成未驗證，和被推翻的一起列「未能確認」
-const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
-const kept = claims.filter((f) => v.has(f.id) && !v.get(f.id).refuted)
-const doubted = claims.filter((f) => !v.has(f.id) || v.get(f.id).refuted)
+const { challenge, kept, doubted } = judged
 
 phase('Write')
 const after = await snap('after')

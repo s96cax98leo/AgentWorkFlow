@@ -25,8 +25,83 @@ for (const k of ['brief', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`
 const CTX = `簡報（唯一指示來源）：${A.brief}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}＋簡報 §1。不自編任務編號；衍生工作放 derived_work。`
 const brief = (e) => e ? JSON.stringify({ status: e.status, summary: e.summary, artifacts: e.artifacts, open_questions: e.open_questions }) : 'null'
 // 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。
+// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
+// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留），同一 target_id 只要有一則 refuted 就算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const anyRefuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !anyRefuted.has(i.id)
+    : (i) => last.has(i.id) && !last.get(i.id).refuted
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
+/*@snippet:layers*/
+// ── 片段 layers（.claude/teams/tools/snippets/layers.js）：依 depends_on 把子任務拓撲分層 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 碰到循環或指向不存在的子任務就停下：回傳的 cycle／unknown 不是空的，呼叫端要停（throw 或回 halted:true）。
+// 這裡不派 agent，所以沒有 agent 缺件（missing）的問題；缺的是相依目標時列在 unknown。
+
+// 指向 known（預設是 items 自己的 id）以外的相依，回 ['<子任務>→<相依>', …]
+function unknownDeps(items, known) {
+  const ids = known || new Set(items.map((s) => s.id))
+  return items.flatMap((s) => (s.depends_on || []).filter((d) => !ids.has(d)).map((d) => `${s.id}→${d}`))
+}
+
+// 分層：同一層的子任務彼此沒有相依，可以平行。
+// o.satisfied：一開始就算已完成的 id（例如測試先行時已先做完的 test 子任務）。
+// o.known：算「存在」的 id（預設 items 自己的 id）。
+// o.ignoreUnknown＝true：指向 known 以外的相依直接忽略（不算缺項）；否則先列在 unknown 並停下。
+// 回 { layers, unknown, cycle }：unknown 是 '<子任務>→<相依>'，cycle 是排不進任何一層的子任務 id。
+function layerByDeps(items, o = {}) {
+  const known = o.known || new Set(items.map((s) => s.id))
+  const done = new Set(o.satisfied || [])
+  if (!o.ignoreUnknown) {
+    const unknown = unknownDeps(items, new Set([...known, ...done]))
+    if (unknown.length) return { layers: [], unknown, cycle: [] }
+  }
+  const layers = []
+  let rest = items.slice()
+  while (rest.length) {
+    const ready = rest.filter((s) => (s.depends_on || []).every((d) => done.has(d) || (o.ignoreUnknown && !known.has(d))))
+    if (!ready.length) return { layers, unknown: [], cycle: rest.map((s) => s.id) }
+    layers.push(ready)
+    ready.forEach((s) => done.add(s.id))
+    rest = rest.filter((s) => !ready.includes(s))
+  }
+  return { layers, unknown: [], cycle: [] }
+}
+/*@end*/
 const missing = []
-const halt = (stage, extra = {}) => ({ event: 'brief', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
+const halt = (stage, extra = {}) => haltMissing({ event: 'brief' }, stage, missing, extra)
 // 寫程式的子任務（code、test）轉 SDLC，本 workflow 不實作；和 tpm-planner 的 kind 定義一致
 const SDLC_KINDS = ['code', 'test']
 
@@ -38,7 +113,7 @@ if (plan.status !== 'done') return { event: 'brief', stage: 'plan', halted: true
 
 const subtasks = plan.payload.subtasks || []
 const ids = new Set(subtasks.map((s) => s.id))
-const unknown = subtasks.flatMap((s) => (s.depends_on || []).filter((d) => !ids.has(d)).map((d) => `${s.id}→${d}`))
+const unknown = unknownDeps(subtasks, ids)
 if (unknown.length) return { event: 'brief', stage: 'plan', halted: true, halt_reason: `相依指向不存在的子任務：${unknown.join('、')}`, plan }
 const toSdlc = subtasks.filter((s) => SDLC_KINDS.includes(s.kind))
 const sdlcIds = new Set(toSdlc.map((s) => s.id))
@@ -51,14 +126,9 @@ for (let changed = true; changed;) {
 }
 const waiting = work.filter((s) => waitIds.has(s.id))
 const runnable = work.filter((s) => !waitIds.has(s.id))
-const done = new Set()
-const layers = []
-let rest = runnable.slice()
-while (rest.length) {
-  const ready = rest.filter((s) => (s.depends_on || []).every((d) => done.has(d)))
-  if (!ready.length) throw new Error(`相依有循環：${rest.map((s) => s.id).join('、')}`)
-  layers.push(ready); ready.forEach((s) => done.add(s.id)); rest = rest.filter((s) => !ready.includes(s))
-}
+// 依相依分層（layers 片段）：runnable 的相依都在 runnable 裡，排不進任何一層就是循環
+const { layers, cycle } = layerByDeps(runnable, { known: ids })
+if (cycle.length) throw new Error(`相依有循環：${cycle.join('、')}`)
 log(`子任務 ${subtasks.length} 個：轉 SDLC ${toSdlc.length}、等 SDLC ${waiting.length}、本流程分 ${layers.length} 層`)
 
 // 上游相關的子任務：tpm-researcher 用上游模式（merge-tree 衝突預測、影響範圍、時間線）
@@ -84,12 +154,12 @@ for (const layer of layers) {
 }
 
 phase('Challenge')
-const challenge = claims.length ? await agent(`${CTX}\n\n## 派工單\n逐則試著反駁下列發現（打開 location 查證），不確定就判 refuted=true。每則都要判，target_id 照抄發現的 id（含子任務前綴）：\n${JSON.stringify(claims)}`,
-  { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-if (claims.length && !challenge) { missing.push('challenge'); return halt('challenge', { plan, to_sdlc: toSdlc, waiting, results }) }
+const judged = await challengeList(claims, { prompt: `${CTX}\n\n## 派工單\n逐則試著反駁下列發現（打開 location 查證），不確定就判 refuted=true。每則都要判，target_id 照抄發現的 id（含子任務前綴）：\n${JSON.stringify(claims)}`,
+  agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing })
+if (judged.lacking) return halt('challenge', { plan, to_sdlc: toSdlc, waiting, results })
+const challenge = judged.challenge
 // skeptic 沒判到的發現當成未驗證，和被推翻的一起列「未能確認」
-const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
-const refuted = claims.filter((f) => !v.has(f.id) || v.get(f.id).refuted).map((f) => f.id)
+const refuted = judged.doubted.map((f) => f.id)
 
 phase('Write')
 const docs = await agent(`${CTX}\n\n## 派工單\n依簡報 §3 指定的產出路徑寫文件（通常是給決策者版、research 版、執行紀錄三件套；執行紀錄照 {{BRIEFS_DIR}}/*_執行紀錄.md 的格式，沒有就用：產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作）。只用未被推翻的發現；被推翻或沒被驗證的列在「未能確認」。轉 SDLC 的子任務列在執行紀錄並說明下一步；等 SDLC 的子任務列為「等待中」，寫明要等哪些 SDLC 子任務完成後再跑。每份跑 check_rules.py（給決策者的加 --audience owner）。\n子任務：${JSON.stringify(subtasks)}\n等 SDLC：${JSON.stringify(waiting.map((s) => s.id))}\n結果：${results.map(brief).join('\n')}\n未能確認：${JSON.stringify(refuted)}\npayload 用 docs。`,

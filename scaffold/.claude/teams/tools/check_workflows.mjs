@@ -130,6 +130,7 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
     if (meta && meta.name !== f.replace(/\.js$/, '')) errs.push(`meta.name「${meta.name}」與檔名不同`)
   }
   if (/@schema:[a-z-]+\*\/\s*null/.test(src)) errs.push('schema 尚未內嵌（請跑 build.py）')
+  if (/@snippet:[a-z0-9-]+\*\/\s*\/\*@end\*\//.test(src)) errs.push('片段尚未內嵌（請跑 build.py）')
   if (/Date\.now\(\)|Math\.random\(\)|new Date\(\)/.test(src)) errs.push('不能用 Date.now()／Math.random()／new Date()')
   const titles = new Set((meta && meta.phases || []).map((p) => p.title))
   let agents = 0

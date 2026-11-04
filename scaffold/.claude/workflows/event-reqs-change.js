@@ -16,13 +16,47 @@ const A = args || {}
 for (const k of ['change', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `需求變動：${A.change}\n目標 repo：${A.repo || '{{REPOS_DIR}}（見 rules.md 的專案規則）'}\nrun 目錄：${A.run_dir}\n只讀（需求來源永遠唯讀）。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 // 規則 26：agent 沒交件記為 missing，不當成「沒有差異」或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
-const missing = []
-const halt = (stage, extra = {}) => ({ event: 'reqs-change', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
-// skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑
-const judge = (list, challenge) => {
-  const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
-  return { kept: list.filter((i) => v.has(i.id) && !v.get(i.id).refuted), doubted: list.filter((i) => !v.has(i.id) || v.get(i.id).refuted) }
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
 }
+
+// 把 verdicts（target_id 對事項 id）對回 list。
+// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
+// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留），同一 target_id 只要有一則 refuted 就算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const anyRefuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !anyRefuted.has(i.id)
+    : (i) => last.has(i.id) && !last.get(i.id).refuted
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
+const missing = []
+const halt = (stage, extra = {}) => haltMissing({ event: 'reqs-change' }, stage, missing, extra)
 
 phase('Diff')
 const diff = await agent(`${CTX}\n\n## 派工單\n逐條列出新增、修改、刪除的需求（Story ID、欄位、舊值、新值），type=change。payload 用 items。`,
@@ -50,10 +84,11 @@ impact.forEach((r, i) => {
 if (missing.length) return halt('impact', { changes, impact: items })
 
 phase('Challenge')
-const challenge = items.length ? await agent(`${CTX}\n\n## 派工單\n逐項反駁（打開 target_files 查證），不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 specs:i1）：\n${JSON.stringify(items)}`,
-  { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-if (items.length && !challenge) { missing.push('challenge'); return halt('challenge', { changes, impact: items }) }
-const { kept, doubted } = judge(items, challenge)
+// skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑（challenge 片段）
+const judged = await challengeList(items, { prompt: `${CTX}\n\n## 派工單\n逐項反駁（打開 target_files 查證），不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 specs:i1）：\n${JSON.stringify(items)}`,
+  agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing })
+if (judged.lacking) return halt('challenge', { changes, impact: items })
+const { kept, doubted } = judged
 
 phase('Write')
 const docs = await agent(`${CTX}\n\n## 派工單\n寫影響清單 ${A.run_dir}/impact.md（變動 → 受影響檔案 → 建議動作；被推翻或沒被驗證的另列存疑）。需要開發的，在 ${A.run_dir}/intent-draft-<短名>.md 起草 intent 草稿交 SDLC（Maintain → Plan）。跑 check_rules.py。\n變動：${JSON.stringify(changes)}\n影響：${JSON.stringify(kept)}\n存疑：${JSON.stringify(doubted)}\npayload 用 docs。`,

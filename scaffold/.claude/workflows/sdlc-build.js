@@ -54,16 +54,45 @@ if (skipped.length) log(`不屬於 Build 的子任務不處理：${skipped.map((
 
 // 依相依分層。測試先行：test 子任務在 Red 先做完，視為已滿足；
 // 不測試先行：test 子任務排在實作之後（Tests），code 子任務對 test 子任務的相依一律忽略
-const done = new Set(tests.map((s) => s.id))
-const layers = []
-let rest = work.slice()
-while (rest.length) {
-  const ready = rest.filter((s) => (s.depends_on || []).every((d) => done.has(d) || !ids.has(d)))
-  if (!ready.length) throw new Error(`子任務相依有循環或缺項：${rest.map((s) => s.id).join('、')}`)
-  layers.push(ready)
-  ready.forEach((s) => done.add(s.id))
-  rest = rest.filter((s) => !ready.includes(s))
+/*@snippet:layers*/
+// ── 片段 layers（.claude/teams/tools/snippets/layers.js）：依 depends_on 把子任務拓撲分層 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 碰到循環或指向不存在的子任務就停下：回傳的 cycle／unknown 不是空的，呼叫端要停（throw 或回 halted:true）。
+// 這裡不派 agent，所以沒有 agent 缺件（missing）的問題；缺的是相依目標時列在 unknown。
+
+// 指向 known（預設是 items 自己的 id）以外的相依，回 ['<子任務>→<相依>', …]
+function unknownDeps(items, known) {
+  const ids = known || new Set(items.map((s) => s.id))
+  return items.flatMap((s) => (s.depends_on || []).filter((d) => !ids.has(d)).map((d) => `${s.id}→${d}`))
 }
+
+// 分層：同一層的子任務彼此沒有相依，可以平行。
+// o.satisfied：一開始就算已完成的 id（例如測試先行時已先做完的 test 子任務）。
+// o.known：算「存在」的 id（預設 items 自己的 id）。
+// o.ignoreUnknown＝true：指向 known 以外的相依直接忽略（不算缺項）；否則先列在 unknown 並停下。
+// 回 { layers, unknown, cycle }：unknown 是 '<子任務>→<相依>'，cycle 是排不進任何一層的子任務 id。
+function layerByDeps(items, o = {}) {
+  const known = o.known || new Set(items.map((s) => s.id))
+  const done = new Set(o.satisfied || [])
+  if (!o.ignoreUnknown) {
+    const unknown = unknownDeps(items, new Set([...known, ...done]))
+    if (unknown.length) return { layers: [], unknown, cycle: [] }
+  }
+  const layers = []
+  let rest = items.slice()
+  while (rest.length) {
+    const ready = rest.filter((s) => (s.depends_on || []).every((d) => done.has(d) || (o.ignoreUnknown && !known.has(d))))
+    if (!ready.length) return { layers, unknown: [], cycle: rest.map((s) => s.id) }
+    layers.push(ready)
+    ready.forEach((s) => done.add(s.id))
+    rest = rest.filter((s) => !ready.includes(s))
+  }
+  return { layers, unknown: [], cycle: [] }
+}
+/*@end*/
+// 指向清單外的相依忽略（ignoreUnknown，沿用原本做法）；指向不屬於 Build 的子任務會排不進任何一層，算缺項停下
+const { layers, cycle } = layerByDeps(work, { satisfied: tests.map((s) => s.id), known: ids, ignoreUnknown: true })
+if (cycle.length) throw new Error(`子任務相依有循環或缺項：${cycle.join('、')}`)
 log(`${TEST_FIRST ? 'Red（測試先行）' : 'Tests（實作後補驗證測試）'} ${tests.length} 個；實作分 ${layers.length} 層：${layers.map((l) => l.map((s) => s.id).join('+')).join(' → ')}`)
 
 const taskBrief = (s) => `子任務 ${s.id}「${s.title}」\n擁有（只能改）：${(s.owns || []).join('、')}\n完成條件：${(s.acceptance || []).join('；')}\nStory：${(s.story_ids || []).join('、') || '見 spec'}`

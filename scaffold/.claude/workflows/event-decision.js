@@ -16,13 +16,47 @@ const A = args || {}
 for (const k of ['decision', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `決策：${A.decision}\nrun 目錄：${A.run_dir}\n只找、只建議：不直接改共用檔、不碰 guard.config.json 的 forbidden_paths。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 // 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
-const missing = []
-const halt = (stage, extra = {}) => ({ event: 'decision', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
-// skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑
-const judge = (list, challenge) => {
-  const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
-  return { kept: list.filter((i) => v.has(i.id) && !v.get(i.id).refuted), doubted: list.filter((i) => !v.has(i.id) || v.get(i.id).refuted) }
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
 }
+
+// 把 verdicts（target_id 對事項 id）對回 list。
+// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
+// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留），同一 target_id 只要有一則 refuted 就算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const anyRefuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !anyRefuted.has(i.id)
+    : (i) => last.has(i.id) && !last.get(i.id).refuted
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
+const missing = []
+const halt = (stage, extra = {}) => haltMissing({ event: 'decision' }, stage, missing, extra)
 // 規則 12：給決策者的文件要過 check_rules --audience owner；writer 沒回報或沒過就 halted 交人
 const ruleCheck = (d) => {
   const rc = String(d.payload.rule_check || '').trim()
@@ -51,10 +85,11 @@ found.forEach((r, i) => {
 if (missing.length) return halt('find', { items })
 
 phase('Challenge')
-const challenge = items.length ? await agent(`${CTX}\n\n## 派工單\n逐項反駁：真的受這個決策影響嗎？建議的改法有沒有超出決策範圍？不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 tpm-docs:i1）：\n${JSON.stringify(items)}`,
-  { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-if (items.length && !challenge) { missing.push('challenge'); return halt('challenge', { items }) }
-const { kept, doubted } = judge(items, challenge)
+// skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑（challenge 片段）
+const judged = await challengeList(items, { prompt: `${CTX}\n\n## 派工單\n逐項反駁：真的受這個決策影響嗎？建議的改法有沒有超出決策範圍？不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 tpm-docs:i1）：\n${JSON.stringify(items)}`,
+  agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing })
+if (judged.lacking) return halt('challenge', { items })
+const { kept, doubted } = judged
 
 phase('Write')
 const docs = await agent(`${CTX}\n\n## 派工單\n1. 寫待改清單 ${A.run_dir}/changes.md（依檔案分組：現況 → 建議 → 草稿），被推翻或沒被驗證的另列存疑；共用檔的修改要走目標 repo 的 {{BRANCH_PREFIX}}sdlc-* 分支，列為下一步由使用者決定。\n` +

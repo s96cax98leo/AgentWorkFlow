@@ -16,10 +16,94 @@ const A = args || {}
 for (const k of ['target', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const LENSES = A.lenses || ['standards', 'spec', 'bugs', 'security', 'design', 'history']
 const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 gh pr diff／git diff，不 approve、不 merge、不 comment。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
-const key = (f) => `${(f.location || '').replace(/:\d+.*/, '')}|${(f.claim || '').slice(0, 40)}`
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。
+// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
+// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留），同一 target_id 只要有一則 refuted 就算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const anyRefuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !anyRefuted.has(i.id)
+    : (i) => last.has(i.id) && !last.get(i.id).refuted
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
+/*@snippet:review-skeptic*/
+// @requires: challenge
+// ── 片段 review-skeptic（.claude/teams/tools/snippets/review-skeptic.js）：審查 agent 交 findings 後，派 skeptic 逐則反駁 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 用到 challenge 片段的 judgeVerdicts，引用本片段的 workflow 也要引用 challenge 片段。
+// 缺件（rules.md 規則 26）：審查或反駁的 agent 回 null 或交件無效時記進 missing（回傳的 missing 欄位是 label）；
+// 缺件不是「沒有發現」也不是「沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label。
+
+// 審查交件 → 信心 ≥ minConfidence（預設 0.8）的發現；prefix 有給時 id 改成 <prefix>:<id>（多批合併時 skeptic 的 target_id 才不會撞號）。
+// 缺件回 { fs: null, missing: label }，有給 missing 陣列時也記進去。
+function takeFindings(r, label, o = {}) {
+  if (!r || !r.payload) {
+    if (o.missing) o.missing.push(label)
+    return { fs: null, missing: label }
+  }
+  const min = o.minConfidence === undefined ? 0.8 : o.minConfidence
+  const fs = (r.payload.findings || []).filter((f) => f.confidence >= min).map((f) => (o.prefix ? { ...f, id: `${o.prefix}:${f.id}` } : f))
+  return { fs, missing: null }
+}
+
+// 派一個 skeptic 反駁一批發現；fs 是空的就不派。回 Promise<{ kept, dropped, missing }>，missing 是缺件的 label（沒缺件為 null）。
+// o：{ prompt, label, phase='Verify', agentType, schema, unansweredKept（見 judgeVerdicts）, keepOnMissing }
+// keepOnMissing＝true：反駁缺件時發現全部留在 kept（不能當成被推翻）；否則 kept 為空。兩種都要由呼叫端依 missing 停下。
+function verifyFindings(fs, o) {
+  if (!fs.length) return Promise.resolve({ kept: [], dropped: [], missing: null })
+  return agent(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema })
+    .then((v) => {
+      if (!v || !v.payload) return { kept: o.keepOnMissing ? fs : [], dropped: [], missing: o.label }
+      const j = judgeVerdicts(fs, v, { unansweredKept: o.unansweredKept })
+      return { kept: j.kept, dropped: j.doubted, missing: null }
+    })
+}
+
+// 多批反駁後的發現去重（同檔、同主張前 40 字算同一則），保留先出現的；每則加上 field 欄位（例如 lens、axis）標出來自哪一批。
+function dedupeFindings(groups, field) {
+  const seen = new Set()
+  const kept = []
+  for (const g of groups) {
+    for (const f of g.kept) {
+      const k = `${(f.location || '').replace(/:\d+.*/, '')}|${(f.claim || '').slice(0, 40)}`
+      if (!seen.has(k)) { seen.add(k); kept.push({ [field]: g[field], ...f }) }
+    }
+  }
+  return kept
+}
+/*@end*/
 // 規則 26：lens 沒交件不是「這個 lens 很乾淨」，skeptic 沒交件也不是「全部沒被推翻」；缺件一律 halted，halt_reason 寫出 label
 const missing = []
-const halt = (stage, extra = {}) => ({ event: 'pr-review', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
+const halt = (stage, extra = {}) => haltMissing({ event: 'pr-review' }, stage, missing, extra)
 
 phase('Review')
 const reviews = await parallel(LENSES.map((lens) => () => agent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 REVIEW.md 分級，每則附 file:line 與 0–1 信心，只列 ≥0.8。payload 用 findings（lens=${lens}）。`,
@@ -28,26 +112,26 @@ const reviews = await parallel(LENSES.map((lens) => () => agent(`${CTX}\n\n## �
 const batches = []
 reviews.forEach((r, i) => {
   const lens = LENSES[i]
-  if (!r) { missing.push(`review:${lens}`); return }
-  batches.push({ lens, fs: (r.payload.findings || []).filter((f) => f.confidence >= 0.8).map((f) => ({ ...f, id: `${lens}:${f.id}` })) })
+  const { fs } = takeFindings(r, `review:${lens}`, { prefix: lens, missing })
+  if (fs) batches.push({ lens, fs })
 })
 if (missing.length) return halt('review')
 
 phase('Verify')
 const toVerify = batches.filter((b) => b.fs.length)
-const verdicts = await parallel(toVerify.map((b) => () => agent(`${CTX}\n\n## 派工單\n逐則反駁 ${b.lens} 的發現（打開 location 看實際程式），不確定判 refuted=true。每則都要判，target_id 照抄發現的 id（含 lens 前綴）：\n${JSON.stringify(b.fs)}`,
-  { label: `verify:${b.lens}`, phase: 'Verify', agentType: NS + 'tpm-skeptic', schema: VERDICTS })))
+const verdicts = await parallel(toVerify.map((b) => () => verifyFindings(b.fs, {
+  prompt: `${CTX}\n\n## 派工單\n逐則反駁 ${b.lens} 的發現（打開 location 看實際程式），不確定判 refuted=true。每則都要判，target_id 照抄發現的 id（含 lens 前綴）：\n${JSON.stringify(b.fs)}`,
+  label: `verify:${b.lens}`, phase: 'Verify', agentType: NS + 'tpm-skeptic', schema: VERDICTS,
+})))
+// skeptic 沒判到的發現當成未驗證，不採納（review-skeptic 片段的預設）
 const reviewed = []
 toVerify.forEach((b, i) => {
-  const vr = verdicts[i]
-  if (!vr) { missing.push(`verify:${b.lens}`); return }
-  // skeptic 沒判到的發現當成未驗證，不採納
-  const v = new Map((vr.payload.verdicts || []).map((x) => [x.target_id, x]))
-  reviewed.push({ lens: b.lens, kept: b.fs.filter((f) => v.has(f.id) && !v.get(f.id).refuted), dropped: b.fs.filter((f) => !v.has(f.id) || v.get(f.id).refuted) })
+  const res = verdicts[i]
+  if (!res || res.missing) { missing.push(`verify:${b.lens}`); return }
+  reviewed.push({ lens: b.lens, kept: res.kept, dropped: res.dropped })
 })
 if (missing.length) return halt('verify')
-const seen = new Set(), kept = []
-for (const r of reviewed) for (const f of r.kept) { const k = key(f); if (!seen.has(k)) { seen.add(k); kept.push({ lens: r.lens, ...f }) } }
+const kept = dedupeFindings(reviewed, 'lens')
 log(`保留 ${kept.length} 則（去重後）`)
 
 phase('Write')

@@ -16,8 +16,47 @@ const A = args || {}
 for (const k of ['target', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `demo 目標：${A.target}\ndemo 腳本：${A.script || '（未提供，先找 {{BRIEFS_DIR}} 中最新的 demo 簡報）'}\ndemo 日：${A.date || '未提供'}\nrun 目錄：${A.run_dir}\n只讀或本機操作：不推、不改上游、不刪資料；compose 指令一律帶 -p <demo 專屬專案名>，避免撞到使用者本機同名專案（注意環境變數 COMPOSE_PROJECT_NAME 會覆蓋）；.env 是 symlink 時，會寫 .env 的步驟（例如產生金鑰）會寫到原檔：先記 sha，收尾還原；機敏檔不讀、不印，只用 grep -q 判斷有無；會動到使用者本機既有環境的步驟先列出來交人，不自行執行。要改程式的項目只列成 derived_work 或 intent 草稿，不自行動手。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 // 規則 26：agent 沒交件記為 missing，不當成「沒有檢查點」或「綠燈沒被推翻」；缺件一律 halted，halt_reason 寫出 label
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。
+// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
+// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留），同一 target_id 只要有一則 refuted 就算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const anyRefuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !anyRefuted.has(i.id)
+    : (i) => last.has(i.id) && !last.get(i.id).refuted
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
 const missing = []
-const halt = (stage, extra = {}) => ({ event: 'demo-check', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
+const halt = (stage, extra = {}) => haltMissing({ event: 'demo-check' }, stage, missing, extra)
 const AREAS = [
   { key: 'env', ask: '環境：分支與 commit、服務能不能起（just up 或對等指令）、健康檢查、版本是否和 demo 腳本一致。' },
   { key: 'data', ask: '資料：demo 需要的帳號、租戶、種子資料、模型與 MCP 設定是否就緒（只檢查有沒有值，不印金鑰）。' },
@@ -40,12 +79,11 @@ if (missing.length) return halt('check', { items })
 
 phase('Challenge')
 const greens = items.filter((i) => i.status === 'green')
-const challenge = greens.length ? await agent(`${CTX}\n\n## 派工單\n逐項反駁「green」判定：證據真的支持嗎？是不是只看設定沒實際跑？不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 env:c1）：\n${JSON.stringify(greens)}`,
-  { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-if (greens.length && !challenge) { missing.push('challenge'); return halt('challenge', { items }) }
+const judged = await challengeList(greens, { prompt: `${CTX}\n\n## 派工單\n逐項反駁「green」判定：證據真的支持嗎？是不是只看設定沒實際跑？不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 env:c1）：\n${JSON.stringify(greens)}`,
+  agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing })
+if (judged.lacking) return halt('challenge', { items })
 // skeptic 沒判到的 green 當成未驗證，和被推翻的一起降為 yellow
-const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
-const downgraded = greens.filter((i) => !v.has(i.id) || v.get(i.id).refuted).map((i) => i.id)
+const downgraded = judged.doubted.map((i) => i.id)
 
 phase('Write')
 const docs = await agent(`${CTX}\n\n## 派工單\n寫紅綠燈清單 ${A.run_dir}/demo-check.md：先列 red 與被推翻或沒被驗證的 green（降為 yellow），再列其他；每項附證據與建議處理。需要改程式的在 ${A.run_dir}/intent-draft-<短名>.md 起草 intent 交 SDLC。跑 check_rules.py。\n檢查：${JSON.stringify(items)}\n降為 yellow 的 green：${JSON.stringify(downgraded)}\npayload 用 docs。`,
