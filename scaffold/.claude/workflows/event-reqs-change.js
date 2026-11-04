@@ -15,11 +15,20 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 const A = args || {}
 for (const k of ['change', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `需求變動：${A.change}\n目標 repo：${A.repo || '{{REPOS_DIR}}（見 rules.md 的專案規則）'}\nrun 目錄：${A.run_dir}\n只讀（需求來源永遠唯讀）。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
+// 規則 26：agent 沒交件記為 missing，不當成「沒有差異」或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
+const missing = []
+const halt = (stage, extra = {}) => ({ event: 'reqs-change', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
+// skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑
+const judge = (list, challenge) => {
+  const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
+  return { kept: list.filter((i) => v.has(i.id) && !v.get(i.id).refuted), doubted: list.filter((i) => !v.has(i.id) || v.get(i.id).refuted) }
+}
 
 phase('Diff')
 const diff = await agent(`${CTX}\n\n## 派工單\n逐條列出新增、修改、刪除的需求（Story ID、欄位、舊值、新值），type=change。payload 用 items。`,
   { label: 'diff', phase: 'Diff', agentType: NS + 'tpm-researcher', schema: ITEMS })
-const changes = diff ? diff.payload.items : []
+if (!diff) { missing.push('diff'); return halt('diff') }
+const changes = diff.payload.items || []
 if (!changes.length) return { event: 'reqs-change', diff, note: '沒有差異' }
 
 const AREAS = [
@@ -28,17 +37,27 @@ const AREAS = [
   { key: 'deliverables', ask: '對外交付的文件與表格（md／docx／xlsx 成對時兩邊都要改）。' },
   { key: 'capability', ask: 'WBS、能力矩陣或能力對照表；已排入的 demo 範圍。' },
 ]
+phase('Impact')
 const impact = await pipeline(AREAS, (a) => agent(`${CTX}\n\n## 派工單（影響面：${a.key}）\n範圍：${a.ask}\n對每條變動找受影響的檔案與段落（target_files 寫路徑:行號），type=impact。\n變動：${JSON.stringify(changes)}\npayload 用 items。`,
   { label: `impact:${a.key}`, phase: 'Impact', agentType: NS + 'tpm-researcher', schema: ITEMS }))
-const items = impact.filter(Boolean).flatMap((r) => r.payload.items || [])
+// 各面向的事項 id 各自編號，合併前加面向前綴（<面向>:<id>），skeptic 的 target_id 才不會撞號
+const items = []
+impact.forEach((r, i) => {
+  const k = AREAS[i].key
+  if (!r) missing.push(`impact:${k}`)
+  else for (const it of r.payload.items || []) items.push({ ...it, id: `${k}:${it.id}` })
+})
+if (missing.length) return halt('impact', { changes, impact: items })
 
 phase('Challenge')
-const challenge = items.length ? await agent(`${CTX}\n\n## 派工單\n逐項反駁（打開 target_files 查證），不確定判 refuted=true：\n${JSON.stringify(items)}`,
+const challenge = items.length ? await agent(`${CTX}\n\n## 派工單\n逐項反駁（打開 target_files 查證），不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 specs:i1）：\n${JSON.stringify(items)}`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-const refuted = new Set((challenge && challenge.payload.verdicts || []).filter((v) => v.refuted).map((v) => v.target_id))
+if (items.length && !challenge) { missing.push('challenge'); return halt('challenge', { changes, impact: items }) }
+const { kept, doubted } = judge(items, challenge)
 
 phase('Write')
-const docs = await agent(`${CTX}\n\n## 派工單\n寫影響清單 ${A.run_dir}/impact.md（變動 → 受影響檔案 → 建議動作；存疑另列）。需要開發的，在 ${A.run_dir}/intent-draft-<短名>.md 起草 intent 草稿交 SDLC（Maintain → Plan）。跑 check_rules.py。\n變動：${JSON.stringify(changes)}\n影響：${JSON.stringify(items.filter((i) => !refuted.has(i.id)))}\n存疑：${JSON.stringify([...refuted])}\npayload 用 docs。`,
+const docs = await agent(`${CTX}\n\n## 派工單\n寫影響清單 ${A.run_dir}/impact.md（變動 → 受影響檔案 → 建議動作；被推翻或沒被驗證的另列存疑）。需要開發的，在 ${A.run_dir}/intent-draft-<短名>.md 起草 intent 草稿交 SDLC（Maintain → Plan）。跑 check_rules.py。\n變動：${JSON.stringify(changes)}\n影響：${JSON.stringify(kept)}\n存疑：${JSON.stringify(doubted)}\npayload 用 docs。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
+if (!docs) { missing.push('write'); return halt('write', { changes, impact: items }) }
 
-return { event: 'reqs-change', changes, impact: items, refuted: [...refuted], docs }
+return { event: 'reqs-change', changes, impact: items, refuted: doubted.map((i) => i.id), docs }

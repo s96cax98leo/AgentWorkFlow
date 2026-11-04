@@ -15,6 +15,14 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 const A = args || {}
 for (const k of ['source', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `會議來源：${A.source}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。每個事項都附原文位置（路徑:行號或時間戳）；不自編任務編號；不評價人。`
+// 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
+const missing = []
+const halt = (stage, extra = {}) => ({ event: 'meeting', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
+// skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑
+const judge = (list, challenge) => {
+  const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
+  return { kept: list.filter((i) => v.has(i.id) && !v.get(i.id).refuted), doubted: list.filter((i) => !v.has(i.id) || v.get(i.id).refuted) }
+}
 const ANGLES = [
   { key: 'action', type: 'action', ask: '交辦：誰、做什麼、期限（原文沒說期限就留空）。' },
   { key: 'decision', type: 'decision', ask: '已拍板的決議與由誰拍板；只列明確拍板的，討論中的不算。' },
@@ -22,18 +30,28 @@ const ANGLES = [
   { key: 'doc', type: 'doc_update', ask: '因這場會議需要更新的既有文件（專案文件、對外交付文件、規格、backlog），target_files 寫路徑，text 寫要改什麼。' },
   { key: 'todo', type: 'todo', ask: '要交給 {{TASK_AUTHORITY}} 編號的新工作（不編號），和既有 backlog 重複的標出既有 id。' },
 ]
+
+phase('Extract')
 const extracted = await pipeline(ANGLES, (a) => agent(`${CTX}\n\n## 派工單（${a.key}）\n${a.ask}\n只抽 type=${a.type} 的事項。payload 用 items（source=${A.source}）。`,
   { label: `extract:${a.key}`, phase: 'Extract', agentType: NS + 'tpm-researcher', schema: ITEMS }))
-const got = extracted.filter(Boolean)
-const all = got.flatMap((r) => r.payload.items || [])
+// 各角度的事項 id 各自編號，合併前加角度前綴（<角度>:<id>），skeptic 的 target_id 才不會撞號
+const all = []
+extracted.forEach((r, i) => {
+  const k = ANGLES[i].key
+  if (!r) missing.push(`extract:${k}`)
+  else for (const it of r.payload.items || []) all.push({ ...it, id: `${k}:${it.id}` })
+})
+if (missing.length) return halt('extract', { items: all })
 
 phase('Challenge')
-const challenge = all.length ? await agent(`${CTX}\n\n## 派工單\n逐項對照會議原文，反駁不忠於原文、張冠李戴、把討論當決議的事項，不確定判 refuted=true：\n${JSON.stringify(all)}`,
+const challenge = all.length ? await agent(`${CTX}\n\n## 派工單\n逐項對照會議原文，反駁不忠於原文、張冠李戴、把討論當決議的事項，不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含角度前綴，例如 action:i1）：\n${JSON.stringify(all)}`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-const refuted = new Set((challenge && challenge.payload.verdicts || []).filter((v) => v.refuted).map((v) => v.target_id))
+if (all.length && !challenge) { missing.push('challenge'); return halt('challenge', { items: all }) }
+const { kept, doubted } = judge(all, challenge)
 
 phase('Write')
-const docs = await agent(`${CTX}\n\n## 派工單\n寫會議摘要到 ${A.run_dir}/meeting-summary.md 與待辦清單 ${A.run_dir}/todo-for-task-authority.md（要搬到專案的會議目錄由使用者決定）。被推翻的事項列「存疑」。跑 check_rules.py。\n事項：${JSON.stringify(all.filter((i) => !refuted.has(i.id)))}\n存疑：${JSON.stringify(all.filter((i) => refuted.has(i.id)))}\npayload 用 docs。`,
+const docs = await agent(`${CTX}\n\n## 派工單\n寫會議摘要到 ${A.run_dir}/meeting-summary.md 與待辦清單 ${A.run_dir}/todo-for-task-authority.md（要搬到專案的會議目錄由使用者決定）。被推翻或沒被驗證的事項列「存疑」。跑 check_rules.py。\n事項：${JSON.stringify(kept)}\n存疑：${JSON.stringify(doubted)}\npayload 用 docs。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
+if (!docs) { missing.push('write'); return halt('write', { items: all, refuted: doubted.map((i) => i.id) }) }
 
-return { event: 'meeting', items: all, refuted: [...refuted], docs }
+return { event: 'meeting', items: all, refuted: doubted.map((i) => i.id), docs }

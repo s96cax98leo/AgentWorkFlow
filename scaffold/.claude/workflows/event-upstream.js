@@ -1,6 +1,6 @@
 export const meta = {
   name: 'event-upstream',
-  description: '上游（{{UPSTREAM_REPO}}）變動（新 PR、main 前進、CI 失敗）：四個角度平行唯讀分析 → skeptic 反駁 → writer 寫報告；開工與收尾記錄上游狀態證明零寫入',
+  description: '上游（{{UPSTREAM_REPO}}）變動（新 PR、main 前進、CI 失敗）：四個角度平行唯讀分析 → skeptic 反駁 → writer 寫報告、給決策者版與 intent 草稿；開工與收尾記錄上游狀態證明零寫入',
   whenToUse: '上游有新 PR、main 前進或 CI 失敗；args：what（描述或 PR 編號）、repo（我方 fork 路徑）、run_dir',
   phases: [
     { title: 'Baseline', detail: '記錄上游狀態' },
@@ -19,29 +19,65 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 const A = args || {}
 for (const k of ['what', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `事件：${A.what}\n我方 fork：${A.repo}\nrun 目錄：${A.run_dir}\n全程唯讀：不對上游做任何寫入，不切換 fork 主工作目錄的分支（用 git fetch 到唯讀 ref、git merge-tree 預測）。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
-const snap = (tag) => agent(`${CTX}\n\n## 派工單\n記錄上游狀態（${tag}）：main 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。寫到 ${A.run_dir}/upstream-${tag}.md。payload 用 findings（lens=upstream）。`,
-  { label: `snapshot:${tag}`, phase: 'Baseline', agentType: NS + 'tpm-upstream-analyst', schema: FINDINGS })
+// 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
+const missing = []
+const halt = (stage, extra = {}) => ({ event: 'upstream', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
+// 規則 12：給決策者的文件要過 check_rules --audience owner；writer 沒回報或沒過就 halted 交人
+const ruleCheck = (d) => {
+  const rc = String(d.payload.rule_check || '').trim()
+  if (!rc) return 'writer 沒有回報 rule_check（check_rules.py 的結果）'
+  if (!/^pass\b/i.test(rc)) return `check_rules.py 沒過：${rc}`
+  if (!(d.payload.documents || []).some((x) => x.audience === 'owner')) return 'writer 沒有交出給決策者版（documents 沒有 audience=owner）'
+  return null
+}
+// tpm-upstream-analyst 沒有 Write：分析與快照只交信封，由 tpm-writer 落檔
+const snap = (tag) => agent(`${CTX}\n\n## 派工單\n記錄上游狀態（${tag}）：main 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。不寫檔，全部放在信封：每項一則 finding（severity=info，location 寫查詢指令）。payload 用 findings（lens=upstream）。`,
+  { label: `snapshot:${tag}`, phase: tag === 'before' ? 'Baseline' : 'Write', agentType: NS + 'tpm-upstream-analyst', schema: FINDINGS })
 
 phase('Baseline')
 const before = await snap('before')
+if (!before) { missing.push('snapshot:before'); return halt('baseline') }
+
 const ANGLES = [
   { key: 'conflict', ask: '用 git merge-tree 預測這次變動和我方每條進行中分支的衝突檔，分類（機械式、需判斷、隱性風險）。' },
   { key: 'impact', ask: '這次變動改了哪些目錄、契約、migration、設計 token；對我方 demo、fork 開發與規範檔有什麼影響。' },
   { key: 'timeline', ask: '重建時間線（絕對時間、含時區）：誰在什麼時候合了什麼、CI 狀態；不推論意圖。' },
   { key: 'action', ask: '依前面的事實列出該通知誰、需要誰決定什麼、我方下一步選項（附代價）；不替人做決定。' },
 ]
-const analyzed = await pipeline(ANGLES, (a) => agent(`${CTX}\n\n## 派工單（${a.key}）\n${a.ask}\n筆記寫到 ${A.run_dir}/${a.key}.md。payload 用 findings（lens=${a.key}）。`,
+phase('Analyze')
+const analyzed = await pipeline(ANGLES, (a) => agent(`${CTX}\n\n## 派工單（${a.key}）\n${a.ask}\n不寫檔，筆記全部放在信封（findings 的 claim、location、recommendation）。payload 用 findings（lens=${a.key}）。`,
   { label: `analyze:${a.key}`, phase: 'Analyze', agentType: NS + 'tpm-upstream-analyst', schema: FINDINGS }))
-const got = analyzed.filter(Boolean)
+// 各角度的發現 id 各自編號，合併前加角度前綴（<角度>:<id>），skeptic 的 target_id 才不會撞號
+const claims = []
+analyzed.forEach((r, i) => {
+  const k = ANGLES[i].key
+  if (!r) missing.push(`analyze:${k}`)
+  else for (const f of r.payload.findings || []) claims.push({ ...f, id: `${k}:${f.id}` })
+})
+if (missing.length) return halt('analyze', { before, claims })
 
 phase('Challenge')
-const claims = got.flatMap((r) => r.payload.findings || [])
-const challenge = claims.length ? await agent(`${CTX}\n\n## 派工單\n逐則反駁（重跑唯讀指令查證），不確定判 refuted=true：\n${JSON.stringify(claims)}`,
+const challenge = claims.length ? await agent(`${CTX}\n\n## 派工單\n逐則反駁（重跑唯讀指令查證），不確定判 refuted=true。每則都要判，target_id 照抄發現的 id（含角度前綴，例如 conflict:f1）：\n${JSON.stringify(claims)}`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
+if (claims.length && !challenge) { missing.push('challenge'); return halt('challenge', { before, claims }) }
+// skeptic 沒判到的發現當成未驗證，和被推翻的一起列「未能確認」
+const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
+const kept = claims.filter((f) => v.has(f.id) && !v.get(f.id).refuted)
+const doubted = claims.filter((f) => !v.has(f.id) || v.get(f.id).refuted)
 
 phase('Write')
 const after = await snap('after')
-const docs = await agent(`${CTX}\n\n## 派工單\n寫 ${A.run_dir}/upstream-report.md：事實、衝突預測、影響、時間線、選項；被推翻的發現列「未能確認」；附開工與收尾的上游狀態對照（證明零寫入）。跑 check_rules.py。\n分析：${JSON.stringify(got.map((r) => ({ s: r.summary, a: r.artifacts })))}\n反駁：${JSON.stringify(challenge && challenge.payload)}\n上游狀態：${JSON.stringify([before && before.artifacts, after && after.artifacts])}\npayload 用 docs。`,
+if (!after) { missing.push('snapshot:after'); return halt('write', { before, claims }) }
+const docs = await agent(`${CTX}\n\n## 派工單\n分析 agent 沒有寫檔權限，由你落檔：\n` +
+  `1. 寫上游狀態 ${A.run_dir}/upstream-before.md 與 ${A.run_dir}/upstream-after.md，並在報告附兩者對照（證明零寫入；對不上就在報告最前面標出）。\n` +
+  `2. 寫 ${A.run_dir}/upstream-report.md：事實、衝突預測、影響、時間線、選項；被推翻或沒被驗證的發現列「未能確認」。\n` +
+  `3. 寫給決策者版 ${A.run_dir}/給決策者.md：發生什麼、對我方的影響、需要誰決定什麼、每個選項的代價。\n` +
+  `4. 我方需要開發（例如跟上上游、修衝突）的，在 ${A.run_dir}/intent-draft-<主題>.md 起草 intent 草稿交 SDLC（sdlc-plan），一個主題一份；不需要就在報告寫明「不需開發」。\n` +
+  `5. 每份跑 python3 .claude/teams/tools/check_rules.py（給決策者版加 --audience owner），全過才算完成。payload 用 docs：documents 列出每份（給決策者版 audience=owner、intent 草稿 kind=intent），rule_check 填「pass」或「fail：<沒過的規則>」。\n` +
+  `成立的發現：${JSON.stringify(kept)}\n未能確認：${JSON.stringify(doubted)}\n上游狀態（開工）：${JSON.stringify(before.payload.findings || [])}\n上游狀態（收尾）：${JSON.stringify(after.payload.findings || [])}`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
+if (!docs) { missing.push('write'); return halt('write', { before, after, claims }) }
+const ruleIssue = ruleCheck(docs)
+if (ruleIssue) return { event: 'upstream', halted: true, stage: 'write', halt_reason: ruleIssue, before, after, claims, docs }
 
-return { event: 'upstream', before, after, analyzed: got, challenge, docs }
+return { event: 'upstream', before, after, claims, refuted: doubted.map((f) => f.id), challenge, docs }

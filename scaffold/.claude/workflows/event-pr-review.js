@@ -17,25 +17,42 @@ for (const k of ['target', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 a
 const LENSES = A.lenses || ['standards', 'spec', 'bugs', 'security', 'design', 'history']
 const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 gh pr diff／git diff，不 approve、不 merge、不 comment。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 const key = (f) => `${(f.location || '').replace(/:\d+.*/, '')}|${(f.claim || '').slice(0, 40)}`
+// 規則 26：lens 沒交件不是「這個 lens 很乾淨」，skeptic 沒交件也不是「全部沒被推翻」；缺件一律 halted，halt_reason 寫出 label
+const missing = []
+const halt = (stage, extra = {}) => ({ event: 'pr-review', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
 
-const reviewed = await pipeline(
-  LENSES,
-  (lens) => agent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 REVIEW.md 分級，每則附 file:line 與 0–1 信心，只列 ≥0.8。payload 用 findings（lens=${lens}）。`,
-    { label: `review:${lens}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS }),
-  (r, lens) => {
-    const fs = (r && r.payload.findings || []).filter((f) => f.confidence >= 0.8)
-    if (!fs.length) return { lens, kept: [], dropped: [] }
-    return agent(`${CTX}\n\n## 派工單\n逐則反駁 ${lens} 的發現（打開 location 看實際程式），不確定判 refuted=true：\n${JSON.stringify(fs)}`,
-      { label: `verify:${lens}`, phase: 'Verify', agentType: NS + 'tpm-skeptic', schema: VERDICTS })
-      .then((v) => { const bad = new Set((v && v.payload.verdicts || []).filter((x) => x.refuted).map((x) => x.target_id)); return { lens, kept: fs.filter((f) => !bad.has(f.id)), dropped: fs.filter((f) => bad.has(f.id)) } })
-  },
-)
+phase('Review')
+const reviews = await parallel(LENSES.map((lens) => () => agent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 REVIEW.md 分級，每則附 file:line 與 0–1 信心，只列 ≥0.8。payload 用 findings（lens=${lens}）。`,
+  { label: `review:${lens}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS })))
+// 各 lens 的發現 id 各自編號，加 lens 前綴（<lens>:<id>），skeptic 的 target_id 才不會撞號
+const batches = []
+reviews.forEach((r, i) => {
+  const lens = LENSES[i]
+  if (!r) { missing.push(`review:${lens}`); return }
+  batches.push({ lens, fs: (r.payload.findings || []).filter((f) => f.confidence >= 0.8).map((f) => ({ ...f, id: `${lens}:${f.id}` })) })
+})
+if (missing.length) return halt('review')
+
+phase('Verify')
+const toVerify = batches.filter((b) => b.fs.length)
+const verdicts = await parallel(toVerify.map((b) => () => agent(`${CTX}\n\n## 派工單\n逐則反駁 ${b.lens} 的發現（打開 location 看實際程式），不確定判 refuted=true。每則都要判，target_id 照抄發現的 id（含 lens 前綴）：\n${JSON.stringify(b.fs)}`,
+  { label: `verify:${b.lens}`, phase: 'Verify', agentType: NS + 'tpm-skeptic', schema: VERDICTS })))
+const reviewed = []
+toVerify.forEach((b, i) => {
+  const vr = verdicts[i]
+  if (!vr) { missing.push(`verify:${b.lens}`); return }
+  // skeptic 沒判到的發現當成未驗證，不採納
+  const v = new Map((vr.payload.verdicts || []).map((x) => [x.target_id, x]))
+  reviewed.push({ lens: b.lens, kept: b.fs.filter((f) => v.has(f.id) && !v.get(f.id).refuted), dropped: b.fs.filter((f) => !v.has(f.id) || v.get(f.id).refuted) })
+})
+if (missing.length) return halt('verify')
 const seen = new Set(), kept = []
-for (const r of reviewed.filter(Boolean)) for (const f of r.kept) { const k = key(f); if (!seen.has(k)) { seen.add(k); kept.push({ lens: r.lens, ...f }) } }
+for (const r of reviewed) for (const f of r.kept) { const k = key(f); if (!seen.has(k)) { seen.add(k); kept.push({ lens: r.lens, ...f }) } }
 log(`保留 ${kept.length} 則（去重後）`)
 
 phase('Write')
 const docs = await agent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir}/review.md：依 lens 分節，每則「[Important|Nit|Pre-existing] file:line — 問題 — 建議 — 信心」，Nit 最多 5 則。要不要貼到 PR 由使用者決定。跑 check_rules.py。\n發現：${JSON.stringify(kept)}\npayload 用 docs。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
+if (!docs) { missing.push('write'); return halt('write', { findings: kept }) }
 
-return { event: 'pr-review', findings: kept, docs }
+return { event: 'pr-review', findings: kept, dropped: reviewed.flatMap((r) => r.dropped.map((f) => f.id)), docs }

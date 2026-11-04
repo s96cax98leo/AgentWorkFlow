@@ -15,6 +15,9 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 const A = args || {}
 for (const k of ['target', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const CTX = `demo 目標：${A.target}\ndemo 腳本：${A.script || '（未提供，先找 {{BRIEFS_DIR}} 中最新的 demo 簡報）'}\ndemo 日：${A.date || '未提供'}\nrun 目錄：${A.run_dir}\n只讀或本機操作：不推、不改上游、不刪資料；compose 指令一律帶 -p <demo 專屬專案名>（注意環境變數 COMPOSE_PROJECT_NAME 會覆蓋）；不讀 .env 的值。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
+// 規則 26：agent 沒交件記為 missing，不當成「沒有檢查點」或「綠燈沒被推翻」；缺件一律 halted，halt_reason 寫出 label
+const missing = []
+const halt = (stage, extra = {}) => ({ event: 'demo-check', halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra })
 const AREAS = [
   { key: 'env', ask: '環境：分支與 commit、服務能不能起（just up 或對等指令）、健康檢查、版本是否和 demo 腳本一致。' },
   { key: 'data', ask: '資料：demo 需要的帳號、租戶、種子資料、模型與 MCP 設定是否就緒（只檢查有沒有值，不印金鑰）。' },
@@ -22,18 +25,31 @@ const AREAS = [
   { key: 'ui', ask: '畫面：demo 會出現的頁面在常用桌機尺寸與專案支援的色彩模式下有沒有破版、錯字、console error（截圖存 run 目錄）。' },
   { key: 'fallback', ask: '備案：網路、模型、外部服務失效時的備案是否可用（錄影、靜態頁、離線資料）。' },
 ]
+
+phase('Check')
 const checked = await pipeline(AREAS, (a) => agent(`${CTX}\n\n## 派工單（${a.key}）\n${a.ask}\n每個檢查點一個 type=check 的事項，status 用 green／yellow／red，refs 放證據。payload 用 items。`,
   { label: `check:${a.key}`, phase: 'Check', agentType: NS + 'tpm-researcher', schema: ITEMS }))
-const items = checked.filter(Boolean).flatMap((r) => r.payload.items || [])
+// 各面向的事項 id 各自編號，合併前加面向前綴（<面向>:<id>），skeptic 的 target_id 才不會撞號
+const items = []
+checked.forEach((r, i) => {
+  const k = AREAS[i].key
+  if (!r) missing.push(`check:${k}`)
+  else for (const it of r.payload.items || []) items.push({ ...it, id: `${k}:${it.id}` })
+})
+if (missing.length) return halt('check', { items })
 
 phase('Challenge')
 const greens = items.filter((i) => i.status === 'green')
-const challenge = greens.length ? await agent(`${CTX}\n\n## 派工單\n逐項反駁「green」判定：證據真的支持嗎？是不是只看設定沒實際跑？不確定判 refuted=true：\n${JSON.stringify(greens)}`,
+const challenge = greens.length ? await agent(`${CTX}\n\n## 派工單\n逐項反駁「green」判定：證據真的支持嗎？是不是只看設定沒實際跑？不確定判 refuted=true。每個事項都要判，target_id 照抄事項的 id（含面向前綴，例如 env:c1）：\n${JSON.stringify(greens)}`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS }) : null
-const refuted = new Set((challenge && challenge.payload.verdicts || []).filter((v) => v.refuted).map((v) => v.target_id))
+if (greens.length && !challenge) { missing.push('challenge'); return halt('challenge', { items }) }
+// skeptic 沒判到的 green 當成未驗證，和被推翻的一起降為 yellow
+const v = new Map((challenge ? challenge.payload.verdicts || [] : []).map((x) => [x.target_id, x]))
+const downgraded = greens.filter((i) => !v.has(i.id) || v.get(i.id).refuted).map((i) => i.id)
 
 phase('Write')
-const docs = await agent(`${CTX}\n\n## 派工單\n寫紅綠燈清單 ${A.run_dir}/demo-check.md：先列 red 與被推翻的 green（降為 yellow），再列其他；每項附證據與建議處理。需要改程式的在 ${A.run_dir}/intent-draft-<短名>.md 起草 intent 交 SDLC。跑 check_rules.py。\n檢查：${JSON.stringify(items)}\n被推翻的 green：${JSON.stringify([...refuted])}\npayload 用 docs。`,
+const docs = await agent(`${CTX}\n\n## 派工單\n寫紅綠燈清單 ${A.run_dir}/demo-check.md：先列 red 與被推翻或沒被驗證的 green（降為 yellow），再列其他；每項附證據與建議處理。需要改程式的在 ${A.run_dir}/intent-draft-<短名>.md 起草 intent 交 SDLC。跑 check_rules.py。\n檢查：${JSON.stringify(items)}\n降為 yellow 的 green：${JSON.stringify(downgraded)}\npayload 用 docs。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
+if (!docs) { missing.push('write'); return halt('write', { items, downgraded }) }
 
-return { event: 'demo-check', items, downgraded: [...refuted], docs }
+return { event: 'demo-check', items, downgraded, docs }
