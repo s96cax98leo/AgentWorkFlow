@@ -9,8 +9,10 @@ hook 會擋 tpm-*／dev-* 執行這支；主 session 呼叫時 hook 只看到「
   2. 分支名要符合 allowed_branch_prefixes，不能是 protected_branches（預設 main、master）或 PR 的 base。不 force push。
   3. 推送前掃 diff（<remote>/<base>...<分支>）新增的行：常見金鑰樣式、私鑰區塊、機敏檔名，
      以及 --secrets-file 列的機敏值（逐字比對）。命中就拒絕，只報檔名與樣式名稱，不印出值。
-  4. 依政策判定能不能推：--run 的 run.json 裡該段（預設 deliver）要 done 且已核准，前面有閘門的段也都要已核准；
-     核准是 --by policy 時，重跑 save_run.policy_violations 讀該段實際結果，有任何違規就拒絕。
+  4. 依政策判定能不能推（和 save_run.py 共用同一套判定）：run 已取消（save_run.py abandon）一律拒絕；
+     --run 的 run.json 裡該段（預設 deliver）要 done 且已核准，前面每一段都要 done、有閘門的都要已核准
+     （save_run.chain_errors）；該段與前面任何一段的核准是 --by policy 時，重跑 save_run.policy_violations
+     讀該段實際結果（skeptic 推翻、agent 缺件、blocking 問題等），有任何違規就拒絕。
   5. git push <remote> refs/heads/<分支>:refs/heads/<分支>，再 gh pr create --repo <fork>。
      有 --supersedes N 時，PR 說明末尾加一行「取代 #N」；舊 PR 由人關閉，本工具不執行 gh pr close。
   6. 每次執行（含拒絕、dry-run）append 一行到 <runs_dir>/publish-audit.jsonl。
@@ -180,6 +182,8 @@ def check_policy(run_dir: Path | None, stage: str) -> str:
         data = json.loads(f.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         raise Refused(f"讀不到 {f}：{e}") from e
+    if data.get("abandoned"):
+        raise Refused(save_run.abandoned_error(data) + "，不推送")
     stages = data.get("stages") or {}
     st = stages.get(stage)
     if not isinstance(st, dict):
@@ -189,20 +193,23 @@ def check_policy(run_dir: Path | None, stage: str) -> str:
     appr = st.get("approved")
     if not appr:
         raise Refused(f"{stage} 還沒核准（save_run.py approve）")
-    if stage in save_run.SDLC:
-        for prev in save_run.SDLC[: save_run.SDLC.index(stage)]:
-            ps = stages.get(prev) or {}
-            if ps.get("status") != "done" or (ps.get("gate") and not ps.get("approved")):
-                raise Refused(f"前面的 {prev} 段沒有 done 或沒有核准")
-    if appr.get("by") == "policy" or appr.get("kind") == "policy":
-        sf = run_dir / f"{stage}.json"
+    chain = save_run.chain_errors(stages, stage)
+    if chain:
+        raise Refused("閘門鏈不完整：" + "；".join(chain[:5]))
+    # 該段與前面各段凡是政策核准的，都重跑同一套政策判定（run.json 可能被手改，不信任紀錄本身）
+    check = [s for s in save_run.SDLC[: save_run.SDLC.index(stage)] if s in stages] if stage in save_run.SDLC else []
+    for s in [*check, stage]:
+        a2 = (stages.get(s) or {}).get("approved") or {}
+        if a2.get("by") != "policy" and a2.get("kind") != "policy":
+            continue
+        sf = run_dir / f"{s}.json"
         try:
             result = json.loads(sf.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             raise Refused(f"政策核准要讀 {sf.name}，讀不到：{e}") from e
-        errs = save_run.policy_violations(stage, result)
+        errs = save_run.policy_violations(s, result)
         if errs:
-            raise Refused("政策判定不通過：" + "；".join(errs[:5]))
+            raise Refused(f"{s} 段政策判定不通過：" + "；".join(errs[:5]))
     return f"{stage} 由 {appr.get('by')} 核准（{appr.get('kind', '')} @ {appr.get('at', '')}）"
 
 
@@ -375,7 +382,8 @@ def _selftest() -> int:
         body.write_text("示範 PR 說明\n", encoding="utf-8")
         base = {"summary": "s", "artifacts": [], "evidence": [], "confidence": 1, "open_questions": [], "derived_work": []}
 
-        def make_run(name: str, deliver_by: str | None = "使用者", deliver_payload: dict | None = None) -> Path:
+        def make_run(name: str, deliver_by: str | None = "使用者", deliver_payload: dict | None = None,
+                     deliver_extra: dict | None = None) -> Path:
             rd = proj / "_tpm/runs" / name
             sp = str(HERE / "save_run.py")
             sub = lambda *a, stdin="": subprocess.run([sys.executable, sp, *a], input=stdin, capture_output=True, text=True, encoding="utf-8")
@@ -385,7 +393,10 @@ def _selftest() -> int:
                 if stage == "test":
                     payload = {"commit": "a" * 40, "scope_covered": "全部", "scope_skipped": "none", "anti_cheat": [],
                                "criteria": [{"id": "AC-1", "criterion": "c", "command": "true", "result": "pass", "evidence": "e"}]}
-                sub("stage", str(rd), stage, stdin=json.dumps([{**base, "status": "done", "payload": payload}]))
+                res = {"x": [{**base, "status": "done", "payload": payload}]}
+                if stage == "deliver" and deliver_extra:
+                    res.update(deliver_extra)
+                sub("stage", str(rd), stage, stdin=json.dumps(res))
                 if stage == "deliver" and deliver_by is None:
                     break
                 if stage == "deliver" and deliver_by == "policy-forged":
@@ -401,6 +412,12 @@ def _selftest() -> int:
         finding = {"lens": "bugs", "findings": [{"id": "B1", "severity": "important", "claim": "c", "location": "a:1",
                                                  "recommendation": "r", "confidence": 0.9}]}
         forged = make_run("r-forged", deliver_by="policy-forged", deliver_payload=finding)
+        refuted = {"verdicts": [{"target_id": "PR 說明", "refuted": True, "reason": "漏列驗收條件"}]}
+        skeptic = make_run("r-skeptic", deliver_by="policy-forged", deliver_payload=refuted)
+        lost = make_run("r-lost", deliver_by="policy-forged", deliver_extra={"docs": None})
+        dropped = make_run("r-abandon")
+        subprocess.run([sys.executable, str(HERE / "save_run.py"), "abandon", str(dropped), "--reason", "需求取消",
+                        "--by", "使用者", "--at", "t"], capture_output=True, text=True, encoding="utf-8")
 
         def case(name: str, want: str, **kw) -> dict:
             nonlocal ok
@@ -451,6 +468,9 @@ def _selftest() -> int:
         case("diff 含 --secrets-file 列的值 → 拒絕", "refused", secrets_file=str(lit))
         case("deliver 段還沒核准 → 拒絕", "refused", run=str(unapproved))
         case("政策核准但實際結果有 important 發現 → 拒絕", "refused", run=str(forged))
+        case("政策核准但 skeptic 推翻了產出 → 拒絕", "refused", run=str(skeptic))
+        case("政策核准但 agent 缺件（docs: null）→ 拒絕", "refused", run=str(lost))
+        case("run 已 abandon（需求取消）→ 拒絕", "refused", run=str(dropped))
         case("沒有 --run → 拒絕", "refused", run=None)
         cfg_up = {**cfg, "fork_repo": "acme-up/app"}
         (proj / ".claude/teams/guard.config.json").write_text(json.dumps(cfg_up), encoding="utf-8")
@@ -459,7 +479,7 @@ def _selftest() -> int:
         audit = proj / "_tpm/runs/publish-audit.jsonl"
         recs = [json.loads(l) for l in audit.read_text(encoding="utf-8").splitlines() if l.strip()]
         need = {"timestamp", "repo", "branch", "base", "head_sha", "run", "stage", "decision", "reasons", "pr_url"}
-        good = len(recs) == 12 and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
+        good = len(recs) == 15 and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
         print(f"  [{'通過' if good else '失敗'}] publish-audit.jsonl 每次執行都有一行、欄位齊全（{len(recs)} 行）")
         ok = ok and good
     GIT, GH = ["git"], ["gh"]
