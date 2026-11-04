@@ -1,0 +1,10 @@
+# 每週檢查 GitHub Actions 的新版本。ci.yml 的 action 都釘 commit SHA，
+# Dependabot 會同時更新 SHA 與後面的版本註解。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore

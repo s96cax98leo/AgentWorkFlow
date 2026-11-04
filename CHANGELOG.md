@@ -1,0 +1,42 @@
+# 變更紀錄
+
+格式依 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號依 [語意化版本](https://semver.org/lang/zh-TW/)。
+
+## [Unreleased]
+
+## [0.2.0]
+
+這一版是整體強化：可以升級既有專案、hook 更不容易鎖死使用者也更難繞過、角色與 command 精簡。
+
+### 破壞性變更
+
+- **角色合併**：`dev-pr-reviewer` 併入 `tpm-reviewer`（新增 deliver 模式）；`tpm-upstream-analyst` 併入 `tpm-researcher`（新增上游模式）。舊名保留**一版**相容（薄殼 agent，`RESERVED_ROLES` 仍認得），下一版移除。自訂 workflow、擴充 agent 設定或 `guard.config.json` 裡用到舊名的，請改用新名。
+- **刪除同名 command**：移除 `/add-agent`、`/correct` 這兩支 command，避免和同名 skill 衝突。功能不變，改由 `add-agent`、`correct` skill 提供，呼叫方式照舊。
+- **hook 註冊方式改變**：plugin 註冊的守門 hook 改為「跑不起來時放行」（`onFailure: continue`、timeout 10 秒），需要更嚴格的專案改用 project 模式（見 `SECURITY.md`）。
+- **scaffold 檔案有更新**：已 init 的專案要跑 `init.py --upgrade` 才會拿到新的 workflow、schema 與工具。
+
+### 新增
+
+- **升級機制**：`init.py --upgrade` 更新已 init 專案的模版檔，不動使用者的檔案；`--adopt-new-fields` 把新版 profile 新增的欄位併入專案的 `methodology.json`。
+- **SA／SD**：`stages.design.system_design` 依 System Design Primer，每個需求做功能層系統設計，有系統面時走完整四步；`sdlc-design` 照它派工，並加派 skeptic 的 `system-design` lens。
+- **sdlc-sync**：build 之後、test 之前，以及 merge 因 PR 落後或衝突判 hold 之後，讓分支跟上 base。由 `sync_branch.py` 依情況選 rebase、merge 或中轉分支，中轉分支用 `publish.py --supersedes` 開 PR 取代原 PR。
+- **schema 驗證**：補強信封與 payload 的 schema 驗證與語意規則，golden-set 補正例與反例。
+- **repo 安全與發佈**：`SECURITY.md`、本變更紀錄、`tests/check_supply.py`（只用標準庫、plugin 不連網、actions 釘 SHA、版控沒有機敏檔）、Dependabot 每週檢查 GitHub Actions。
+
+### 變更
+
+- **hook 高可用與守門強化**：hook 跑得起來時，輸入壞掉一律擋，guard 模組壞掉改用內建最小規則；合併、核准、推送路徑的守門規則加強。
+- **閘門紀錄修正**：核准與 merge gate 的紀錄寫法修正，稽核紀錄與實際決策一致。
+- **CI**：三平台跑 Python 3.12，另在 ubuntu 跑 3.9 與 3.13；所有 action 釘 commit SHA；頂層 `permissions: contents: read`。
+
+### 升級步驟
+
+1. 更新 plugin：執行 `claude plugin update agent-workflow@agentworkflow`，或在 `/plugin` 介面更新。只跑 `/plugin marketplace update agentworkflow` 只會更新目錄清單，**不會**更新 plugin 本身。
+2. 在 Claude Code 裡執行 `/reload-plugins` 載入新版。
+3. 每個已 init 的專案，在專案根目錄執行 `python3 <AgentWorkFlow>/init.py --target . --upgrade`；要採用新版 profile 的新欄位，加 `--adopt-new-fields`。
+4. 把自訂設定裡的 `dev-pr-reviewer`、`tpm-upstream-analyst` 改成 `tpm-reviewer`、`tpm-researcher`。
+5. 在專案根目錄跑 `python3 .claude/teams/tools/build.py --check`，確認內嵌的 schema 與 profile 是最新的。
+
+## [0.1.0]
+
+首次發佈：AI-native SDLC 的 `dev-*` agent 與 `sdlc-*` workflow、事件處理的 `tpm-*` agent 與 `event-*` workflow、網站分析組、交件信封與守門 hook、確定性的 merge gate 與推送工具，以及 `init.py` 套用模版。
