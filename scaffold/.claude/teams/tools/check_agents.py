@@ -4,9 +4,12 @@ agents 可能在 plugin（agent-workflow）或專案的 .claude/agents。找 age
     --agents-dir <dir>  →  --plugin-dir <dir>/agents  →  環境變數 AWF_PLUGIN_DIR、CLAUDE_PLUGIN_ROOT 的 agents/
     →  專案 .claude/agents（裡面有 tpm-*／dev-* 時）
 skill 會在這些地方找：plugin 的 skills/、專案 .claude/skills、~/.claude/skills、Claude Code 內建。
-模版內建 16 個角色（CORE：tpm 6 個、dev 10 個）；檢查 plugin 的 agents 時，少了任何一個都算錯。
+模版內建 16 個角色（CORE：tpm 6 個、dev 10 個）。檢查 plugin 的 agents 時做雙向比對：
+少了任何一個、或多出沒登記在 CORE 的 tpm-*／dev-* 都算錯；並唯讀解析 hooks 的 awf_config.py，
+確認 CORE 都在 RESERVED_ROLES 裡（新增角色時兩邊要一起改，見 CLAUDE.md〈改動時的檢查清單〉）。
 用法：python3 .claude/teams/tools/check_agents.py [--plugin-dir <plugin 目錄>] [--agents-dir <dir>]
 """
+import ast
 import os
 import re
 import sys
@@ -68,9 +71,38 @@ for p in sorted(agents_dir.glob("*.md")):
             errs.append(f"{p.name}: payload schema {pl} 不存在")
 if n == 0:
     errs.append(f"{agents_dir} 裡沒有 tpm-*／dev-* agent")
+
+
+def reserved_roles(path):
+    """唯讀解析 awf_config.py 的 RESERVED_ROLES（不 import、不執行）。找不到或解析不了回 None。"""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RESERVED_ROLES" for t in node.targets):
+            v = node.value
+            if isinstance(v, ast.Call) and v.args:  # frozenset({...})
+                v = v.args[0]
+            try:
+                return set(ast.literal_eval(v))
+            except ValueError:
+                return None
+    return None
+
+
 if plugin and agents_dir == plugin / "agents":
-    missing = sorted(CORE - {p.stem for p in agents_dir.glob("*.md")})
+    have = {p.stem for p in agents_dir.glob("*.md") if p.stem.startswith(("tpm-", "dev-"))}
+    missing, extra = sorted(CORE - have), sorted(have - CORE)
     if missing:
         errs.append(f"plugin 少了模版內建角色（應有 {len(CORE)} 個）：{'、'.join(missing)}")
+    if extra:
+        errs.append(f"plugin 多了沒登記在 CORE 的角色：{'、'.join(extra)}（新增角色要改 check_agents.py 的 CORE 與 awf_config.py 的 RESERVED_ROLES）")
+    cfg_py = plugin / "hooks" / "awf_config.py"
+    reserved = reserved_roles(cfg_py) if cfg_py.is_file() else None
+    if reserved is None:
+        errs.append(f"讀不到 {cfg_py} 的 RESERVED_ROLES，無法核對 CORE ⊆ RESERVED_ROLES")
+    elif CORE - reserved:
+        errs.append(f"awf_config.py 的 RESERVED_ROLES 少了：{'、'.join(sorted(CORE - reserved))}（守門不會把它們當模版角色）")
 print("\n".join(errs) if errs else f"agent 格式檢查通過：{n} 個（模版內建 {len(CORE)} 個；{agents_dir}）")
 sys.exit(1 if errs else 0)

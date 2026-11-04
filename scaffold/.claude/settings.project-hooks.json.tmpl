@@ -23,8 +23,8 @@
   },
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} guard-shell", "onFailure": "block"{{AWF_HOOK_SHELL}}}]},
-      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} guard-paths", "onFailure": "block"{{AWF_HOOK_SHELL}}}]},
+      {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} guard-shell", "timeout": 10, "onFailure": "block"{{AWF_HOOK_SHELL}}}]},
+      {"matcher": "Edit|Write|NotebookEdit|Read|Grep", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} guard-paths", "timeout": 10, "onFailure": "block"{{AWF_HOOK_SHELL}}}]},
       {"matcher": "SubagentHandback|StructuredOutput", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} envelope", "onFailure": "continue"{{AWF_HOOK_SHELL}}}]}
     ],
     "SubagentStop": [

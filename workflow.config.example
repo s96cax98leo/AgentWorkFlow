@@ -9,9 +9,6 @@ PROJECT_NAME=my-project
 # 客戶泛稱（CLAUDE.md 的資料邊界段）。預設：示範客戶
 CLIENT_NAME=示範客戶
 
-# 工作區根目錄（session 的專案目錄）。預設：留空＝init 的 --target
-WORKSPACE_DIR=
-
 # 我方 repo clone 所在的目錄（相對工作區）；留空＝工作區本身就是目標 repo。預設：repos
 REPOS_DIR=repos
 

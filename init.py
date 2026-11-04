@@ -3,8 +3,8 @@
 
 只用 Python 標準庫，macOS、Linux、Windows（PowerShell 或 cmd）都能直接跑：
 
-  python3 init.py --target <專案目錄>（或直接寫 <專案目錄>） [--config <檔>] [--answers <檔>] [--force] [--overwrite-user-files]
-                  [--hooks plugin|project] [--with-mcp] [--with-merge-gate] [--defaults] [--python <路徑>]
+  python3 init.py --target <專案目錄>（或直接寫 <專案目錄>） [--config <檔>] [--answers <檔>] [--upgrade] [--adopt-new-fields]
+                  [--force] [--overwrite-user-files] [--hooks plugin|project] [--with-mcp] [--with-merge-gate] [--defaults] [--python <路徑>]
   （Windows 沒有 python3 指令時用 py -3 init.py … 或 python init.py …）
 
   --target    要初始化的專案目錄（不存在會建立）
@@ -12,12 +12,21 @@
               都沒有時互動詢問（非互動環境或加 --defaults 時直接用預設值）
   --answers   開發規範與慣例的答案檔（JSON，格式見 docs/自訂與擴充.md〈自訂開發規範〉）；給了就不詢問，直接套用
               （選哪個 methodology profile、code style、commit 格式、分支前綴、PR 大小上限、文件格式）
-  --force     覆蓋**模版自己的檔案**（.claude/teams/ 底下、.claude/hooks/ 的 awf 腳本、看得出是模版產生的 workflow），
-              用來更新已 init 過的專案。注意：.claude/teams/rules.md、methodology.json 等你可能改過的模版檔也會被覆蓋，先用 git 備份。
+  --upgrade   升級已 init 過的專案（建議的更新方式）：模版檔一律換成這版（含你改過的工具檔），使用者的設定保留：
+                .claude/teams/methodology.json：不動；列出這版內建 profile 新增、你的 profile 還沒有的欄位與預設值
+                .claude/teams/guard.config.json：你的值一律保留，只補上這版新增的鍵（說明文字 _說明 換成新版）
+                .claude/teams/rules.md：「## 專案規則」段（含 /correct 的對照表）之後保留，前面的通用規則更新
+                CLAUDE.md（init 產生的）與 .claude/teams/agent-workflow.CLAUDE.md：「## 專案特定」段之後保留
+              沒給 --config 時用 init 記下的 .claude/teams/workflow.config，不詢問。會顯示 .claude/teams/VERSION 的舊版 → 新版
+  --adopt-new-fields
+              搭配 --upgrade：把列出的缺少欄位補進 methodology.json（只補缺的，既有值永遠不改），補完驗 schema 再重跑 build.py
+  --force     覆蓋**模版自己的檔案**（.claude/teams/ 底下、.claude/hooks/ 的 awf 腳本、看得出是模版產生的 workflow）。
+              使用者設定的保留規則和 --upgrade 相同（methodology.json、guard.config.json、〈專案規則〉、〈專案特定〉不整份覆寫）。
               使用者的檔案（CLAUDE.md、.claude/settings.json、.mcp.json、不是模版產生的同名 workflow／hook）即使加 --force 也不整份覆蓋：
               CLAUDE.md 只追加一段引用、settings.json 與 .mcp.json 深度合併、其餘保留並列進略過清單
   --overwrite-user-files
-              連使用者的檔案也整份覆蓋成模版版本（會蓋掉你自己的 CLAUDE.md、settings.json 等，只在想重設時用）
+              連使用者的檔案也整份覆蓋成模版版本（會蓋掉你自己的 CLAUDE.md、settings.json、methodology.json、guard.config.json、
+              rules.md 的〈專案規則〉等，只在想重設時用；要換 profile 時搭配 --answers）
   --hooks     plugin（預設）：hooks 由 agent-workflow plugin 註冊，settings.json 只放權限
               project：把 plugin/hooks 複製到 <專案>/.claude/hooks/，settings.json 註冊 hooks（這時不要再啟用 plugin 的 hooks）；
               既有的 settings.json 會保留使用者的欄位與 hooks，只把 awf_hook.py 的 hooks 合併進去（重跑不重複）
@@ -54,7 +63,11 @@ SCAFFOLD = HERE / "scaffold"
 EXAMPLE = HERE / "workflow.config.example"
 PLUGIN_HOOKS = HERE / "plugin" / "hooks"
 METHODOLOGIES = SCAFFOLD / ".claude" / "teams" / "methodologies"
+PLUGIN_JSON = HERE / "plugin" / ".claude-plugin" / "plugin.json"
 PH = re.compile(r"\{\{([A-Z_]+)\}\}")
+# init 寫進專案的版本戳（內容＝plugin.json 的 version）與這次用的佔位符值（--upgrade 沒給 --config 時沿用）
+VERSION_FILE = ".claude/teams/VERSION"
+RECORD_FILE = ".claude/teams/workflow.config"
 # init.py 自己算的佔位符（不從 workflow.config 讀），值已是 JSON 片段，原樣代入
 COMPUTED = ("AWF_HOOK_CMD", "AWF_HOOK_SHELL")
 
@@ -110,8 +123,6 @@ def collect_values(config: Path | None, defaults: bool, target: Path) -> dict[st
                 val = ""
             elif ans:
                 val = ans
-        if k == "WORKSPACE_DIR" and not val:
-            val = str(target)
         vals[k] = val
     return vals
 
@@ -298,6 +309,58 @@ def build_methodology(vals: dict[str, str], answers_file: Path | None, interacti
     return prof
 
 
+def plugin_version() -> str:
+    try:
+        v = json.loads(PLUGIN_JSON.read_text(encoding="utf-8")).get("version")
+    except (OSError, json.JSONDecodeError):
+        v = None
+    if not isinstance(v, str) or not v:
+        die(f"讀不到 {PLUGIN_JSON} 的 version")
+    return v
+
+
+def profile_upgrade(meth: Path, adopt: bool) -> int:
+    """比對專案的 methodology.json 與它的來源內建 profile（看 name；不是內建的名稱就比 default），
+    列出缺少的欄位與預設值；adopt 時只補缺的（既有值不改），補完要過 schema 才寫回。回傳結束碼。"""
+    try:
+        proj = json.loads(meth.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"警告：{meth} 讀不到或不是合法 JSON（{e}），沒有比對 profile 欄位")
+        return 1
+    if not isinstance(proj, dict):
+        print(f"警告：{meth} 不是 JSON 物件，沒有比對 profile 欄位")
+        return 1
+    name = proj.get("name") if proj.get("name") in profile_names() else "default"
+    base = load_profile(name)
+    miss = [(p, v) for p, v in missing_fields(base, proj, atomic=True) if p not in ("name", "description")]
+    sys.path.insert(0, str(SCAFFOLD / ".claude" / "teams" / "tools"))
+    import schemalib  # noqa: E402  只用標準庫
+    if not miss:
+        print(f"開發規範 profile：保留 methodology.json，和內建 {name} 比對沒有缺少的欄位")
+    else:
+        print(f"開發規範 profile：保留 methodology.json；這版內建 {name} 有、你的 profile 沒有的欄位 {len(miss)} 個：")
+        for p, v in miss:
+            print(f"  - {p}：預設 {short(v)}")
+        if not adopt:
+            print("  加 --adopt-new-fields 補上（只補缺的，既有值不改）；不補時 workflow 照缺省行為走。")
+    if adopt and miss:
+        new = json.loads(json.dumps(proj))
+        for p, v in miss:
+            set_missing(new, p, v)
+        errs = schemalib.check_doc(new, "methodology")
+        if errs:
+            print("錯誤：補上欄位後不符合 schemas/methodology.schema.json，沒有寫回：" + "；".join(errs[:5]))
+            return 1
+        meth.write_text(json.dumps(new, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"  已補上 {len(miss)} 個欄位（--adopt-new-fields），既有值沒改。")
+        return 0
+    errs = schemalib.check_doc(proj, "methodology")
+    if errs:
+        print("警告：你的 methodology.json 不符合這版 schema（build.py 會失敗）：" + "；".join(errs[:5]))
+        return 1
+    return 0
+
+
 # ---------------------------------------------------------------- hooks 的啟動指令
 def python_for_hooks(override: str | None) -> str:
     """寫進 settings.json 的 Python：預設是跑 init.py 的這個；在 venv 裡時改用它底下的基礎 Python（venv 可能被刪）。"""
@@ -372,29 +435,84 @@ def _awf_mode(h: dict) -> str | None:
 
 
 def merge_hooks(user: dict, tmpl: dict) -> dict:
+    """awf_hook.py 的每個模式（guard-shell、guard-paths、envelope）在每個事件只留一份：舊的不論掛在哪個 matcher
+    都先拿掉（新版可能改了 matcher，例如 guard-paths 加上 Read|Grep），再放上模版這版的；使用者自己的 hooks 原樣保留。"""
     out = json.loads(json.dumps(user))
     for event, entries in tmpl.items():
         cur = out.setdefault(event, [])
+        modes = {_awf_mode(th) for e in entries for th in e.get("hooks", [])} - {None}
+        keep = []
+        for ue in cur:
+            if isinstance(ue, dict) and isinstance(ue.get("hooks"), list):
+                had = len(ue["hooks"])
+                ue["hooks"] = [uh for uh in ue["hooks"] if _awf_mode(uh) not in modes]
+                if had and not ue["hooks"]:
+                    continue  # 只剩舊的 awf hook 的項目整個拿掉
+            keep.append(ue)
+        cur[:] = keep
         for entry in entries:
-            for th in entry.get("hooks", []):
-                mode = _awf_mode(th)
-                hit = None
-                for ue in cur:
-                    if ue.get("matcher") != entry.get("matcher"):
-                        continue
-                    for i, uh in enumerate(ue.get("hooks", [])):
-                        if mode and _awf_mode(uh) == mode:
-                            hit = (ue, i)
-                if hit:
-                    hit[0]["hooks"][hit[1]] = th
-                else:
-                    cur.append({**{k: x for k, x in entry.items() if k != "hooks"}, "hooks": [th]})
+            cur.append(json.loads(json.dumps(entry)))
     return out
+
+
+def missing_fields(base: dict, have: dict, prefix: str = "", atomic: bool = False) -> list[tuple[str, object]]:
+    """base 有、have 沒有的欄位路徑（a.b.c）與 base 的值；兩邊都是 dict 時往下比，清單與純量不比內容。
+    atomic=True 時，子欄位全是純量或清單的 dict（例如 pr_size、sync）當成一個值：已經有了就不往裡面補
+    （使用者寫的 pr_size 是完整的設定，不混進預設的子欄位）；只有含 dict 的段（例如 stages.design）才往下比。"""
+    out: list[tuple[str, object]] = []
+    for k, v in base.items():
+        p = f"{prefix}.{k}" if prefix else k
+        if k not in have:
+            out.append((p, v))
+        elif isinstance(v, dict) and isinstance(have[k], dict):
+            if atomic and not any(isinstance(x, dict) for x in v.values()):
+                continue
+            out += missing_fields(v, have[k], p, atomic)
+    return out
+
+
+def set_missing(doc: dict, path: str, value) -> None:
+    """只在 path 不存在時寫入（中間的 dict 沒有就建立）；既有值永遠不改。"""
+    keys = path.split(".")
+    cur = doc
+    for k in keys[:-1]:
+        if not isinstance(cur.get(k), dict):
+            if k in cur:
+                return  # 既有值不是 dict：不改
+            cur[k] = {}
+        cur = cur[k]
+    cur.setdefault(keys[-1], json.loads(json.dumps(value)))
+
+
+def refresh_notes(doc: dict, tmpl: dict) -> None:
+    """設定檔裡的說明文字（_說明 開頭的鍵）換成新版模版的內容；其他值不動。"""
+    for k, v in tmpl.items():
+        if k.startswith("_說明") and isinstance(v, str):
+            doc[k] = v
+        elif isinstance(v, dict) and isinstance(doc.get(k), dict):
+            refresh_notes(doc[k], v)
+
+
+def heading_at(text: str, heading: str) -> int:
+    m = re.search(rf"^{re.escape(heading)}[ \t]*\r?$", text, re.M)
+    return m.start() if m else -1
+
+
+def short(v, n: int = 160) -> str:
+    t = json.dumps(v, ensure_ascii=False)
+    return t if len(t) <= n else t[: n - 1] + "…"
+
+
+GUARD_CFG = ".claude/teams/guard.config.json"
+# 模版檔裡由使用者填寫的段：--force／--upgrade 時這個標題（含）之後保留使用者的內容，之前換成新版模版
+SPLICE = {".claude/teams/rules.md": "## 專案規則", CLAUDE_IMPORT: "## 專案特定", "CLAUDE.md": "## 專案特定"}
 
 
 class Writer:
     def __init__(self, target: Path, vals: dict[str, str], force: bool, overwrite_user: bool = False):
         self.target, self.vals, self.force, self.overwrite_user = target, vals, force, overwrite_user
+        self.seen: set[Path] = set()        # 這版模版會產生的所有檔案（用來找舊版殘留）
+        self.preserved: list[tuple[Path, str]] = []  # 模版檔裡的使用者設定：更新模版部分、保留使用者部分
         self.written: list[Path] = []
         self.skipped: list[Path] = []       # 模版檔已存在（加 --force 更新）
         self.user_kept: list[Path] = []     # 使用者的檔案，保留不動
@@ -426,6 +544,12 @@ class Writer:
         rel = self.rel(dst)
         if rel == "CLAUDE.md":
             self.put_claude_md(src, dst)
+            return True
+        if self.force and rel == GUARD_CFG:
+            self.put_guard(src, dst)
+            return True
+        if self.force and rel in SPLICE:
+            self.put_splice(src, dst, SPLICE[rel])
             return True
         if rel in MERGE_JSON:
             text = self.render_file(src, dst)
@@ -463,8 +587,7 @@ class Writer:
             body = f.read()
         if CLAUDE_MARK in body:  # 先前 init 在空專案產生的 CLAUDE.md
             if self.force:
-                self.write_text(dst, self.render_file(src, dst))
-                self.written.append(dst)
+                self.put_splice(src, dst, SPLICE["CLAUDE.md"])
             else:
                 self.skipped.append(dst)
             return
@@ -480,6 +603,41 @@ class Writer:
             f.write(block)
         self.merged.append(dst)
 
+    def put_guard(self, src: Path, dst: Path) -> None:
+        """guard.config.json：使用者的值一律保留（main_session_*、upstream_authorized_by、extension_agents…），
+        只補上新版模版新增的鍵，說明文字換成新版。"""
+        text = self.render_file(src, dst)
+        try:
+            user = json.loads(dst.read_text(encoding="utf-8-sig"))
+            tmpl = json.loads(text)
+        except (OSError, json.JSONDecodeError):
+            user = None
+        if not isinstance(user, dict):
+            self.user_kept.append(dst)
+            print(f"注意：{self.rel(dst)} 不是合法 JSON 物件，沒有更新；請照模版 {src.name} 手動補上新欄位")
+            return
+        added = [p for p, _ in missing_fields(tmpl, user) if not p.split(".")[-1].startswith("_說明")]
+        merged = merge_settings(user, tmpl)
+        refresh_notes(merged, tmpl)
+        if merged != user:
+            self.write_text(dst, json.dumps(merged, ensure_ascii=False, indent=2) + "\n")
+        self.preserved.append((dst, "你的值全部保留；" + (f"補上新欄位：{'、'.join(added)}" if added else "沒有新欄位")))
+
+    def put_splice(self, src: Path, dst: Path, heading: str) -> None:
+        """標題之前換成新版模版，標題（含）之後保留使用者的內容；任一邊找不到標題就整份保留。"""
+        new = self.render_file(src, dst)
+        with open(dst, encoding="utf-8", newline="") as f:
+            old = f.read()
+        i_new, i_old = heading_at(new, heading), heading_at(old, heading)
+        if i_new < 0 or i_old < 0:
+            self.user_kept.append(dst)
+            print(f"注意：{self.rel(dst)} 找不到「{heading}」標題，整份保留沒有更新；要更新請手動對照模版 {src.name}")
+            return
+        out = new[:i_new] + old[i_old:]
+        if out != old:
+            self.write_text(dst, out)
+        self.preserved.append((dst, f"「{heading.lstrip('# ')}」段之後保留，前面更新成新版"))
+
     def render(self, text: str, as_json: bool) -> str:
         def sub(m: re.Match) -> str:
             k = m.group(1)
@@ -492,6 +650,7 @@ class Writer:
         return PH.sub(sub, text)
 
     def put(self, src: Path, dst: Path, text_render: bool = True) -> None:
+        self.seen.add(dst)
         if self.put_user(src, dst):
             return
         if dst.exists() and not (self.force or self.overwrite_user):
@@ -540,7 +699,9 @@ def main() -> None:
     ap.add_argument("--target")
     ap.add_argument("--config")
     ap.add_argument("--answers", help="開發規範與慣例的答案檔（JSON）")
-    ap.add_argument("--force", action="store_true", help="覆蓋模版自己的檔案；使用者的檔案仍走合併")
+    ap.add_argument("--upgrade", action="store_true", help="升級已 init 的專案：模版檔更新、使用者設定保留，列出 profile 缺少的新欄位")
+    ap.add_argument("--adopt-new-fields", action="store_true", help="搭配 --upgrade：把缺少的 profile 欄位補進 methodology.json（既有值不改）")
+    ap.add_argument("--force", action="store_true", help="覆蓋模版自己的檔案；使用者的設定照 --upgrade 的規則保留")
     ap.add_argument("--overwrite-user-files", action="store_true", help="連 CLAUDE.md、settings.json 等使用者檔案也整份覆蓋")
     ap.add_argument("--hooks", default="plugin")
     ap.add_argument("--with-mcp", action="store_true")
@@ -562,16 +723,33 @@ def main() -> None:
     if not EXAMPLE.is_file():
         die(f"找不到 {EXAMPLE}")
 
+    target = Path(target_arg).expanduser()
+    target.mkdir(parents=True, exist_ok=True)
+    target = target.resolve()
+    force = a.force or a.upgrade
+    new_ver = plugin_version()
+    vfile = target / VERSION_FILE
+    old_ver = vfile.read_text(encoding="utf-8").strip() if vfile.is_file() else ""
+    if a.upgrade:
+        if not (target / ".claude" / "teams").is_dir():
+            die(f"{target} 還沒 init 過（沒有 .claude/teams/），不能 --upgrade；先不加 --upgrade 跑一次 init")
+        print(f"== 升級 agent-workflow：{old_ver or '未記錄（0.2.0 以前的版本）'} → {new_ver} ==")
+
     config: Path | None = None
+    record = target / RECORD_FILE
     if a.config:
         config = Path(a.config).expanduser()
         if not config.is_file():
             die(f"找不到設定檔 {a.config}")
+    elif a.upgrade and record.is_file():
+        config = record
     else:
         for c in (Path.cwd() / "workflow.config", HERE / "workflow.config"):
             if c.is_file():
                 config = c
                 break
+    if a.upgrade:
+        print(f"佔位符的值：{config if config else '找不到 init 時的設定（' + RECORD_FILE + '），用 workflow.config.example 的預設值；不對時加 --config 重跑'}")
 
     answers: Path | None = None
     if a.answers:
@@ -579,20 +757,17 @@ def main() -> None:
         if not answers.is_file():
             die(f"找不到答案檔 {a.answers}")
 
-    target = Path(target_arg).expanduser()
-    target.mkdir(parents=True, exist_ok=True)
-    target = target.resolve()
-
-    vals = collect_values(config, a.defaults, target)
-    interactive = config is None and not a.defaults and sys.stdin.isatty()
-    methodology = build_methodology(vals, answers, interactive, a.defaults)
+    defaults = a.defaults or a.upgrade  # 升級不詢問
+    vals = collect_values(config, defaults, target)
+    interactive = config is None and not defaults and sys.stdin.isatty()
+    methodology = build_methodology(vals, answers, interactive, defaults)
     main_free = ask_main_session(answers, interactive)
     python = python_for_hooks(a.python)
     vals["AWF_HOOK_CMD"], vals["AWF_HOOK_SHELL"] = hook_command(python)
     runs = (vals.get("RUNS_DIR") or "_tpm/runs").strip("/")
     briefs = (vals.get("BRIEFS_DIR") or "").strip("/")
 
-    w = Writer(target, vals, a.force, a.overwrite_user_files)
+    w = Writer(target, vals, force, a.overwrite_user_files)
     for src in sorted(p for p in SCAFFOLD.rglob("*") if p.is_file()):
         if skip_file(src):
             continue
@@ -609,6 +784,16 @@ def main() -> None:
     if briefs:
         (target / briefs).mkdir(parents=True, exist_ok=True)
 
+    # 版本戳與這次的佔位符值：模版檔都是這版時才寫 VERSION（有略過的舊模版檔時不謊報版本）
+    templates_current = force or a.overwrite_user_files or not w.skipped
+    if templates_current:
+        Writer.write_text(vfile, new_ver + "\n")
+    elif not old_ver:
+        print(f"注意：有已存在的模版檔沒有更新，沒寫 {VERSION_FILE}；用 --upgrade 更新到 {new_ver}")
+    if templates_current or not record.is_file():
+        Writer.write_text(record, "# init.py 這次用的佔位符值（init.py --upgrade 沒給 --config 時沿用）。不要放金鑰或密碼。\n"
+                          + "".join(f"{k}={v}\n" for k, v in vals.items() if k not in COMPUTED))
+
     # 主 session 的習慣：會直接 push main、合併 PR 時放寬主 session 的 git／GitHub 限制（只改這次寫出的 guard.config.json）
     gcfg = target / ".claude" / "teams" / "guard.config.json"
     if main_free:
@@ -622,29 +807,43 @@ def main() -> None:
             print(f"注意：{gcfg.relative_to(target).as_posix()} 已存在、沒有改；要放寬主 session 的限制，"
                   "自己把 main_session_git_rules、main_session_github_rules 改成 false。")
 
-    # 開發規範 profile：寫成專案的 .claude/teams/methodology.json（已存在且沒加 --force 時保留專案自己的）
+    # 開發規範 profile：寫成專案的 .claude/teams/methodology.json（已存在時保留專案自己的；--overwrite-user-files 才整份換掉）
     meth = target / ".claude" / "teams" / "methodology.json"
-    if meth.exists() and not a.force:
-        w.skipped.append(meth)
+    exit_code = 0
+    if meth.exists() and not a.overwrite_user_files:
+        w.user_kept.append(meth)
+        if force or a.adopt_new_fields:
+            exit_code = profile_upgrade(meth, a.adopt_new_fields)
     else:
         meth.parent.mkdir(parents=True, exist_ok=True)
         meth.write_text(json.dumps(methodology, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         w.written.append(meth)
-    print(f"開發規範 profile：{methodology.get('name')}（{meth.relative_to(target).as_posix()}"
-          f"{'，已存在、保留原檔' if meth in w.skipped else ''}）")
+    if meth not in w.user_kept:
+        print(f"開發規範 profile：{methodology.get('name')}（{meth.relative_to(target).as_posix()}）")
 
-    print(f"寫入 {len(w.written)} 個檔案到 {target}")
+    # 舊版殘留：專案裡模版目錄下、這版模版已不再提供的檔案（不刪，列出來讓人決定）
+    stale = []
+    for sub in ("tools", "schemas", "golden-set", "methodologies"):
+        d = target / ".claude" / "teams" / sub
+        if d.is_dir():
+            stale += [p for p in sorted(d.rglob("*")) if p.is_file() and not skip_file(p) and p not in w.seen]
+
+    print(f"{'更新' if force else '寫入'} {len(w.written)} 個模版檔到 {target}")
+    if w.preserved:
+        print(f"保留使用者設定（模版部分更新）{len(w.preserved)} 個：")
+        for p, how in w.preserved:
+            print(f"  - {p.relative_to(target).as_posix()}：{how}")
     if w.merged:
         print(f"合併進 {len(w.merged)} 個既有的使用者檔案（原內容保留）：")
         for p in w.merged:
             how = "結尾追加一段 @ 引用" if p.name == "CLAUDE.md" else "深度合併，使用者的值優先"
             print(f"  - {p.relative_to(target).as_posix()}（{how}）")
     if w.user_kept:
-        print(f"保留 {len(w.user_kept)} 個使用者的檔案，沒有改動（--force 也不覆蓋；要整份換成模版版本加 --overwrite-user-files）：")
+        print(f"保留 {len(w.user_kept)} 個使用者的檔案，沒有改動（--force／--upgrade 也不覆蓋；要整份換成模版版本加 --overwrite-user-files）：")
         for p in w.user_kept:
             print(f"  - {p.relative_to(target).as_posix()}")
     if w.skipped:
-        print(f"略過 {len(w.skipped)} 個已存在的模版檔（加 --force 更新）：")
+        print(f"略過 {len(w.skipped)} 個已存在的模版檔（用 --upgrade 更新）：")
         for p in w.skipped:
             print(f"  - {p.relative_to(target).as_posix()}")
     st_path = target / ".claude" / "settings.json"
@@ -658,6 +857,10 @@ def main() -> None:
                   "plugin 也會註冊同一組 hooks，請擇一：刪掉 settings.json 裡的 awf_hook.py hooks，或改回 --hooks project。")
         if a.hooks == "project" and not has_awf:
             print("注意：.claude/settings.json 沒有 awf_hook.py 的 hooks（可能不是合法 JSON），請照 .claude/settings.README.md 手動註冊。")
+    if stale:
+        print(f"這版模版已不再提供、專案裡還留著的檔案 {len(stale)} 個（沒有刪；確認沒在用後手動刪除）：")
+        for p in stale:
+            print(f"  - {p.relative_to(target).as_posix()}")
     if w.leftovers:
         print("警告：還有沒替換的佔位符（workflow.config 缺這些值）：")
         for x in sorted(set(w.leftovers)):
@@ -669,6 +872,12 @@ def main() -> None:
         r = subprocess.run([sys.executable, str(build)], cwd=target)
         if r.returncode:
             print("警告：build.py 失敗，請手動跑 python3 .claude/teams/tools/build.py")
+            if a.upgrade:
+                exit_code = exit_code or 1
+
+    if a.upgrade:
+        print(f"\n升級完成：{old_ver or '未記錄'} → {new_ver}。用 git diff 檢查變更；驗證指令見下面第 5 步。")
+        print("記得也更新 plugin（agents、skills、hooks）：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins。")
 
     if a.hooks == "plugin" and os.name == "nt" and not python3_works():
         print("\n警告：這台 Windows 的 python3 指令跑不起來（常見是 Microsoft Store 的空殼或只裝了 py 啟動器）。"
@@ -702,6 +911,8 @@ def main() -> None:
         print(f"""  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 {HERE / 'docs' / '自動合併信任模型.md'}
      的啟用前檢查清單，再加 --with-merge-gate 重跑 init。""")
     print(f"""  套用到既有專案時保留了什麼、怎麼移除模版：見 {HERE / 'docs' / '自訂與擴充.md'}〈套用到既有專案〉。""")
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
