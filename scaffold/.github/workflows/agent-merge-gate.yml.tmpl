@@ -11,6 +11,8 @@
 # 目標 repo 的 ruleset（Settings → Rules → Rulesets，套用到 main）必須設定：
 #   1. Require status checks to pass：加入 agent-merge-gate/decision，來源（source）選 gate App，不要選 any source。
 #      勾 Require branches to be up to date；有用 merge queue 時也在 merge_group 重跑（本檔已觸發）。
+#      merge_group 時 check run 回報在 queue 的暫存 commit（github.event.merge_group.head_sha），queue 才看得到；
+#      gate 判定仍綁 PR head（--head-sha），steward 的對照與驗證證據都是對 PR head 做的。
 #   2. Do not allow bypassing the above settings（bypass list 留空，admin 也不能繞過）。
 #   3. Restrict updates：只有 merger App（以及人）能更新 main；禁止 force push、禁止刪除。
 #   4. Require a pull request before merging：
@@ -92,6 +94,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_FROM_EVENT: ${{ github.event.pull_request.number || github.event.issue.number }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "merge_group" ]; then
@@ -101,7 +104,17 @@ jobs:
             PR="$PR_FROM_EVENT"
           fi
           test -n "$PR"
-          gh api "repos/$REPO/pulls/$PR" --jq '"pr=\(.number)\nbase_ref=\(.base.ref)\nbase_sha=\(.base.sha)\nhead_sha=\(.head.sha)"' >> "$GITHUB_OUTPUT"
+          INFO="$(gh api "repos/$REPO/pulls/$PR" --jq '"pr=\(.number)\nbase_ref=\(.base.ref)\nbase_sha=\(.base.sha)\nhead_sha=\(.head.sha)"')"
+          printf '%s\n' "$INFO" >> "$GITHUB_OUTPUT"
+          # check run 要回報在「這次要合進去的 commit」上：merge_group 時是 queue 的暫存 commit（ruleset 在 queue 裡看的是它），
+          # 其他事件是 PR head。gate 的 --head-sha 一律用 PR head（steward 對照、驗證證據綁的是它）。
+          if [ "$EVENT" = "merge_group" ]; then
+            printf '%s' "$QUEUE_SHA" | grep -Eq '^[0-9a-f]{40}$'  # 取不到 queue commit 就失敗（fail-closed），不回報到別的 commit
+            REPORT_SHA="$QUEUE_SHA"
+          else
+            REPORT_SHA="$(printf '%s\n' "$INFO" | sed -n 's/^head_sha=//p')"
+          fi
+          echo "report_sha=$REPORT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: checkout 受保護的 base 分支（gate 與設定都從這裡來）
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,7 +133,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gate"
           git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
           test "$(git rev-parse refs/remotes/pr/head)" = "$HEAD_SHA"
-          git diff --no-color --no-ext-diff "origin/$BASE_REF...$HEAD_SHA" > "$RUNNER_TEMP/gate/diff.txt"
+          # 明寫 a/、b/ 前綴：merge_gate 的 diff 解析認不得標頭時一律 hold
+          git diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "origin/$BASE_REF...$HEAD_SHA" > "$RUNNER_TEMP/gate/diff.txt"
 
       - name: 收集 required checks 與 merger App 貼的 gate 輸入
         env:
@@ -221,13 +235,15 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          REPORT_SHA: ${{ steps.pr.outputs.report_sha }}
           GATE_EXIT: ${{ steps.gate.outputs.exit }}
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/gate"
+          test -n "$REPORT_SHA"
           if [ "$GATE_EXIT" = "0" ]; then CONCLUSION=success; else CONCLUSION=failure; fi
-          python3 - "$OUT/result.json" "$CONCLUSION" "$HEAD_SHA" > "$OUT/check.json" <<'PY'
+          # 回報位置：merge_group 時是 queue commit（github.event.merge_group.head_sha），其他事件是 PR head
+          python3 - "$OUT/result.json" "$CONCLUSION" "$REPORT_SHA" > "$OUT/check.json" <<'PY'
           import json, sys
           try:
               res = json.load(open(sys.argv[1], encoding="utf-8"))

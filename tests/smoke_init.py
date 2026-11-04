@@ -14,7 +14,8 @@
   8. 版本：plugin.json、marketplace.json（metadata 與 plugins[]）、init 寫的 .claude/teams/VERSION 三處一致
   9. 佔位符雙向一致：scaffold 用到的 ⊆ workflow.config.example（加 init 自己算的），且 example 的每一個 scaffold 都有用到
  10. 升級：init → 自訂 methodology／guard.config／〈專案規則〉並弄舊模版檔 → --upgrade → 自訂保留、模版檔更新、
-     列出缺少的 profile 欄位、--adopt-new-fields 只補缺的，build.py --check 與 golden-set 通過；--force 也保留自訂
+     列出缺少的 profile 欄位、--adopt-new-fields 只補缺的，build.py --check 與 golden-set 通過；--force 也保留自訂；
+     自訂 RUNS_DIR init 後跑沒給 --config 的 --force，workflow 的 runs 路徑與 workflow.config 紀錄都不變
 用法：python3 tests/smoke_init.py [設定檔]   （預設 workflow.config.example）
 環境變數 KEEP=1 時保留暫存目錄方便除錯。
 """
@@ -596,6 +597,38 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
                 and g4.get("extension_agents", {}).get("acme-db-reviewer") == "tpm-reviewer" and RULE_MARK in rules_p.read_text(encoding="utf-8")
                 and tool.read_text(encoding="utf-8") == src_tool)
         ok("--force：模版檔更新，methodology、guard.config、〈專案規則〉照升級規則保留") if good else bad("--force 蓋掉了使用者的設定")
+    check_force_keeps_values(work, config, env)
+
+
+def check_force_keeps_values(work: Path, config: Path, env: dict) -> None:
+    """升級：用自訂 RUNS_DIR init，再跑沒給 --config 的 --force：佔位符沿用紀錄檔，workflow 裡的 runs 路徑與紀錄檔都不變。"""
+    print("\n== 升級：--force 沒給 --config 時沿用 init 記下的佔位符值 ==")
+    t = work / "project-force-values"
+    t.mkdir()
+    custom = work / "custom.config"
+    custom_runs = "_acme/agent-runs"
+    lines = [f"RUNS_DIR={custom_runs}" if l.strip().startswith("RUNS_DIR") and "=" in l else l
+             for l in config.read_text(encoding="utf-8").splitlines()]
+    custom.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if not init(t, custom, env=env):
+        return
+    wf = t / ".claude/workflows/event-post-merge.js"
+    record = t / ".claude/teams/workflow.config"
+    want = f"const RUNS = '{custom_runs}'"
+    if want not in wf.read_text(encoding="utf-8") or read_kv(record, "RUNS_DIR") != custom_runs:
+        bad(f"自訂 RUNS_DIR 的 init 結果不對（{wf.name} 或 workflow.config 紀錄）")
+        return
+    r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--force"], cwd=t.parent, env=env)
+    if r.returncode != 0:
+        bad("init.py --force（沒給 --config）失敗：", r.stdout + r.stderr)
+        return
+    text = wf.read_text(encoding="utf-8")
+    ok(f"升級：--force 沒給 --config，workflow 的 runs 路徑仍是 {custom_runs}") if want in text else bad(
+        f"升級：--force 沒給 --config，workflow 的 runs 路徑被換掉了：{[l for l in text.splitlines() if 'const RUNS' in l]}")
+    got = read_kv(record, "RUNS_DIR")
+    ok("升級：--force 沒給 --config，workflow.config 紀錄沒被範例預設值覆寫") if got == custom_runs else bad(f"升級：--force 後 workflow.config 紀錄的 RUNS_DIR 變成 {got}")
+    g = json.loads((t / ".claude/teams/guard.config.json").read_text(encoding="utf-8"))
+    ok("升級：--force 後 guard.config.json 的 runs_dir 仍是自訂值") if g.get("runs_dir") == custom_runs else bad(f"升級：--force 後 runs_dir 變成 {g.get('runs_dir')}")
 
 
 def main(argv: list[str]) -> int:

@@ -22,6 +22,8 @@
               搭配 --upgrade：把列出的缺少欄位補進 methodology.json（只補缺的，既有值永遠不改），補完驗 schema 再重跑 build.py
   --force     覆蓋**模版自己的檔案**（.claude/teams/ 底下、.claude/hooks/ 的 awf 腳本、看得出是模版產生的 workflow）。
               使用者設定的保留規則和 --upgrade 相同（methodology.json、guard.config.json、〈專案規則〉、〈專案特定〉不整份覆寫）。
+              佔位符的值也和 --upgrade 相同：沒給 --config 時沿用 init 記下的 .claude/teams/workflow.config，
+              不會用範例預設值重算（RUNS_DIR 等自訂值不會被換掉）；值不是從 --config 或紀錄檔來時，不覆寫既有的紀錄檔。
               使用者的檔案（CLAUDE.md、.claude/settings.json、.mcp.json、不是模版產生的同名 workflow／hook）即使加 --force 也不整份覆蓋：
               CLAUDE.md 只追加一段引用、settings.json 與 .mcp.json 深度合併、其餘保留並列進略過清單
   --overwrite-user-files
@@ -701,7 +703,7 @@ def main() -> None:
     ap.add_argument("--answers", help="開發規範與慣例的答案檔（JSON）")
     ap.add_argument("--upgrade", action="store_true", help="升級已 init 的專案：模版檔更新、使用者設定保留，列出 profile 缺少的新欄位")
     ap.add_argument("--adopt-new-fields", action="store_true", help="搭配 --upgrade：把缺少的 profile 欄位補進 methodology.json（既有值不改）")
-    ap.add_argument("--force", action="store_true", help="覆蓋模版自己的檔案；使用者的設定照 --upgrade 的規則保留")
+    ap.add_argument("--force", action="store_true", help="覆蓋模版自己的檔案；使用者的設定與佔位符的值（沒給 --config 時沿用 workflow.config 紀錄）照 --upgrade 的規則保留")
     ap.add_argument("--overwrite-user-files", action="store_true", help="連 CLAUDE.md、settings.json 等使用者檔案也整份覆蓋")
     ap.add_argument("--hooks", default="plugin")
     ap.add_argument("--with-mcp", action="store_true")
@@ -741,14 +743,14 @@ def main() -> None:
         config = Path(a.config).expanduser()
         if not config.is_file():
             die(f"找不到設定檔 {a.config}")
-    elif a.upgrade and record.is_file():
-        config = record
+    elif (a.upgrade or a.force) and record.is_file():
+        config = record  # --force 和 --upgrade 一樣沿用 init 記下的值，不用範例預設值重算佔位符
     else:
         for c in (Path.cwd() / "workflow.config", HERE / "workflow.config"):
             if c.is_file():
                 config = c
                 break
-    if a.upgrade:
+    if a.upgrade or a.force:
         print(f"佔位符的值：{config if config else '找不到 init 時的設定（' + RECORD_FILE + '），用 workflow.config.example 的預設值；不對時加 --config 重跑'}")
 
     answers: Path | None = None
@@ -790,8 +792,11 @@ def main() -> None:
         Writer.write_text(vfile, new_ver + "\n")
     elif not old_ver:
         print(f"注意：有已存在的模版檔沒有更新，沒寫 {VERSION_FILE}；用 --upgrade 更新到 {new_ver}")
-    if templates_current or not record.is_file():
-        Writer.write_text(record, "# init.py 這次用的佔位符值（init.py --upgrade 沒給 --config 時沿用）。不要放金鑰或密碼。\n"
+    # 紀錄檔只在「明確給了 --config」「值就是從紀錄檔來的」或「還沒有紀錄檔」時寫；
+    # 值來自其他地方（./workflow.config、範例預設值）時不覆寫既有的紀錄，避免把使用者 init 時的值換掉
+    record_ok = bool(a.config) or config == record or not record.is_file()
+    if (templates_current or not record.is_file()) and record_ok:
+        Writer.write_text(record, "# init.py 這次用的佔位符值（init.py --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\n"
                           + "".join(f"{k}={v}\n" for k, v in vals.items() if k not in COMPUTED))
 
     # 主 session 的習慣：會直接 push main、合併 PR 時放寬主 session 的 git／GitHub 限制（只改這次寫出的 guard.config.json）
