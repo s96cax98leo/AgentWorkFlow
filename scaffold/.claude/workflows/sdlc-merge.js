@@ -168,7 +168,7 @@ const finalDecision = inconsistent ? {
   followups,
 } : dec
 
-const GATE = `python3 .claude/teams/tools/merge_gate.py check --decision - --repo ${GH} --pr ${N} --head-sha <目前 head> --evidence <證據> --checks <gh pr checks ${N} --repo ${GH} --required --json name,state 的輸出> --diff <git diff ${BASE}...<head> 的輸出> --tests-before <N> --tests-after <N> --base-sha <gh pr view ${N} --repo ${GH} --json baseRefOid 的值>${A.requirements ? ` --requirements ${A.requirements}` : ''} --findings <審查發現> ${REVIEWED_ARG}（中間檔放 mktemp -d）`
+const GATE = `python3 .claude/teams/tools/merge_gate.py check --decision - --repo ${GH} --pr ${N} --head-sha <目前 head> --evidence <證據> --checks <gh pr checks ${N} --repo ${GH} --required --json name,state 的輸出> --diff <git -c core.quotepath=false diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ ${BASE}...<head> 的輸出（標頭解析不了 gate 會 hold）> --tests-before <N> --tests-after <N> --base-sha <gh pr view ${N} --repo ${GH} --json baseRefOid 的值>${A.requirements ? ` --requirements ${A.requirements}` : ''} --findings <審查發現> ${REVIEWED_ARG}（中間檔放 mktemp -d）`
 // CI 範本（.github/workflows/agent-merge-gate.yml）只採信 merger 帳號貼在 PR 的最後一則 gate 輸入留言；沒有留言時 CI 的 gate 判 hold
 const COMMENT = (decisionNote) => `把 gate 輸入貼成 PR 留言（在跑 gate 之前）：內容寫到 mktemp -d 的暫存檔，第一行是 <!-- agent-merge-gate-inputs -->，接著一個 \`\`\`json 區塊，` +
   `格式 {"decision": <${decisionNote}，整個信封>, "evidence": <驗證證據（正規化證據或 verifier 的 criteria 信封）>, "tests_before": <N>, "tests_after": <N>, "findings": <保留下來的審查發現>}；` +

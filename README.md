@@ -83,7 +83,7 @@ init 會先逐一詢問佔位符的值，再確認你的開發習慣：
 
 每題都有預設值，直接按 Enter 就套用。也可以在 Claude Code 裡執行 `/agent-workflow:init-workflow`，讓它在對話中問完再幫你跑 init。
 
-init 會在專案寫下 `.claude/teams/VERSION`（套用的模版版本）與 `.claude/teams/workflow.config`（這次的佔位符值），之後 `--upgrade` 會沿用。
+init 會在專案寫下 `.claude/teams/VERSION`（套用的模版版本）與 `.claude/teams/workflow.config`（這次的佔位符值），之後 `--upgrade` 與 `--force` 沒給 `--config` 時都會沿用。
 
 要驗證產出，在目標專案根目錄執行：
 
@@ -247,7 +247,7 @@ python3 init.py --target <專案> [--config workflow.config] [--answers <答案.
 | `--hooks project` | 把 hooks 複製到專案的 `.claude/hooks/`，由 `settings.json` 註冊，並寫入 Python 的絕對路徑。**Windows 建議用這個。** 和 plugin 註冊只能擇一 |
 | `--with-mcp` | 產生正式的 `.mcp.json`，不加時只產生 `.mcp.json.example` |
 | `--with-merge-gate` | 放 `.github/workflows/agent-merge-gate.yml`。預設不放，因為還沒設好 gate App 時它會讓每個 PR 失敗 |
-| `--upgrade` | 升級已 init 的專案（建議的更新方式）：模版檔換成這版，使用者的設定保留，列出 profile 缺少的新欄位。沒給 `--config` 時沿用 `.claude/teams/workflow.config` |
+| `--upgrade` | 升級已 init 的專案（建議的更新方式）：模版檔換成這版，使用者的設定保留，列出 profile 缺少的新欄位。沒給 `--config` 時沿用 `.claude/teams/workflow.config`（`--force` 也一樣） |
 | `--adopt-new-fields` | 搭配 `--upgrade`：把缺少的 profile 欄位補進 `methodology.json`，既有值不改 |
 | `--force` | 覆寫已存在的模版檔；使用者設定的保留規則和 `--upgrade` 相同 |
 | `--overwrite-user-files` | 連使用者的檔案（`CLAUDE.md`、`settings.json`、`methodology.json`、`guard.config.json`、〈專案規則〉）也整份覆寫，只在想重設時使用 |

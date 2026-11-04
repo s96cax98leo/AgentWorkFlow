@@ -137,7 +137,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - `auto_merge.allowed_skipped_checks`：skipped／neutral 預設不算通過，列在這裡的才算。
   - `upstream_authorized_by` 的值可以是字串或 `{by, link, scope, expires}`；過期或日期讀不懂都和沒有授權一樣 escalate，和 hook 一致。放寬閘門（改測試／lint／覆蓋率設定、新增壓制註解）一律 escalate；`auto_merge.carry_verdict_on_rebase`（預設關閉）開啟時，rebase 後 patch-id 相同才沿用 verdict。
 - steward 合併後要讀回 PR 狀態填 `merge_state`，`sdlc-merge` 只在 `merged` 時算已合併（merge queue 可能只是排隊）。
-- `publish.py`：確定性推送工具。只推 fork 的功能分支，推送前掃機敏值、檢查閘門、開 PR，並寫稽核紀錄。
+- `publish.py`：確定性推送工具。只推 fork 的功能分支，推送前掃機敏值（含二進位與空檔的機敏檔名）、檢查整條閘門鏈到 deliver 都已核准（`--stage` 只能指定 deliver 或更後面）、開 PR，並寫稽核紀錄。
+- `merge_gate.py` 解析 diff 時，rename／刪除的舊路徑也算進風險判斷，加引號的路徑會還原；標頭或行數解析不了一律 hold，所以 diff 要用 `--src-prefix=a/ --dst-prefix=b/` 產生。判定的「今天」取 `--timestamp` 與系統 UTC 日期較晚者。
 - `scaffold/.github/workflows/agent-merge-gate.yml.tmpl`：給目標專案用的 CI，從受保護的 base 執行 gate，設為 required check。
 - 真正的信任邊界在伺服器端（ruleset、GitHub App、CODEOWNERS），hook 只是輔助，可以被繞過。`auto_merge` 預設關閉。安全政策見 `SECURITY.md`。
 

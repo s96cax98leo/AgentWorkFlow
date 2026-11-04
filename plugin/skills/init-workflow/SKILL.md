@@ -75,13 +75,13 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 ## 5. 跑 init
 `python3 <模版根目錄>/init.py --target <目標專案> --config <目標專案>/workflow.config --answers <答案檔>`（Windows 用 `py -3` 或 `python`）。執行前把指令列給使用者看。可選參數：
 - `--upgrade`：升級已 init 的專案（第 2 步發現舊版時用）。模版檔換成新版；`methodology.json` 不動、`guard.config.json` 保留使用者的值只補新鍵、`rules.md` 的〈專案規則〉段之後保留；沒給 `--config` 時沿用 init 記下的 `.claude/teams/workflow.config`。輸出會列出新版內建 profile 有、專案 profile 沒有的欄位，給使用者看過、同意後再加 `--adopt-new-fields` 重跑補上（只補缺的，既有值不改）
-- `--force`：覆蓋已存在的模版檔（`.claude/teams/` 等；只有在第 2 步使用者同意覆蓋時才加）。使用者設定的保留規則同 `--upgrade`：`methodology.json`、`guard.config.json`、〈專案規則〉不會被整份換掉。使用者的 `CLAUDE.md`、`settings.json` 加 `--force` 也只會合併
+- `--force`：覆蓋已存在的模版檔（`.claude/teams/` 等；只有在第 2 步使用者同意覆蓋時才加）。使用者設定的保留規則同 `--upgrade`：`methodology.json`、`guard.config.json`、〈專案規則〉不會被整份換掉。沒給 `--config` 時一樣沿用 `.claude/teams/workflow.config`。使用者的 `CLAUDE.md`、`settings.json` 加 `--force` 也只會合併
 - `--overwrite-user-files`：連使用者的檔案也整份覆蓋，包括 `methodology.json`、`guard.config.json`、〈專案規則〉（只有使用者明確要求重設時才加）
 - `--with-merge-gate`：放 merge gate CI（預設不放；沒有 gate App 時會讓每個 PR 失敗，只有使用者已完成 docs/自動合併信任模型.md 的檢查清單才加）
 - `--hooks plugin|project`：hooks 用 plugin 內建的，或複製到專案（Windows 建議 project）
 - `--with-mcp`：一併產生 `.mcp.json`
 
-init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 schema 驗過，再跑 `build.py` 內嵌進 `sdlc-*.js`；並寫入 `.claude/teams/VERSION`（模版版本）與 `.claude/teams/workflow.config`（這次用的佔位符值，之後 `--upgrade` 沿用）。
+init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 schema 驗過，再跑 `build.py` 內嵌進 `sdlc-*.js`；並寫入 `.claude/teams/VERSION`（模版版本）與 `.claude/teams/workflow.config`（這次用的佔位符值，之後 `--upgrade`、`--force` 沒給 `--config` 時沿用）。
 
 ## 6. 驗證
 - 產出的檔案裡不應再有未替換的 `{{…}}`：`grep -rn '{{[A-Z_]*}}' <目標專案>/.claude <目標專案>/CLAUDE.md`。
