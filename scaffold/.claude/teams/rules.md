@@ -44,6 +44,7 @@
 23. **成果一律寫成檔案，信封只放路徑。** 有 blocking 問題時 `status` 不能是 `done`；blocking 問題要附 2–3 個選項與代價。
 24. **審查者只讀，只看證據，不採信作者的自述。** 慣例類的審查標準（PR 大小、code style、commit 格式、分支命名）引用開發規範 profile 的 `conventions`，profile 設為 null 的項目不檢查。 退回最多 2 次，超過交給人；無人值守時改為 park（寫進 run.json 並推播{{DECISION_OWNER}}，不等待）。合併通道裡不確定就 hold：agent 的發現只能讓結果變嚴，skeptic 不得推翻 blocker／important。
 25. **派工單自足**：目標、依據檔、硬規則、驗收、回覆格式都寫在派工單裡，使用輸出語言。
+26. **缺件不是「沒有發現」**：workflow 裡任何 agent 沒交件（回 null、信封不合格）時，該項記為 missing，不得當成空清單、「沒有差異」或「沒有被推翻」。審查、反駁、比對類的步驟缺件時，結果一律 hold，workflow 回傳 `halted: true`，`halt_reason` 寫出缺了哪個 agent（label）；其他步驟缺件時也要在回傳裡列出，不得默默略過。由 workflow 的確定性核對與 `check_workflows.mjs` 的缺件情境檢查。
 
 ---
 

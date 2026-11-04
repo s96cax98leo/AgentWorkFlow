@@ -10,7 +10,7 @@
     "design": {
       "artifacts": ["spec.md", "plan.md"],
       "requirement_style": "spec.md 用條列寫驗收條件，每條以 issue 編號開頭（例：「ISSUE-12：匯出按鈕下載 CSV」），可直接引用 issue 原文。",
-      "guidance": "沒有系統面時不寫 design.md，功能層 SD 寫在 plan.md 開頭一節；plan.md 列任務與檔案即可。",
+      "guidance": "功能層 SD 寫在 plan.md 開頭一節；有系統面時同一節四步寫完整（不另寫 design.md）。plan.md 列任務與檔案即可。",
       "system_design": {
         "source": "System Design Primer（https://github.com/donnemartin/system-design-primer，CC BY 4.0）；整理見模版 docs/系統設計方法.md",
         "steps": [
@@ -36,7 +36,7 @@
           "通訊（TCP、UDP、RPC、REST）",
           "安全"
         ],
-        "document": "功能層寫在 plan.md 開頭的「系統設計」節；系統層另寫 design.md。第一行寫這次是功能層還是系統層，以及判斷理由"
+        "document": "plan.md 開頭的「系統設計」節（功能層與系統層都寫在這裡）：第一行寫這次是功能層還是系統層，以及判斷理由"
       }
     },
     "build": {

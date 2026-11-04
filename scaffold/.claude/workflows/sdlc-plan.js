@@ -23,6 +23,8 @@ const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 const STAGE = ((MP.stages || {}).plan) || {}
 const CONV = MP.conventions || {}
+// 系統設計方法（profile 的 stages.design.system_design）：plan 段是 SA，對應它的第 1 步；skeptic 依它檢查 intent
+const SD = ((MP.stages || {}).design || {}).system_design || null
 const METH_NOTE = METHODOLOGY
   ? `開發規範 profile：${MP.name}（.claude/teams/methodology.json；各段做法與慣例以它為準）。文件格式：${(CONV.doc_format || {}).format || '依目標 repo'}。`
   : '開發規範 profile：未設定（沒有 .claude/teams/methodology.json），做法與慣例依目標 repo 既有規範。'
@@ -83,7 +85,7 @@ const intent = await agent(
 
 phase('Challenge')
 const challenge = intent ? await agent(
-  `${CTX}\n\n## 派工單\n試著反駁 ${EPIC_DIR}/specs/${A.epic}/intent.md：它有沒有偷渡需求原文沒有的範圍、漏掉原文的驗收要點、把解法寫進問題、或忽略調研發現的衝突？逐點判定（target_id 用 intent 的節名），不確定就判 refuted=true。\n調研結果：\n${got.map(brief).join('\n')}`,
+  `${CTX}\n\n## 派工單\n試著反駁 ${EPIC_DIR}/specs/${A.epic}/intent.md：它有沒有偷渡需求原文沒有的範圍、漏掉原文的驗收要點、把解法寫進問題、或忽略調研發現的衝突？${SD ? `另依系統設計方法（${SD.source}）的第 1 步檢查 SA：用例、限制、假設與量級有沒有寫齊，每個數字有沒有出處或標成假設（沒標的判 refuted）。` : ''}逐點判定（target_id 用 intent 的節名），不確定就判 refuted=true。\n調研結果：\n${got.map(brief).join('\n')}`,
   { label: 'challenge:intent', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
 ) : null
 

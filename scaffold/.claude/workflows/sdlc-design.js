@@ -58,7 +58,7 @@ const SD_RULES = SD
     `  寫在：${SD.document || 'design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由'}。\n`
   : ''
 const DOC_RULES = (dir) =>
-  `- 產出文件（放在 ${dir}/）：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）；架構取捨寫 ADR（至少 2 個真實選項；repo 有 adr skill 就用）。\n` +
+  `- 產出文件（放在 ${dir}/）：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）；架構取捨怎麼記錄依 profile 的指引，沒寫就依目標 repo 慣例。\n` +
   `- 需求／驗收條件的寫法：${STAGE.requirement_style || '照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文'}。\n` +
   (STAGE.guidance ? `- profile 的指引：${STAGE.guidance}\n` : '') + SD_RULES
 const COMMIT = `commit（${commitFor('docs', A.epic)}；結尾 {{ATTRIBUTION_LINE}}）。不 push。`

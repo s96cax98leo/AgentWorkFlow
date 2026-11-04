@@ -48,6 +48,9 @@ def main() -> int:
         ("去客戶化掃描", [PY, str(ROOT / "tests" / "scrub_check.py")]),
         ("init 煙霧測試", [PY, str(ROOT / "tests" / "smoke_init.py")]),
         ("hook 測試", [PY, str(ROOT / "plugin" / "hooks" / "tests" / "run.py")]),
+        # 自動發現：plugin/hooks/tests/test_*.py 與 tests/check_*.py，新增檢查不用改這裡
+        *[(f"hook 測試：{p.stem}", [PY, str(p)]) for p in sorted((ROOT / "plugin" / "hooks" / "tests").glob("test_*.py"))],
+        *[(f"檢查：{p.stem}", [PY, str(p)]) for p in sorted((ROOT / "tests").glob("check_*.py"))],
         ("check-tokens 掃描器", None),
     ]
     results, status = [], 0

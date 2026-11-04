@@ -51,6 +51,14 @@ REQUIRED = [
     *[f".claude/workflows/{w}.js" for w in WORKFLOWS],
 ]
 
+SELFTEST_REQUIRED = ("merge_gate.py", "publish.py", "sync_branch.py", "checklist.py")
+
+
+def selftest_tools(tools: Path) -> list[Path]:
+    """tools/ 裡有實作 --selftest 的 .py（原始碼出現 "--selftest" 字串）。"""
+    return sorted(p for p in tools.glob("*.py") if '"--selftest"' in p.read_text(encoding="utf-8"))
+
+
 fail = False
 GH_EXPR = re.compile(r"\$\{\{.*?\}\}")  # GitHub Actions 的 ${{ … }} 運算式不是佔位符
 
@@ -180,21 +188,14 @@ def check_tools(target: Path) -> None:
             ok(f"check_workflows.mjs：{last_line(r.stdout)}") if r.returncode == 0 else bad("check_workflows.mjs 失敗：", r.stdout + r.stderr)
         else:
             skip("沒有 node，略過 check_workflows.mjs")
-    if (target / ".claude/teams/tools/merge_gate.py").is_file():
-        r = run([PY, ".claude/teams/tools/merge_gate.py", "--selftest"], cwd=target)
-        ok(f"merge_gate.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("merge_gate.py --selftest 失敗：", r.stdout + r.stderr)
-    else:
-        bad("缺 .claude/teams/tools/merge_gate.py")
-    if (target / ".claude/teams/tools/publish.py").is_file():
-        r = run([PY, ".claude/teams/tools/publish.py", "--selftest"], cwd=target)
-        ok(f"publish.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("publish.py --selftest 失敗：", r.stdout + r.stderr)
-    else:
-        bad("缺 .claude/teams/tools/publish.py")
-    if (target / ".claude/teams/tools/sync_branch.py").is_file():
-        r = run([PY, ".claude/teams/tools/sync_branch.py", "--selftest"], cwd=target)
-        ok(f"sync_branch.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("sync_branch.py --selftest 失敗：", r.stdout + r.stderr)
-    else:
-        bad("缺 .claude/teams/tools/sync_branch.py")
+    # 有 --selftest 的工具全部跑（自動發現：新增 selftest 不用改這裡）；必備的幾支缺了算失敗
+    tools = target / ".claude/teams/tools"
+    for must in SELFTEST_REQUIRED:
+        if not (tools / must).is_file():
+            bad(f"缺 .claude/teams/tools/{must}")
+    for tool in selftest_tools(tools):
+        r = run([PY, f".claude/teams/tools/{tool.name}", "--selftest"], cwd=target)
+        ok(f"{tool.name} --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad(f"{tool.name} --selftest 失敗：", r.stdout + r.stderr)
     # plugin 安裝模式：agent 在模版的 plugin/agents，不在專案 .claude/agents
     if (target / ".claude/teams/tools/check_agents.py").is_file():
         r = run([PY, ".claude/teams/tools/check_agents.py", "--plugin-dir", str(ROOT / "plugin")], cwd=target)

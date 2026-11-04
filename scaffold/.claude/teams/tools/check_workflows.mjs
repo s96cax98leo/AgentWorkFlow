@@ -6,9 +6,9 @@
 //   4. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
 // 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>]
 //   agents 目錄預設依序找：--agents-dir、環境變數 AWF_PLUGIN_DIR／CLAUDE_PLUGIN_ROOT 的 agents/、專案 .claude/agents
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const claude = join(here, '..', '..')
@@ -70,11 +70,13 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   let agents = 0
   const visited = []
   const labels = []
+  const prompts = {}
   let out
   const api = {
     agent: async (prompt, opts = {}) => {
       agents++
       labels.push(opts.label)
+      prompts[opts.label] = typeof prompt === 'string' ? prompt.slice(0, 6000) : ''
       if (typeof prompt !== 'string' || !prompt) errs.push('agent() 的 prompt 空白')
       if (opts.phase && !titles.has(opts.phase)) errs.push(`opts.phase「${opts.phase}」不在 meta.phases`)
       if (opts.agentType && extAgents.has(opts.agentType)) {
@@ -101,179 +103,18 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
     out = await fn(args, ...Object.values(api))
     if (out === undefined) errs.push('腳本沒有 return 結果')
   } catch (e) { errs.push(`乾跑失敗：${e.message}`) }
-  return { errs, agents, visited, labels, out }
+  return { errs, agents, visited, labels, prompts, out }
 }
 
-// 走預設乾跑碰不到的分支：拆子計劃、分片驗證、平行修正
-const ENV = (payload, extra = {}) => (base) => ({ ...base, status: 'done', open_questions: [], ...extra, payload })
-const SUB_PLANS = [
-  { id: 'api', title: '後端', scope: 'API', owns: ['services/'], depends_on: [], interfaces: ['GET /x'] },
-  { id: 'ui', title: '前端', scope: '畫面', owns: ['apps/'], depends_on: ['api'], interfaces: ['GET /x'] },
-]
-const crit = (id, result) => ({ id, criterion: 'c', command: 'x', result, evidence: 'e' })
-const CRIT = (rows, cheats = []) => ENV({ commit: 'abc', scope_covered: 'x', scope_skipped: 'none', criteria: rows, anti_cheat: cheats })
-// 擴充 agent 的情境：一個沒有命名空間的專案 agent、一個其他 plugin 的 agent，各段都要被派出
-const EXT_PROFILE = { extensions: [
-  { name: 'db', agent: 'acme-db-reviewer', stage: 'plan', instructions: 'x' },
-  { name: 'db2', agent: 'acme-db-reviewer', stage: 'design', instructions: 'x' },
-  { name: 'db3', agent: 'acme-db-reviewer', stage: 'test', instructions: 'x' },
-  { name: 'a11y', agent: 'my-plugin:a11y', stage: 'deliver', instructions: 'x' },
-] }
-const extScenario = (label) => ({
-  name: '擴充 agent', args: {}, fakes: {}, profile: EXT_PROFILE, virtualAgents: ['acme-db-reviewer'],
-  expect: (r) => (r.labels.includes(label) ? [] : [`沒有派出擴充 agent ${label}：${r.labels.join(',')}`]),
-})
-// merge：只信讀回的狀態（merge_state），gh pr merge 回報成功時可能只是進了 merge queue
-const EXEC = (state) => (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'merge', merge_state: state } })
-// 對照全部一致、skeptic 沒推翻：才會走到執行模式的合併分支
-const CONSISTENT = {
-  analyze: (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'merge', head_sha: 'abc1234',
-    traceability: [{ requirement_id: 'R1', requirement: 'x', evidence: ['e'], result: 'match' }], out_of_scope: [], followups: [] } }),
-  challenge: ENV({ verdicts: [{ target_id: 'R1', refuted: false, reason: 'ok' }, { target_id: 'out_of_scope', refuted: false, reason: 'ok' }] }),
-}
-// sync：plan 的策略決定走哪條路；中轉分支回報的衝突檔要和 plan 預測的一致
-const SYNC_PLAN = (sync) => ENV({ task_id: 'sync-plan', branch: 'feature/demo', commits: [], files_changed: [], tests: [], sync })
-const SYNC_APPLY = (sync, conflicts = []) => ENV({ task_id: 'sync', branch: sync.head_branch, commits: ['abc merge'], files_changed: [], tests: [{ command: 'verify', result: 'pass' }], conflicts, sync })
-const TRANSIT = { strategy: 'transit', behind: 3, published: true, conflicts: ['src/a.ts'], transit_branch: 'merge/demo-into-main-20261012' }
-const SCENARIOS = {
-  'sdlc-sync.js': [
-    {
-      name: '已跟上',
-      fakes: { plan: SYNC_PLAN({ strategy: 'none', behind: 0, conflicts: [] }) },
-      expect: (r) => (r.out && r.out.strategy === 'none' && !r.out.halted && !r.labels.some((l) => l.startsWith('apply')) ? [] : [`已跟上不該執行：${JSON.stringify(r.out && { strategy: r.out.strategy, halted: r.out.halted })}`]),
-    },
-    {
-      name: '已推送、沒衝突：merge',
-      fakes: { plan: SYNC_PLAN({ strategy: 'merge', behind: 2, published: true, conflicts: [] }), 'apply:merge': SYNC_APPLY({ strategy: 'merge', conflicts: [], head_branch: 'feature/demo-999-sample', head_sha: 'a'.repeat(40) }) },
-      expect: (r) => (r.out && r.out.strategy === 'merge' && !r.out.halted && /重跑 sdlc-test/.test(r.out.next || '') ? [] : [`merge 後要提示重跑 sdlc-test：${JSON.stringify(r.out && { halted: r.out.halted, next: r.out.next })}`]),
-    },
-    {
-      name: '有衝突：transit',
-      fakes: { plan: SYNC_PLAN(TRANSIT), 'apply:transit': SYNC_APPLY({ ...TRANSIT, head_branch: TRANSIT.transit_branch, head_sha: 'b'.repeat(40) }, [{ file: 'src/a.ts', kind: 'seam', resolution: 'x' }]) },
-      expect: (r) => (r.out && !r.out.halted && r.out.head_branch === TRANSIT.transit_branch && /publish\.py/.test(r.out.next || '') && /--supersedes 1/.test(r.out.next || '') ? [] : [`transit 要換 head_branch 並提示開新 PR：${JSON.stringify(r.out && { halted: r.out.halted, head_branch: r.out.head_branch, next: r.out.next, why: r.out.halt_reason })}`]),
-    },
-    {
-      name: '中轉分支多解了沒預測的檔',
-      fakes: { plan: SYNC_PLAN(TRANSIT), 'apply:transit': SYNC_APPLY({ ...TRANSIT, head_branch: TRANSIT.transit_branch }, [{ file: 'src/a.ts', kind: 'seam', resolution: 'x' }, { file: 'src/other.ts', kind: 'mechanical', resolution: 'x' }]) },
-      expect: (r) => (r.out && r.out.halted === true && /不一致/.test(r.out.halt_reason || '') ? [] : ['衝突清單和 plan 不一致時要 halted']),
-    },
-    {
-      name: '固定 rebase 但已推送：工具停下',
-      fakes: { plan: (base) => ({ ...SYNC_PLAN({ strategy: 'rebase', behind: 1, published: true, conflicts: [], halted: true, reason: '已推送的分支 rebase 要 force push' })(base), status: 'needs_decision' }) },
-      expect: (r) => (r.out && r.out.halted === true && !r.labels.some((l) => l.startsWith('apply')) ? [] : ['plan halted 時不能執行']),
-    },
-  ],
-  'sdlc-merge.js': [
-    {
-      name: 'PR 落後 base：先同步',
-      args: {},
-      fakes: { analyze: (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'hold', needs_sync: true } }) },
-      expect: (r) => [
-        ...(r.out && r.out.needs_sync === true && r.out.merged === false && /sdlc-sync/.test(r.out.next || '') ? [] : ['needs_sync 要回傳 needs_sync=true 並指向 sdlc-sync']),
-        ...(r.labels.some((l) => l.startsWith('execute') || l === 'challenge') ? [`needs_sync 不能進挑戰或執行：${r.labels.join(',')}`] : []),
-      ],
-    },
-    {
-      name: '讀回已合併',
-      args: {},
-      fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },
-      expect: (r) => (r.labels.includes('execute:merge') && r.out && r.out.merged === true && !r.out.queued ? [] : [`讀回 merged 應該 merged=true：${JSON.stringify(r.out && { merged: r.out.merged, queued: r.out.queued })}`]),
-    },
-    {
-      name: '只進 merge queue',
-      args: {},
-      fakes: { ...CONSISTENT, 'execute:merge': EXEC('queued') },
-      expect: (r) => [
-        ...(r.out && r.out.merged === false && r.out.queued === true ? [] : [`排隊中不能算已合併：${JSON.stringify(r.out && { merged: r.out.merged, queued: r.out.queued })}`]),
-        ...(r.labels.includes('followup') ? ['排隊中不該產出 followup 文件'] : []),
-      ],
-    },
-    {
-      name: 'gate 判 merge 但沒讀回狀態',
-      args: {},
-      fakes: { ...CONSISTENT, 'execute:merge': (base) => ({ ...base, status: 'done', open_questions: [], payload: { ...base.payload, decision: 'merge' } }) },
-      expect: (r) => (r.labels.includes('execute:merge') && r.out && r.out.merged === false ? [] : ['沒有 merge_state 不能算已合併']),
-    },
-  ],
-  'sdlc-plan.js': [extScenario('ext:db')],
-  'sdlc-deliver.js': [extScenario('ext:a11y')],
-  'sdlc-design.js': [
-    extScenario('ext:db2'),
-    {
-      name: 'profile 有系統設計方法',
-      profile: { stages: { design: { artifacts: ['design.md', 'spec.md', 'plan.md'], requirement_style: 'x', guidance: 'x',
-        system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設', '4 擴展與取捨'], feature_scope: '功能層要寫', system_scope: '系統層要寫', topics: ['CAP'] } } } },
-      fakes: { design: (base, prompt) => { if (!/系統設計（SA／SD/.test(prompt) || !/4 擴展與取捨/.test(prompt)) throw new Error('design 派工單沒帶系統設計方法'); return ENV(base.payload)(base) } },
-      expect: (r) => (r.labels.includes('analyze:system-design') ? [] : [`沒有派出 system-design lens：${r.labels.join(',')}`]),
-    },
-    {
-      name: '拆成子計劃',
-      fakes: {
-        outline: ENV({ epic: 'demo', split: true, reason: '預估 12 個子任務', sub_plans: SUB_PLANS }),
-        'subplan:api': ENV({ epic: 'demo', subtasks: [{ id: 'api-t1', title: 'a', kind: 'code', owns: ['services/a.py'], depends_on: [], acceptance: ['x'] }] }),
-        'subplan:ui': ENV({ epic: 'demo', subtasks: [{ id: 'ui-t1', title: 'b', kind: 'code', owns: ['apps/b.tsx'], depends_on: ['@api'], acceptance: ['x'] }] }),
-        consolidate: (base, prompt) => {
-          if (!prompt.includes('"depends_on":["api-t1"]')) throw new Error('@api 相依沒有展開成 api-t1')
-          return ENV({ epic: 'demo', subtasks: [
-            { id: 'api-t1', title: 'a', kind: 'code', owns: ['services/a.py'], depends_on: [], acceptance: ['x'], sub_plan: 'api' },
-            { id: 'ui-t1', title: 'b', kind: 'code', owns: ['apps/b.tsx'], depends_on: ['api-t1'], acceptance: ['x'], sub_plan: 'ui' },
-          ] })(base)
-        },
-      },
-      expect: (r) => [
-        ...(['subplan:api', 'subplan:ui', 'consolidate', 'analyze:sub-plans'].every((l) => r.labels.includes(l)) ? [] : [`沒有走完子計劃流程：${r.labels.join(',')}`]),
-        ...(r.out && r.out.halted ? [`不該中斷：${r.out.halt_reason}`] : []),
-      ],
-    },
-    {
-      name: '子計劃範圍重疊要停下',
-      fakes: { outline: ENV({ epic: 'demo', split: true, reason: 'x', sub_plans: [SUB_PLANS[0], { ...SUB_PLANS[1], owns: ['services/web/'] }] }) },
-      expect: (r) => (r.out && r.out.halted && !r.labels.some((l) => l.startsWith('subplan:')) ? [] : ['範圍重疊卻沒有在平行規劃前停下']),
-    },
-    {
-      name: '彙整掉了子任務要停下',
-      fakes: {
-        outline: ENV({ epic: 'demo', split: true, reason: 'x', sub_plans: SUB_PLANS }),
-        'subplan:api': ENV({ epic: 'demo', subtasks: [{ id: 'api-t1', title: 'a', kind: 'code', owns: ['services/a.py'], depends_on: [], acceptance: ['x'] }] }),
-        'subplan:ui': ENV({ epic: 'demo', subtasks: [{ id: 'ui-t1', title: 'b', kind: 'code', owns: ['apps/b.tsx'], depends_on: [], acceptance: ['x'] }] }),
-        consolidate: ENV({ epic: 'demo', subtasks: [{ id: 'api-t1', title: 'a', kind: 'code', owns: ['services/a.py'], depends_on: [], acceptance: ['x'] }] }),
-      },
-      expect: (r) => (r.out && r.out.halted ? [] : ['彙整少了 ui-t1 卻沒有停下']),
-    },
-  ],
-  'sdlc-test.js': [
-    extScenario('ext:db3'),
-    {
-      name: '分片驗證＋平行修正',
-      args: { sub_plans: SUB_PLANS },
-      fakes: {
-        'verify:api#1': CRIT([crit('A1', 'fail')]),
-        'verify:ui#1': CRIT([crit('U1', 'fail')]),
-        'verify:integration#1': CRIT([crit('I1', 'pass')]),
-        'consolidate#1': CRIT([crit('A1', 'fail'), crit('U1', 'fail'), crit('I1', 'pass')]),
-        'verify:api#2': CRIT([crit('A1', 'pass')]),
-        'verify:ui#2': CRIT([crit('U1', 'pass')]),
-        'verify:integration#2': CRIT([crit('I1', 'pass')]),
-        'consolidate#2': CRIT([crit('A1', 'pass'), crit('U1', 'pass'), crit('I1', 'pass')]),
-      },
-      expect: (r) => [
-        ...(['verify:api#1', 'verify:ui#1', 'verify:integration#1', 'consolidate#1', 'fix:api#1', 'fix:ui#1', 'integrate:fix#1', 'consolidate#2'].every((l) => r.labels.includes(l)) ? [] : [`沒有走完分片與平行修正：${r.labels.join(',')}`]),
-        ...(r.out && r.out.halted ? [`不該中斷：${r.out.halt_reason}`] : []),
-        ...(r.out && r.out.summary && r.out.summary.pass === 3 ? [] : ['第 2 輪後應該全部 pass']),
-      ],
-    },
-    {
-      name: '彙整竄改結果要停下',
-      args: { sub_plans: SUB_PLANS },
-      fakes: {
-        'verify:api#1': CRIT([crit('A1', 'fail')]),
-        'consolidate#1': CRIT([crit('A1', 'pass')]),
-      },
-      expect: (r) => (r.out && r.out.halted ? [] : ['彙整把 fail 改成 pass 卻沒有停下']),
-    },
-  ],
+// 情境放在 scenarios/<workflow>.mjs（export default 陣列），每支 workflow 一檔，平行修改不互相衝突
+const SCENARIOS = {}
+const scDir = join(here, 'scenarios')
+if (existsSync(scDir)) for (const f of readdirSync(scDir).filter((x) => x.endsWith('.mjs') && !x.startsWith('_')).sort()) {
+  SCENARIOS[f.replace(/\.mjs$/, '.js')] = (await import(pathToFileURL(join(scDir, f)).href)).default
 }
 
+// AWF_SCENARIO_REPORT=<檔>：把每個情境的結果（派出的 label、派工單、halted）寫成 JSON，給計畫的驗證腳本用
+const report = {}
 let failed = 0
 for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
   // 換行統一成 \n：Windows 上的檔案可能是 CRLF
@@ -295,14 +136,18 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
   const visited = []
   const scenarios = [{ name: '', args: {}, fakes: {} }, ...(SCENARIOS[f] || [])]
   for (const sc of scenarios) {
-    const r = await dryRun(withProfile(src, sc.profile), titles, { ...SAMPLE_ARGS, ...sc.args }, sc.fakes, sc.virtualAgents)
+    const r = await dryRun(withProfile(src, sc.profile), titles, { ...SAMPLE_ARGS, ...sc.args }, sc.fakes || {}, sc.virtualAgents)
     agents += r.agents
     r.visited.forEach((t) => { if (!visited.includes(t)) visited.push(t) })
     errs.push(...r.errs.map((e) => (sc.name ? `[情境：${sc.name}] ${e}` : e)))
+    const scErrs = [...r.errs, ...(sc.expect ? sc.expect(r) : [])]
     if (sc.expect) errs.push(...sc.expect(r).map((e) => `[情境：${sc.name}] ${e}`))
+    report[f] = report[f] || { phases: [...titles], scenarios: [] }
+    report[f].scenarios.push({ name: sc.name, ok: scErrs.length === 0, halted: !!(r.out && r.out.halted), labels: r.labels, visited: r.visited, prompts: r.prompts, out: r.out && typeof r.out === 'object' ? Object.fromEntries(Object.entries(r.out).filter(([, v]) => typeof v !== 'object' || v === null)) : null })
   }
   if (errs.length) { failed++; console.log(`FAIL ${f}\n  - ${[...new Set(errs)].join('\n  - ')}`) }
   else console.log(`ok   ${f}（乾跑 ${agents} 個 agent；phases: ${visited.join('→') || '-'}）`)
 }
+if (process.env.AWF_SCENARIO_REPORT) writeFileSync(process.env.AWF_SCENARIO_REPORT, JSON.stringify(report))
 console.log(failed ? `workflow 檢查：${failed} 支有問題` : 'workflow 檢查：全部通過')
 process.exit(failed ? 1 : 0)

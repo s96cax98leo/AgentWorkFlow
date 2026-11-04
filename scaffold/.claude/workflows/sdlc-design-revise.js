@@ -58,6 +58,8 @@ const LENSES = [
   { key: 'resolved', ask: `逐條確認上面 ${A.issues.length} 條問題是否真的修好（打開檔案看，不採信對照表的自述）；target_id 用原問題編號。` },
   { key: 'regression', ask: '修正有沒有造成新的落差：intent ↔ spec ↔ plan ↔ 子任務 owns／depends_on ↔ 測試對應表 ↔ 契約；使用者決定有沒有被正確落實。' },
 ]
+// 有系統設計方法時，修正後的設計也要再過一次 system-design lens（和 sdlc-design 同一套檢查）
+if (SD) LENSES.push({ key: 'system-design', ask: `修正後的系統設計是否仍照 profile 的方法（${SD.source}）：步驟（${SD.steps.join('；')}）齊全、功能層／系統層判斷正確、第 1 步的數字有出處或標成假設、每個取捨寫了放棄什麼；有沒有單點故障、沒說明的一致性模型、沒處理的重試與冪等。` })
 const recheck = revised ? await parallel(LENSES.map((l) => () => agent(
   `${CTX}\n\n## 派工單（複查：${l.key}）\n讀 ${SPEC}/ 與 ${A.run_dir}/design-revise-對照.md。子任務：${JSON.stringify(revised.payload)}\n${l.ask}\nrefuted=true 表示「這裡還有問題」。\n\n原問題：\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}\n使用者決定：\n${A.decisions.join('\n')}`,
   { label: `recheck:${l.key}`, phase: 'Recheck', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
