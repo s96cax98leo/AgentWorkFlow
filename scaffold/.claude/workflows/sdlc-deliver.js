@@ -3,7 +3,7 @@ export const meta = {
   description: 'AI-native SDLC 第 5 段 Deploy：四軸平行審查 → 每則發現由 skeptic 反駁 → 只留信心 ≥0.8 且未被推翻的 → 寫 PR 說明草稿與執行紀錄；推送與開 PR 由使用者決定',
   whenToUse: 'sdlc-test 的結果確認之後；sdlc-sync 走了中轉分支時 args 加 branch（中轉分支名）',
   phases: [
-    { title: 'Review', detail: 'dev-pr-reviewer 四軸平行（standards、spec、bugs、history）' },
+    { title: 'Review', detail: 'tpm-reviewer（deliver 模式）四軸平行（standards、spec、bugs、history）' },
     { title: 'Verify', detail: 'tpm-skeptic 逐則反駁' },
     { title: 'Write', detail: 'tpm-writer 寫 PR 說明草稿與執行紀錄、跑 check_rules' },
   ],
@@ -67,8 +67,8 @@ const key = (f) => `${(f.location || '').replace(/:\d+.*/, '')}|${(f.claim || ''
 // 擴充 agent 和四軸一起審，發現一樣經 skeptic 反駁
 const reviewed = await pipeline(
   [...AXES, ...EXT.map((e) => ({ key: e.name, ext: e }))],
-  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥0.8 的。`, 'Review')() : agent(`${CTX}\n\n## 派工單（審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
-    { label: `review:${a.key}`, phase: 'Review', agentType: NS + 'dev-pr-reviewer', schema: FINDINGS }),
+  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥0.8 的。`, 'Review')() : agent(`${CTX}\n\n## 派工單（deliver 模式，審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
+    { label: `review:${a.key}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS }),
   (r, a) => {
     // 缺件不是「沒有發現」（rules.md 規則 26）：審查軸缺件記下 label，不能當成空清單
     if (!r) return { axis: a.key, kept: [], dropped: [], missing: a.ext ? `ext:${a.key}` : `review:${a.key}` }

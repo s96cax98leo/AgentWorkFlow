@@ -1207,7 +1207,10 @@ def check_paths(data: dict) -> None:
     if role and path.name == "run.json" and (not RUNS or (rel or "").startswith(RUNS)):
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
     if role == "tpm-writer":
-        ok = rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None)
+        # 凍結檔照 auto_merge.freeze_file 的實際設定（可能不在 writer_dirs 裡）；能不能寫已由上面的 writes_freeze 判定
+        # 只認設定的那個路徑本身（同名的其他檔不算）
+        is_freeze = prot == AM["freeze_file"] and path.resolve() == freeze_path().resolve() and writes_freeze(data)
+        ok = is_freeze or (rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None))
         if not ok:
             block(f"tpm-writer 只能寫 {'、'.join(CFG['writer_dirs'])} 與 repo 的 specs/<epic>/*.md（{rel or fp}）")
     elif role.startswith("tpm-"):

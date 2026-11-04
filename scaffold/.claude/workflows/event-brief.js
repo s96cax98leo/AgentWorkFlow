@@ -4,7 +4,7 @@ export const meta = {
   whenToUse: '{{TASK_AUTHORITY}} 發來一份 {{BRIEFS_DIR}}/{{TASK_ID_PREFIX}}<編號>_*.md；args：brief、run_dir',
   phases: [
     { title: 'Plan', detail: 'tpm-planner 拆子任務' },
-    { title: 'Work', detail: '依相依分層平行處理（tpm-researcher／tpm-upstream-analyst）' },
+    { title: 'Work', detail: '依相依分層平行處理（tpm-researcher；上游相關的子任務用上游模式）' },
     { title: 'Challenge', detail: 'tpm-skeptic 反駁' },
     { title: 'Write', detail: 'tpm-writer 三件套' },
     { title: 'Accept', detail: '對簡報 §4 逐條自我驗收' },
@@ -61,14 +61,16 @@ while (rest.length) {
 }
 log(`子任務 ${subtasks.length} 個：轉 SDLC ${toSdlc.length}、等 SDLC ${waiting.length}、本流程分 ${layers.length} 層`)
 
+// 上游相關的子任務：tpm-researcher 用上游模式（merge-tree 衝突預測、影響範圍、時間線）
+const UPSTREAM_RE = /上游|upstream|PR|衝突|merge/i
 const results = []
 const claims = []
 for (const layer of layers) {
   phase('Work')
   const prior = results.map(brief).join('\n')
   const out = await parallel(layer.map((s) => () => agent(
-    `${CTX}\n\n## 派工單（子任務 ${s.id}：${s.title}，kind=${s.kind}）\n完成條件：${(s.acceptance || []).join('；')}\n可寫：${A.run_dir}/${s.id}-*.md。\n前面子任務的結果：\n${prior}\npayload 用 findings（lens=${s.kind}）。`,
-    { label: `work:${s.kind}:${s.id}`, phase: 'Work', agentType: /上游|upstream|PR|衝突|merge/i.test(s.title) ? NS + 'tpm-upstream-analyst' : NS + 'tpm-researcher', schema: FINDINGS },
+    `${CTX}\n\n## 派工單（子任務 ${s.id}：${s.title}，kind=${s.kind}${UPSTREAM_RE.test(s.title) ? '；上游模式' : ''}）\n完成條件：${(s.acceptance || []).join('；')}\n可寫：${A.run_dir}/${s.id}-*.md。\n前面子任務的結果：\n${prior}\npayload 用 findings（lens=${s.kind}）。`,
+    { label: `work:${s.kind}:${s.id}`, phase: 'Work', agentType: NS + 'tpm-researcher', schema: FINDINGS },
   )))
   out.forEach((r, i) => {
     const s = layer[i]

@@ -4,7 +4,7 @@ export const meta = {
   whenToUse: '上游有新 PR、main 前進或 CI 失敗；args：what（描述或 PR 編號）、repo（我方 fork 路徑）、run_dir',
   phases: [
     { title: 'Baseline', detail: '記錄上游狀態' },
-    { title: 'Analyze', detail: 'tpm-upstream-analyst 四個角度平行' },
+    { title: 'Analyze', detail: 'tpm-researcher（上游模式）四個角度平行' },
     { title: 'Challenge' }, { title: 'Write' },
   ],
 }
@@ -30,9 +30,9 @@ const ruleCheck = (d) => {
   if (!(d.payload.documents || []).some((x) => x.audience === 'owner')) return 'writer 沒有交出給決策者版（documents 沒有 audience=owner）'
   return null
 }
-// tpm-upstream-analyst 沒有 Write：分析與快照只交信封，由 tpm-writer 落檔
-const snap = (tag) => agent(`${CTX}\n\n## 派工單\n記錄上游狀態（${tag}）：main 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。不寫檔，全部放在信封：每項一則 finding（severity=info，location 寫查詢指令）。payload 用 findings（lens=upstream）。`,
-  { label: `snapshot:${tag}`, phase: tag === 'before' ? 'Baseline' : 'Write', agentType: NS + 'tpm-upstream-analyst', schema: FINDINGS })
+// tpm-researcher 上游模式不寫檔：分析與快照只交信封，由 tpm-writer 落檔（快照前後對照要由同一份落檔證明零寫入）
+const snap = (tag) => agent(`${CTX}\n\n## 派工單（上游模式）\n記錄上游狀態（${tag}）：main 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。不寫檔，全部放在信封：每項一則 finding（severity=info，location 寫查詢指令）。payload 用 findings（lens=upstream）。`,
+  { label: `snapshot:${tag}`, phase: tag === 'before' ? 'Baseline' : 'Write', agentType: NS + 'tpm-researcher', schema: FINDINGS })
 
 phase('Baseline')
 const before = await snap('before')
@@ -45,8 +45,8 @@ const ANGLES = [
   { key: 'action', ask: '依前面的事實列出該通知誰、需要誰決定什麼、我方下一步選項（附代價）；不替人做決定。' },
 ]
 phase('Analyze')
-const analyzed = await pipeline(ANGLES, (a) => agent(`${CTX}\n\n## 派工單（${a.key}）\n${a.ask}\n不寫檔，筆記全部放在信封（findings 的 claim、location、recommendation）。payload 用 findings（lens=${a.key}）。`,
-  { label: `analyze:${a.key}`, phase: 'Analyze', agentType: NS + 'tpm-upstream-analyst', schema: FINDINGS }))
+const analyzed = await pipeline(ANGLES, (a) => agent(`${CTX}\n\n## 派工單（上游模式：${a.key}）\n${a.ask}\n不寫檔，筆記全部放在信封（findings 的 claim、location、recommendation）。payload 用 findings（lens=${a.key}）。`,
+  { label: `analyze:${a.key}`, phase: 'Analyze', agentType: NS + 'tpm-researcher', schema: FINDINGS }))
 // 各角度的發現 id 各自編號，合併前加角度前綴（<角度>:<id>），skeptic 的 target_id 才不會撞號
 const claims = []
 analyzed.forEach((r, i) => {

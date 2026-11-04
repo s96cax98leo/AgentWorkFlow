@@ -665,6 +665,53 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     tool(2, "轉呼叫的 guard-paths exit 1", "Write", {"file_path": str(ERR / "src/a.py")}, IMP)
     pair(0, "沒有 repo guard 的 repo 照常", "git commit -m x", agent=IMP, cwd=H1R)
 
+    # ------------------------------------------------------------ R3：角色合併後的舊名（別名）與凍結檔寫入
+    # 別名：dev-pr-reviewer → tpm-reviewer、tpm-upstream-analyst → tpm-researcher，舊名照新角色的規則套用
+    for old, new in (("dev-pr-reviewer", "tpm-reviewer"), ("tpm-upstream-analyst", "tpm-researcher")):
+        for who in (old, new):
+            a = "agent-workflow:" + who
+            tag = f"{who}（{'舊名，套 ' + new if who == old else '新名'}）"
+            pair(2, f"{tag} 不能 push", "git push origin feature/x", agent=a, cwd=H1R)
+            pair(0, f"{tag} 唯讀查 git 放行", "git log --oneline -1", agent=a, cwd=H1R)
+            pair(2, f"{tag} 不能對 GitHub 寫入", "gh pr comment 3 --repo acme-fork/app --body x", agent=a)
+            pair(0, f"{tag} 讀 PR 放行", "gh pr view 3 --repo acme-fork/app", agent=a)
+            pair(2, f"{tag} 不能跑 merge_gate check", "python3 .claude/teams/tools/merge_gate.py check --pr 3", agent=a)
+            pair(2, f"{tag} 不能寫 run.json", "python3 -c \"open('_tpm/runs/x/run'+'.json','w').write('{}')\"", agent=a)
+            tool(0, f"{tag} 寫 run 目錄放行", "Write", {"file_path": str(H1W / "_tpm/runs/r1/notes.md")}, a)
+            tool(2, f"{tag} 不能寫產品程式", "Write", {"file_path": str(H1R / "src/a.py")}, a)
+            tool(2, f"{tag} 不能寫 docs/", "Write", {"file_path": str(H1W / "docs/a.md")}, a)
+            tool(2, f"{tag} 不能寫 run.json", "Write", {"file_path": str(H1W / "_tpm/runs/x/run.json")}, a)
+        # 轉呼叫 repo guard：舊名和新名一樣對應成 pr-reviewer（假 repo 的 guard 擋 pr-reviewer commit）
+        for who in (old, new):
+            run(S, 2, f"R3 轉呼叫：{who} commit 照 pr-reviewer 擋", sh_in(REPO, "git commit -m x", "agent-workflow:" + who))
+            run(S, 2, f"R3 轉呼叫 PS：{who} commit 照 pr-reviewer 擋", ps_in(REPO, "git commit -m x", "agent-workflow:" + who))
+            run(S, 0, f"R3 轉呼叫：{who} git status 放行", sh_in(REPO, "git status -sb", "agent-workflow:" + who))
+            run(S, 0, f"R3 轉呼叫 PS：{who} git status 放行", ps_in(REPO, "git status -sb", "agent-workflow:" + who))
+    # 擴充 agent 對應到舊名：照新角色（tpm-reviewer）套用，不能寫產品程式
+    AXW = mkws("ws-ext-alias", {"extension_agents": {"acme-old-review": "dev-pr-reviewer"}})
+    run(P, 2, "R3 擴充 agent 對應舊名 dev-pr-reviewer：照 tpm-reviewer 不能寫 src/", edit(AXW / "src/a.py", "acme-old-review", AXW), AXW)
+    run(P, 0, "R3 擴充 agent 對應舊名 dev-pr-reviewer：可以寫 run 目錄", edit(AXW / "_tpm/runs/r/x.md", "acme-old-review", AXW), AXW)
+    both(2, "R3 擴充 agent 對應舊名 dev-pr-reviewer：不能 push", AXW, "git push origin feature/x", "acme-old-review")
+
+    # freeze_file 設在 writer_dirs 以外：tpm-writer 照實際設定的路徑凍結；dev-release-watcher 不再是 freeze_writer
+    FWS = mkws("ws-freeze", {"auto_merge": {"enabled": True, "repos": {"acme-fork/app": "low"}, "freeze_file": "ops/merge.freeze.json"}})
+    FF = FWS / "ops" / "merge.freeze.json"
+
+    def ftool(want: int, name: str, path: Path, agent: str, content, tool_name: str = "Write") -> None:
+        body = content if isinstance(content, str) else json.dumps(content)
+        tool(want, name, tool_name, {"file_path": str(path), "content": body}, agent, w=FWS)
+
+    ftool(0, "R3 tpm-writer 寫自訂 freeze_file（frozen=true）", FF, WRT, {"frozen": True, "reason": "x"})
+    ftool(2, "R3 tpm-writer 寫自訂 freeze_file 的 frozen=false", FF, WRT, {"frozen": False})
+    ftool(2, "R3 tpm-writer 用 Edit 改自訂 freeze_file", FF, WRT, {"frozen": True}, "Edit")
+    ftool(2, "R3 tpm-writer 寫同名但不是設定路徑的檔（writer_dirs 以外）", FWS / "src" / "merge.freeze.json", WRT, {"frozen": True})
+    ftool(2, "R3 tpm-writer 寫預設路徑以外的一般檔（ops/ 不在 writer_dirs）", FWS / "ops" / "notes.md", WRT, "x")
+    ftool(2, "R3 dev-release-watcher 不再能寫凍結檔", FF, "agent-workflow:dev-release-watcher", {"frozen": True})
+    ftool(2, "R3 tpm-researcher 不能寫凍結檔", FF, "agent-workflow:tpm-researcher", {"frozen": True})
+    pair(2, "R3 tpm-writer 用 shell 寫自訂 freeze_file", "echo '{\"frozen\": true}' > ops/merge.freeze.json",
+         "Set-Content -Path ops/merge.freeze.json -Value '{\"frozen\": true}'", agent=WRT, w=FWS)
+    pair(0, "R3 tpm-writer 讀自訂 freeze_file", "cat ops/merge.freeze.json", "Get-Content ops/merge.freeze.json", agent=WRT, w=FWS)
+
     # ------------------------------------------------------------ 交件信封
     E = "envelope"
     ok_env = '{"status":"done","summary":"s","artifacts":[],"evidence":[],"confidence":0.9,"open_questions":[],"derived_work":[],"payload":{}}'

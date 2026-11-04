@@ -41,6 +41,8 @@ DEFAULTS = {
         "dev-pr-reviewer": "pr-reviewer",
         "tpm-reviewer": "pr-reviewer",
         "tpm-skeptic": "pr-reviewer",
+        # tpm-researcher（含上游模式）在本工作區只能寫 run 目錄；轉呼叫 repo 的 guard 時照唯讀審查角色套用
+        "tpm-researcher": "pr-reviewer",
         "tpm-upstream-analyst": "pr-reviewer",
         "dev-merge-steward": "merge-steward",
         "dev-release-watcher": "release-watcher",
@@ -64,7 +66,8 @@ AUTO_MERGE_DEFAULTS = {
     "merger_role": DEFAULT_NS + "dev-merge-steward",  # 唯一能合併的角色，比對完整 agent_type（含命名空間）
     "merge_method": "squash",  # steward 的 gh pr merge 必須帶對應旗標（--squash／--merge／--rebase）
     # 能寫凍結旗標的角色（完整 agent_type）：只能用 Write 寫入 {"frozen": true, …}；解凍（刪除、改成 false）由人做
-    "freeze_writers": [DEFAULT_NS + "tpm-writer", DEFAULT_NS + "dev-release-watcher"],
+    # dev-release-watcher 只讀、沒有 Write：凍結建議交信封，由 tpm-writer 寫到 freeze_file
+    "freeze_writers": [DEFAULT_NS + "tpm-writer"],
     "daily_cap": 5,
     "upstream_authorized_by": {},  # {"owner/repo": "授權人" 或 {"by", "link", "scope", "expires"}}；上游沒有授權人一律擋
     "freeze_file": "",  # 空＝<runs_dir>/auto-merge.freeze.json；內容 {"frozen": true, "reason": …}（event-post-merge 寫）
@@ -229,6 +232,13 @@ EXTENSION_ROLES = frozenset({
 })
 EXTENSION_FALLBACK = "tpm-reviewer"
 
+# 已合併的舊角色名（相容一版，下一版移除）：舊名照新角色的規則套用（寫入範圍、轉呼叫 repo guard 的對應）。
+# 舊名仍留在 RESERVED_ROLES 與 EXTENSION_ROLES，還沒升級的專案與擴充設定照樣被認得。
+ROLE_ALIASES = {
+    "dev-pr-reviewer": "tpm-reviewer",
+    "tpm-upstream-analyst": "tpm-researcher",
+}
+
 
 def extension_role(agent: str, cfg: dict) -> str:
     """登記在 extension_agents 的擴充 agent 回傳要套用的模版角色名；沒登記回空字串。比對完整 agent_type。"""
@@ -253,9 +263,12 @@ def is_team_agent(agent: str, cfg: dict) -> bool:
 
 
 def team_role(agent: str, cfg: dict) -> str:
-    """模版角色回傳去掉命名空間的角色名（例如 dev-implementer），擴充 agent 回傳它套用的角色，都不是回空字串。"""
+    """模版角色回傳去掉命名空間的角色名（例如 dev-implementer），擴充 agent 回傳它套用的角色，都不是回空字串。
+    已合併的舊名（ROLE_ALIASES）回傳併入的新角色名，守門照新角色的規則套用。"""
     if role_name(agent) not in RESERVED_ROLES:
         ext = extension_role(agent, cfg)
         if ext:
-            return ext
-    return role_name(agent) if is_team_agent(agent, cfg) else ""
+            return ROLE_ALIASES.get(ext, ext)
+    if not is_team_agent(agent, cfg):
+        return ""
+    return ROLE_ALIASES.get(role_name(agent), role_name(agent))
