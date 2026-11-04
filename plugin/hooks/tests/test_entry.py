@@ -8,6 +8,7 @@
   3. 量 guard-shell 典型指令的延遲並印出 p95。門檻預設 300ms；CI（環境變數 CI 有值）放寬到 1000ms，
      因為共用 runner 的行程啟動常態就慢上數倍；也可用 AWF_HOOK_P95_MS 自訂。
   4. 沒有 guard.config.json 的專案：主 session 一般指令、commit、寫檔放行；tpm-／dev- agent 推送仍擋。
+     PATH 上沒有 git：一般指令與寫檔放行（不鎖死），推送、合併、核准、受保護檔等純字串規則仍擋。
   5. 壞輸入（空、非 JSON、殘缺 JSON、非物件、缺欄位、非 UTF-8、2MB）：守門 exit 2、交件 exit 0，都不能有 traceback。
 只用標準庫，macOS、Linux、Windows 都能跑（/bin/sh 的部分只在 POSIX 跑）。
 """
@@ -238,6 +239,41 @@ def t_no_init() -> None:
         expect(f"沒 init：{agent} push 仍擋", hook("guard-shell", proj, sh(proj, "git push origin HEAD:feature/x", agent)), 2)
 
 
+# ───────── 4b. PATH 上沒有 git（A-1） ─────────
+
+
+def t_no_git(ws: Path, repo: Path) -> None:
+    """hook 跑得起來但找不到 git：不能鎖死所有工具（查 repo 的地方當成不在 repo），純字串規則照常擋。"""
+    empty = TMP / "no_git_bin"
+    empty.mkdir()
+    e = {**env_for(ws), "PATH": str(empty)}
+    check("測試前提：PATH 上找不到 git", shutil.which("git", path=str(empty)) is None)
+
+    def nh(mode: str, data: dict) -> subprocess.CompletedProcess:
+        raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        return subprocess.run([PY, str(HOOKS / "awf_hook.py"), mode], input=raw, capture_output=True, env=e, timeout=60)
+
+    for c, agent in (("ls -la", ""), ("git status", ""), ("git status", AGENT), ("npm test", AGENT),
+                     ("git commit -m x", AGENT), ("gh pr view 3 --repo acme-fork/app", AGENT)):
+        expect(f"沒有 git：guard-shell 放行 {c}（{agent or '主 session'}）", nh("guard-shell", sh(repo, c, agent)), 0)
+    expect("沒有 git：guard-paths agent 寫 repo 檔放行", nh("guard-paths", write(repo, repo / "src" / "a.py", AGENT)), 0)
+    expect("沒有 git：guard-paths 主 session 寫檔放行", nh("guard-paths", write(repo, repo / "a.txt")), 0)
+    for c, agent in (
+        ("git push origin HEAD:feature/x", AGENT),                          # team 角色一律不能 push（不靠 git 查詢）
+        ("git push origin main", ""),                                       # refspec 寫明受保護分支
+        ("git push origin HEAD:main", ""),
+        ("git push https://github.com/acme-up/app.git HEAD:feature/x", ""),  # URL 寫明上游
+        ("gh pr merge 3 --repo acme-fork/app --squash", ""),
+        ("gh pr review 3 --approve --repo acme-fork/app", ""),
+        ("gh pr comment 3 --repo acme-fork/app -b x", AGENT),
+        ("echo x >> _tpm/runs/merge-audit.jsonl", ""),
+    ):
+        r = nh("guard-shell", sh(repo, c, agent))
+        expect(f"沒有 git：仍擋 {c}（{agent or '主 session'}）", r, 2)
+        check(f"沒有 git：擋 {c} 是規則判斷，不是意外錯誤", "意外錯誤" not in stderr(r), stderr(r))
+    expect("沒有 git：guard-paths agent 寫 guard.config.json 仍擋", nh("guard-paths", write(ws, ws / ".claude/teams/guard.config.json", AGENT)), 2)
+
+
 # ───────── 5. 壞輸入 ─────────
 
 
@@ -269,6 +305,7 @@ def main() -> int:
         t_launcher(ws, repo)
         t_latency(ws, repo)
         t_no_init()
+        t_no_git(ws, repo)
         t_bad_input(ws)
     finally:
         shutil.rmtree(TMP, ignore_errors=True)

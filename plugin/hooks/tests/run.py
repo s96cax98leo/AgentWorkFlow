@@ -394,6 +394,14 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     am(2, "agent 刪凍結檔", "rm -f _tpm/runs/auto-merge.freeze.json", WRITER)
     am(2, "steward 沒寫合併方式", f"gh pr merge 3 --repo acme-fork/app --match-head-commit {SHA_A}")
     am(2, "steward 合併方式和 merge_method 不同", f"gh pr merge 3 --repo acme-fork/app --rebase --match-head-commit {SHA_A}")
+    # A-5：同一旗標重複出現（gh 取最後一個值）一律拒絕，不能只看第一個
+    am(2, "A-5 steward --repo 重複（gh 會合併第二個 repo）", f"gh pr merge 3 --repo acme-fork/app --repo acme-fork/other --squash --match-head-commit {SHA_A}")
+    am(2, "A-5 steward -R 與 --repo= 混用", f"gh pr merge 3 -R acme-fork/app --repo=acme-fork/other --squash --match-head-commit {SHA_A}")
+    am(2, "A-5 steward --repo 與 -R 黏寫值混用", f"gh pr merge 3 --repo acme-fork/app -Racme-fork/other --squash --match-head-commit {SHA_A}")
+    am(2, "A-5 steward --match-head-commit 兩次", f"gh pr merge 3 --repo acme-fork/app --squash --match-head-commit {SHA_A} --match-head-commit {SHA_B}")
+    am(2, "A-5 steward 留言 --repo 重複", "gh pr comment 3 --repo acme-fork/app --repo acme-fork/other --body x")
+    am(0, "A-5 steward 只寫一次 -R 放行", f"gh pr merge 3 -R acme-fork/app --squash --match-head-commit {SHA_A}")
+    am(0, "A-5 steward 留言只寫一次 -R 放行", "gh pr comment 3 -R acme-fork/app --body x")
     am(2, "watcher 重跑 CI（gh run rerun）", "gh run rerun 123 --repo acme-fork/app", WATCH)
     am(2, "watcher 留言", "gh pr comment 3 --repo acme-fork/app --body x", WATCH)
     am(2, "watcher 合併", M3, WATCH)
@@ -640,6 +648,12 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     pair(0, "publish --project-dir 本專案放行", "python3 .claude/teams/tools/publish.py push --project-dir .")
     pair(2, "merge_gate --project-dir 外部", "python3 .claude/teams/tools/merge_gate.py check --project-dir /tmp/fake", agent=STW1)
     pair(2, "merge_gate --runs-dir 外部", "python3 .claude/teams/tools/merge_gate.py check --runs-dir /tmp/fake", agent=STW1)
+    # A-5：旗標重複出現時每個值都要檢查，gh 寫入的 --repo／-R 只能寫一次
+    pair(2, "A-5 publish --project-dir 重複（argparse 取最後一個）", "python3 .claude/teams/tools/publish.py push --project-dir . --project-dir /tmp/fake")
+    pair(2, "A-5 merge_gate --runs-dir 重複", "python3 .claude/teams/tools/merge_gate.py check --runs-dir _tpm/runs --runs-dir /tmp/fake", agent=STW1)
+    pair(2, "A-5 主 session gh pr create --repo 重複", "gh pr create --repo acme-fork/app --repo acme-fork/other --title x")
+    pair(2, "A-5 主 session gh pr create -R 與 --repo 混用", "gh pr create -R acme-fork/app --repo=acme-fork/other --title x")
+    pair(0, "A-5 主 session gh pr create -R 只寫一次放行", "gh pr create -R acme-fork/app --title x")
     # H1.9 唯讀審查角色只寫自己的報告；implementer 不寫驗收測試
     for want, name, ag, rel in [
         (2, "verifier 寫 src", "dev-verifier", "src/a.py"),
@@ -664,6 +678,33 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     pair(2, "轉呼叫的 guard-git exit 1", "git commit -m x", agent=IMP, cwd=ERR)
     tool(2, "轉呼叫的 guard-paths exit 1", "Write", {"file_path": str(ERR / "src/a.py")}, IMP)
     pair(0, "沒有 repo guard 的 repo 照常", "git commit -m x", agent=IMP, cwd=H1R)
+
+    # A-6：大小寫不敏感的檔案系統（macOS、Windows）上，同名異寫指到同一個檔；擋人用的比對一律不分大小寫
+    pair(2, "A-6 主 session 重新導向寫 MERGE-AUDIT.jsonl", "echo x >> _tpm/runs/MERGE-AUDIT.jsonl", "'x' | Out-File -Append _tpm/runs/MERGE-AUDIT.jsonl")
+    pair(2, "A-6 主 session rm Auto-Merge.Freeze.json（解凍）", "rm _tpm/runs/Auto-Merge.Freeze.json", "Remove-Item _tpm/runs/Auto-Merge.Freeze.json")
+    pair(2, "A-6 agent tee 寫 .claude/teams/GUARD.CONFIG.JSON", "echo '{}' | tee .claude/teams/GUARD.CONFIG.JSON",
+         "Set-Content -Path .claude/teams/GUARD.CONFIG.JSON -Value '{}'", agent=IMP)
+    pair(2, "A-6 cat .ENV", "cat .ENV", "Get-Content .ENV", cwd=H1R)
+    pair(2, "A-6 agent head ID_RSA", "head -n 1 ~/.ssh/ID_RSA", "Get-Content -Path ~/.ssh/ID_RSA -TotalCount 1", agent=IMP)
+    pair(0, "A-6 讀 MERGE-AUDIT.jsonl 放行", "tail -n 3 _tpm/runs/MERGE-AUDIT.jsonl", "Get-Content _tpm/runs/MERGE-AUDIT.jsonl -Tail 3")
+    pair(0, "A-6 cat 一般檔 README.ENV.md 放行", "cat README.ENV.md", "Get-Content README.ENV.md", cwd=H1R)
+    tool(2, "A-6 主 session Write MERGE-AUDIT.jsonl", "Write", {"file_path": str(H1W / "_tpm/runs/MERGE-AUDIT.jsonl")})
+    tool(2, "A-6 agent Write Publish-Audit.JSONL", "Write", {"file_path": str(H1W / "_tpm/runs/Publish-Audit.JSONL")}, WRT)
+    tool(2, "A-6 主 session Write Auto-Merge.Freeze.json frozen:false", "Write",
+         {"file_path": str(H1W / "_tpm/runs/Auto-Merge.Freeze.json"), "content": '{"frozen": false}'})
+    tool(2, "A-6 agent Write .CLAUDE/teams/guard.config.json", "Write", {"file_path": str(H1W / ".CLAUDE/teams/guard.config.json")}, WRT)
+    tool(2, "A-6 Read .ENV", "Read", {"file_path": str(H1R / ".ENV")})
+    tool(2, "A-6 Read Server.PEM", "Read", {"file_path": str(H1R / "deploy/Server.PEM")}, IMP)
+    tool(2, "A-6 agent Write run 目錄的 RUN.JSON", "Write", {"file_path": str(H1W / "_tpm/runs/x/RUN.JSON")}, WRT)
+    tool(2, "A-6 implementer 寫 Tests/Acceptance", "Write", {"file_path": str(H1R / "Tests/Acceptance/a.spec.ts")}, IMP)
+    tool(0, "A-6 Read 一般檔 Notes.MD 放行", "Read", {"file_path": str(H1R / "Notes.MD")})
+    CWS = mkws("ws-case", {"forbidden_paths": "vendor/readonly-ref"})  # 沒有 repos_dir：dev 角色可寫工作區（.claude/ 除外）
+    run(P, 2, "A-6 dev agent 寫 .CLAUDE/hooks/x", edit(CWS / ".CLAUDE/hooks/x.py", IMP, CWS), CWS)
+    run(P, 2, "A-6 dev agent 寫 .Claude/settings.json", edit(CWS / ".Claude/settings.json", IMP, CWS), CWS)
+    run(P, 0, "A-6 dev agent 寫 src/ 放行", edit(CWS / "src/a.py", IMP, CWS), CWS)
+    run(P, 2, "A-6 寫禁止路徑 Vendor/ReadOnly-Ref", edit(CWS / "Vendor/ReadOnly-Ref/a.txt", "", CWS), CWS)
+    both(2, "A-6 rm 禁止路徑 VENDOR/readonly-ref", CWS, "rm -rf VENDOR/readonly-ref/tmp")
+    both(0, "A-6 讀禁止路徑 VENDOR/readonly-ref 放行", CWS, "cat VENDOR/readonly-ref/README.md")
 
     # ------------------------------------------------------------ R3：角色合併後的舊名（別名）與凍結檔寫入
     # 別名：dev-pr-reviewer → tpm-reviewer、tpm-upstream-analyst → tpm-researcher，舊名照新角色的規則套用

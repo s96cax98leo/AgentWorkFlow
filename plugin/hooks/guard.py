@@ -58,10 +58,28 @@ def norm(p: str) -> str:
     return p
 
 
+def fold(s: str) -> str:
+    """擋人用的路徑比對（受保護檔、機敏檔、禁止路徑、.claude/、run.json、驗收測試目錄）一律不分大小寫。
+    macOS（APFS／HFS+ 預設）與 Windows（NTFS）不分大小寫，MERGE-AUDIT.jsonl、.CLAUDE/ 指到的是同一個檔；
+    Linux 上一律 casefold 只會多擋同名異寫的檔，不會少擋，所以不看平台。
+    放行用的白名單（writer_dirs、runs_dir、repos_dir、報告檔名）維持原樣比對：大小寫不同時判不符＝擋，同樣只會更嚴。"""
+    return s.casefold()
+
+
 def rel_to_workspace(p: Path) -> str | None:
     try:
         return Path(norm(str(p))).resolve().relative_to(WORKSPACE.resolve()).as_posix()
     except ValueError:
+        return None
+
+
+def run_git(*a: str) -> subprocess.CompletedProcess | None:
+    """跑 git 並回傳結果；找不到 git（PATH 上沒有、無法執行，OSError）回 None。
+    hook 跑得起來但環境沒有 git 時不能因此鎖死所有工具：呼叫端一律當成「不在 repo／查不到」處理，
+    純字串的規則（推送、合併、核准、受保護檔）照常判斷。"""
+    try:
+        return subprocess.run(["git", *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError:
         return None
 
 
@@ -71,8 +89,8 @@ def git_toplevel(start: Path) -> Path | None:
         d = d.parent
     if d.is_file():
         d = d.parent
-    r = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    r = run_git("-C", str(d), "rev-parse", "--show-toplevel")
+    return Path(r.stdout.strip()) if r is not None and r.returncode == 0 and r.stdout.strip() else None
 
 
 GIT_GLOBAL_OPTS = re.compile(r"\bgit\s+(?:(?:-C|-c)\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s+|--(?:git-dir|work-tree|namespace)=\S+\s+|--no-pager\s+|--bare\s+)+")
@@ -85,8 +103,8 @@ def forward(top: Path | None, guard: str, data: dict) -> None:
     script = find_repo_guard(top, guard)
     if script is None:
         # worktree 從沒有 guard 的分支開出時，改用主 repo 的 guard（規則一樣適用）
-        r = subprocess.run(["git", "-C", str(top), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        main = Path(r.stdout.strip()).parent if r.returncode == 0 else None
+        r = run_git("-C", str(top), "rev-parse", "--path-format=absolute", "--git-common-dir")
+        main = Path(r.stdout.strip()).parent if r is not None and r.returncode == 0 else None
         script = find_repo_guard(main, guard) if main else None
         if script is None:
             return
@@ -165,13 +183,14 @@ def forbidden_entries() -> tuple[list[str], list[str]]:
 
 def under_forbidden(path: Path) -> str | None:
     rel = rel_to_workspace(path)
-    absp = Path(norm(str(path))).resolve().as_posix() if path.is_absolute() else None
+    rel = fold(rel) if rel is not None else None
+    absp = fold(Path(norm(str(path))).resolve().as_posix()) if path.is_absolute() else None
     for e in forbidden_entries()[0]:
         if os.path.isabs(e):
-            target = Path(e).resolve().as_posix()
+            target = fold(Path(e).resolve().as_posix())
             if absp and (absp == target or absp.startswith(target + "/")):
                 return e
-        elif rel is not None and (rel == e or rel.startswith(e + "/")):
+        elif rel is not None and (rel == fold(e) or rel.startswith(fold(e) + "/")):
             return e
     return None
 
@@ -334,15 +353,45 @@ SUBST = re.compile(r"\$\(|`|<\(|\$\{")  # 指令替換、程序替換、變數�
 VALUE_FLAGS = ("--repo", "-R", "--match-head-commit", "-b", "--body", "-F", "--body-file", "-t", "--subject", "--author-email")
 
 
-def _flag(toks: list[str], *names: str) -> str | None:
-    """取旗標值：--repo x、--repo=x、-R x。沒有回 None。"""
-    for i, t in enumerate(toks):
+def _flag_values(toks: list[str], *names: str) -> list[str]:
+    """旗標每次出現的值（依出現順序）：--repo x、--repo=x、-R x、-Rx、-R=x，以及短旗標合寫（-sR x）。
+    旗標在最後、沒有值時記成空字串（出現次數照算）。"""
+    out: list[str] = []
+    i = 0
+    while i < len(toks):
+        t, step = toks[i], 1
         for n in names:
-            if t == n and i + 1 < len(toks):
-                return toks[i + 1]
+            if t == n:
+                out.append(toks[i + 1] if i + 1 < len(toks) else "")
+                step = 2
+                break
             if n.startswith("--") and t.startswith(n + "="):
-                return t.split("=", 1)[1]
-    return None
+                out.append(t.split("=", 1)[1])
+                break
+            if len(n) == 2 and n[0] == "-" and not t.startswith("--"):
+                m = re.match(rf"^-[A-Za-z]*{re.escape(n[1])}(.*)$", t)
+                if m:
+                    v = m.group(1)
+                    if v:
+                        out.append(v[1:] if v.startswith("=") else v)
+                    else:
+                        out.append(toks[i + 1] if i + 1 < len(toks) else "")
+                        step = 2
+                    break
+        i += step
+    return out
+
+
+def _flag(toks: list[str], *names: str) -> str | None:
+    """取旗標值（和 gh／argparse 一樣取最後一個）；沒有回 None。
+    同一旗標出現多次時，安全判斷要先用 _flag_dup() 拒絕，不能只看其中一個值。"""
+    vals = _flag_values(toks, *names)
+    return vals[-1] if vals else None
+
+
+def _flag_dup(toks: list[str], *names: str) -> bool:
+    """同一旗標（含別名混用，例如 -R 與 --repo）出現超過一次。"""
+    return len(_flag_values(toks, *names)) > 1
 
 
 def _gh_pr(seg: str, sub: str) -> tuple[str, int | None, list[str]] | None:
@@ -395,6 +444,14 @@ def frozen() -> str | None:
 
 
 METHOD_FLAGS = {"squash": ("--squash", "-s"), "merge": ("--merge", "-m"), "rebase": ("--rebase", "-r")}
+
+
+def dup_flag_problem(args: list[str], *groups: tuple[str, ...]) -> str | None:
+    """同一旗標出現超過一次（含 -R 與 --repo 混用）就拒絕：gh 取最後一個值，守門若只看其中一個就會被繞過。"""
+    for names in groups:
+        if _flag_dup(args, *names):
+            return f"{'／'.join(names)} 只能寫一次（重複出現時 gh 取最後一個值，無法確認實際目標）"
+    return None
 
 
 def upstream_auth(repo: str) -> str | None:
@@ -466,6 +523,9 @@ def merge_refusal(seg: str, data: dict) -> str | None:
     if not parsed:
         return "看不懂這個 gh pr merge"
     repo, pr, args = parsed
+    dup = dup_flag_problem(args, ("--repo", "-R"), ("--match-head-commit",))
+    if dup:
+        return dup
     if pr is None:
         return "要寫 PR 編號（或同一個 repo 的 PR URL）"
     if "--admin" in args:
@@ -512,6 +572,9 @@ def steward_write_refusal(seg: str, data: dict) -> str | None:
         if not parsed:
             continue
         repo, pr, args = parsed
+        dup = dup_flag_problem(args, ("--repo", "-R"))
+        if dup:
+            return dup
         if need and not any(a in need for a in args):
             return f"gh pr {sub} 只允許 {'／'.join(need)}"
         if sub == "review" and any(a in ("--approve", "-a", "--comment", "-c") or a.startswith("--approve=") for a in args):
@@ -539,7 +602,7 @@ WRITE_API = re.compile(r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.wr
 
 def agent_writes_state(seg: str) -> bool:
     """agent 用內嵌程式（或在 run 目錄裡）寫 run 狀態、稽核紀錄、凍結檔、守門設定，檔名拆開寫也算。"""
-    near_runs = bool(RUNS) and RUNS.rstrip("/") in norm(seg)
+    near_runs = bool(RUNS) and fold(RUNS.rstrip("/")) in fold(norm(seg))
     if not (INTERP.search(seg) or near_runs):
         return False
     probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", seg, flags=re.I)
@@ -554,7 +617,8 @@ def freezes_only(text: str) -> bool:
 
 
 # 機敏檔（和 publish.py 的 SECRET_FILES 同一份清單）：Read、Grep、cat／Get-Content 等讀內容一律擋；grep -q 只判有無，放行
-SECRET_FILES = re.compile(r"(?:^|/)(?:\.env(?:\.[\w-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:pem|p12|pfx|key|keystore|jks)|\.npmrc|\.pypirc|credentials(?:\.json)?)$")
+# 不分大小寫（.ENV、ID_RSA、x.PEM 在 macOS／Windows 是同一個檔）；例外清單 SECRET_FILE_OK 維持區分大小寫（只會更嚴）
+SECRET_FILES = re.compile(r"(?:^|/)(?:\.env(?:\.[\w-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:pem|p12|pfx|key|keystore|jks)|\.npmrc|\.pypirc|credentials(?:\.json)?)$", re.I)
 SECRET_FILE_OK = re.compile(r"\.env\.(?:example|sample|template)$")
 SECRET_GLOB = re.compile(r"(?:^|[/{,])\.env|id_(?:rsa|dsa|ecdsa|ed25519)|\.(?:pem|p12|pfx|key|keystore|jks)\b|\.npmrc|\.pypirc|credentials", re.I)
 SECRET_READERS = {
@@ -595,18 +659,21 @@ def protected_target(text: str, is_path: bool) -> str | None:
     t = norm(text)
     freeze = AM["freeze_file"]
     freeze_name = freeze.rsplit("/", 1)[-1]
+    # 一律不分大小寫比對（fold）；回傳值用設定裡的原名，呼叫端拿它和 AM["freeze_file"]、AUDIT_FILES 比對
     if is_path:
-        rel = rel_to_workspace(Path(t)) or t
+        rel = fold(rel_to_workspace(Path(t)) or t)
         base = rel.rsplit("/", 1)[-1]
         if rel.endswith(".claude/teams/guard.config.json"):
             return "guard.config.json"
-        if base in AUDIT_FILES:
-            return base
-        if rel == freeze or base == freeze_name:
+        for a in AUDIT_FILES:
+            if base == a:
+                return a
+        if rel == fold(norm(freeze)) or base == fold(freeze_name):
             return freeze
         return None
+    ft = fold(t)
     for n in ("guard.config.json", *AUDIT_FILES, freeze_name):
-        if n and n in t:
+        if n and fold(n) in ft:
             return freeze if n == freeze_name else n
     return None
 
@@ -651,8 +718,9 @@ def push_target_branches(seg: str, d: Path) -> list[str]:
         k += 1
 
     def git_out(*a: str) -> str:
-        r = subprocess.run(["git", "-C", str(d), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        return r.stdout.strip() if r.returncode == 0 else ""
+        # 找不到 git 時這個 push 本來就跑不起來，查不到目標分支＝不用擋（refspec 寫明的分支仍照字串判斷）
+        r = run_git("-C", str(d), *a)
+        return r.stdout.strip() if r is not None and r.returncode == 0 else ""
 
     refspecs = pos[1:]
     if not refspecs:
@@ -960,14 +1028,14 @@ def push_target_urls(seg: str, d: Path) -> list[str]:
         return []
     remote = next((a for a in args if not a.startswith("-")), None)
     if remote is None:
-        r = subprocess.run(["git", "-C", str(d), "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        remote = r.stdout.strip().split("/")[0] if r.returncode == 0 else ""
+        r = run_git("-C", str(d), "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}")
+        remote = r.stdout.strip().split("/")[0] if r is not None and r.returncode == 0 else ""
     if not remote:
         return [""]
     if "://" in remote or "@" in remote:
         return [remote]
-    r = subprocess.run(["git", "-C", str(d), "remote", "get-url", "--all", "--push", remote], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return r.stdout.split() if r.returncode == 0 else [remote]
+    r = run_git("-C", str(d), "remote", "get-url", "--all", "--push", remote)
+    return r.stdout.split() if r is not None and r.returncode == 0 else [remote]
 
 
 def is_force_push(seg: str) -> bool:
@@ -1075,12 +1143,13 @@ def check_shell(data: dict) -> None:
         for tool in ("publish.py", "merge_gate.py"):
             if re.search(rf"(?:^|[\s/\\]){re.escape(tool)}\b", seg):
                 targs = shlex_tokens(seg)
-                pd = _flag(targs, "--project-dir")
-                if pd is not None and _resolve(d, pd) != WORKSPACE.resolve():
-                    block(f"{tool} 的 --project-dir 只能是本專案（{WORKSPACE}），不能指到 {pd}")
-                rd = _flag(targs, "--runs-dir") if tool == "merge_gate.py" else None
-                if rd is not None and _resolve(WORKSPACE, rd) != (WORKSPACE / (CFG["runs_dir"] or "_tpm/runs")).resolve():
-                    block(f"merge_gate.py 的 --runs-dir 只能是 guard.config.json 的 runs_dir（{CFG['runs_dir']}）")
+                # 每個出現的值都要檢查（argparse 取最後一個；只看第一個會被 --project-dir . --project-dir /外部 繞過）
+                for pd in _flag_values(targs, "--project-dir"):
+                    if _resolve(d, pd) != WORKSPACE.resolve():
+                        block(f"{tool} 的 --project-dir 只能是本專案（{WORKSPACE}），不能指到 {pd}")
+                for rd in (_flag_values(targs, "--runs-dir") if tool == "merge_gate.py" else []):
+                    if _resolve(WORKSPACE, rd) != (WORKSPACE / (CFG["runs_dir"] or "_tpm/runs")).resolve():
+                        block(f"merge_gate.py 的 --runs-dir 只能是 guard.config.json 的 runs_dir（{CFG['runs_dir']}）")
         if (gh_rules or am_on) and not ok and (is_merge_cmd(seg) or is_merge_cmd(rest_cmd)):
             why = merge_refusal(seg, data) if (AM["enabled"] and GH_PR_MERGE.search(seg)) else None
             block(f"{who} 不能合併 PR（gh pr merge、gh api／curl 打 merge 端點）" + (f"：{why}" if why else "")
@@ -1112,6 +1181,8 @@ def check_shell(data: dict) -> None:
                 if s and s in seg:
                     block(f"不允許對上游或禁止的 repo {s} 做寫入動作；要決策者當下明確同意並自己執行")
             if gh_rules and configured and GH_WRITE.search(seg):
+                if _flag_dup(shlex_tokens(seg), "--repo", "-R"):
+                    block("gh 寫入動作的 --repo／-R 只能寫一次（重複出現時 gh 取最後一個值，無法確認實際目標）")
                 fork = CFG.get("fork_repo") or ""
                 if fork and not re.search(rf"(?:-R|--repo)[\s=]+{re.escape(fork)}\b", seg):
                     block(f"gh 寫入動作要明確寫 --repo {fork}（在 fork 裡 gh 可能預設到上游）")
@@ -1121,7 +1192,7 @@ def check_shell(data: dict) -> None:
                 block(f"gh api 寫入只能對 repos/{CFG['fork_repo']}/")
         for e in fpaths:
             names = {e, (WORKSPACE / e).as_posix()} if not os.path.isabs(e) else {e}
-            if any(n in seg for n in names) and DESTRUCTIVE.search(seg):
+            if any(fold(n) in fold(seg) for n in names) and DESTRUCTIVE.search(seg):
                 block(f"不動 {e}（禁止路徑，只能讀）")
 
     forward(git_toplevel(fdir), "guard-git", data)
@@ -1204,7 +1275,7 @@ def check_paths(data: dict) -> None:
         block(f"主 session 不解凍自動合併（刪除凍結檔、寫 frozen=false 或用 Edit 改）；解凍由人自己做（手動編輯 {prot}）")
     elif prot and CFG["_configured"] and (prot in AUDIT_FILES or (prot == "guard.config.json" and AM["enabled"])):
         block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
-    if role and path.name == "run.json" and (not RUNS or (rel or "").startswith(RUNS)):
+    if role and fold(path.name) == "run.json" and (not RUNS or fold(rel or "").startswith(fold(RUNS))):
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
     if role == "tpm-writer":
         # 凍結檔照 auto_merge.freeze_file 的實際設定（可能不在 writer_dirs 裡）；能不能寫已由上面的 writes_freeze 判定
@@ -1217,7 +1288,8 @@ def check_paths(data: dict) -> None:
         if not (rel is not None and RUNS and rel.startswith(RUNS)):
             block(f"{agent} 只能寫 {RUNS or 'run 目錄'}（{rel or fp}）")
     elif role.startswith("dev-"):
-        ok = rel is not None and ((rel.startswith(REPOS) if REPOS else not rel.startswith(".claude/")) or (RUNS and rel.startswith(RUNS)))
+        # .claude/ 是黑名單（不分大小寫：.CLAUDE/hooks 在 macOS／Windows 是同一個目錄）；repos_dir、runs_dir 是白名單，照原樣比對
+        ok = rel is not None and ((rel.startswith(REPOS) if REPOS else not fold(rel).startswith(".claude/")) or (RUNS and rel.startswith(RUNS)))
         if not ok:
             where = f"{REPOS}<repo>/" if REPOS else "工作區（.claude/ 除外）"
             block(f"{agent} 只能改 {where} 與 {RUNS}（{rel or fp}）")
@@ -1229,7 +1301,7 @@ def check_paths(data: dict) -> None:
         if role == "dev-implementer":
             for t in CFG.get("acceptance_test_dirs") or []:
                 t = t.strip("/")
-                if t and f"/{t}/" in "/" + rel:
+                if t and fold(f"/{t}/") in fold("/" + rel):
                     block(f"{agent} 不能改驗收測試（{t}/；acceptance_test_dirs），驗收測試由 dev-acceptance-tester 寫（{rel}）")
     forward(git_toplevel(path.parent), "guard-paths", data)
 
