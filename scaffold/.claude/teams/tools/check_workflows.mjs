@@ -63,7 +63,8 @@ function checkSchema(s, path, errs) {
   if (s.type === 'array') checkSchema(s.items, `${path}[]`, errs)
 }
 
-// 乾跑一次：fakes 依 agent label 覆寫假回傳（例如讓大綱判 split=true），沒覆寫的照 schema 產生最小合法值
+// 乾跑一次：fakes 依 agent label 覆寫假回傳（例如讓大綱判 split=true），沒覆寫的照 schema 產生最小合法值；
+// fake 給 'THROW' 或會 throw 的函式時，agent() 會 throw（模擬 agent 失敗）
 async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   const errs = []
   const extAgents = new Set(((embedded(src) || {}).extensions || []).map((e) => e.agent))
@@ -88,10 +89,13 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
       else { if (opts.schema.type !== 'object') errs.push(`agent ${opts.label} 的 schema 根不是 object`); checkSchema(opts.schema, opts.label, errs) }
       const base = fake(opts.schema)
       const o = fakes[opts.label]
+      // fake 是 'THROW'（或會 throw 的函式）：模擬 agent 失敗（逾時、被中止、交件驗證錯誤），workflow 要走缺件流程
+      if (o === 'THROW') throw new Error(`假 agent ${opts.label} throw`)
       return o ? (typeof o === 'function' ? o(base, prompt) : { ...base, ...o }) : base
     },
     parallel: async (thunks) => Promise.all(thunks.map((t) => t().catch((e) => { errs.push(`parallel 內錯誤：${e.message}`); return null }))),
-    pipeline: async (items, ...stages) => Promise.all(items.map(async (it, i) => { let r = it; for (const s of stages) { r = await s(r === it && s === stages[0] ? it : r, it, i) } return r })),
+    // 和 parallel 一樣：某一項 throw 時記成錯誤、該項回 null（workflow 該自己用 tryAgent 接住，走到這裡就是漏接）
+    pipeline: async (items, ...stages) => Promise.all(items.map(async (it, i) => { let r = it; for (const s of stages) { r = await s(r === it && s === stages[0] ? it : r, it, i) } return r }).map((p) => p.catch((e) => { errs.push(`pipeline 內錯誤：${e.message}`); return null }))),
     phase: (t) => { if (!titles.has(t)) errs.push(`phase('${t}') 不在 meta.phases`); if (visited[visited.length - 1] !== t) visited.push(t) },
     log: () => {},
     budget: { total: null, spent: () => 0, remaining: () => Infinity },

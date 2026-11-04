@@ -68,4 +68,46 @@ export default [
       return errs
     },
   },
+  {
+    // B-6：依賴不屬於 Build 的子任務（research）：明確 halted，不是循環、不 throw，回傳續跑資訊
+    name: '依賴不屬於 Build 的子任務：halted',
+    args: { subtasks: [
+      { id: 'r1', title: '調研', kind: 'research', owns: [], depends_on: [], acceptance: ['x'] },
+      { id: 't2', title: '前端', kind: 'code', owns: ['apps/b.tsx'], depends_on: ['r1'], acceptance: ['vitest b'] },
+    ] },
+    expect: (r) => {
+      const o = out(r)
+      const errs = []
+      if (!o.halted || !/依賴不屬於 Build 的子任務/.test(o.halt_reason || '') || !/r1/.test(o.halt_reason || '')) errs.push(`應 halted 並寫出依賴不屬於 Build 的子任務 r1：${JSON.stringify({ halted: o.halted, why: o.halt_reason })}`)
+      if (!Array.isArray(o.integrated) || !(o.remaining_subtasks || []).some((s) => s.id === 't2') || !o.branch || !o.next) errs.push(`回傳要帶 integrated、remaining_subtasks、branch、next：${JSON.stringify({ integrated: o.integrated, branch: o.branch, next: o.next })}`)
+      if (r.labels.length) errs.push(`停下前不該派任何 agent：${r.labels.join(',')}`)
+      return errs
+    },
+  },
+  {
+    // B-6：相依循環：halted（不 throw），回傳續跑資訊
+    name: '相依循環：halted',
+    args: { subtasks: [
+      { id: 'c1', title: 'a', kind: 'code', owns: ['a.py'], depends_on: ['c2'], acceptance: ['x'] },
+      { id: 'c2', title: 'b', kind: 'code', owns: ['b.py'], depends_on: ['c1'], acceptance: ['x'] },
+    ] },
+    expect: (r) => {
+      const o = out(r)
+      const errs = []
+      if (!o.halted || !/循環/.test(o.halt_reason || '')) errs.push(`循環應 halted：${JSON.stringify({ halted: o.halted, why: o.halt_reason })}`)
+      if (!Array.isArray(o.integrated) || (o.remaining_subtasks || []).length !== 2 || !o.branch || !o.next) errs.push(`回傳要帶 integrated、remaining_subtasks、branch、next：${JSON.stringify({ integrated: o.integrated, branch: o.branch, next: o.next })}`)
+      if (r.labels.length) errs.push(`停下前不該派任何 agent：${r.labels.join(',')}`)
+      return errs
+    },
+  },
+  {
+    // B-8：實作 agent throw：記成缺件、halted、留下續跑資訊
+    name: '缺件：實作子任務 throw',
+    fakes: { 'Implement:t2': 'THROW' },
+    expect: (r) => {
+      const o = out(r)
+      const rem = (o.remaining_subtasks || []).map((s) => s.id)
+      return o.halted && (o.missing || []).some((l) => l.includes('t2')) && rem.includes('t2') ? [] : [`實作 throw 要 halted、missing 列出 t2：${JSON.stringify({ halted: o.halted, missing: o.missing, rem })}`]
+    },
+  },
 ]

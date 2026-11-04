@@ -72,4 +72,25 @@ export default [
       fakes: { ...CONSISTENT, 'execute:merge': () => null },
       expect: (r) => (r.out && r.out.halted && r.out.merged === false && (r.out.missing || []).includes('execute:merge') ? [] : ['execute 缺件要 halted、merged=false']),
     },
-  ]
+    {
+      // B-8：執行模式 throw 可能發生在 gh pr merge 之後：halted，寫明 PR 狀態未知、先查 PR 狀態，不能當成沒合併
+      name: '缺件：執行模式 throw',
+      args: {},
+      fakes: { ...CONSISTENT, 'execute:merge': 'THROW' },
+      expect: (r) => {
+        const o = r.out || {}
+        return [
+          ...(o.halted && (o.missing || []).includes('execute:merge') ? [] : [`執行 throw 要 halted 並列進 missing：${JSON.stringify({ halted: o.halted, missing: o.missing })}`]),
+          ...(/PR 狀態未知/.test(o.halt_reason || '') && /先查 PR 狀態/.test(o.halt_reason || '') ? [] : [`halt_reason 要寫明 PR 狀態未知、先查 PR 狀態：${o.halt_reason}`]),
+          ...(o.merged ? ['執行 throw 不能算已合併'] : []),
+        ]
+      },
+    },
+    {
+      // B-8：分析模式 throw 也是缺件：不合併、不退回
+      name: '缺件：分析模式 throw',
+      args: {},
+      fakes: { analyze: 'THROW' },
+      expect: (r) => (r.out && r.out.halted && (r.out.missing || []).includes('analyze') && !r.labels.some((l) => l.startsWith('execute')) ? [] : [`analyze throw 要 halted 且不執行：${JSON.stringify(r.out && { halted: r.out.halted, missing: r.out.missing })}`]),
+    },
+]

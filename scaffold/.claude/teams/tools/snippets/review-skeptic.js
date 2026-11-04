@@ -1,7 +1,7 @@
 // @requires: challenge
 // ── 片段 review-skeptic（.claude/teams/tools/snippets/review-skeptic.js）：審查 agent 交 findings 後，派 skeptic 逐則反駁 ──
 // build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
-// 用到 challenge 片段的 judgeVerdicts，引用本片段的 workflow 也要引用 challenge 片段。
+// 用到 challenge 片段的 judgeVerdicts 與 tryAgent，引用本片段的 workflow 也要引用 challenge 片段。
 // 缺件（rules.md 規則 26）：審查或反駁的 agent 回 null 或交件無效時記進 missing（回傳的 missing 欄位是 label）；
 // 缺件不是「沒有發現」也不是「沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label。
 
@@ -22,7 +22,7 @@ function takeFindings(r, label, o = {}) {
 // keepOnMissing＝true：反駁缺件時發現全部留在 kept（不能當成被推翻）；否則 kept 為空。兩種都要由呼叫端依 missing 停下。
 function verifyFindings(fs, o) {
   if (!fs.length) return Promise.resolve({ kept: [], dropped: [], missing: null })
-  return agent(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema })
+  return tryAgent(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema })
     .then((v) => {
       if (!v || !v.payload) return { kept: o.keepOnMissing ? fs : [], dropped: [], missing: o.label }
       const j = judgeVerdicts(fs, v, { unansweredKept: o.unansweredKept })

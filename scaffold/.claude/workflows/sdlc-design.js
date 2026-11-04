@@ -13,6 +13,60 @@ export const meta = {
 
 // plugin 的 agent 帶命名空間（init.py 依 workflow.config 的 AGENT_NS 填入；agents 放專案 .claude/agents 時填空字串）
 const NS = '{{AGENT_NS}}'
+// tryAgent：agent 失敗（throw）時當成缺件回 null（challenge 片段）
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
+// workflow 裡所有 agent() 都改走這個，不要讓 throw 繞過缺件處理或把整支 workflow 打斷。
+function tryAgent(prompt, opts) {
+  try {
+    return Promise.resolve(agent(prompt, opts)).catch((e) => { log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`); return null })
+  } catch (e) {
+    log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`)
+    return Promise.resolve(null)
+  }
+}
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。兩種模式都往嚴的方向判，但「嚴」的方向相反：
+// 預設：kept 是被採信的結論（例如抽出的決議、事項），要每一則判定都沒推翻才採信：
+//   skeptic 沒判到的當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時，只要有一則 refuted 就列 doubted。
+// opts.unansweredKept＝true：kept 是保留下來、會擋住的問題（例如審查發現），要每一則判定都推翻才拿掉：
+//   只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const answered = new Set(verdicts.map((x) => x.target_id))
+  const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
+  const refuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !answered.has(i.id) || upheld.has(i.id)
+    : (i) => answered.has(i.id) && !refuted.has(i.id)
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !answered.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
 
 const SUBTASKS = /*@schema:subtasks*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["epic","subtasks"],"properties":{"epic":{"type":"string"},"subtasks":{"type":"array","minItems":1,"items":{"type":"object","required":["id","title","kind","owns","depends_on","acceptance"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"kind":{"type":"string","enum":["code","test","doc","research","check","decision"]},"owns":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptance":{"type":"array","items":{"type":"string"}},"story_ids":{"type":"array","items":{"type":"string"}},"sub_plan":{"type":"string"}}}}}}}} /*@end*/
 const FINDINGS = /*@schema:findings*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["lens","findings"],"properties":{"lens":{"type":"string"},"findings":{"type":"array","items":{"type":"object","required":["id","severity","claim","location","recommendation","confidence"],"properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["important","nit","pre_existing","info","blocker","should_fix"]},"claim":{"type":"string"},"location":{"type":"string"},"recommendation":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1},"quote":{"type":"string"}}}}}}}} /*@end*/
@@ -70,7 +124,7 @@ const PR_RULE = PR_SIZE.max_files || PR_SIZE.max_lines
 // 使用者加進這一段的自己的 agent（profile 的 extensions，用 add-agent skill 設定）：和內建 agent 平行執行，交 findings；
 // blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
 const EXT = (MP.extensions || []).filter((e) => e.stage === 'design')
-const extJob = (e, ctx, phaseName) => () => agent(
+const extJob = (e, ctx, phaseName) => () => tryAgent(
   `${ctx}\n\n## 派工單（擴充 agent：${e.name}）\n${e.instructions}\n` +
   `只讀不改：不改程式、測試與 spec，不 push、不對 GitHub 寫入。詳細結果寫到 ${A.run_dir}/ext-${e.name}.md。` +
   `payload 用 findings（lens=${e.name}）：每則附 0–1 信心與嚴重度；會擋住上線或合併的列 blocker／important（會擋住政策核准），其餘列 nit／info。`,
@@ -79,7 +133,7 @@ const extJob = (e, ctx, phaseName) => () => agent(
 const halt = (reason, extra) => ({ stage: 'design', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, missing, ...extra })
 
 phase('Outline')
-const outline = await agent(
+const outline = await tryAgent(
   `${CTX}\n\n## 派工單（SDLC 第 2 段 Design：先出大綱）\n` +
   `讀 ${SPEC}/intent.md 與目標 repo 的影響範圍，預估要拆成幾個子任務、有哪些可以各自交付的區塊。\n` +
   `- 預估超過 ${SPLIT_AT} 個子任務，或有 2 個以上彼此不共用檔案、可以各自規劃的區塊時：split=true，切成 2–${MAX_SUB} 個子計劃（sub plan），之後每個子計劃由一個 agent 平行規劃。\n` +
@@ -154,7 +208,7 @@ if (!SUBS.length) {
   if (outline) log(`不拆子計劃：${outline.payload.reason}`)
   else log('大綱沒有回傳結果，改由一個 dev-spec-author 規劃')
   phase('Design')
-  design = await agent(
+  design = await tryAgent(
     `${CTX}\n\n## 派工單（SDLC 第 2 段 Design）\n依 ${SPEC}/intent.md 與 ${EPIC_DIR}/specs/_templates/：\n` +
     DOC_RULES(SPEC) + PR_RULE +
     `- 拆子任務（payload subtasks）：${SUBTASK_RULES}\n- ${COMMIT}\n` +
@@ -168,7 +222,7 @@ if (!SUBS.length) {
 
   phase('SubPlan')
   const subBrief = (s) => `子計劃 ${s.id}「${s.title}」\n範圍：${s.scope}\n可擁有的檔案或目錄：${s.owns.join('、')}\n依賴的子計劃：${(s.depends_on || []).join('、') || '無'}\n介面：${(s.interfaces || []).join('；') || '無'}\nStory：${(s.story_ids || []).join('、') || '見 intent'}`
-  subDesigns = await parallel(SUBS.map((s) => () => agent(
+  subDesigns = await parallel(SUBS.map((s) => () => tryAgent(
     `${CTX}\n\n## 派工單（子計劃規劃：${s.id}）\n${subBrief(s)}\n\n` +
     `完整大綱：${SPEC}/outline.md（其他子計劃同時由別的 agent 規劃，你只負責這一個）。依 ${SPEC}/intent.md 與 ${EPIC_DIR}/specs/_templates/：\n` +
     DOC_RULES(`${SPEC}/sub/${s.id}`) +
@@ -185,10 +239,24 @@ if (!SUBS.length) {
   const draft = []
   SUBS.forEach((s, i) => subDesigns[i].payload.subtasks.forEach((t) => draft.push({ ...t, sub_plan: s.id })))
   const bySub = (id) => draft.filter((t) => t.sub_plan === id).map((t) => t.id)
-  draft.forEach((t) => { t.depends_on = [...new Set((t.depends_on || []).flatMap((d) => (d.startsWith('@') ? bySub(d.slice(1)) : [d])))] })
+  // 展開不了的 @<子計劃> 不能默默變成「沒有相依」：查不到該子計劃、該子計劃沒有子任務、指向自己，一律記錯並停下
+  const subIds = SUBS.map((s) => s.id)
+  const expandErrs = []
+  draft.forEach((t) => {
+    t.depends_on = [...new Set((t.depends_on || []).flatMap((d) => {
+      if (!d.startsWith('@')) return [d]
+      const target = d.slice(1)
+      if (target === t.sub_plan) { expandErrs.push(`子任務 ${t.id} 的相依 ${d} 指向自己所在的子計劃`); return [] }
+      if (!subIds.includes(target)) { expandErrs.push(`子任務 ${t.id} 的相依 ${d} 查不到這個子計劃`); return [] }
+      const ids = bySub(target)
+      if (!ids.length) expandErrs.push(`子任務 ${t.id} 的相依 ${d} 展開後是空的（子計劃 ${target} 沒有子任務）`)
+      return ids
+    }))]
+  })
+  if (expandErrs.length) return halt(`子計劃的跨子計劃相依展開失敗，停下交人：${expandErrs.join('；')}`, { outline, sub_plans: SUBS, sub_designs: subDesigns, draft })
 
   phase('Consolidate')
-  const merged = await agent(
+  const merged = await tryAgent(
     `${CTX}\n\n## 派工單（彙整子計劃）\n${SUBS.length} 個子計劃已平行規劃完成，文件在 ${SPEC}/sub/<id>/，大綱在 ${SPEC}/outline.md。\n` +
     `1. 核對子計劃之間的介面（interfaces、契約、共用型別）是否一致，檔案所有權有沒有重疊或漏掉的檔案；有落差就修正對應子計劃的文件。\n` +
     `2. 在 ${SPEC}/ 寫總覽：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）。總覽的 spec 只放跨子計劃的整合驗收條件，並連到各子計劃的 spec；plan 寫子計劃的順序與相依。${SD ? '總覽另寫跨子計劃的系統設計（子計劃之間的資料流、一致性、失敗處理與取捨），照下面的方法；各子計劃只寫自己範圍內的部分。' : ''}\n` +
@@ -231,7 +299,7 @@ const LENSES = [
 ]
 if (SD) LENSES.push({ key: 'system-design', ask: `照 profile 的系統設計方法（${SD.source}）檢查設計文件：每一步都有寫嗎？功能層／系統層的判斷對嗎（有新服務、新資料儲存、跨服務呼叫、流量／延遲／可用性要求卻只做功能層，算問題）？第 1 步的數字有出處或標成假設嗎？每個取捨有寫放棄了什麼嗎？另外找：單點故障、沒說明的一致性模型、沒有失敗／重試／冪等處理、快取沒有更新與失效策略、過長的同步呼叫鏈、沒有 back pressure 的佇列。系統層時逐項對照這些主題：${(SD.topics || []).join('、') || '（profile 沒列）'}。` })
 if (SUBS.length) LENSES.push({ key: 'sub-plans', ask: `子計劃之間：各子計劃的 spec 合起來有沒有涵蓋 intent 的全部範圍、有沒有重複或互相矛盾的驗收條件？介面（端點、事件、型別）兩邊的寫法一致嗎？跨子計劃的相依有沒有反映在子任務的 depends_on？總覽 spec 的整合驗收條件夠不夠？` })
-const checks = await parallel([...LENSES.map((l) => () => agent(
+const checks = await parallel([...LENSES.map((l) => () => tryAgent(
   `${CTX}\n\n## 派工單（一致性檢查：${l.key}）\n讀 ${SPEC}/ 下的 intent、design、spec、plan、progress${SUBS.length ? `、outline.md 與 sub/<id>/ 的子計劃文件` : ''}與子任務：\n${JSON.stringify(design.payload)}\n${l.ask}\n每個問題一則 verdict（target_id 寫文件與節名），refuted=true 表示「這份設計在此處有問題」。`,
   { label: `analyze:${l.key}`, phase: 'Analyze', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
 )), ...EXT.map((e) => extJob(e, `${CTX}\n設計文件在 ${SPEC}/（intent、spec、plan${SUBS.length ? '、outline.md、sub/<id>/' : ''}），子任務：${JSON.stringify(design.payload)}`, 'Analyze'))])

@@ -22,32 +22,46 @@ const CTX = `決策：${A.decision}\nrun 目錄：${A.run_dir}\n只找、只建�
 // 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
 // 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
 
+// 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
+// workflow 裡所有 agent() 都改走這個，不要讓 throw 繞過缺件處理或把整支 workflow 打斷。
+function tryAgent(prompt, opts) {
+  try {
+    return Promise.resolve(agent(prompt, opts)).catch((e) => { log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`); return null })
+  } catch (e) {
+    log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`)
+    return Promise.resolve(null)
+  }
+}
+
 // 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
 function haltMissing(base, stage, missing, extra = {}) {
   return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
 }
 
-// 把 verdicts（target_id 對事項 id）對回 list。
-// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
-// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻（只會更嚴）。
+// 把 verdicts（target_id 對事項 id）對回 list。兩種模式都往嚴的方向判，但「嚴」的方向相反：
+// 預設：kept 是被採信的結論（例如抽出的決議、事項），要每一則判定都沒推翻才採信：
+//   skeptic 沒判到的當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時，只要有一則 refuted 就列 doubted。
+// opts.unansweredKept＝true：kept 是保留下來、會擋住的問題（例如審查發現），要每一則判定都推翻才拿掉：
+//   只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻。
 // 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
 function judgeVerdicts(list, challenge, opts = {}) {
   const verdicts = (((challenge || {}).payload || {}).verdicts) || []
-  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const answered = new Set(verdicts.map((x) => x.target_id))
   const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
+  const refuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
   const ok = opts.unansweredKept
-    ? (i) => !last.has(i.id) || upheld.has(i.id)
-    : (i) => last.has(i.id) && !last.get(i.id).refuted
-  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+    ? (i) => !answered.has(i.id) || upheld.has(i.id)
+    : (i) => answered.has(i.id) && !refuted.has(i.id)
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !answered.has(i.id)).map((i) => i.id) }
 }
 
 // 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
 // o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
-// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+// skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
 async function challengeList(list, o) {
   const label = o.label || 'challenge'
   if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
-  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
   if (!challenge || !challenge.payload) {
     if (o.missing) o.missing.push(label)
     return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
@@ -73,7 +87,7 @@ const AREAS = [
 ]
 
 phase('Find')
-const found = await pipeline(AREAS, (a) => agent(`${CTX}\n\n## 派工單（${a.key}）\n${a.ask}\n每處一個 type=change 的事項：target_files 寫路徑:行號，text 寫建議怎麼改（附改後的文字草稿）。payload 用 items。`,
+const found = await pipeline(AREAS, (a) => tryAgent(`${CTX}\n\n## 派工單（${a.key}）\n${a.ask}\n每處一個 type=change 的事項：target_files 寫路徑:行號，text 寫建議怎麼改（附改後的文字草稿）。payload 用 items。`,
   { label: `find:${a.key}`, phase: 'Find', agentType: NS + 'tpm-researcher', schema: ITEMS }))
 // 各面向的事項 id 各自編號，合併前加面向前綴（<面向>:<id>），skeptic 的 target_id 才不會撞號
 const items = []
@@ -92,7 +106,7 @@ if (judged.lacking) return halt('challenge', { items })
 const { kept, doubted } = judged
 
 phase('Write')
-const docs = await agent(`${CTX}\n\n## 派工單\n1. 寫待改清單 ${A.run_dir}/changes.md（依檔案分組：現況 → 建議 → 草稿），被推翻或沒被驗證的另列存疑；共用檔的修改要走目標 repo 的 {{BRANCH_PREFIX}}sdlc-* 分支，列為下一步由使用者決定。\n` +
+const docs = await tryAgent(`${CTX}\n\n## 派工單\n1. 寫待改清單 ${A.run_dir}/changes.md（依檔案分組：現況 → 建議 → 草稿），被推翻或沒被驗證的另列存疑；共用檔的修改要走目標 repo 的 {{BRANCH_PREFIX}}sdlc-* 分支，列為下一步由使用者決定。\n` +
   `2. 需要改程式或共用檔的，在 ${A.run_dir}/intent-draft-<主題>.md 起草 intent 草稿交 SDLC（sdlc-plan），一個主題一份；不需要就在 changes.md 寫明「不需開發」。\n` +
   `3. 寫給決策者版 ${A.run_dir}/給決策者.md：決策會動到哪些地方、建議的下一步與每個選項的代價。\n` +
   `4. 每份跑 python3 .claude/teams/tools/check_rules.py（給決策者版加 --audience owner），全過才算完成。payload 用 docs：documents 列出每份（給決策者版 audience=owner、intent 草稿 kind=intent），rule_check 填「pass」或「fail：<沒過的規則>」。\n` +

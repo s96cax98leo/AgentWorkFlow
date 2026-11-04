@@ -13,6 +13,60 @@ export const meta = {
 
 // plugin 的 agent 帶命名空間（init.py 依 workflow.config 的 AGENT_NS 填入；agents 放專案 .claude/agents 時填空字串）
 const NS = '{{AGENT_NS}}'
+// tryAgent：agent 失敗（throw）時當成缺件回 null（challenge 片段）
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
+// workflow 裡所有 agent() 都改走這個，不要讓 throw 繞過缺件處理或把整支 workflow 打斷。
+function tryAgent(prompt, opts) {
+  try {
+    return Promise.resolve(agent(prompt, opts)).catch((e) => { log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`); return null })
+  } catch (e) {
+    log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`)
+    return Promise.resolve(null)
+  }
+}
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。兩種模式都往嚴的方向判，但「嚴」的方向相反：
+// 預設：kept 是被採信的結論（例如抽出的決議、事項），要每一則判定都沒推翻才採信：
+//   skeptic 沒判到的當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時，只要有一則 refuted 就列 doubted。
+// opts.unansweredKept＝true：kept 是保留下來、會擋住的問題（例如審查發現），要每一則判定都推翻才拿掉：
+//   只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const answered = new Set(verdicts.map((x) => x.target_id))
+  const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
+  const refuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !answered.has(i.id) || upheld.has(i.id)
+    : (i) => answered.has(i.id) && !refuted.has(i.id)
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !answered.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
 
 const DECISION = /*@schema:merge-decision*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["decision","repo","pr","head_sha","traceability","out_of_scope","followups","risk_tier","gate_reasons"],"properties":{"decision":{"type":"string","enum":["merge","hold","escalate"]},"repo":{"type":"string","minLength":1},"pr":{"type":"integer","minimum":1},"head_sha":{"type":"string","minLength":7},"requirements_source":{"type":"string"},"traceability":{"type":"array","minItems":1,"items":{"type":"object","required":["requirement_id","requirement","evidence","result"],"properties":{"requirement_id":{"type":"string","minLength":1},"requirement":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}},"result":{"type":"string","enum":["match","mismatch","missing"]}}}},"out_of_scope":{"type":"array","items":{"type":"object","required":["location","change"],"properties":{"location":{"type":"string"},"change":{"type":"string"}}}},"followups":{"type":"array","items":{"type":"object","required":["requirement_id","expected","actual","adjustment"],"properties":{"requirement_id":{"type":"string","minLength":1},"expected":{"type":"string"},"actual":{"type":"string"},"adjustment":{"type":"string"}}}},"risk_tier":{"type":"string","enum":["low","medium","high"]},"gate_reasons":{"type":"array","items":{"type":"string"}},"needs_sync":{"type":"boolean"},"merge_state":{"type":"string","enum":["merged","queued","not_merged"]}}}}} /*@end*/
 const VERDICTS = /*@schema:verdicts*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["target_id","refuted","reason"],"properties":{"target_id":{"type":"string"},"refuted":{"type":"boolean"},"reason":{"type":"string"},"counter_evidence":{"type":"string"}}}}}}}} /*@end*/
@@ -61,7 +115,7 @@ const CTX = `目標 repo（本機 clone）：${A.repo}\nGitHub repo：${GH}；PR
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 
 // (a) 分析模式：需求對照表，綁定 head SHA；不做任何 gh 寫入
-const analysis = await agent(
+const analysis = await tryAgent(
   `${CTX}\n\n## 派工單（分析模式）\n1. 取得需求清單，逐條對照驗證證據、測試與程式位置，判 match／mismatch／missing。\n2. 讀 git diff ${BASE}...<head>，列出對不到任何需求的改動（out_of_scope）。\n3. 每條不一致、缺證據與範圍外改動都寫一則 followups（新需求：requirement_id、expected、actual、adjustment）。\n4. head_sha 填 gh pr view ${N} --repo ${GH} --json headRefOid 的值。gate_reasons 先填空陣列。\n5. 讀 gh pr view ${N} --repo ${GH} --json mergeable,mergeStateStatus：mergeStateStatus 是 BEHIND（落後 base，而 base 要求先跟上）或 DIRTY、mergeable 是 CONFLICTING（有衝突）時，needs_sync 填 true、decision 填 hold，另寫一則 followups（requirement_id=sync，adjustment 寫「跑 sdlc-sync 跟上 base 後重跑 sdlc-test」）。你不同步分支。\n只分析，不執行任何 gh 寫入（review、ready、merge、comment）。payload 用 merge-decision。`,
   { label: 'analyze', phase: 'Analyze', agentType: NS + 'dev-merge-steward', schema: DECISION },
 )
@@ -81,7 +135,7 @@ const targets = [
   ...matched.map((r) => ({ id: r.requirement_id, claim: `需求一致：${r.requirement}`, evidence: r.evidence })),
   ...(dec.out_of_scope.length ? [] : [{ id: 'out_of_scope', claim: `git diff ${BASE}...${dec.head_sha} 沒有對不到需求的改動` }]),
 ]
-const challenge = targets.length ? await agent(
+const challenge = targets.length ? await tryAgent(
   `${CTX}\n\n## 派工單（合併模式）\nhead SHA：${dec.head_sha}。逐則試著找出 dev-merge-steward 漏掉的不一致（打開證據、重跑能重跑的唯讀指令、讀 diff）。\nrefuted=true 代表「其實不一致、缺證據，或有範圍外改動」；不確定就判 refuted=true（hold）。\n只處理下列 target，不得推翻 steward 判的 mismatch／missing 或審查的 blocker／important：\n${JSON.stringify(targets)}\npayload 用 verdicts，target_id 照抄 id。`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
 ) : null
@@ -123,13 +177,13 @@ const RETURN = `gh pr review ${N} --repo ${GH} --request-changes --body "<新需
 
 // (c)／(d) 執行模式
 phase('Execute')
-const exec = await agent(
+const exec = await tryAgent(
   inconsistent
     ? `${CTX}\n\n## 派工單（執行模式：退回）\n對照或挑戰判出不一致，這個 PR 不合併。\n1. 確認 head 仍是 ${dec.head_sha}。\n2. ${COMMENT('下面這份最終 merge-decision')}\n3. 用同一份 merge-decision 跑 gate 留下紀錄：${GATE}。不論 gate 判什麼都不合併。\n4. 退回 PR：${RETURN}。\n最終 merge-decision（decision 以 gate 與本派工單較嚴者為準，gate_reasons 照抄 gate 輸出）：\n${JSON.stringify(finalDecision)}\npayload 用 merge-decision。`
     : `${CTX}\n\n## 派工單（執行模式：合併）\n對照與挑戰都判一致。\n1. 確認 head 仍是 ${dec.head_sha}。變了的話：guard.config.json 的 auto_merge.carry_verdict_on_rebase 不是 true 就停下判 hold，不做任何 gh 寫入；是 true 就照樣往下，由 gate 用 patch-id 判斷能不能沿用（之後的 --head-sha、--match-head-commit 都用目前 head）。{{RUNS_DIR}}/auto-merge.freeze.json 存在且 frozen=true（自動合併已凍結）時也一樣停下。\n2. ${COMMENT('下面這份 merge-decision')}\n3. 跑 gate：${GATE}。\n4. exit 0：gh pr merge ${N} --repo ${GH} --squash --match-head-commit <目前 head>（合併方式依 guard.config.json 的 auto_merge.merge_method，預設 squash；目標 repo 用 CI 的 agent-merge-gate 當 required check 時，要等它對這個 head 轉綠才合併得進去）。合併指令回報成功不代表已合進去（merge queue 可能只是排隊）：接著跑 gh pr view ${N} --repo ${GH} --json state,mergedAt,mergeCommit 讀回，state=MERGED 填 merge_state=merged，還在排隊填 queued，其他填 not_merged。\n5. exit 1 或 3：不合併，改為退回 PR：${RETURN}；followups 照抄 gate 輸出的 followups，merge_state 填 not_merged。\nmerge-decision：\n${JSON.stringify(dec)}\npayload 用 merge-decision，gate_reasons 照抄 gate 輸出。`,
   { label: inconsistent ? 'execute:return' : 'execute:merge', phase: 'Execute', agentType: NS + 'dev-merge-steward', schema: DECISION },
 )
-const result = exec ? exec.payload : { ...finalDecision, decision: 'hold', gate_reasons: ['steward 執行模式沒有交件；狀態不明，交主 session 查 PR 與 merge-audit.jsonl'] }
+const result = exec ? exec.payload : { ...finalDecision, decision: 'hold', gate_reasons: ['steward 執行模式沒有交件；PR 狀態未知，先查 PR 狀態與 merge-audit.jsonl'] }
 // 只信讀回的狀態：gh pr merge 回報成功時，merge queue 可能只是排隊
 const merged = !!(!inconsistent && exec && result.decision === 'merge' && result.merge_state === 'merged')
 const queued = !!(!inconsistent && exec && result.decision === 'merge' && result.merge_state === 'queued')
@@ -139,7 +193,7 @@ const outFollowups = merged || queued ? [] : (result.followups && result.followu
 let followupDocs = null
 if (outFollowups.length) {
   phase('Followup')
-  followupDocs = await agent(
+  followupDocs = await tryAgent(
     `${CTX}\n\n## 派工單\nPR #${N} 因為需求與成果不一致被退回。把每一則新需求寫成一份文件：${FOLLOWUP_DIR}/followup-<requirement_id>.md（requirement_id 裡的 / 換成 -）。\n每份寫：對應的原需求（逐字引用）、期望、實際（附證據位置）、要怎麼調整、驗證方式、來源（PR #${N}、head ${dec.head_sha}）。\n新需求：${JSON.stringify(outFollowups)}\n寫完跑 python3 .claude/teams/tools/check_rules.py。payload 用 docs（kind=other，audience=agents），rule_check 填結果。`,
     { label: 'followup', phase: 'Followup', agentType: NS + 'tpm-writer', schema: DOCS },
   )
@@ -147,7 +201,7 @@ if (outFollowups.length) {
 
 // (e) 合併紀錄
 phase('Record')
-const record = await agent(
+const record = await tryAgent(
   `${CTX}\n\n## 派工單\n寫合併紀錄到 ${A.run_dir}/合併紀錄.md：PR、head SHA、結果（${merged ? '已合併' : queued ? '已進 merge queue，尚未合進去' : '未合併'}）、需求對照表（逐條 requirement_id、結果、證據）、skeptic 判出的不一致、gate 理由、新需求文件路徑、下一步。\n對照表：${JSON.stringify(result)}\nskeptic 判出：${JSON.stringify(refuted)}\n新需求文件：${JSON.stringify(followupDocs ? followupDocs.payload.documents : [])}\n寫完跑 python3 .claude/teams/tools/check_rules.py。payload 用 docs（kind=exec_record），rule_check 填結果。`,
   { label: 'record', phase: 'Record', agentType: NS + 'tpm-writer', schema: DOCS },
 )
@@ -158,7 +212,8 @@ return {
   stage: 'merge',
   // 執行模式缺件：PR 狀態不明（可能已合併、已退回或都沒有），一律停下交人
   halted: !exec,
-  ...(exec ? {} : { halt_reason: `${execLabel} 缺件：steward 執行模式沒有交件，PR 狀態不明；交主 session 查 PR 與 merge-audit.jsonl` }),
+  // 執行模式可能在 gh pr merge 之後才失敗（throw、逾時）：PR 可能已經合併，不能當成沒合併重派
+  ...(exec ? {} : { halt_reason: `${execLabel} 缺件：steward 執行模式沒有交件（失敗、throw 或逾時，可能發生在合併之後），PR 狀態未知，先查 PR 狀態（gh pr view ${N} --repo ${GH} --json state,mergedAt,isDraft）與 merge-audit.jsonl 再決定` }),
   missing,
   merged,
   queued,

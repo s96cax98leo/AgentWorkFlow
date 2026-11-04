@@ -36,4 +36,10 @@ export default [
       return e
     },
   },
+  {
+    // B-8：skeptic throw（逾時、被中止）不能當成全部沒被推翻，也不能讓 workflow 整個失敗
+    name: '缺件：skeptic throw',
+    fakes: { challenge: 'THROW' },
+    expect: (r) => [...halted('challenge')(r), ...(((r.out && r.out.missing) || []).includes('challenge') ? [] : ['missing 沒列出 challenge'])],
+  },
 ]

@@ -12,6 +12,60 @@ export const meta = {
 
 // plugin 的 agent 帶命名空間（init.py 依 workflow.config 的 AGENT_NS 填入；agents 放專案 .claude/agents 時填空字串）
 const NS = '{{AGENT_NS}}'
+// tryAgent：agent 失敗（throw）時當成缺件回 null（challenge 片段）
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
+// workflow 裡所有 agent() 都改走這個，不要讓 throw 繞過缺件處理或把整支 workflow 打斷。
+function tryAgent(prompt, opts) {
+  try {
+    return Promise.resolve(agent(prompt, opts)).catch((e) => { log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`); return null })
+  } catch (e) {
+    log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`)
+    return Promise.resolve(null)
+  }
+}
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。兩種模式都往嚴的方向判，但「嚴」的方向相反：
+// 預設：kept 是被採信的結論（例如抽出的決議、事項），要每一則判定都沒推翻才採信：
+//   skeptic 沒判到的當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時，只要有一則 refuted 就列 doubted。
+// opts.unansweredKept＝true：kept 是保留下來、會擋住的問題（例如審查發現），要每一則判定都推翻才拿掉：
+//   只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const answered = new Set(verdicts.map((x) => x.target_id))
+  const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
+  const refuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !answered.has(i.id) || upheld.has(i.id)
+    : (i) => answered.has(i.id) && !refuted.has(i.id)
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !answered.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
 
 const BUILD = /*@schema:build-result*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["task_id","branch","commits","files_changed","tests"],"properties":{"task_id":{"type":"string"},"branch":{"type":"string"},"worktree":{"type":"string"},"commits":{"type":"array","items":{"type":"string"}},"files_changed":{"type":"array","items":{"type":"string"}},"tests":{"type":"array","items":{"type":"object","required":["command","result"],"properties":{"command":{"type":"string"},"result":{"type":"string","enum":["pass","fail","red_as_expected","not_run"]},"summary":{"type":"string"}}}},"sync":{"type":"object","required":["strategy","conflicts"],"properties":{"strategy":{"type":"string","enum":["none","rebase","merge","transit"]},"behind":{"type":"integer","minimum":0},"published":{"type":"boolean"},"conflicts":{"type":"array","items":{"type":"string"}},"transit_branch":{"type":["string","null"]},"head_branch":{"type":"string"},"head_sha":{"type":"string"},"halted":{"type":"boolean"},"reason":{"type":"string"}}},"conflicts":{"type":"array","items":{"type":"object","required":["file","kind","resolution"],"properties":{"file":{"type":"string"},"kind":{"type":"string","enum":["mechanical","seam","judgement","implicit_compile","implicit_behavior","generated"]},"resolution":{"type":"string"}}}}}}}} /*@end*/
 
@@ -93,9 +147,9 @@ function layerByDeps(items, o = {}) {
 // 相依指向清單外的子任務一律停下（gate 只會更嚴）；續跑時已合進整合分支的子任務由 args.integrated 明列，視為已滿足
 const PRIOR = A.integrated || []
 const { layers, unknown, cycle } = layerByDeps(work, { satisfied: [...tests.map((s) => s.id), ...PRIOR], known: new Set([...ids, ...PRIOR]) })
-if (unknown.length) return { halted: true, halt_reason: `子任務相依指向不存在的子任務：${unknown.join('、')}`, unknown, branch: BRANCH, next: '確認 subtasks 是否完整；續跑時已合進整合分支的子任務要用 args.integrated 列出' }
-if (cycle.length) throw new Error(`子任務相依有循環或缺項：${cycle.join('、')}`)
-log(`${TEST_FIRST ? 'Red（測試先行）' : 'Tests（實作後補驗證測試）'} ${tests.length} 個；實作分 ${layers.length} 層：${layers.map((l) => l.map((s) => s.id).join('+')).join(' → ')}`)
+// 依賴不屬於 Build 的子任務（research／check／decision 等）：Build 不做它們，排不進任何一層，明確停下（不是循環）
+const skippedIds = new Set(skipped.map((s) => s.id).filter((id) => !PRIOR.includes(id)))
+const onSkipped = [...tests, ...work].flatMap((s) => (s.depends_on || []).filter((d) => skippedIds.has(d)).map((d) => `${s.id}→${d}(${all.find((x) => x.id === d).kind})`))
 
 const taskBrief = (s) => `子任務 ${s.id}「${s.title}」\n擁有（只能改）：${(s.owns || []).join('、')}\n完成條件：${(s.acceptance || []).join('；')}\nStory：${(s.story_ids || []).join('、') || '見 spec'}`
 const wtFor = (s) => `${A.repo}/.worktrees/${A.epic}--${s.id}`
@@ -104,7 +158,7 @@ function runTask(s, role, phaseName, extra) {
   return (async () => {
     let res = null
     for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
-      res = await agent(
+      res = await tryAgent(
         `${CTX}\n\n## 派工單（${phaseName}，第 ${attempt} 次）\n${taskBrief(s)}\n` +
         `在自己的 worktree 做：git -C "${A.repo}" worktree add .worktrees/${A.epic}--${s.id} -b {{BRANCH_PREFIX}}${A.epic}--${s.id} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
         (attempt > 1 && res ? `上一次的結果（請修正）：${JSON.stringify({ status: res.status, summary: res.summary, open_questions: res.open_questions })}\n` : '') +
@@ -118,7 +172,7 @@ function runTask(s, role, phaseName, extra) {
 }
 
 async function integrate(batch, label) {
-  return agent(
+  return tryAgent(
     `${CTX}\n\n## 派工單（整合：${label}）\n依序把這些分支 git merge --no-ff 進 ${BRANCH}（在 ${EPIC_DIR} 操作，先確認目前分支是 ${BRANCH}）：\n` +
     batch.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
     `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
@@ -138,12 +192,19 @@ const halt = (reason) => {
   const remaining = [...tests, ...work].filter((s) => !integrated.has(s.id))
   const missing = results.failures.filter((f) => f.result === 'no_result').map((f) => f.where.startsWith('integrate:') ? f.where : `${f.where}:${f.task_id}`)
   return {
-    stage: 'build', halted: true, halt_reason: reason, gate: null, missing,
+    stage: 'build', halted: true, halt_reason: reason, gate: null, missing, branch: BRANCH,
     integrated: [...PRIOR, ...integrated], remaining_subtasks: remaining,
     next: `處理 failures 的原因後續跑：重跑 sdlc-build，args.subtasks 只傳 remaining_subtasks（${remaining.map((s) => s.id).join('、') || '無'}），args.integrated 傳已合進 ${BRANCH} 的 [${[...PRIOR, ...integrated].join('、') || '無'}]（不要重傳成 subtasks），其他 args 照舊${A.branch ? `（含 branch=${A.branch}）` : ''}。子任務 worktree 已存在會沿用；要從頭重做某個子任務就先移除它的 worktree 與分支。`,
     ...results,
   }
 }
+// 開工前的結構檢查（還沒派任何 agent）：一律停下交人，回傳和其他 halted 一致（integrated、remaining_subtasks、branch、next）
+const preHalt = (reason, next, extra) => ({ ...halt(reason), ...extra, next })
+if (unknown.length) return preHalt(`子任務相依指向不存在的子任務：${unknown.join('、')}`, '確認 subtasks 是否完整；續跑時已合進整合分支的子任務要用 args.integrated 列出', { unknown })
+if (onSkipped.length) return preHalt(`依賴不屬於 Build 的子任務：${onSkipped.join('、')}`, '這些子任務（research／check／decision 等）不在 Build 裡做：先在對應流程完成並確認結果，再把它們列進 args.integrated（視為已滿足）後重跑 sdlc-build，或修正 depends_on', { skipped_deps: onSkipped })
+if (cycle.length) return preHalt(`子任務相依有循環：${cycle.join('、')}`, '修正 subtasks 的 depends_on（回 sdlc-design 或交人）後重跑 sdlc-build', { cycle })
+log(`${TEST_FIRST ? 'Red（測試先行）' : 'Tests（實作後補驗證測試）'} ${tests.length} 個；實作分 ${layers.length} 層：${layers.map((l) => l.map((s) => s.id).join('+')).join(' → ')}`)
+
 function settle(subs, res, where) {
   const ok = []
   res.forEach((r, i) => {

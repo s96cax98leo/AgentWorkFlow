@@ -32,32 +32,46 @@ const CTX = `目標 repo（本機 clone）：${A.repo}\nGitHub repo：${GH}\nrun
 // 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
 // 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
 
+// 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
+// workflow 裡所有 agent() 都改走這個，不要讓 throw 繞過缺件處理或把整支 workflow 打斷。
+function tryAgent(prompt, opts) {
+  try {
+    return Promise.resolve(agent(prompt, opts)).catch((e) => { log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`); return null })
+  } catch (e) {
+    log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`)
+    return Promise.resolve(null)
+  }
+}
+
 // 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
 function haltMissing(base, stage, missing, extra = {}) {
   return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
 }
 
-// 把 verdicts（target_id 對事項 id）對回 list。
-// 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
-// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻（只會更嚴）。
+// 把 verdicts（target_id 對事項 id）對回 list。兩種模式都往嚴的方向判，但「嚴」的方向相反：
+// 預設：kept 是被採信的結論（例如抽出的決議、事項），要每一則判定都沒推翻才採信：
+//   skeptic 沒判到的當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時，只要有一則 refuted 就列 doubted。
+// opts.unansweredKept＝true：kept 是保留下來、會擋住的問題（例如審查發現），要每一則判定都推翻才拿掉：
+//   只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻。
 // 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
 function judgeVerdicts(list, challenge, opts = {}) {
   const verdicts = (((challenge || {}).payload || {}).verdicts) || []
-  const last = new Map(verdicts.map((x) => [x.target_id, x]))
+  const answered = new Set(verdicts.map((x) => x.target_id))
   const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
+  const refuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
   const ok = opts.unansweredKept
-    ? (i) => !last.has(i.id) || upheld.has(i.id)
-    : (i) => last.has(i.id) && !last.get(i.id).refuted
-  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
+    ? (i) => !answered.has(i.id) || upheld.has(i.id)
+    : (i) => answered.has(i.id) && !refuted.has(i.id)
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !answered.has(i.id)).map((i) => i.id) }
 }
 
 // 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
 // o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
-// skeptic 缺件：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+// skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
 async function challengeList(list, o) {
   const label = o.label || 'challenge'
   if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
-  const challenge = await agent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
   if (!challenge || !challenge.payload) {
     if (o.missing) o.missing.push(label)
     return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
@@ -77,7 +91,7 @@ const ruleCheck = (d) => {
 }
 
 phase('Watch')
-const watch = await agent(
+const watch = await tryAgent(
   `${CTX}\n\n## 派工單\n1. 讀 ${AUDIT}，找出監看範圍內 decision=merge 的紀錄。\n2. 讀 main 的 CI（gh run list --repo ${GH} --branch main；失敗的看 gh run view --log-failed）。\n3. 失敗歸因到合併 commit；每則發現的 location 寫合併 commit SHA 與 CI run URL，recommendation 寫 git revert <sha> 的範圍說明（影響檔案、會一起撤掉的需求、和之後 commit 的衝突預測）與是否凍結自動合併。\n4. main 正常就交一則 severity=info。讀不到 CI 或 merge-audit 時寫 important，說明 not_verifiable。\npayload 用 findings（lens=post-merge）。`,
   { label: 'watch', phase: 'Watch', agentType: NS + 'dev-release-watcher', schema: FINDINGS },
 )
@@ -101,7 +115,7 @@ const { challenge, kept: confirmed, doubted: unconfirmed } = judged
 log(`問題 ${problems.length} 則：歸因成立 ${confirmed.length}、未確認 ${unconfirmed.length}；${freeze ? '建議凍結自動合併' : '不凍結'}`)
 
 phase('Write')
-const docs = await agent(
+const docs = await tryAgent(
   `${CTX}\n\n## 派工單\n1. 寫 revert 提案到 ${A.run_dir}/revert-proposal.md：每個歸因成立的合併 commit 一節（git revert <sha> 的範圍、影響檔案、會撤掉的需求、衝突預測、驗證方式）；歸因未確認的另列一節，寫明要人判斷。提案只是文件，不執行。\n` +
   (freeze ? `2. 寫凍結旗標：先讀 ${FREEZE_SRC} 取得凍結檔路徑（沒有設定檔或沒設 freeze_file 時，用 .claude/teams/tools/merge_gate.py 的 freeze_file() 預設值，位在 ${RUNS} 下），寫入 JSON：{"frozen": true, "reason": "<一句話>", "merge_shas": [...], "proposal": "${A.run_dir}/revert-proposal.md", "lift_when": "<解除條件>"}。實際寫入的路徑列在 documents（kind=other，notes 寫「凍結旗標」）。\n` : '2. 不寫凍結旗標（沒有 blocker）。\n') +
   `3. 寫給決策者版到 ${A.run_dir}/給決策者.md：發生什麼、哪個合併、建議（由人合併 revert PR／先凍結再查／判 flaky 解除），每個選項附代價。\n` +
