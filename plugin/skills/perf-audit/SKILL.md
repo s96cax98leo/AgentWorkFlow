@@ -70,4 +70,6 @@ let cls=0;new PerformanceObserver(l=>l.getEntries().forEach(e=>{if(!e.hadRecentI
 
 ## 鐵律
 單次量測不成結論。報告任何數字都要附樣本數與量測點。
-把「量到的」與「推論的」分開寫。
+把「量到的」與「推論的」分開寫。報中位數與全距，不報單一最佳值。
+原始輸出（curl 時序、瀑布、console 結果）存到 `artifacts/<target>/raw/`。
+輸出語言照專案 `.claude/teams/rules.md` 的設定；沒有設定時用繁體中文。技術名詞保留原文。

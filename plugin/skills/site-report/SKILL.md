@@ -30,6 +30,7 @@ description: 全站深度分析的總指揮與報告合成 — 派工 agent team
 原始證據（標頭、DNS、量測輸出）一律存到 `artifacts/<target>/raw/`。
 
 ## 階段三：交叉驗證（這一步不能省）
+合成者（lead-synthesizer）**不重做**各 agent 的調查，工作是驗證、對撞、萃取。動筆前先讀完 `artifacts/<target>/` 下所有分析檔與 `raw/` 原始證據。
 各 agent 獨立作業必然產生矛盾。逐項核對：
 - 技術判定的 CDN／雲供應商，與基礎設施的 ASN 歸屬**是否一致**
 - 效能量到的 TTFB 與 PoP，是否支持基礎設施宣稱的節點分布
