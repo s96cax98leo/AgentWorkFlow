@@ -44,4 +44,32 @@ export default [
       },
       expect: (r) => (r.out && r.out.halted ? [] : ['彙整少了 ui-t1 卻沒有停下']),
     },
+    {
+      name: '缺件：design 沒交件',
+      fakes: { design: () => null },
+      expect: (r) => [
+        ...(r.out && r.out.halted && /design/.test(r.out.halt_reason || '') && (r.out.missing || []).includes('design') ? [] : [`design 缺件要 halted：${JSON.stringify(r.out && { halted: r.out.halted, missing: r.out.missing })}`]),
+        ...(r.labels.some((l) => l.startsWith('analyze:')) ? ['沒有設計不該派一致性檢查'] : []),
+      ],
+    },
+    {
+      name: '缺件：一致性檢查沒交件',
+      fakes: { 'analyze:plan': () => null },
+      expect: (r) => (r.out && r.out.halted && /analyze:plan/.test(r.out.halt_reason || '') ? [] : ['analyze:plan 缺件要 halted 並寫出 label']),
+    },
+    {
+      name: '缺件：彙整沒交件',
+      fakes: {
+        outline: ENV({ epic: 'demo', split: true, reason: 'x', sub_plans: SUB_PLANS }),
+        'subplan:api': ENV({ epic: 'demo', subtasks: [{ id: 'api-t1', title: 'a', kind: 'code', owns: ['services/a.py'], depends_on: [], acceptance: ['x'] }] }),
+        'subplan:ui': ENV({ epic: 'demo', subtasks: [{ id: 'ui-t1', title: 'b', kind: 'code', owns: ['apps/b.tsx'], depends_on: [], acceptance: ['x'] }] }),
+        consolidate: () => null,
+      },
+      expect: (r) => (r.out && r.out.halted && /consolidate/.test(r.out.halt_reason || '') ? [] : ['consolidate 缺件要 halted']),
+    },
+    {
+      name: 'profile 設 pr_size：第一輪就規劃拆 PR',
+      profile: { conventions: { pr_size: { max_lines: 400, max_files: 20, scope: 'git diff --numstat' } } },
+      expect: (r) => (/PR 大小[\s\S]*400 行[\s\S]*拆 PR/.test(r.prompts.design || '') ? [] : ['design 派工單沒帶 profile 的 PR 大小與拆 PR 規劃']),
+    },
   ]

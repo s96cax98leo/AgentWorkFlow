@@ -27,4 +27,23 @@ export default [
       fakes: { plan: (base) => ({ ...SYNC_PLAN({ strategy: 'rebase', behind: 1, published: true, conflicts: [], halted: true, reason: '已推送的分支 rebase 要 force push' })(base), status: 'needs_decision' }) },
       expect: (r) => (r.out && r.out.halted === true && !r.labels.some((l) => l.startsWith('apply')) ? [] : ['plan halted 時不能執行']),
     },
+    {
+      name: '缺件：執行沒交件',
+      fakes: { plan: SYNC_PLAN({ strategy: 'merge', behind: 2, published: true, conflicts: [] }), 'apply:merge': () => null },
+      expect: (r) => (r.out && r.out.halted && (r.out.missing || []).includes('apply:merge') ? [] : ['apply 缺件要 halted 並列出 label']),
+    },
+    {
+      // 合併段不讀 branch：走過中轉分支後要指向新 PR 編號，不能叫 sdlc-merge 帶 branch
+      name: '中轉分支的下一步：合併段用新 PR 編號',
+      args: { pr: 7 },
+      fakes: { plan: SYNC_PLAN(TRANSIT), 'apply:transit': SYNC_APPLY({ ...TRANSIT, head_branch: TRANSIT.transit_branch, head_sha: 'b'.repeat(40) }, [{ file: 'src/a.ts', kind: 'seam', resolution: 'x' }]) },
+      expect: (r) => {
+        const n = (r.out && r.out.next) || ''
+        return [
+          ...(/sdlc-deliver/.test(n) && /branch=merge\//.test(n) ? [] : [`next 要叫 sdlc-test、sdlc-deliver 帶 branch：${n}`]),
+          ...(/--supersedes 7/.test(n) && /新 PR 的編號/.test(n) ? [] : [`next 要說合併段用新 PR 編號：${n}`]),
+          ...(/sdlc-merge[^。；]*branch/.test(n) ? [`next 不能叫 sdlc-merge 帶 branch：${n}`] : []),
+        ]
+      },
+    },
   ]

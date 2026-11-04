@@ -70,21 +70,29 @@ const reviewed = await pipeline(
   (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥0.8 的。`, 'Review')() : agent(`${CTX}\n\n## 派工單（審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
     { label: `review:${a.key}`, phase: 'Review', agentType: NS + 'dev-pr-reviewer', schema: FINDINGS }),
   (r, a) => {
-    const fs = (r && r.payload.findings || []).filter((f) => f.confidence >= 0.8)
+    // 缺件不是「沒有發現」（rules.md 規則 26）：審查軸缺件記下 label，不能當成空清單
+    if (!r) return { axis: a.key, kept: [], dropped: [], missing: a.ext ? `ext:${a.key}` : `review:${a.key}` }
+    const fs = (r.payload.findings || []).filter((f) => f.confidence >= 0.8)
     if (!fs.length) return { axis: a.key, kept: [], dropped: [] }
     return agent(`${CTX}\n\n## 派工單\n逐則試著反駁下列 ${a.key} 軸的發現（打開 location 看實際程式），不確定就判 refuted=true：\n${JSON.stringify(fs)}`,
       { label: `verify:${a.key}`, phase: 'Verify', agentType: NS + 'tpm-skeptic', schema: VERDICTS })
       .then((v) => {
-        const refuted = new Set((v && v.payload.verdicts || []).filter((x) => x.refuted).map((x) => x.target_id))
+        // 反駁缺件：發現全部保留（不能當成被推翻），但這一軸沒經過反駁，整段停下
+        if (!v) return { axis: a.key, kept: fs, dropped: [], missing: `verify:${a.key}` }
+        const refuted = new Set((v.payload.verdicts || []).filter((x) => x.refuted).map((x) => x.target_id))
         return { axis: a.key, kept: fs.filter((f) => !refuted.has(f.id)), dropped: fs.filter((f) => refuted.has(f.id)) }
       })
   },
 )
+const AXIS_LABELS = [...AXES.map((a) => `review:${a.key}`), ...EXT.map((e) => `ext:${e.name}`)]
+const missing = reviewed.map((r, i) => (r ? r.missing : AXIS_LABELS[i])).filter(Boolean)
 const seen = new Set()
 const kept = []
 for (const r of reviewed.filter(Boolean)) for (const f of r.kept) { const k = key(f); if (!seen.has(k)) { seen.add(k); kept.push({ axis: r.axis, ...f }) } }
 const dropped = reviewed.filter(Boolean).reduce((n, r) => n + r.dropped.length, 0)
 log(`保留 ${kept.length} 則；被 skeptic 推翻 ${dropped} 則`)
+// 審查或反駁缺件：不寫 PR 說明（避免草稿寫成「審過、沒有發現」），停下交人
+if (missing.length) return { stage: 'deliver', halted: true, halt_reason: `審查／反駁類 agent 缺件：${missing.join('、')}（缺件不是沒有發現），停下交人`, missing, gate: null, findings: kept, dropped, docs: null }
 
 phase('Write')
 const docs = await agent(
@@ -92,4 +100,5 @@ const docs = await agent(
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
 )
 
-return { stage: 'deliver', gate: '推 fork／開 PR 由使用者當下決定；寫入上游另需再次同意；agent 不核准、不合併', findings: kept, dropped, docs }
+// writer 不是審查類：缺件列進 missing（PR 說明與執行紀錄沒寫），閘門照常但要補寫
+return { stage: 'deliver', halted: false, missing: docs ? [] : ['write'], gate: '推 fork／開 PR 由使用者當下決定；寫入上游另需再次同意；agent 不核准、不合併', findings: kept, dropped, docs }

@@ -104,12 +104,12 @@ const shardRuns = []
 async function verify(round) {
   if (!SHARDS) {
     const v = await verifyAll(round)
-    return { combined: v, problem: v ? null : '驗證沒有回傳結果' }
+    return { combined: v, problem: v ? null : `verify#${round} 缺件：驗證沒有回傳結果`, missing: v ? [] : [`verify#${round}`] }
   }
   const res = await parallel(SHARDS.map((sh) => () => verifyShard(sh, round)))
   shardRuns.push({ round, shards: res })
   const lost = SHARDS.filter((sh, i) => !res[i])
-  if (lost.length) return { combined: null, problem: `分片 ${lost.map((s) => s.id).join('、')} 沒有回傳驗證結果` }
+  if (lost.length) return { combined: null, problem: `分片 ${lost.map((s) => s.id).join('、')} 沒有回傳驗證結果（缺件：${lost.map((s) => `verify:${s.id}#${round}`).join('、')}）`, missing: lost.map((s) => `verify:${s.id}#${round}`) }
   const c = combine(res)
   phase('Consolidate')
   const merged = await agent(
@@ -118,13 +118,15 @@ async function verify(round) {
     `## 分片結果\n${JSON.stringify({ commits: c.commits, criteria: c.crit, anti_cheat: c.cheats })}`,
     { label: `consolidate#${round}`, phase: 'Consolidate', agentType: NS + 'dev-verifier', schema: CRITERIA },
   )
-  if (!merged) return { combined: null, problem: '彙整分片驗證沒有回傳結果' }
+  if (!merged) return { combined: null, problem: `consolidate#${round} 缺件：彙整分片驗證沒有回傳結果`, missing: [`consolidate#${round}`] }
   const errs = consolidationProblems(merged, c)
   return { combined: merged, problem: errs.length ? `彙整結果和分片不一致：${errs.join('；')}` : null, crit: c.crit }
 }
 
 phase('Verify')
 const jobs = [() => verify(1)]
+// 每個審查 job 的 label，缺件時寫進 halt_reason（順序和 jobs[1..] 一致）
+const reviewLabels = [...(A.has_ui ? ['design-review'] : []), ...(A.has_security ? ['security-review'] : []), ...EXT.map((e) => `ext:${e.name}`)]
 if (A.has_ui) jobs.push(() => agent(`${CTX}\n\n## 派工單\n設計審查 ${BRANCH} 的畫面改動，寫 ${SPEC}/design-review.md 與 ${SPEC}/evidence/。payload 用 findings（lens=design）。`, { label: 'design-review', phase: 'Verify', agentType: NS + 'dev-design-reviewer', schema: FINDINGS }))
 if (A.has_security) jobs.push(() => agent(`${CTX}\n\n## 派工單\n安全審查 ${BRANCH}（git diff ${A.base || 'origin/main'}...HEAD），寫 ${SPEC}/security-review.md。payload 用 findings（lens=security）。`, { label: 'security-review', phase: 'Verify', agentType: NS + 'dev-security-reviewer', schema: FINDINGS }))
 EXT.forEach((e) => jobs.push(extJob(e, `${CTX}\n驗證對象：${EPIC_DIR} 的目前 HEAD（git diff ${A.base || 'origin/main'}...HEAD），spec 在 ${SPEC}/。`, 'Verify')))
@@ -135,8 +137,14 @@ const finish = (current, extra) => {
   const summary = current ? (current.payload.criteria || []).reduce((m, c) => (m[c.result] = (m[c.result] || 0) + 1, m), {}) : null
   return { stage: 'test', gate: '驗證結果確認（fail 或 not_verifiable 由人決定）', verifier: current, verifier_shards: shardRuns, reviews: reviews.filter(Boolean), fixes, summary, ...extra }
 }
-if (!first) return finish(null, { halted: true, halt_reason: '驗證沒有回傳結果，停下交人' })
-if (first.problem) return finish(first.combined, { halted: true, halt_reason: first.problem })
+if (!first) return finish(null, { halted: true, halt_reason: 'verify#1 缺件：驗證沒有回傳結果，停下交人', missing: ['verify#1'] })
+// 缺件不是「沒有發現」（rules.md 規則 26）：設計、安全審查或擴充 agent 缺件時，不能讓閘門以為「審過、沒有發現」
+const reviewMissing = reviewLabels.filter((l, i) => !reviews[i])
+const missingAll = [...(first.missing || []), ...reviewMissing]
+if (first.problem || reviewMissing.length) {
+  const why = [first.problem, reviewMissing.length ? `審查類 agent 缺件：${reviewMissing.join('、')}（缺件不是沒有發現）` : ''].filter(Boolean).join('；')
+  return finish(first.combined, { halted: true, halt_reason: `${why}，停下交人`, missing: missingAll })
+}
 
 const fixBrief = (failed, cheats) => `測試失敗就改程式、不改測試，不加 skip／retry、不放寬斷言。\n失敗：${JSON.stringify(failed)}\n反作弊發現：${JSON.stringify(cheats)}`
 async function fixSerial(round, failed, cheats) {
@@ -146,10 +154,13 @@ async function fixSerial(round, failed, cheats) {
   )
 }
 // 多個子計劃都有失敗：各自在 worktree 平行修（只改該子計劃範圍），再由 integrator 合併；整合分片的失敗跨子計劃，合併後再單獨修
+// 回傳 { done: true, ir } 或 { done: false, problem, left }；left 是留下來的 worktree 與分支（交人清理或續修）
 async function fixParallel(round, groups) {
+  const brOf = (g) => `{{BRANCH_PREFIX}}${A.epic}--fix${round}-${g.id}`
+  const wtOf = (g) => `${A.repo}/.worktrees/${A.epic}--fix${round}-${g.id}`
   const res = await parallel(groups.map((g) => () => {
-    const br = `{{BRANCH_PREFIX}}${A.epic}--fix${round}-${g.id}`
-    const wt = `${A.repo}/.worktrees/${A.epic}--fix${round}-${g.id}`
+    const br = brOf(g)
+    const wt = wtOf(g)
     return agent(
       `${CTX}\n\n## 派工單（修正第 ${round} 輪，子計劃 ${g.id}）\n其他子計劃的失敗由別的 agent 同時修，你只負責這一個。\n` +
       `在自己的 worktree 修：git -C "${A.repo}" worktree add .worktrees/${A.epic}--fix${round}-${g.id} -b ${br} ${BRANCH}（已存在就沿用）。worktree：${wt}。\n` +
@@ -160,7 +171,11 @@ async function fixParallel(round, groups) {
   }))
   fixes.push(...res)
   const ok = res.filter((r) => r && r.status === 'done')
-  if (ok.length < groups.length) return null
+  const left = groups.map((g, i) => ({ group: g.id, label: `fix:${g.id}#${round}`, branch: brOf(g), worktree: wtOf(g), result: res[i] ? res[i].status : 'no_result' }))
+  if (ok.length < groups.length) {
+    const bad = left.filter((x) => x.result !== 'done')
+    return { done: false, left, problem: `平行修正第 ${round} 輪有 ${bad.length} 組沒交 done（${bad.map((x) => `${x.label}：${x.result === 'no_result' ? '缺件' : x.result}`).join('、')}），沒有整合；各組的 worktree 與分支都留著：${left.map((x) => `${x.worktree}（${x.branch}）`).join('、')}` }
+  }
   phase('Integrate')
   const ir = await agent(
     `${CTX}\n\n## 派工單（整合修正第 ${round} 輪）\n依序把這些分支 git merge --no-ff 進 ${BRANCH}（在 ${EPIC_DIR} 操作）：\n` +
@@ -169,7 +184,8 @@ async function fixParallel(round, groups) {
     { label: `integrate:fix#${round}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
   fixes.push(ir)
-  return ir
+  if (!ir || ir.status !== 'done') return { done: false, left, problem: `integrate:fix#${round} ${ir ? `沒完成（${ir.status}）` : '缺件'}：修正分支沒合進 ${BRANCH}，worktree 與分支可能還留著：${left.map((x) => `${x.worktree}（${x.branch}）`).join('、')}` }
+  return { done: true, ir }
 }
 
 let state = first
@@ -191,8 +207,10 @@ for (let round = 1; round <= MAX_FIX && state.combined; round++) {
   const rest = SHARDS ? { failed: failed.filter((c) => !groups.some((g) => g.failed.includes(c))), cheats: cheats.filter((x) => !groups.some((g) => g.cheats.includes(x))) } : null
   if (groups.length >= 2) {
     log(`平行修正 ${groups.length} 個子計劃：${groups.map((g) => g.id).join('、')}`)
-    fix = await fixParallel(round, groups)
-    if (fix && fix.status === 'done' && (rest.failed.length || rest.cheats.length)) {
+    const par = await fixParallel(round, groups)
+    if (!par.done) return finish(current, { halted: true, halt_reason: `${par.problem}，停下交人`, left_worktrees: par.left, next: '交人決定：看留下的 worktree 續修後由 dev-integrator 合進分支再重跑 sdlc-test，或清掉 worktree 與分支（git worktree remove、git branch -D）後重跑 sdlc-test' })
+    fix = par.ir
+    if (rest.failed.length || rest.cheats.length) {
       fix = await fixSerial(round, rest.failed, rest.cheats)
       fixes.push(fix)
     }
@@ -200,10 +218,12 @@ for (let round = 1; round <= MAX_FIX && state.combined; round++) {
     fix = await fixSerial(round, failed, cheats)
     fixes.push(fix)
   }
-  if (!fix || fix.status !== 'done') break
+  // 修正缺件或沒交 done：不能當成「修好了」或默默停在 fail，停下交人
+  if (!fix) return finish(current, { halted: true, halt_reason: `fix#${round} 缺件：修正沒有回傳結果，停下交人`, missing: [`fix#${round}`] })
+  if (fix.status !== 'done') return finish(current, { halted: true, halt_reason: `第 ${round} 輪修正沒完成（${fix.status}：${fix.summary}），停下交人` })
   phase('Verify')
   state = await verify(round + 1)
-  if (state.problem) return finish(state.combined, { halted: true, halt_reason: state.problem })
+  if (state.problem) return finish(state.combined, { halted: true, halt_reason: state.problem, missing: state.missing || [] })
 }
 
-return finish(state.combined, { halted: false })
+return finish(state.combined, { halted: false, missing: [] })

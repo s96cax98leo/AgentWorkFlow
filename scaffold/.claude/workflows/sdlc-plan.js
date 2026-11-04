@@ -70,6 +70,13 @@ const research = await parallel([...ANGLES.map((a) => () => agent(
 )), ...EXT.map((e) => extJob(e, CTX, 'Research'))])
 const got = research.filter(Boolean)
 log(`調研完成 ${got.length}/${ANGLES.length + EXT.length} 個角度${EXT.length ? `（含擴充 agent：${EXT.map((e) => e.name).join('、')}）` : ''}`)
+// 缺件不是「沒有發現」（rules.md 規則 26）：調研缺件列進 missing 並告訴 intent 作者；擴充 agent 是審查類，缺件就停下
+const RESEARCH_LABELS = [...ANGLES.map((a) => `research:${a.key}`), ...EXT.map((e) => `ext:${e.name}`)]
+const missing = RESEARCH_LABELS.filter((l, i) => !research[i])
+const halt = (reason, extra) => ({ stage: 'plan', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, research: got, missing, ...extra })
+const extMissing = missing.filter((l) => l.startsWith('ext:'))
+if (extMissing.length) return halt(`審查類 agent 缺件：${extMissing.join('、')}，停下交人（缺件不是沒有發現）`)
+const MISSING_NOTE = missing.length ? `\n\n## 缺件的調研角度\n${missing.join('、')} 沒有交件：這些角度的事實不能當成「查過、沒有問題」；intent 涉及的部分標成待查，放進 open_questions。` : ''
 
 phase('Intent')
 const intent = await agent(
@@ -79,14 +86,18 @@ const intent = await agent(
   `${(STAGE.artifacts || []).filter((a) => a !== 'intent.md').length ? `，另寫 ${(STAGE.artifacts || []).filter((a) => a !== 'intent.md').join('、')}` : ''}。\n` +
   `3. 依據下面的調研結果（先讀 artifacts 的檔案）；每個主張附出處。待釐清問題放 open_questions（blocking 的附 2–3 個選項與代價）。需求明顯包含多個可以各自交付的部分時，在 intent 加一節「範圍切分建議」，列出建議的子計劃（只寫範圍與理由，不寫解法），讓使用者在 intent 閘門先看到；design 段會依它決定要不要拆成子計劃平行規劃。${STAGE.guidance ? `\n   profile 的指引：${STAGE.guidance}` : ''}\n` +
   `4. commit（${commitFor('docs', A.epic)}；結尾 {{ATTRIBUTION_LINE}}）。不 push。\n` +
-  `payload 用 docs（kind=intent）。\n\n## 調研結果\n${got.map(brief).join('\n')}`,
+  `payload 用 docs（kind=intent）。\n\n## 調研結果\n${got.map(brief).join('\n')}${MISSING_NOTE}`,
   { label: 'intent', phase: 'Intent', agentType: NS + 'dev-spec-author', schema: DOCS },
 )
 
-phase('Challenge')
-const challenge = intent ? await agent(
-  `${CTX}\n\n## 派工單\n試著反駁 ${EPIC_DIR}/specs/${A.epic}/intent.md：它有沒有偷渡需求原文沒有的範圍、漏掉原文的驗收要點、把解法寫進問題、或忽略調研發現的衝突？${SD ? `另依系統設計方法（${SD.source}）的第 1 步檢查 SA：用例、限制、假設與量級有沒有寫齊，每個數字有沒有出處或標成假設（沒標的判 refuted）。` : ''}逐點判定（target_id 用 intent 的節名），不確定就判 refuted=true。\n調研結果：\n${got.map(brief).join('\n')}`,
-  { label: 'challenge:intent', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
-) : null
+if (!intent) return halt('intent 缺件（label：intent），沒有可以核准的 intent，停下交人')
 
-return { stage: 'plan', gate: 'intent 核准（{{DECISION_OWNER}}核准；要送上游的需求另需{{STAKEHOLDER}}同意）', epic_dir: EPIC_DIR, research: got, intent, challenge }
+phase('Challenge')
+const challenge = await agent(
+  `${CTX}\n\n## 派工單\n試著反駁 ${EPIC_DIR}/specs/${A.epic}/intent.md：它有沒有偷渡需求原文沒有的範圍、漏掉原文的驗收要點、把解法寫進問題、或忽略調研發現的衝突？${SD ? `另依系統設計方法（${SD.source}）的第 1 步檢查 SA：用例、限制、假設與量級有沒有寫齊，每個數字有沒有出處或標成假設（沒標的判 refuted）。` : ''}逐點判定（target_id 用 intent 的節名），不確定就判 refuted=true。\n調研結果：\n${got.map(brief).join('\n')}${missing.length ? `\n缺件的調研角度：${missing.join('、')}（intent 若把這些角度的事實當成已確認，判 refuted）` : ''}`,
+  { label: 'challenge:intent', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
+)
+// 反駁類缺件＝結果 hold（規則 26），不能當成「沒有被推翻」
+if (!challenge) return halt('反駁類 agent 缺件：challenge:intent 沒有交件，intent 沒經過挑錯，停下交人', { intent })
+
+return { stage: 'plan', halted: false, missing, gate: 'intent 核准（{{DECISION_OWNER}}核准；要送上游的需求另需{{STAKEHOLDER}}同意）', epic_dir: EPIC_DIR, research: got, intent, challenge }

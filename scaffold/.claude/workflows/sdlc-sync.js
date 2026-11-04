@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-sync',
   description: 'AI-native SDLC 同步段：sync_branch.py 判斷分支怎麼跟上 base（已跟上不動；未推送且無衝突 rebase；已推送且無衝突把 base merge 進來；有衝突從 base 開中轉分支，把分支 merge 進中轉分支解衝突）→ dev-integrator 執行並跑 verify → workflow 核對衝突清單；head 變了就要重跑 sdlc-test',
-  whenToUse: 'sdlc-build 之後、sdlc-test 之前；或 sdlc-merge 因 PR 落後／衝突判 hold 之後；args：repo、epic、run_dir，可加 base、branch、strategy（蓋過 profile）、date（YYYYMMDD，沒給就從 run_dir 取）、pr',
+  whenToUse: 'sdlc-build 之後、sdlc-test 之前；或 sdlc-merge 因 PR 落後／衝突判 hold 之後。args：repo、epic、run_dir，可加 base、branch、strategy（蓋過 profile）、date（YYYYMMDD，沒給就從 run_dir 取）、pr',
   phases: [
     { title: 'Plan', detail: 'dev-integrator 跑 sync_branch.py plan（唯讀）：落後幾個 commit、有沒有推送過、預測衝突檔、選策略' },
     { title: 'Apply', detail: 'dev-integrator 跑 sync_branch.py apply；中轉分支有衝突時解衝突、分類、commit，再跑 check-transit；最後跑 verify' },
@@ -51,7 +51,7 @@ const planRes = await agent(
   { label: 'plan', phase: 'Plan', agentType: NS + 'dev-integrator', schema: BUILD },
 )
 const plan = planRes && planRes.payload && planRes.payload.sync
-if (!plan) return out({ halted: true, halt_reason: 'sync plan 沒有回傳 payload.sync（agent 失敗、逾時或沒照抄工具輸出）', next: null })
+if (!plan) return out({ halted: true, halt_reason: `plan ${planRes ? '沒有回傳 payload.sync（沒照抄工具輸出）' : '缺件（agent 失敗、逾時或被中止）'}`, missing: planRes ? [] : ['plan'], next: null })
 if (plan.halted || planRes.status !== 'done') return out({ halted: true, halt_reason: `sync_branch.py plan 停下：${plan.reason || planRes.summary}`, plan, next: '依 reason 處理（例如固定 rebase 但分支已推送：改 strategy 或交人決定）後重跑 sdlc-sync' })
 log(`同步策略：${plan.strategy}（落後 ${plan.behind ?? '?'}、${plan.published ? '已推送' : '未推送'}、預測衝突 ${(plan.conflicts || []).length} 個）：${plan.reason || ''}`)
 if (plan.strategy === 'none') return out({ strategy: 'none', plan, head_branch: BRANCH, next: '已跟上，照原流程往下' })
@@ -75,7 +75,7 @@ const applyBrief = plan.strategy === 'transit'
 const applyRes = await agent(`${CTX}\n\n## 派工單（同步：執行 ${plan.strategy}）\n在主 session 的專案根目錄操作：\n${applyBrief}`,
   { label: `apply:${plan.strategy}`, phase: 'Apply', agentType: NS + 'dev-integrator', schema: BUILD })
 
-if (!applyRes || applyRes.status !== 'done') return out({ halted: true, halt_reason: `同步執行沒完成：${applyRes ? applyRes.summary : 'agent 沒有回傳結果'}`, strategy: plan.strategy, plan, apply: applyRes, next: '交人處理；工作目錄可能停在解到一半的狀態' })
+if (!applyRes || applyRes.status !== 'done') return out({ halted: true, halt_reason: `同步執行沒完成：${applyRes ? applyRes.summary : `apply:${plan.strategy} 缺件（agent 沒有回傳結果）`}`, missing: applyRes ? [] : [`apply:${plan.strategy}`], strategy: plan.strategy, plan, apply: applyRes, next: '交人處理；工作目錄可能停在解到一半的狀態' })
 const p = applyRes.payload || {}
 const headBranch = (p.sync && p.sync.head_branch) || (plan.strategy === 'transit' ? plan.transit_branch : BRANCH)
 // 確定性核對：中轉分支回報的衝突檔要和 plan 預測的一致（不能多解、也不能漏記）
@@ -87,7 +87,9 @@ if (plan.strategy === 'transit') {
 const failed = (p.tests || []).filter((t) => t.result === 'fail')
 if (failed.length) return out({ halted: true, halt_reason: `同步後 verify 失敗：${failed.map((t) => t.command).join('、')}`, strategy: plan.strategy, head_branch: headBranch, plan, apply: applyRes, next: '交人決定：修正（回 sdlc-test 的修正輪）或放棄這次同步' })
 
-const nextSteps = ['head 已變：驗證證據綁 head SHA，重跑 sdlc-test' + (headBranch !== BRANCH ? `（args 加 branch=${headBranch}；之後的 sdlc-deliver、sdlc-merge 也要帶）` : '')]
-if (plan.strategy === 'transit') nextSteps.push(`驗證通過後用 publish.py 推 ${headBranch}、開 PR${A.pr ? `（--supersedes ${A.pr}，原 PR 由人關閉）` : ''}，再跑 sdlc-merge`)
+// 換了 head 分支：sdlc-test、sdlc-deliver（以及 merge 退回時的 sdlc-build）都帶 args.branch；
+// 合併段不讀 args.branch，認的是 publish.py --supersedes 開出的新 PR 編號（args.pr）
+const nextSteps = ['head 已變：驗證證據綁 head SHA，重跑 sdlc-test' + (headBranch !== BRANCH ? `（args 加 branch=${headBranch}；之後的 sdlc-deliver 與退回重做時的 sdlc-build 也帶同一個 branch）` : '')]
+if (plan.strategy === 'transit') nextSteps.push(`驗證通過後用 publish.py 推 ${headBranch}、開新 PR${A.pr ? `（--supersedes ${A.pr}，原 PR 由人關閉）` : ''}；合併段以新 PR 的編號為準（args.pr=新 PR 編號）`)
 else if (plan.published) nextSteps.push('驗證通過後推送更新（publish.py；不需要 force push）')
 return out({ strategy: plan.strategy, head_branch: headBranch, head_sha: (p.sync || {}).head_sha || null, behind: plan.behind, conflicts: p.conflicts || [], plan, apply: applyRes, next: nextSteps.join('；') })

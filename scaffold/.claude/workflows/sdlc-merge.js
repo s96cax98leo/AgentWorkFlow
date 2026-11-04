@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-merge',
   description: 'AI-native SDLC 合併段：dev-merge-steward 逐條對照需求與驗證證據（綁 head SHA）→ tpm-skeptic 合併模式找漏掉的不一致（不確定就 hold）→ 有不一致就退回 PR 並把每條不一致寫成新需求（followup）；全部一致才跑 merge_gate.py 並合併 → tpm-writer 寫合併紀錄',
-  whenToUse: 'sdlc-deliver 之後，PR 已開在我方 fork、使用者同意進入合併段；args：repo（本機 clone）、pr（或 target）、run_dir，可加 gh_repo、base、epic、evidence、requirements、findings、tests_before、tests_after',
+  whenToUse: 'sdlc-deliver 之後，PR 已開在我方 fork、使用者同意進入合併段；args：repo（本機 clone）、pr（或 target）、run_dir，可加 gh_repo、base、epic、evidence、requirements、findings、reviewed_sha（審查／驗證當下的 head，可多個）、tests_before、tests_after',
   phases: [
     { title: 'Analyze', detail: 'dev-merge-steward 分析模式：需求對照表（merge-decision）' },
     { title: 'Challenge', detail: 'tpm-skeptic 合併模式：只找漏掉的不一致，不確定就 hold' },
@@ -47,6 +47,12 @@ const BASE = A.base || 'origin/main'
 const FOLLOWUP_DIR = `${A.run_dir}/followups`
 const EVIDENCE = A.evidence || `${A.run_dir}/test.json 的 verifier 信封（取出 .verifier 存到暫存目錄再給 --evidence）`
 const FINDINGS = [].concat(A.findings || [`${A.run_dir}/deliver.json 的 findings（保留下來的審查發現）`]).join('、')
+// 審查／驗證當下的 head：merge_gate.py 有 --findings 卻沒有 --reviewed-sha 一律 hold。主 session 可用 args.reviewed_sha 直接給；
+// 沒給就從驗證證據取，取不到就不帶（gate 照樣 hold），不能拿目前 head 頂替
+const REVIEWED = [].concat(A.reviewed_sha || [])
+const REVIEWED_ARG = REVIEWED.length
+  ? REVIEWED.map((s) => `--reviewed-sha ${s}`).join(' ')
+  : `--reviewed-sha <審查／驗證當下的 head：取驗證證據的 commit（${A.run_dir}/test.json 的 .verifier.payload.commit）；deliver 段另有記錄審查時的 head 就也帶一個 --reviewed-sha。取不到就不要帶、也不要拿目前 head 頂替，gate 會判 hold>`
 const CTX = `目標 repo（本機 clone）：${A.repo}\nGitHub repo：${GH}；PR #${N}；基準 ${BASE}${A.epic ? `；epic ${A.epic}（spec 在 specs/${A.epic}/）` : ''}\nrun 目錄：${A.run_dir}\n` +
   `需求來源：${A.requirements || REQ_SRC}\n驗證證據：${EVIDENCE}\n審查發現：${FINDINGS}\n` +
   (A.tests_before != null ? `測試數：合併前 ${A.tests_before}、合併後 ${A.tests_after}\n` : '') +
@@ -59,12 +65,13 @@ const analysis = await agent(
   `${CTX}\n\n## 派工單（分析模式）\n1. 取得需求清單，逐條對照驗證證據、測試與程式位置，判 match／mismatch／missing。\n2. 讀 git diff ${BASE}...<head>，列出對不到任何需求的改動（out_of_scope）。\n3. 每條不一致、缺證據與範圍外改動都寫一則 followups（新需求：requirement_id、expected、actual、adjustment）。\n4. head_sha 填 gh pr view ${N} --repo ${GH} --json headRefOid 的值。gate_reasons 先填空陣列。\n5. 讀 gh pr view ${N} --repo ${GH} --json mergeable,mergeStateStatus：mergeStateStatus 是 BEHIND（落後 base，而 base 要求先跟上）或 DIRTY、mergeable 是 CONFLICTING（有衝突）時，needs_sync 填 true、decision 填 hold，另寫一則 followups（requirement_id=sync，adjustment 寫「跑 sdlc-sync 跟上 base 後重跑 sdlc-test」）。你不同步分支。\n只分析，不執行任何 gh 寫入（review、ready、merge、comment）。payload 用 merge-decision。`,
   { label: 'analyze', phase: 'Analyze', agentType: NS + 'dev-merge-steward', schema: DECISION },
 )
-if (!analysis) return { stage: 'merge', halted: true, reason: 'steward 分析沒有交件；不合併、不退回，交主 session 判斷' }
+// 缺件不是「沒有發現」（rules.md 規則 26）：比對、反駁、執行缺件一律 halted，不合併也不退回
+if (!analysis) return { stage: 'merge', halted: true, halt_reason: 'analyze 缺件：steward 分析沒有交件；不合併、不退回，交主 session 判斷', missing: ['analyze'], merged: false, queued: false, next: null }
 const dec = analysis.payload
 // PR 落後 base 或有衝突：不是實作和需求不一致，不退回 PR，也不做任何 gh 寫入；先同步再重新驗證
 if (dec.needs_sync) {
   log('PR 落後 base 或有衝突：先跑 sdlc-sync')
-  return { stage: 'merge', merged: false, queued: false, needs_sync: true, decision: dec, followups: [], next: `跑 sdlc-sync（args 加 pr=${N}）→ sdlc-test（走了中轉分支時兩段都帶 branch）→ 中轉分支要用 publish.py --supersedes ${N} 開新 PR → 再跑 sdlc-merge` }
+  return { stage: 'merge', merged: false, queued: false, needs_sync: true, decision: dec, followups: [], next: `跑 sdlc-sync（args 加 pr=${N}）→ sdlc-test、sdlc-deliver（走了中轉分支時都帶 branch=中轉分支）→ 中轉分支要用 publish.py --supersedes ${N} 開新 PR → 用新 PR 的編號（args.pr）再跑 sdlc-merge` }
 }
 const rows = dec.traceability || []
 const matched = rows.filter((r) => r.result === 'match')
@@ -78,8 +85,9 @@ const challenge = targets.length ? await agent(
   `${CTX}\n\n## 派工單（合併模式）\nhead SHA：${dec.head_sha}。逐則試著找出 dev-merge-steward 漏掉的不一致（打開證據、重跑能重跑的唯讀指令、讀 diff）。\nrefuted=true 代表「其實不一致、缺證據，或有範圍外改動」；不確定就判 refuted=true（hold）。\n只處理下列 target，不得推翻 steward 判的 mismatch／missing 或審查的 blocker／important：\n${JSON.stringify(targets)}\npayload 用 verdicts，target_id 照抄 id。`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
 ) : null
-// skeptic 沒交件＝不確定＝hold
-const verdicts = challenge ? challenge.payload.verdicts || [] : targets.map((t) => ({ target_id: t.id, refuted: true, reason: 'skeptic 沒有交件，視為不確定' }))
+// skeptic 沒交件＝沒有經過挑戰：halted 交人，不據此退回 PR（缺件不是「判出不一致」，也不是「沒被推翻」）
+if (targets.length && !challenge) return { stage: 'merge', halted: true, halt_reason: 'challenge 缺件：合併模式 skeptic 沒有交件，對照表沒經過挑戰；不合併、不退回，交主 session 判斷', missing: ['challenge'], merged: false, queued: false, decision: 'hold', head_sha: dec.head_sha, analysis, followups: [], next: `重跑 sdlc-merge（args.pr=${N}），或交人判斷` }
+const verdicts = challenge ? challenge.payload.verdicts || [] : []
 const answered = new Set(verdicts.map((v) => v.target_id))
 const refuted = [
   ...verdicts.filter((v) => v.refuted),
@@ -106,7 +114,7 @@ const finalDecision = inconsistent ? {
   followups,
 } : dec
 
-const GATE = `python3 .claude/teams/tools/merge_gate.py check --decision - --repo ${GH} --pr ${N} --head-sha <目前 head> --evidence <證據> --checks <gh pr checks ${N} --repo ${GH} --required --json name,state 的輸出> --diff <git diff ${BASE}...<head> 的輸出> --tests-before <N> --tests-after <N> --base-sha <gh pr view ${N} --repo ${GH} --json baseRefOid 的值>${A.requirements ? ` --requirements ${A.requirements}` : ''}（--findings 帶審查發現；中間檔放 mktemp -d）`
+const GATE = `python3 .claude/teams/tools/merge_gate.py check --decision - --repo ${GH} --pr ${N} --head-sha <目前 head> --evidence <證據> --checks <gh pr checks ${N} --repo ${GH} --required --json name,state 的輸出> --diff <git diff ${BASE}...<head> 的輸出> --tests-before <N> --tests-after <N> --base-sha <gh pr view ${N} --repo ${GH} --json baseRefOid 的值>${A.requirements ? ` --requirements ${A.requirements}` : ''} --findings <審查發現> ${REVIEWED_ARG}（中間檔放 mktemp -d）`
 // CI 範本（.github/workflows/agent-merge-gate.yml）只採信 merger 帳號貼在 PR 的最後一則 gate 輸入留言；沒有留言時 CI 的 gate 判 hold
 const COMMENT = (decisionNote) => `把 gate 輸入貼成 PR 留言（在跑 gate 之前）：內容寫到 mktemp -d 的暫存檔，第一行是 <!-- agent-merge-gate-inputs -->，接著一個 \`\`\`json 區塊，` +
   `格式 {"decision": <${decisionNote}，整個信封>, "evidence": <驗證證據（正規化證據或 verifier 的 criteria 信封）>, "tests_before": <N>, "tests_after": <N>, "findings": <保留下來的審查發現>}；` +
@@ -123,8 +131,8 @@ const exec = await agent(
 )
 const result = exec ? exec.payload : { ...finalDecision, decision: 'hold', gate_reasons: ['steward 執行模式沒有交件；狀態不明，交主 session 查 PR 與 merge-audit.jsonl'] }
 // 只信讀回的狀態：gh pr merge 回報成功時，merge queue 可能只是排隊
-const merged = !inconsistent && exec && result.decision === 'merge' && result.merge_state === 'merged'
-const queued = !inconsistent && exec && result.decision === 'merge' && result.merge_state === 'queued'
+const merged = !!(!inconsistent && exec && result.decision === 'merge' && result.merge_state === 'merged')
+const queued = !!(!inconsistent && exec && result.decision === 'merge' && result.merge_state === 'queued')
 const outFollowups = merged || queued ? [] : (result.followups && result.followups.length ? result.followups : followups)
 
 // (c) 新需求文件：每條不一致一份 followup
@@ -144,8 +152,14 @@ const record = await agent(
   { label: 'record', phase: 'Record', agentType: NS + 'tpm-writer', schema: DOCS },
 )
 
+const execLabel = inconsistent ? 'execute:return' : 'execute:merge'
+const missing = [...(exec ? [] : [execLabel]), ...(outFollowups.length && !followupDocs ? ['followup'] : []), ...(record ? [] : ['record'])]
 return {
   stage: 'merge',
+  // 執行模式缺件：PR 狀態不明（可能已合併、已退回或都沒有），一律停下交人
+  halted: !exec,
+  ...(exec ? {} : { halt_reason: `${execLabel} 缺件：steward 執行模式沒有交件，PR 狀態不明；交主 session 查 PR 與 merge-audit.jsonl` }),
+  missing,
   merged,
   queued,
   decision: result.decision,
@@ -156,9 +170,11 @@ return {
   followups: outFollowups,
   followup_docs: followupDocs,
   record,
-  next: merged
+  next: !exec
+    ? `先確認 PR #${N} 的實際狀態（gh pr view ${N} --repo ${GH} --json state,isDraft,reviewDecision）與 merge-audit.jsonl，再決定重跑 sdlc-merge 或交人`
+    : merged
     ? '已合併。之後跑 event-post-merge 監看 main 的 CI。'
     : queued
     ? `已進 merge queue，還沒合進去。不要重派合併；之後用 gh pr view ${N} --repo ${GH} --json state 確認，合進去後再跑 event-post-merge。`
-    : `未合併，PR 已退回並轉回 draft。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走 event-reqs-change；實作要補的回到 SDLC 對應段落（通常是 sdlc-build → sdlc-test → sdlc-deliver），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,
+    : `未合併，PR 已退回並轉回 draft。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走 event-reqs-change；實作要補的回到 SDLC 對應段落（通常是 sdlc-build → sdlc-test → sdlc-deliver；之前走過中轉分支的，這幾段都帶 branch=中轉分支），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,
 }

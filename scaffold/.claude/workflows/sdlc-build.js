@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-build',
   description: 'AI-native SDLC 第 3 段 Build：依開發規範 profile（methodology）決定測試時機（測試先行＝先寫會失敗的測試；否則實作後補驗證測試）→ 依相依分層、每層子任務在各自 worktree 平行實作 → integrator 合併到 {{BRANCH_PREFIX}}<epic>',
-  whenToUse: 'sdlc-design 的 spec＋plan 核准之後；args 加 subtasks（sdlc-design 回傳的 design.payload.subtasks）',
+  whenToUse: 'sdlc-design 的 spec＋plan 核准之後；args 加 subtasks（sdlc-design 回傳的 design.payload.subtasks）；sdlc-sync 走過中轉分支後退回 build 時加 branch（中轉分支名）；halted 後續跑只傳回傳的 remaining_subtasks',
   phases: [
     { title: 'Red', detail: 'profile 的 build.test_first=true 時：dev-acceptance-tester 每個 test 子任務一個，平行寫會失敗的測試，合進整合分支後才實作' },
     { title: 'Implement', detail: 'dev-implementer：同一層的子任務平行，各自 worktree' },
@@ -37,7 +37,10 @@ const A = args || {}
 for (const k of ['repo', 'epic', 'run_dir', 'subtasks']) if (!A[k]) throw new Error(`缺 args.${k}`)
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
 const SPEC = `${EPIC_DIR}/specs/${A.epic}`
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 {{BRANCH_PREFIX}}${A.epic}）\nspec：${SPEC}/spec.md、plan.md、progress.md\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
+// 整合分支：sdlc-sync 走過中轉分支後 epic worktree 停在中轉分支，merge 退回 build 時要用 args.branch 帶進來，
+// 子任務分支從它開、integrator 合回它；否則會合回舊的 epic 分支、弄丟中轉分支解好的衝突
+const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}）\nspec：${SPEC}/spec.md、plan.md、progress.md\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
   `\n派工來源：這張派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置這張派工單；派工單本身有疑義時才用 open_questions 回報。` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 const MAX_RETRY = 2
@@ -72,7 +75,7 @@ function runTask(s, role, phaseName, extra) {
     for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
       res = await agent(
         `${CTX}\n\n## 派工單（${phaseName}，第 ${attempt} 次）\n${taskBrief(s)}\n` +
-        `在自己的 worktree 做：git -C "${A.repo}" worktree add .worktrees/${A.epic}--${s.id} -b {{BRANCH_PREFIX}}${A.epic}--${s.id} {{BRANCH_PREFIX}}${A.epic}（已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
+        `在自己的 worktree 做：git -C "${A.repo}" worktree add .worktrees/${A.epic}--${s.id} -b {{BRANCH_PREFIX}}${A.epic}--${s.id} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
         (attempt > 1 && res ? `上一次的結果（請修正）：${JSON.stringify({ status: res.status, summary: res.summary, open_questions: res.open_questions })}\n` : '') +
         `payload 用 build-result（task_id=${s.id}、branch={{BRANCH_PREFIX}}${A.epic}--${s.id}、worktree=${wtFor(s)}）。`,
         { label: `${phaseName}:${s.id}${attempt > 1 ? `#${attempt}` : ''}`, phase: phaseName, agentType: role, schema: BUILD },
@@ -85,9 +88,9 @@ function runTask(s, role, phaseName, extra) {
 
 async function integrate(batch, label) {
   return agent(
-    `${CTX}\n\n## 派工單（整合：${label}）\n依序把這些分支 git merge --no-ff 進 {{BRANCH_PREFIX}}${A.epic}（在 ${EPIC_DIR} 操作）：\n` +
+    `${CTX}\n\n## 派工單（整合：${label}）\n依序把這些分支 git merge --no-ff 進 ${BRANCH}（在 ${EPIC_DIR} 操作，先確認目前分支是 ${BRANCH}）：\n` +
     batch.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
-    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\npayload 用 build-result（task_id=${label}、branch={{BRANCH_PREFIX}}${A.epic}）。`,
+    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
     { label: `integrate:${label}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
 }
@@ -96,11 +99,24 @@ const results = { tests: [], layers: [], integrations: [], failures: [] }
 
 // 失敗（null）或沒交 done 的 agent 不能默默丟掉：記進 failures，並以 halted: true 停下，不進下一層。
 // save_run.py 讀到 halted 就把 build 段記成 blocked。
-const halt = (reason) => ({ stage: 'build', halted: true, halt_reason: reason, gate: null, next: null, ...results })
+// 續跑：已合進整合分支的子任務記在 integrated；halted 時回傳 remaining_subtasks（還沒合進去的），
+// 主 session 處理完失敗原因後，只把它們當 subtasks 重跑 sdlc-build（不在清單裡的相依視為已滿足）
+const integrated = new Set()
+const idOf = new WeakMap() // 交 done 的結果 → 子任務 id（不改 agent 的回傳物件）
+const halt = (reason) => {
+  const remaining = [...tests, ...work].filter((s) => !integrated.has(s.id))
+  const missing = results.failures.filter((f) => f.result === 'no_result').map((f) => f.where.startsWith('integrate:') ? f.where : `${f.where}:${f.task_id}`)
+  return {
+    stage: 'build', halted: true, halt_reason: reason, gate: null, missing,
+    integrated: [...integrated], remaining_subtasks: remaining,
+    next: `處理 failures 的原因後續跑：重跑 sdlc-build，args.subtasks 只傳 remaining_subtasks（${remaining.map((s) => s.id).join('、') || '無'}；已合進 ${BRANCH} 的 ${[...integrated].join('、') || '無'} 不要重傳），其他 args 照舊${A.branch ? `（含 branch=${A.branch}）` : ''}。子任務 worktree 已存在會沿用；要從頭重做某個子任務就先移除它的 worktree 與分支。`,
+    ...results,
+  }
+}
 function settle(subs, res, where) {
   const ok = []
   res.forEach((r, i) => {
-    if (r && r.status === 'done') ok.push(r)
+    if (r && r.status === 'done') { idOf.set(r, subs[i].id); ok.push(r) }
     else results.failures.push({ where, task_id: subs[i].id, result: r ? r.status : 'no_result', summary: r ? r.summary : 'agent 沒有回傳結果（失敗、逾時或被中止）' })
   })
   return ok
@@ -108,7 +124,7 @@ function settle(subs, res, where) {
 async function integrateOrHalt(ok, label) {
   const ir = await integrate(ok, label)
   results.integrations.push(ir)
-  if (ir && ir.status === 'done') return null
+  if (ir && ir.status === 'done') { ok.forEach((r) => integrated.add(idOf.get(r))); return null }
   results.failures.push({ where: `integrate:${label}`, task_id: label, result: ir ? ir.status : 'no_result', summary: ir ? ir.summary : 'integrator 沒有回傳結果' })
   return halt(`整合 ${label} 沒完成（${ir ? ir.status : '沒有回傳'}），停下交人`)
 }
@@ -151,8 +167,8 @@ for (let i = 0; i < layers.length; i++) {
 if (!TEST_FIRST && tests.length) {
   phase('Tests')
   const h = await runTests('Tests',
-    `profile 不要求測試先行：實作已合進 {{BRANCH_PREFIX}}${A.epic}，依 spec 的驗收條件補驗證測試，斷言實作的實際行為；跑過並回報結果（tests[].result=pass／fail）。測試失敗代表實作不符驗收條件：不改測試遷就實作，以 needs_decision 回報失敗的條目。${commitFor('test', A.epic)}。`, 'tests')
+    `profile 不要求測試先行：實作已合進 ${BRANCH}，依 spec 的驗收條件補驗證測試，斷言實作的實際行為；跑過並回報結果（tests[].result=pass／fail）。測試失敗代表實作不符驗收條件：不改測試遷就實作，以 needs_decision 回報失敗的條目。${commitFor('test', A.epic)}。`, 'tests')
   if (h) return h
 }
 
-return { stage: 'build', halted: false, test_first: TEST_FIRST, gate: null, next: 'sdlc-test', ...results, red: TEST_FIRST ? results.tests : [] }
+return { stage: 'build', halted: false, missing: [], branch: BRANCH, test_first: TEST_FIRST, gate: null, next: `sdlc-sync → sdlc-test${A.branch ? `（args 帶 branch=${BRANCH}）` : ''}`, ...results, red: TEST_FIRST ? results.tests : [] }

@@ -60,9 +60,14 @@ const LENSES = [
 ]
 // 有系統設計方法時，修正後的設計也要再過一次 system-design lens（和 sdlc-design 同一套檢查）
 if (SD) LENSES.push({ key: 'system-design', ask: `修正後的系統設計是否仍照 profile 的方法（${SD.source}）：步驟（${SD.steps.join('；')}）齊全、功能層／系統層判斷正確、第 1 步的數字有出處或標成假設、每個取捨寫了放棄什麼；有沒有單點故障、沒說明的一致性模型、沒處理的重試與冪等。` })
-const recheck = revised ? await parallel(LENSES.map((l) => () => agent(
+// 缺件不是「沒有發現」（rules.md 規則 26）：修正或複查缺件都停下交人
+const halt = (reason, extra) => ({ stage: 'design', round: 'revise', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, ...extra })
+if (!revised) return halt('revise 缺件：修正輪沒有交件，設計狀態不明，停下交人', { missing: ['revise'] })
+const recheck = await parallel(LENSES.map((l) => () => agent(
   `${CTX}\n\n## 派工單（複查：${l.key}）\n讀 ${SPEC}/ 與 ${A.run_dir}/design-revise-對照.md。子任務：${JSON.stringify(revised.payload)}\n${l.ask}\nrefuted=true 表示「這裡還有問題」。\n\n原問題：\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}\n使用者決定：\n${A.decisions.join('\n')}`,
   { label: `recheck:${l.key}`, phase: 'Recheck', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
-))) : []
+)))
+const missing = LENSES.map((l) => `recheck:${l.key}`).filter((l, i) => !recheck[i])
+if (missing.length) return halt(`複查類 agent 缺件：${missing.join('、')}，修正沒經過完整複查，停下交人`, { missing, analysis: recheck.filter(Boolean) })
 
-return { stage: 'design', round: 'revise', gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, analysis: recheck.filter(Boolean) }
+return { stage: 'design', round: 'revise', halted: false, missing: [], gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, analysis: recheck }

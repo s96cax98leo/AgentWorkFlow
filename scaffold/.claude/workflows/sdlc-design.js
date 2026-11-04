@@ -62,6 +62,11 @@ const DOC_RULES = (dir) =>
   `- 需求／驗收條件的寫法：${STAGE.requirement_style || '照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文'}。\n` +
   (STAGE.guidance ? `- profile 的指引：${STAGE.guidance}\n` : '') + SD_RULES
 const COMMIT = `commit（${commitFor('docs', A.epic)}；結尾 {{ATTRIBUTION_LINE}}）。不 push。`
+// PR 大小（profile 的 conventions.pr_size）：第一輪就依上限規劃拆 PR，不要等 design-revise 或 deliver 才發現太大
+const PR_SIZE = CONV.pr_size || {}
+const PR_RULE = PR_SIZE.max_files || PR_SIZE.max_lines
+  ? `- PR 大小：profile 的上限是 ${[PR_SIZE.max_lines ? `${PR_SIZE.max_lines} 行` : '', PR_SIZE.max_files ? `${PR_SIZE.max_files} 個檔` : ''].filter(Boolean).join('或')}（量法：${PR_SIZE.scope || '依 profile'}）。預計改動超過時，依 PR 大小規劃拆 PR：在 plan 寫拆成幾個依序可合的 PR、每個 PR 含哪些子任務。\n`
+  : ''
 // 使用者加進這一段的自己的 agent（profile 的 extensions，用 /add-agent 設定）：和內建 agent 平行執行，交 findings；
 // blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
 const EXT = (MP.extensions || []).filter((e) => e.stage === 'design')
@@ -71,7 +76,7 @@ const extJob = (e, ctx, phaseName) => () => agent(
   `payload 用 findings（lens=${e.name}）：每則附 0–1 信心與嚴重度；會擋住上線或合併的列 blocker／important（會擋住政策核准），其餘列 nit／info。`,
   { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema: FINDINGS },
 )
-const halt = (reason, extra) => ({ stage: 'design', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, ...extra })
+const halt = (reason, extra) => ({ stage: 'design', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, missing, ...extra })
 
 phase('Outline')
 const outline = await agent(
@@ -85,6 +90,8 @@ const outline = await agent(
   { label: 'outline', phase: 'Outline', agentType: NS + 'dev-spec-author', schema: OUTLINE },
 )
 const SUBS = outline && outline.payload.split ? outline.payload.sub_plans : []
+// 缺件不是「沒有發現」（rules.md 規則 26）：非審查類缺件列進 missing，審查、反駁類缺件就 halted
+const missing = outline ? [] : ['outline']
 
 // 子計劃的結構在 workflow 裡先做確定性檢查（和 schemalib 的 plan-outline 語意規則一致）：數量、id、相依、範圍重疊
 function outlineProblems(subs) {
@@ -116,7 +123,7 @@ if (!SUBS.length) {
   phase('Design')
   design = await agent(
     `${CTX}\n\n## 派工單（SDLC 第 2 段 Design）\n依 ${SPEC}/intent.md 與 ${EPIC_DIR}/specs/_templates/：\n` +
-    DOC_RULES(SPEC) +
+    DOC_RULES(SPEC) + PR_RULE +
     `- 拆子任務（payload subtasks）：${SUBTASK_RULES}\n- ${COMMIT}\n` +
     `契約不夠用就以 needs_decision 回報，不自己設計新端點。`,
     { label: 'design', phase: 'Design', agentType: NS + 'dev-spec-author', schema: SUBTASKS },
@@ -137,8 +144,9 @@ if (!SUBS.length) {
     `- 需要跨子計劃的介面但大綱沒寫時，照大綱的 interfaces 假設並放進 open_questions，不要擅自改別的子計劃的範圍。`,
     { label: `subplan:${s.id}`, phase: 'SubPlan', agentType: NS + 'dev-spec-author', schema: SUBTASKS },
   )))
-  const missing = SUBS.filter((s, i) => !subDesigns[i] || subDesigns[i].status !== 'done')
-  if (missing.length) return halt(`子計劃 ${missing.map((s) => s.id).join('、')} 沒有規劃完成，停下交人`, { outline, sub_plans: SUBS, sub_designs: subDesigns })
+  const unfinished = SUBS.filter((s, i) => !subDesigns[i] || subDesigns[i].status !== 'done')
+  SUBS.forEach((s, i) => { if (!subDesigns[i]) missing.push(`subplan:${s.id}`) })
+  if (unfinished.length) return halt(`子計劃 ${unfinished.map((s) => s.id).join('、')} 沒有規劃完成（缺件：${missing.filter((l) => l.startsWith('subplan:')).join('、') || '無'}），停下交人`, { outline, sub_plans: SUBS, sub_designs: subDesigns })
 
   // 先在 workflow 裡把子任務接起來：展開 @<子計劃> 相依，交給彙整步驟核對
   const draft = []
@@ -151,7 +159,7 @@ if (!SUBS.length) {
     `${CTX}\n\n## 派工單（彙整子計劃）\n${SUBS.length} 個子計劃已平行規劃完成，文件在 ${SPEC}/sub/<id>/，大綱在 ${SPEC}/outline.md。\n` +
     `1. 核對子計劃之間的介面（interfaces、契約、共用型別）是否一致，檔案所有權有沒有重疊或漏掉的檔案；有落差就修正對應子計劃的文件。\n` +
     `2. 在 ${SPEC}/ 寫總覽：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）。總覽的 spec 只放跨子計劃的整合驗收條件，並連到各子計劃的 spec；plan 寫子計劃的順序與相依。${SD ? '總覽另寫跨子計劃的系統設計（子計劃之間的資料流、一致性、失敗處理與取捨），照下面的方法；各子計劃只寫自己範圍內的部分。' : ''}\n` +
-    SD_RULES +
+    SD_RULES + PR_RULE +
     `3. payload subtasks 交「完整的最終子任務清單」：下面草稿的子任務一個都不能少（可以修正內容；要拿掉必須在 open_questions 寫明子任務 id 與理由），保留 sub_plan 欄位；需要跨子計劃的整合子任務時，id 以「int-」開頭、sub_plan=integration。${SUBTASK_RULES}\n` +
     `4. ${COMMIT}（commit 內容包含 outline.md 與全部子計劃文件。）\n` +
     `契約不夠用就以 needs_decision 回報，不自己設計新端點。\n\n` +
@@ -176,6 +184,12 @@ if (!SUBS.length) {
   }
   design = merged
 }
+// 沒有設計就沒有東西可以核准：design／consolidate 缺件一律停下（不能回 halted:false 讓閘門看到空的設計）
+if (!design) {
+  const label = SUBS.length ? 'consolidate' : 'design'
+  missing.push(label)
+  return halt(`${label} 缺件：沒有交出設計與子任務，停下交人`, { outline, sub_plans: SUBS, sub_designs: subDesigns })
+}
 
 phase('Analyze')
 const LENSES = [
@@ -184,11 +198,17 @@ const LENSES = [
 ]
 if (SD) LENSES.push({ key: 'system-design', ask: `照 profile 的系統設計方法（${SD.source}）檢查設計文件：每一步都有寫嗎？功能層／系統層的判斷對嗎（有新服務、新資料儲存、跨服務呼叫、流量／延遲／可用性要求卻只做功能層，算問題）？第 1 步的數字有出處或標成假設嗎？每個取捨有寫放棄了什麼嗎？另外找：單點故障、沒說明的一致性模型、沒有失敗／重試／冪等處理、快取沒有更新與失效策略、過長的同步呼叫鏈、沒有 back pressure 的佇列。系統層時逐項對照這些主題：${(SD.topics || []).join('、') || '（profile 沒列）'}。` })
 if (SUBS.length) LENSES.push({ key: 'sub-plans', ask: `子計劃之間：各子計劃的 spec 合起來有沒有涵蓋 intent 的全部範圍、有沒有重複或互相矛盾的驗收條件？介面（端點、事件、型別）兩邊的寫法一致嗎？跨子計劃的相依有沒有反映在子任務的 depends_on？總覽 spec 的整合驗收條件夠不夠？` })
-const checks = design ? await parallel([...LENSES.map((l) => () => agent(
+const checks = await parallel([...LENSES.map((l) => () => agent(
   `${CTX}\n\n## 派工單（一致性檢查：${l.key}）\n讀 ${SPEC}/ 下的 intent、design、spec、plan、progress${SUBS.length ? `、outline.md 與 sub/<id>/ 的子計劃文件` : ''}與子任務：\n${JSON.stringify(design.payload)}\n${l.ask}\n每個問題一則 verdict（target_id 寫文件與節名），refuted=true 表示「這份設計在此處有問題」。`,
   { label: `analyze:${l.key}`, phase: 'Analyze', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
-)), ...EXT.map((e) => extJob(e, `${CTX}\n設計文件在 ${SPEC}/（intent、spec、plan${SUBS.length ? '、outline.md、sub/<id>/' : ''}），子任務：${JSON.stringify(design.payload)}`, 'Analyze'))]) : []
+)), ...EXT.map((e) => extJob(e, `${CTX}\n設計文件在 ${SPEC}/（intent、spec、plan${SUBS.length ? '、outline.md、sub/<id>/' : ''}），子任務：${JSON.stringify(design.payload)}`, 'Analyze'))])
 const analysis = checks.slice(0, LENSES.length)
 const extensions = checks.slice(LENSES.length)
+// 一致性檢查與擴充 agent 都是審查類：缺件＝沒檢查，不是「沒有問題」（規則 26）
+const reviewMissing = [...LENSES.map((l) => `analyze:${l.key}`), ...EXT.map((e) => `ext:${e.name}`)].filter((l, i) => !checks[i])
+if (reviewMissing.length) {
+  missing.push(...reviewMissing)
+  return halt(`審查類 agent 缺件：${reviewMissing.join('、')}，設計沒經過完整檢查，停下交人`, { outline, sub_plans: SUBS, sub_designs: subDesigns, design, analysis: analysis.filter(Boolean), extensions: extensions.filter(Boolean) })
+}
 
-return { stage: 'design', halted: false, gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, outline, sub_plans: SUBS, sub_designs: subDesigns.filter(Boolean), design, analysis: analysis.filter(Boolean), extensions: extensions.filter(Boolean) }
+return { stage: 'design', halted: false, missing, gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, outline, sub_plans: SUBS, sub_designs: subDesigns, design, analysis, extensions }
