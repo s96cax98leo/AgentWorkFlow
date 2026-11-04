@@ -99,9 +99,9 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### 平行處理
 
-- **`sdlc-design`**：先由 dev-spec-author 出大綱（`plan-outline`）。預估子任務超過 `parallelism.split_threshold`，或有多個可以各自規劃的區塊時，拆成最多 `max_sub_plans` 個子計劃。每個子計劃由一個 dev-spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，不 commit；最後由一個 dev-spec-author 彙整並 commit。跨子計劃的相依寫成 `@<子計劃 id>`，由 workflow 展開。
+- **`sdlc-design`**：先由 dev-spec-author 出大綱（`plan-outline`）。預估子任務超過 `parallelism.split_threshold`，或有多個可以各自規劃的區塊時，拆成最多 `max_sub_plans` 個子計劃。每個子計劃由一個 dev-spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，不 commit；最後由一個 dev-spec-author 彙整並 commit。跨子計劃的相依寫成 `@<子計劃 id>`，由 workflow 展開；指向不存在、沒有子任務或自己的子計劃時 halted。
 - **`sdlc-build`**：依子任務相依分層，同一層各自開 worktree 平行實作，每層由 dev-integrator 合併。
-- **`sdlc-test`**：有子計劃時，每個子計劃一個 dev-verifier，另加一個整合分片，平行驗證後彙整成 `verifier.md`。失敗分散在多個子計劃時，各自開 worktree 平行修正，再合併。
+- **`sdlc-test`**：有子計劃時，每個子計劃一個 dev-verifier，另加一個整合分片，平行驗證後彙整成 `verifier.md`；條目 id 帶分片前綴（`<分片>:<原 id>`），彙整後的 commit 必須等於各分片共同的 HEAD（merge 的 `--reviewed-sha` 取自它）。失敗分散在多個子計劃時，各自開 worktree 平行修正，再合併。
 - workflow 會對以下幾點做確定性核對，不一致就回傳 `halted: true`：子計劃的範圍與相依、彙整後的子任務清單（不能默默少掉）、彙整後的驗證結果（不能漏條目或改結果，各分片要驗同一個 HEAD）。
 - 預設乾跑走不到這些分支，所以 `check_workflows.mjs` 載入 `tools/scenarios/<workflow>.mjs`（每支 workflow 一檔）用假回傳把它們走過一遍，另有各 agent 缺件的情境。改了這些流程，對應的 scenarios 檔要一起改。
 
@@ -122,6 +122,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 - 腳本裡不能取時間，跑到一半也不能等人輸入。日期由主 session 放進 `run_dir`；需要人決定的地方，就把 workflow 拆成兩支，例如 `sdlc-design` 和 `sdlc-design-revise`。
 - 每個 `agent()` 都要帶 `agentType: NS + '<agent 名>'` 和 `schema`。`NS` 取自 `'{{AGENT_NS}}'`，預設 `agent-workflow:`。
+- `agent()` 一律透過 challenge 片段的 `tryAgent` 呼叫，失敗或 throw 都當成缺件（回 null）。乾跑情境的 fake 可以給 `'THROW'` 模擬 agent 失敗。
 - 多個 agent 共用同一個 worktree 時不能各自 commit（會搶 index.lock），要由最後一步統一 commit。
 - 共用片段（`tools/snippets/*.js`）只定義函式：不能有頂層 `await`，不能用 `{{佔位符}}`，也不讀 workflow 的區域變數，需要的值一律用參數傳進去。片段之間有依賴時，在片段開頭寫 `// @requires: <名>`，引用它的 workflow 也必須引用被依賴的片段。違反時 `build.py` exit 1。
 

@@ -85,7 +85,7 @@ python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstr
 
 ### 缺件與 halted（所有 workflow 共通）
 
-agent 沒交件（失敗、逾時、被中止）不等於「沒有發現」。各 workflow 回傳的 `missing` 列出缺件的 agent label，閘門重點一律列出來：
+agent 沒交件（失敗、throw、逾時、被中止）不等於「沒有發現」。各 workflow 回傳的 `missing` 列出缺件的 agent label，閘門重點一律列出來：
 
 - **審查、反駁、比對類**（reviewer、skeptic、verifier、比對或彙整驗證結果的 agent、擴充 agent）缺件時，workflow 回 `halted: true`，`halt_reason` 寫出缺件的 label。停下交人，不進下一段。
 - **其他缺件**（調研、writer 等）只列在 `missing`，閘門照常，但要在對話裡講明哪些角度沒查、哪些文件沒寫，並問使用者要不要重跑。
