@@ -27,7 +27,21 @@
           "properties": {
             "artifacts": {"type": "array", "items": {"type": "string"}},
             "requirement_style": {"type": "string", "minLength": 1, "description": "需求／驗收條件的寫法"},
-            "guidance": {"type": "string"}
+            "guidance": {"type": "string"},
+            "system_design": {
+              "type": ["object", "null"],
+              "description": "選填：SA／SD 的方法（預設 profile 依 System Design Primer）。有設時 sdlc-design 照它寫設計，並多派一個 skeptic 用 system-design lens 檢查；null 或不寫＝不套用",
+              "required": ["source", "steps", "feature_scope", "system_scope"],
+              "additionalProperties": false,
+              "properties": {
+                "source": {"type": "string", "minLength": 1, "description": "方法出處（網址與授權）"},
+                "steps": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "設計步驟，依序寫進設計文件"},
+                "feature_scope": {"type": "string", "minLength": 1, "description": "功能層 SD：每個需求都要做到哪裡"},
+                "system_scope": {"type": "string", "minLength": 1, "description": "系統層 SD：什麼情況算有系統面、要做到哪裡"},
+                "topics": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "擴展與取捨要逐項檢查的主題"},
+                "document": {"type": "string", "description": "寫在哪份文件、哪一節"}
+              }
+            }
           }
         },
         "build": {

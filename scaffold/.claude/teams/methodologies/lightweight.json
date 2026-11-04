@@ -10,7 +10,34 @@
     "design": {
       "artifacts": ["spec.md", "plan.md"],
       "requirement_style": "spec.md 用條列寫驗收條件，每條以 issue 編號開頭（例：「ISSUE-12：匯出按鈕下載 CSV」），可直接引用 issue 原文。",
-      "guidance": "沒有新介面或取捨時不寫 design.md；plan.md 列任務與檔案即可。"
+      "guidance": "沒有系統面時不寫 design.md，功能層 SD 寫在 plan.md 開頭一節；plan.md 列任務與檔案即可。",
+      "system_design": {
+        "source": "System Design Primer（https://github.com/donnemartin/system-design-primer，CC BY 4.0）；整理見模版 docs/系統設計方法.md",
+        "steps": [
+          "1 用例、限制與假設（SA）：誰在什麼情境用、輸入與輸出、資料量、請求率、讀寫比、延遲與可用性目標；沒有實際數字就寫假設並標明依據",
+          "2 高階設計：主要元件與資料流（圖或清單），每個選擇附理由",
+          "3 核心元件：API（REST 或 RPC、錯誤碼、冪等、分頁）、資料模型與 schema（選 SQL 或 NoSQL 的理由、索引）、元件內部流程",
+          "4 擴展與取捨：依第 1 步的限制找出瓶頸，每個取捨寫選了什麼、放棄什麼、為什麼"
+        ],
+        "feature_scope": "每個需求都要做功能層 SD：至少寫第 1、3 步，加上和這次改動相關的第 4 步取捨（一致性、快取、非同步、失敗與重試、安全）；規模小可以精簡，但不能跳過，不適用的項目寫一句理由",
+        "system_scope": "有系統面時（新服務、新資料儲存、跨服務呼叫、對流量／延遲／可用性有要求、資料量會成長）四步都要完整：第 1 步附量級粗估（QPS、儲存量、頻寬），第 4 步逐項檢查 topics",
+        "topics": [
+          "效能 vs 擴展性",
+          "延遲 vs 吞吐量",
+          "可用性 vs 一致性（CAP：選 CP 還是 AP）",
+          "一致性模式（弱、最終、強）",
+          "可用性模式（failover、複製、可用性的數字）",
+          "DNS 與 CDN（push、pull）",
+          "負載平衡（L4、L7、水平擴展）與反向代理",
+          "應用層（微服務、服務發現）",
+          "資料庫（複製、federation、分片、反正規化、SQL 調校；SQL 還是 NoSQL）",
+          "快取（放在哪一層；更新策略：cache-aside、write-through、write-behind、refresh-ahead）",
+          "非同步（訊息佇列、任務佇列、back pressure）",
+          "通訊（TCP、UDP、RPC、REST）",
+          "安全"
+        ],
+        "document": "功能層寫在 plan.md 開頭的「系統設計」節；系統層另寫 design.md。第一行寫這次是功能層還是系統層，以及判斷理由"
+      }
     },
     "build": {
       "test_first": false,

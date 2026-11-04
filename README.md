@@ -255,6 +255,7 @@ init 對既有專案只新增檔案，你原本的 agent、skill、command 和�
 |---|---|
 | [`docs/開發模式總覽.md`](docs/開發模式總覽.md) | 整套工作方式總覽：角色、閘門、派工、信封、手機決策 |
 | [`docs/ai-native-sdlc.md`](docs/ai-native-sdlc.md) | SDLC 各段的 agent、輸入輸出、閘門、worktree 與整合分支 |
+| [`docs/系統設計方法.md`](docs/系統設計方法.md) | SA／SD 的做法：依 System Design Primer 的四步、功能層與系統層、取捨檢查主題 |
 | [`docs/事件處理.md`](docs/事件處理.md) | event-* workflow、方案辯論、網站分析 |
 | [`docs/agent-協作規則.md`](docs/agent-協作規則.md) | 派工單範本、信封格式、背景 agent、驗收證據 |
 | [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) | 自動合併的防線分層、啟用前檢查清單、revert 演練 |

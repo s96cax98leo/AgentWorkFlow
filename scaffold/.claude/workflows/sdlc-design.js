@@ -48,10 +48,19 @@ const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：
 
 const TEST_NOTE = ((MP.stages || {}).build || {}).test_first === false ? '這個 profile 不要求測試先行：test 子任務會在實作完成後才做，code 子任務不要依賴 test 子任務。' : ''
 const SUBTASK_RULES = `每個子任務獨佔 owns 的檔案（不重疊），寫 depends_on 與可機械判定的 acceptance；kind=test 的子任務擁有測試目錄（例如 e2e/tests 與各服務 tests/）；偏寬淺、沒有相依的子任務會由多個 agent 平行實作，能並行就並行，數量最小化。${TEST_NOTE}`
+// SA／SD 方法（profile 的 stages.design.system_design；預設 profile 依 System Design Primer）。沒設就不套用
+const SD = STAGE.system_design || null
+const SD_RULES = SD
+  ? `- 系統設計（SA／SD，方法出處：${SD.source}）：\n` +
+    `  步驟：${SD.steps.join('；')}\n` +
+    `  功能層：${SD.feature_scope}\n  系統層：${SD.system_scope}\n` +
+    ((SD.topics || []).length ? `  第 4 步逐項檢查的主題：${SD.topics.join('、')}\n` : '') +
+    `  寫在：${SD.document || 'design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由'}。\n`
+  : ''
 const DOC_RULES = (dir) =>
   `- 產出文件（放在 ${dir}/）：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）；架構取捨寫 ADR（至少 2 個真實選項；repo 有 adr skill 就用）。\n` +
   `- 需求／驗收條件的寫法：${STAGE.requirement_style || '照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文'}。\n` +
-  (STAGE.guidance ? `- profile 的指引：${STAGE.guidance}\n` : '')
+  (STAGE.guidance ? `- profile 的指引：${STAGE.guidance}\n` : '') + SD_RULES
 const COMMIT = `commit（${commitFor('docs', A.epic)}；結尾 {{ATTRIBUTION_LINE}}）。不 push。`
 // 使用者加進這一段的自己的 agent（profile 的 extensions，用 /add-agent 設定）：和內建 agent 平行執行，交 findings；
 // blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
@@ -141,7 +150,8 @@ if (!SUBS.length) {
   const merged = await agent(
     `${CTX}\n\n## 派工單（彙整子計劃）\n${SUBS.length} 個子計劃已平行規劃完成，文件在 ${SPEC}/sub/<id>/，大綱在 ${SPEC}/outline.md。\n` +
     `1. 核對子計劃之間的介面（interfaces、契約、共用型別）是否一致，檔案所有權有沒有重疊或漏掉的檔案；有落差就修正對應子計劃的文件。\n` +
-    `2. 在 ${SPEC}/ 寫總覽：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）。總覽的 spec 只放跨子計劃的整合驗收條件，並連到各子計劃的 spec；plan 寫子計劃的順序與相依。\n` +
+    `2. 在 ${SPEC}/ 寫總覽：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）。總覽的 spec 只放跨子計劃的整合驗收條件，並連到各子計劃的 spec；plan 寫子計劃的順序與相依。${SD ? '總覽另寫跨子計劃的系統設計（子計劃之間的資料流、一致性、失敗處理與取捨），照下面的方法；各子計劃只寫自己範圍內的部分。' : ''}\n` +
+    SD_RULES +
     `3. payload subtasks 交「完整的最終子任務清單」：下面草稿的子任務一個都不能少（可以修正內容；要拿掉必須在 open_questions 寫明子任務 id 與理由），保留 sub_plan 欄位；需要跨子計劃的整合子任務時，id 以「int-」開頭、sub_plan=integration。${SUBTASK_RULES}\n` +
     `4. ${COMMIT}（commit 內容包含 outline.md 與全部子計劃文件。）\n` +
     `契約不夠用就以 needs_decision 回報，不自己設計新端點。\n\n` +
@@ -172,6 +182,7 @@ const LENSES = [
   { key: 'coverage', ask: `intent 的每個期望結果都有 spec 驗收條件？驗收條件是否照 profile 的需求寫法（${STAGE.requirement_style || '目標 repo 既有寫法'}）、對到需求 ID、原文數值與錯誤碼？spec 有沒有超出 intent 的範圍？` },
   { key: 'plan', ask: `plan 與子任務：每條驗收條件都有任務與測試？子任務的 owns 有沒有重疊、有沒有漏掉 spec 影響系統表外的檔案？depends_on 有沒有循環？引用的 contracts 端點是否真的存在（路徑:行號）？` },
 ]
+if (SD) LENSES.push({ key: 'system-design', ask: `照 profile 的系統設計方法（${SD.source}）檢查設計文件：每一步都有寫嗎？功能層／系統層的判斷對嗎（有新服務、新資料儲存、跨服務呼叫、流量／延遲／可用性要求卻只做功能層，算問題）？第 1 步的數字有出處或標成假設嗎？每個取捨有寫放棄了什麼嗎？另外找：單點故障、沒說明的一致性模型、沒有失敗／重試／冪等處理、快取沒有更新與失效策略、過長的同步呼叫鏈、沒有 back pressure 的佇列。系統層時逐項對照這些主題：${(SD.topics || []).join('、') || '（profile 沒列）'}。` })
 if (SUBS.length) LENSES.push({ key: 'sub-plans', ask: `子計劃之間：各子計劃的 spec 合起來有沒有涵蓋 intent 的全部範圍、有沒有重複或互相矛盾的驗收條件？介面（端點、事件、型別）兩邊的寫法一致嗎？跨子計劃的相依有沒有反映在子任務的 depends_on？總覽 spec 的整合驗收條件夠不夠？` })
 const checks = design ? await parallel([...LENSES.map((l) => () => agent(
   `${CTX}\n\n## 派工單（一致性檢查：${l.key}）\n讀 ${SPEC}/ 下的 intent、design、spec、plan、progress${SUBS.length ? `、outline.md 與 sub/<id>/ 的子計劃文件` : ''}與子任務：\n${JSON.stringify(design.payload)}\n${l.ask}\n每個問題一則 verdict（target_id 寫文件與節名），refuted=true 表示「這份設計在此處有問題」。`,

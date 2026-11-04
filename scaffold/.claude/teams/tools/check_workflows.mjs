@@ -200,6 +200,13 @@ const SCENARIOS = {
   'sdlc-design.js': [
     extScenario('ext:db2'),
     {
+      name: 'profile 有系統設計方法',
+      profile: { stages: { design: { artifacts: ['design.md', 'spec.md', 'plan.md'], requirement_style: 'x', guidance: 'x',
+        system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設', '4 擴展與取捨'], feature_scope: '功能層要寫', system_scope: '系統層要寫', topics: ['CAP'] } } } },
+      fakes: { design: (base, prompt) => { if (!/系統設計（SA／SD/.test(prompt) || !/4 擴展與取捨/.test(prompt)) throw new Error('design 派工單沒帶系統設計方法'); return ENV(base.payload)(base) } },
+      expect: (r) => (r.labels.includes('analyze:system-design') ? [] : [`沒有派出 system-design lens：${r.labels.join(',')}`]),
+    },
+    {
       name: '拆成子計劃',
       fakes: {
         outline: ENV({ epic: 'demo', split: true, reason: '預估 12 個子任務', sub_plans: SUB_PLANS }),

@@ -19,6 +19,7 @@ const VERDICTS = /*@schema:verdicts*/ {"type":"object","required":["status","sum
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 const STAGE = ((MP.stages || {}).design) || {}
+const SD = STAGE.system_design || null
 const CONV = MP.conventions || {}
 const METH_NOTE = METHODOLOGY
   ? `開發規範 profile：${MP.name}（.claude/teams/methodology.json；各段做法與慣例以它為準）。文件格式：${(CONV.doc_format || {}).format || '依目標 repo'}。`
@@ -45,6 +46,7 @@ const revised = await agent(
   (SUBS.length ? `這個 epic 拆成了子計劃（${SUBS.map((x) => x.id).join('、')}）：子計劃文件在 ${SPEC}/sub/<id>/，大綱在 ${SPEC}/outline.md；修正時保留子任務的 sub_plan 欄位與「<子計劃 id>-」開頭的 id，owns 不得超出該子計劃的範圍。\n` : '') +
   `每一條問題都要處理：修正，或說明為什麼不改（附依據）。處理對照表寫到 ${A.run_dir}/design-revise-對照.md（問題 → 處理 → 改了哪裡）。\n` +
   `需求／驗收條件的寫法照 profile：${STAGE.requirement_style || '目標 repo 既有的 spec 寫法'}。\n` +
+  (SD ? `系統設計照 profile 的方法（${SD.source}）：${SD.steps.join('；')}。功能層：${SD.feature_scope}。系統層：${SD.system_scope}。修正後的設計仍要符合。\n` : '') +
   (PR_SIZE.max_files || PR_SIZE.max_lines ? `預計改動超過 profile 的 PR 大小上限（${[PR_SIZE.max_lines ? `${PR_SIZE.max_lines} 行` : '', PR_SIZE.max_files ? `${PR_SIZE.max_files} 個檔` : ''].filter(Boolean).join('或')}；量法：${PR_SIZE.scope || '依 profile'}）時，在 plan 寫拆 PR 的規劃（例如分 2 包）。\n` : '') +
   `commit（${commitFor('docs', A.epic)}，內容是依閘門 2 修正 design、spec、plan；結尾 {{ATTRIBUTION_LINE}}）。不 push。\n\n` +
   `## 使用者在閘門 2 的決定\n${A.decisions.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\n## skeptic 的問題（${A.issues.length} 條）\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}`,

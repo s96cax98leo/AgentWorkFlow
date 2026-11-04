@@ -19,9 +19,9 @@
                     【閘門 1：intent 核准】
                                ▼
 ┌──────────────────────── sdlc-design ────────────────────────┐
-│ dev-spec-author：design.md（需要時）、spec.md、plan.md、       │
-│                  progress.md、子任務（owns、depends_on）        │
-│ tpm-skeptic ×2 平行：coverage｜plan 一致性                     │
+│ dev-spec-author：design.md（SA／SD 照 profile 的系統設計方法）、 │
+│                  spec.md、plan.md、progress.md、子任務          │
+│ tpm-skeptic 平行：coverage｜plan 一致性｜system-design         │
 └──────────────────────────────┬──────────────────────────────┘
                                ▼
                  【閘門 2：spec＋plan 核准】──要修──> sdlc-design-revise ──┐
@@ -87,10 +87,10 @@
 | 項目 | 內容 |
 |---|---|
 | 前提 | intent 已核准，本段不得修改 intent |
-| agent | `dev-spec-author` → `tpm-skeptic` ×2 平行 |
-| 產出 | 依 profile 的 `stages.design`（`artifacts`、`requirement_style`）。default profile：`design.md`（有新介面、跨服務、要取捨時才寫；架構取捨至少比較 2 個真實選項）、`spec.md`（驗收條件用 EARS 句型、逐條對應 Story、數值與錯誤碼照原文、影響系統表、疑慮節、整合修訂與例外節）、`plan.md`（任務、檔案、測試對應表）、`progress.md`（清單） |
+| agent | `dev-spec-author` → `tpm-skeptic` 平行（coverage、plan，profile 有系統設計方法時加 system-design） |
+| 產出 | 依 profile 的 `stages.design`（`artifacts`、`requirement_style`）。default profile：`design.md`（每個需求都寫，「系統設計」節照 System Design Primer 的四步做功能層或系統層 SD，見 [`系統設計方法.md`](系統設計方法.md)；架構取捨至少比較 2 個真實選項）、`spec.md`（驗收條件用 EARS 句型、逐條對應 Story、數值與錯誤碼照原文、影響系統表、疑慮節、整合修訂與例外節）、`plan.md`（任務、檔案、測試對應表）、`progress.md`（清單） |
 | 子任務 | 每個子任務獨佔 `owns` 的檔案（不重疊）、寫 `depends_on` 與可機械判定的 `acceptance`；`kind=test` 的子任務擁有測試目錄；偏寬淺、能平行就平行、數量最少 |
-| 一致性檢查 | coverage：intent 的每個期望結果都有驗收條件、spec 沒超出範圍；plan：每條驗收條件都有任務與測試、owns 不重疊、相依無循環、引用的契約真的存在 |
+| 一致性檢查 | coverage：intent 的每個期望結果都有驗收條件、spec 沒超出範圍；plan：每條驗收條件都有任務與測試、owns 不重疊、相依無循環、引用的契約真的存在；system-design：步驟齊全、功能層／系統層判斷正確、數字有出處或標成假設、取捨寫了放棄什麼、沒有單點故障等常見漏洞 |
 | 閘門 2 | 決策者核准 spec＋plan。要修就跑 `sdlc-design-revise`（args 加 `decisions`、`issues`），兩個 skeptic 複查後回到閘門 2 |
 
 契約不夠用時，spec-author 以 `needs_decision` 回報，不自己發明新端點。
