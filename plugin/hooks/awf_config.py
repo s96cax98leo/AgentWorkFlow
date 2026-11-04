@@ -54,6 +54,8 @@ DEFAULTS = {
     # 使用者加進 workflow 的自己的 agent（methodology.json 的 extensions）：{"完整 agent_type": "套用哪個模版角色的規則"}。
     # 登記後就算模版角色（推送、GitHub 寫入、寫入範圍照對應角色擋，信封也會驗）；只能對應 EXTENSION_ROLES。
     "extension_agents": {},
+    # 驗收測試目錄（工作區或 repo 內任一層的相對路徑）：dev-implementer 不能寫（驗收測試由 dev-acceptance-tester 寫）
+    "acceptance_test_dirs": ["tests/acceptance", "e2e"],
 }
 # auto_merge 預設關閉。開放條件見 guard.py 的 merge_exception() 與 docs/自動合併信任模型.md。
 AUTO_MERGE_DEFAULTS = {
@@ -67,7 +69,8 @@ AUTO_MERGE_DEFAULTS = {
     "upstream_authorized_by": {},  # {"owner/repo": "授權人" 或 {"by", "link", "scope", "expires"}}；上游沒有授權人一律擋
     "freeze_file": "",  # 空＝<runs_dir>/auto-merge.freeze.json；內容 {"frozen": true, "reason": …}（event-post-merge 寫）
 }
-LIST_KEYS = ("upstream_repos", "forbidden_paths", "allowed_branch_prefixes", "writer_dirs", "team_agent_prefixes", "protected_branches")
+LIST_KEYS = ("upstream_repos", "forbidden_paths", "allowed_branch_prefixes", "writer_dirs", "team_agent_prefixes", "protected_branches",
+             "acceptance_test_dirs")
 BOOL_KEYS = ("main_session_git_rules", "main_session_github_rules")
 PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
 
@@ -121,16 +124,23 @@ def _bool(v, default: bool) -> bool:
 
 
 def load() -> dict:
-    """回傳合併預設後的設定；cfg["_configured"] 表示專案有設定檔。"""
+    """回傳合併預設後的設定；cfg["_configured"] 表示專案有設定檔。
+    設定檔存在但讀不到或不是 JSON 物件時 fail-closed：視為已設定（主 session 的合併、核准、寫稽核照擋），
+    其餘欄位用預設值，cfg["_broken"] 記下原因（守門擋下時會說明）。"""
     cfg = json.loads(json.dumps(DEFAULTS))
     cfg["_configured"] = False
+    cfg["_broken"] = ""
     p = config_path()
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError) as e:
             data = None
-        if isinstance(data, dict):
+            cfg["_broken"] = f"{type(e).__name__}"
+        if not isinstance(data, dict):
+            cfg["_configured"] = True
+            cfg["_broken"] = cfg["_broken"] or "不是 JSON 物件"
+        else:
             cfg["_configured"] = True
             for k, v in data.items():
                 if k.startswith("_"):

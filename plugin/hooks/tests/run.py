@@ -537,6 +537,134 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     run(S, 2, "放寬但 auto_merge 啟用：主 session 不能 API 合併", sh_in(AMLOOSE, "gh api -X PUT repos/acme-fork/app/pulls/3/merge"), AMLOOSE)
     both(0, "放寬但 auto_merge 啟用：主 session gh pr create 不寫 --repo", AMLOOSE, "gh pr create --title t --body b")
 
+    # ------------------------------------------------------------ H1：審查實測過的繞過與 fail-open（Bash 與 PowerShell 各一）
+    H1W = mkws("ws-h1", {"repos_dir": "repos"})
+    H1R = H1W / "repos" / "app"
+    H1R.mkdir(parents=True)
+    git("init", "-q", "-b", "main", cwd=H1R)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init", cwd=H1R)
+    git("remote", "add", "upstream", "https://github.com/acme-up/app.git", cwd=H1R)
+    git("remote", "add", "origin", "https://github.com/acme-fork/app.git", cwd=H1R)
+    IMP, STW1, WRT = "agent-workflow:dev-implementer", "agent-workflow:dev-merge-steward", "agent-workflow:tpm-writer"
+
+    def pair(want: int, name: str, bash: str, ps: str | None = None, agent: str = "", cwd: Path | None = None, w: Path | None = None) -> None:
+        w = w or H1W
+        run(S, want, f"H1 {name}", sh_in(cwd or w, bash, agent), w)
+        run(S, want, f"H1 PS：{name}", ps_in(cwd or w, bash if ps is None else ps, agent), w)
+
+    def tool(want: int, name: str, tool_name: str, inp: dict, agent: str = "", w: Path | None = None) -> None:
+        w = w or H1W
+        d = {"hook_event_name": "PreToolUse", "tool_name": tool_name, "cwd": str(w), "tool_input": inp}
+        if agent:
+            d["agent_type"] = agent
+        run(P, want, f"H1 {name}", d, w)
+
+    # H1.1 子 shell、pushd、--git-dir、-C 解析成實際目錄
+    pair(2, "子 shell 推上游", "(cd repos/app && git push upstream HEAD:feature/x)", "Push-Location repos/app; git push upstream HEAD:feature/x")
+    pair(2, "子 shell 推 main（refspec 不會變成 main)）", "(cd repos/app && git push origin HEAD:main)", "Set-Location repos/app; git push origin HEAD:main")
+    pair(2, "pushd 推上游", "pushd repos/app && git push upstream HEAD:feature/x", "pushd repos/app; git push upstream HEAD:feature/x")
+    pair(2, "--git-dir 推上游", "git --git-dir=repos/app/.git push upstream HEAD:feature/x")
+    pair(2, "-C 推 main", "git -C repos/app push origin HEAD:main")
+    pair(0, "子 shell 唯讀放行", "(cd repos/app && git status)", "Push-Location repos/app; git status; Pop-Location")
+    pair(0, "子 shell 推 fork 功能分支放行", "(cd repos/app && git push origin HEAD:feature/x)", "Push-Location repos/app; git push origin HEAD:feature/x")
+    pair(0, "git -C repo status 放行", "git -C repos/app status")
+    # H1.2 send-pack、gh 帳號層級寫入、--repo 夾在子指令中間
+    pair(2, "agent send-pack", "git send-pack https://github.com/acme-fork/app.git HEAD:refs/heads/feature/x", agent=IMP, cwd=H1R)
+    pair(2, "主 session send-pack 推上游", "git send-pack https://github.com/acme-up/app.git HEAD:refs/heads/feature/x", cwd=H1R)
+    pair(2, "agent gh alias set", "gh alias set m 'pr merge'", agent=IMP)
+    pair(2, "主 session gh alias set（可繞過守門）", "gh alias set m 'pr merge'")
+    pair(0, "主 session gh alias list 放行", "gh alias list")
+    pair(2, "agent gh extension install", "gh extension install acme/ext", agent=IMP)
+    pair(2, "agent gh ssh-key add", "gh ssh-key add k.pub", agent=IMP)
+    pair(2, "agent gh gist create", "gh gist create a.txt", agent=IMP)
+    pair(2, "agent gh pr --repo X merge", "gh pr --repo acme-fork/app merge 3", agent=IMP)
+    pair(2, "主 session gh pr -R X merge", "gh pr -R acme-fork/app merge 3")
+    pair(2, "主 session gh --repo X pr merge", "gh --repo acme-fork/app pr merge 3")
+    pair(0, "agent gh pr view 放行", "gh pr view 3 --repo acme-fork/app", agent=IMP)
+    # H1.3 直譯器打 merge／reviews 端點
+    PYM = "python3 -c \"import urllib.request as u; u.urlopen(u.Request('https://api.github.com/repos/acme-fork/app/pulls/3/merge', method='PUT'))\""
+    pair(2, "agent python -c 打 merge", PYM, agent=IMP)
+    pair(2, "主 session python -c 打 merge", PYM)
+    pair(2, "agent node -e 打 reviews", "node -e \"fetch('https://api.github.com/repos/acme-fork/app/pulls/3/reviews',{method:'POST'})\"", agent=IMP)
+    pair(2, "heredoc／管線餵給直譯器打 reviews",
+         "python3 - <<'EOF'\nimport urllib.request as u\nu.urlopen('https://api.github.com/repos/acme-fork/app/pulls/3/reviews', b'{}')\nEOF",
+         "\"import urllib.request as u; u.urlopen('https://api.github.com/repos/acme-fork/app/pulls/3/reviews', b'{}')\" | python -", agent=IMP)
+    pair(0, "python -c 一般計算放行", "python3 -c \"print(1+1)\"", agent=IMP)
+    # H1.4 機敏檔：Read、Grep、cat／Get-Content 擋；grep -q 放行
+    tool(2, "Read .env（主 session）", "Read", {"file_path": str(H1R / ".env")})
+    tool(2, "Read .env（agent）", "Read", {"file_path": str(H1R / ".env")}, IMP)
+    tool(2, "Read 私鑰", "Read", {"file_path": str(H1R / "deploy/server.pem")})
+    tool(2, "Grep path=.env", "Grep", {"pattern": "X", "path": str(H1R / ".env.local")})
+    tool(2, "Grep glob=.env*", "Grep", {"pattern": "X", "glob": ".env*"}, IMP)
+    tool(0, "Read .env.example 放行", "Read", {"file_path": str(H1R / ".env.example")})
+    tool(0, "agent Read 一般檔放行（不套寫入範圍）", "Read", {"file_path": str(H1W / ".claude/teams/rules.md")}, IMP)
+    tool(0, "tpm agent Grep 產品程式放行", "Grep", {"pattern": "X", "path": str(H1R / "src")}, "agent-workflow:tpm-reviewer")
+    pair(2, "cat .env", "cat .env", "Get-Content .env", cwd=H1R)
+    pair(2, "agent type／tail .env", "tail -n 5 .env", "type .env", agent=IMP, cwd=H1R)
+    pair(2, "grep 印出 .env 內容", "grep KEY .env", "Select-String KEY .env", cwd=H1R)
+    pair(2, "head 私鑰", "head -n 1 ~/.ssh/id_rsa", "Get-Content -Path ~/.ssh/id_rsa -TotalCount 1")
+    pair(0, "grep -q 只判有無放行", "grep -q X .env", "Select-String -Quiet X .env", cwd=H1R)
+    pair(0, "cat 一般檔放行", "cat README.md", "Get-Content README.md", cwd=H1R)
+    # H1.5 設定檔壞掉：fail-closed
+    BRK = mkws("ws-broken", {})
+    (BRK / ".claude/teams/guard.config.json").write_text("{ 壞掉的 json", encoding="utf-8")
+    pair(2, "設定壞掉：主 session 合併", "gh pr merge 3 --repo acme-fork/app", w=BRK)
+    pair(2, "設定壞掉：主 session 核准", "gh pr review 3 --approve --repo acme-fork/app", w=BRK)
+    pair(2, "設定壞掉：主 session 寫 merge-audit", "echo x >> _tpm/runs/merge-audit.jsonl", "'x' | Out-File -Append _tpm/runs/merge-audit.jsonl", w=BRK)
+    pair(0, "設定壞掉：一般指令放行", "git status", w=BRK)
+    tool(2, "設定壞掉：主 session Write merge-audit", "Write", {"file_path": str(BRK / "_tpm/runs/merge-audit.jsonl")}, w=BRK)
+    tool(0, "設定壞掉：主 session 可以修設定檔", "Write", {"file_path": str(BRK / ".claude/teams/guard.config.json")}, w=BRK)
+    # H1.6 主 session 不能解凍
+    FZ = "_tpm/runs/auto-merge.freeze.json"
+    pair(2, "主 session rm 凍結檔", f"rm {FZ}", f"Remove-Item {FZ}")
+    UNFREEZE, REFREEZE = '{"frozen": false}', '{"frozen": true, "reason": "x"}'
+    pair(2, "主 session 寫 frozen:false", f"echo '{UNFREEZE}' > {FZ}", f"Set-Content -Path {FZ} -Value '{UNFREEZE}'")
+    pair(0, "主 session 寫 frozen:true（只會更嚴）放行", f"echo '{REFREEZE}' > {FZ}", f"Set-Content -Path {FZ} -Value '{REFREEZE}'")
+    pair(0, "主 session 讀凍結檔放行", f"cat {FZ}", f"Get-Content {FZ}")
+    tool(2, "主 session Write frozen:false", "Write", {"file_path": str(H1W / FZ), "content": '{"frozen": false}'})
+    tool(2, "主 session Edit 凍結檔", "Edit", {"file_path": str(H1W / FZ), "old_string": "true", "new_string": "false"})
+    tool(0, "主 session Write frozen:true 放行", "Write", {"file_path": str(H1W / FZ), "content": '{"frozen": true, "reason": "x"}'})
+    # H1.7 merge_gate check 只限 steward；agent 不 approve／abandon、不寫 run.json 與稽核紀錄
+    pair(2, "implementer 跑 merge_gate check", "python3 .claude/teams/tools/merge_gate.py check --pr 3", agent=IMP)
+    pair(0, "steward 跑 merge_gate check 放行", "python3 .claude/teams/tools/merge_gate.py check --pr 3", agent=STW1)
+    pair(2, "agent save_run approve", "python3 .claude/teams/tools/save_run.py approve _tpm/runs/x plan --by human --at t", agent=WRT)
+    pair(2, "agent save_run abandon", "python3 .claude/teams/tools/save_run.py abandon _tpm/runs/x --reason r --by a --at t", agent=WRT)
+    pair(0, "主 session save_run approve 放行", "python3 .claude/teams/tools/save_run.py approve _tpm/runs/x plan --by human --at t")
+    pair(2, "agent 拆字串寫 merge-audit", "python3 -c \"open('_tpm/runs/merge-'+'audit.jsonl','a').write('x')\"", agent=WRT)
+    pair(2, "agent 拆字串寫 run.json", "python3 -c \"open('_tpm/runs/x/run'+'.json','w').write('{}')\"", agent=WRT)
+    pair(0, "agent 用 python 讀 run 目錄放行", "python3 -c \"print(open('_tpm/runs/x/notes.md').read())\"", agent=WRT)
+    tool(2, "agent Write run.json", "Write", {"file_path": str(H1W / "_tpm/runs/x/run.json")}, WRT)
+    tool(0, "agent Write run 目錄其他檔放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/notes.md")}, WRT)
+    # H1.8 --project-dir、--runs-dir 只能指本專案
+    pair(2, "publish --project-dir 外部", "python3 .claude/teams/tools/publish.py push --project-dir /tmp/fake")
+    pair(0, "publish --project-dir 本專案放行", "python3 .claude/teams/tools/publish.py push --project-dir .")
+    pair(2, "merge_gate --project-dir 外部", "python3 .claude/teams/tools/merge_gate.py check --project-dir /tmp/fake", agent=STW1)
+    pair(2, "merge_gate --runs-dir 外部", "python3 .claude/teams/tools/merge_gate.py check --runs-dir /tmp/fake", agent=STW1)
+    # H1.9 唯讀審查角色只寫自己的報告；implementer 不寫驗收測試
+    for want, name, ag, rel in [
+        (2, "verifier 寫 src", "dev-verifier", "src/a.py"),
+        (0, "verifier 寫 verifier.md", "dev-verifier", "specs/e/verifier.md"),
+        (0, "verifier 寫分片報告", "dev-verifier", "specs/e/verifier-integration.md"),
+        (2, "security-reviewer 寫 tests", "dev-security-reviewer", "tests/t.py"),
+        (0, "security-reviewer 寫 security-review.md", "dev-security-reviewer", "specs/e/security-review.md"),
+        (2, "design-reviewer 寫 src", "dev-design-reviewer", "src/a.py"),
+        (0, "design-reviewer 寫 evidence", "dev-design-reviewer", "specs/e/evidence/a.md"),
+        (2, "implementer 寫 tests/acceptance", "dev-implementer", "tests/acceptance/a.spec.ts"),
+        (2, "implementer 寫 e2e", "dev-implementer", "e2e/a.spec.ts"),
+        (0, "implementer 寫 src", "dev-implementer", "src/a.py"),
+        (0, "implementer 寫單元測試", "dev-implementer", "tests/unit/a_test.py"),
+    ]:
+        tool(want, name, "Write", {"file_path": str(H1R / rel)}, "agent-workflow:" + ag)
+    # H1.10 轉呼叫的 repo guard 自己出錯（exit 1）判擋
+    ERR = H1W / "repos" / "err"
+    (ERR / ".claude" / "hooks").mkdir(parents=True)
+    for g in ("guard-git", "guard-paths"):
+        (ERR / ".claude" / "hooks" / f"{g}.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+    git("init", "-q", "-b", "main", cwd=ERR)
+    pair(2, "轉呼叫的 guard-git exit 1", "git commit -m x", agent=IMP, cwd=ERR)
+    tool(2, "轉呼叫的 guard-paths exit 1", "Write", {"file_path": str(ERR / "src/a.py")}, IMP)
+    pair(0, "沒有 repo guard 的 repo 照常", "git commit -m x", agent=IMP, cwd=H1R)
+
     # ------------------------------------------------------------ 交件信封
     E = "envelope"
     ok_env = '{"status":"done","summary":"s","artifacts":[],"evidence":[],"confidence":0.9,"open_questions":[],"derived_work":[],"payload":{}}'
@@ -581,10 +709,10 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     run(E, 2, "TaskCompleted 沒寫 output", tc("_tpm/runs/x 方案一"))
 
     # ------------------------------------------------------------ 入口本身：出錯時不能回 0，也不能冒充 2
-    # （守門類 hook 註冊時設 onFailure: block，所以「非 0 非 2」會被 Claude Code 當成失敗而擋下）
+    # 守門類輸入壞掉一律不放行（exit 2，或 hook 失敗；H2 之後統一為 2），也不能印 traceback
     for mode in ("guard-shell", "guard-paths"):
         r = hook(mode, "不是 JSON", WS)
-        check(f"{mode}：輸入壞掉＝hook 失敗（非 0、非 2）", True, r.returncode not in (0, 2))
+        check(f"{mode}：輸入壞掉不放行", True, r.returncode != 0)
     r = subprocess.run([PY, str(ENTRY), "no-such-mode"], input=b"{}", capture_output=True)
     check("未知模式＝hook 失敗（非 0、非 2）", True, r.returncode not in (0, 2))
 
@@ -595,10 +723,17 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
         pre = cfg["hooks"]["PreToolUse"]
         by = {e["matcher"]: e["hooks"][0] for e in pre}
         check(f"{label}：shell 守門 matcher 是 Bash|PowerShell", True, "Bash|PowerShell" in by)
-        for matcher, mode in (("Bash|PowerShell", "guard-shell"), ("Edit|Write|NotebookEdit", "guard-paths")):
-            h = by.get(matcher, {})
-            check(f"{label}：{mode} 走 awf_hook.py", True, f"awf_hook.py\" {mode}" in h.get("command", ""))
-            check(f"{label}：{mode} 跑不起來時擋下（onFailure: block）", "block", h.get("onFailure"))
+        # 守門類 onFailure 依 plans 的 hook-runtime 決定：plugin 的 hooks.json 是 continue（hook 跑不起來時不鎖死所有工具），
+        # 專案 settings（--hooks project，Python 絕對路徑）是 block
+        want_fail = ("continue",) if label == "hooks.json" else ("block",)
+        for tools, mode in ((("Bash", "PowerShell"), "guard-shell"), (("Edit", "Write", "NotebookEdit"), "guard-paths")):
+            ent = next((e for e in pre if f"awf_hook.py\" {mode}" in e["hooks"][0].get("command", "")), None)
+            check(f"{label}：{mode} 走 awf_hook.py", True, ent is not None)
+            ms = set((ent or {}).get("matcher", "").split("|"))
+            check(f"{label}：{mode} 涵蓋 {'／'.join(tools)}", True, set(tools) <= ms)
+            check(f"{label}：{mode} 的 onFailure 是 {'／'.join(want_fail)}", True, ((ent or {}).get("hooks") or [{}])[0].get("onFailure") in want_fail)
+            if mode == "guard-paths" and ms & {"Read", "Grep"}:
+                check(f"{label}：Read／Grep 走 guard-paths", True, {"Read", "Grep"} <= ms)
         h = by.get("SubagentHandback|StructuredOutput", {})
         check(f"{label}：交件檢查出錯不擋（onFailure: continue）", "continue", h.get("onFailure"))
         for ev in ("SubagentStop", "TaskCompleted"):
