@@ -128,7 +128,7 @@ def main() -> int:
     missing = unregistered_extensions(methodology)
     if missing:
         print("methodology.json 的 extensions 有 agent 沒登記在 guard.config.json 的 extension_agents：" + "、".join(missing)
-              + "（登記要套用哪個模版角色的規則，例如 \"tpm-reviewer\"；可以用 /add-agent 設定）")
+              + "（登記要套用哪個模版角色的規則，例如 \"tpm-reviewer\"；可以用 add-agent skill（/agent-workflow:add-agent）設定）")
         return 1
     cache: dict = {}
     for f in files:

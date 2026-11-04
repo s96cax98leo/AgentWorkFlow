@@ -11,7 +11,11 @@
 ### 破壞性變更
 
 - **角色合併**：`dev-pr-reviewer` 併入 `tpm-reviewer`（新增 deliver 模式）；`tpm-upstream-analyst` 併入 `tpm-researcher`（新增上游模式）。舊名保留**一版**相容（薄殼 agent，`RESERVED_ROLES` 仍認得），下一版移除。自訂 workflow、擴充 agent 設定或 `guard.config.json` 裡用到舊名的，請改用新名。
-- **刪除同名 command**：移除 `/add-agent`、`/correct` 這兩支 command，避免和同名 skill 衝突。功能不變，改由 `add-agent`、`correct` skill 提供，呼叫方式照舊。
+- **刪除同名 command**：移除 `/add-agent`、`/correct` 這兩支 command，避免和同名 skill 衝突，command 剩 4 支（`/sdlc`、`/event`、`/brief`、`/demo-check`）。功能不變，改由 `add-agent`、`correct` skill 提供，用 `/agent-workflow:add-agent`、`/agent-workflow:correct` 叫用（沒有其他同名指令時也可以省略前綴）。
+- **merge gate 缺審查 head 一律 hold**：`merge_gate.py check` 有 `--findings` 卻沒有 `--reviewed-sha`（或和 head 不符）時判 hold；`sdlc-merge` 多了 `reviewed_sha` arg。
+- **skipped／neutral 的 required check 不再算通過**：要放行的 check 名稱列進 `auto_merge.allowed_skipped_checks`。
+- **CI 端凍結改讀 repo variable**：merge gate CI 範本讀 `AGENT_AUTOMERGE_FROZEN`（沒設或 `false` 才算未凍結），本機的凍結檔 CI 看不到；要凍結時兩邊都要設。
+- **workflow 缺件一律 halted**：任何 agent 沒交件都記為 missing，審查、反駁、比對類步驟缺件時 workflow 回傳 `halted: true`，不再當成「沒有發現」。event workflow 的回傳欄位有調整（`missing`、brief 的 `waiting`／`next`、upstream 的 `claims`／`refuted`）。
 - **hook 註冊方式改變**：plugin 註冊的守門 hook 改為「跑不起來時放行」（`onFailure: continue`、timeout 10 秒），需要更嚴格的專案改用 project 模式（見 `SECURITY.md`）。
 - **scaffold 檔案有更新**：已 init 的專案要跑 `init.py --upgrade` 才會拿到新的 workflow、schema 與工具。
 
@@ -21,11 +25,19 @@
 - **SA／SD**：`stages.design.system_design` 依 System Design Primer，每個需求做功能層系統設計，有系統面時走完整四步；`sdlc-design` 照它派工，並加派 skeptic 的 `system-design` lens。
 - **sdlc-sync**：build 之後、test 之前，以及 merge 因 PR 落後或衝突判 hold 之後，讓分支跟上 base。由 `sync_branch.py` 依情況選 rebase、merge 或中轉分支，中轉分支用 `publish.py --supersedes` 開 PR 取代原 PR。
 - **schema 驗證**：補強信封與 payload 的 schema 驗證與語意規則，golden-set 補正例與反例。
+- **merge gate 新參數**：`--merged-today`（CI 用 GitHub API 算當日由 `AGENT_MERGER_BOT` 合併的 PR 數，和本機 audit 取大者）、`--frozen <理由>`、`--reviewed-sha`；`upstream_authorized_by` 可寫 `{by, link, scope, expires}`，過期即失效，hook 與 gate 一致。
+- **新設定**：`guard.config.json` 的 `acceptance_test_dirs`（dev-implementer 不能寫驗收測試）、`auto_merge.allowed_skipped_checks`；profile 的 `conventions.sync`（`strategy`、`transit_naming`）。
+- **`save_run.py abandon`**：需求取消時記錄，之後不能核准、`publish.py` 拒絕推送。政策核准另外擋 skeptic 推翻、agent 缺件，plan 段一律由人核准；重存某段會清掉該段核准，核准要整條閘門鏈都通過。
+- **hook 擋 Read／Grep 讀機敏檔**：`guard-paths` 涵蓋 Read、Grep，`.env`、金鑰、憑證一律擋，主 session 也擋。
+- **文件一致性檢查**：`tests/check_docs.py` 核對 README、CLAUDE.md 等文件寫的角色、workflow、command 數量與名單和實際檔案一致。
 - **repo 安全與發佈**：`SECURITY.md`、本變更紀錄、`tests/check_supply.py`（只用標準庫、plugin 不連網、actions 釘 SHA、版控沒有機敏檔）、Dependabot 每週檢查 GitHub Actions。
 
 ### 變更
 
-- **hook 高可用與守門強化**：hook 跑得起來時，輸入壞掉一律擋，guard 模組壞掉改用內建最小規則；合併、核准、推送路徑的守門規則加強。
+- **hook 高可用與守門強化**：hook 跑得起來時，輸入壞掉或 shell 指令超過 128KB 一律擋，guard 模組壞掉改用內建最小規則，交件 hook 出錯時放行；合併、核准、推送路徑的守門規則加強（子 shell、pushd、`-C`／`--git-dir` 等）。hook 仍可被繞過，信任邊界在伺服器端，見 `docs/自動合併信任模型.md`〈hook 是減速帶，可以被繞過〉。
+- **網站分析 agent 瘦身**：方法論細節收進對應的 skill。
+- **commands 改成薄殼**：流程集中到 `tpm-team` skill。
+- **文件**：README 補〈更新與釘版本〉；`docs/自訂與擴充.md` 補〈升級已 init 的專案〉；佔位符 `WORKSPACE_DIR` 已移除（工作區根目錄就是 `--target`）。
 - **閘門紀錄修正**：核准與 merge gate 的紀錄寫法修正，稽核紀錄與實際決策一致。
 - **CI**：三平台跑 Python 3.12，另在 ubuntu 跑 3.9 與 3.13；所有 action 釘 commit SHA；頂層 `permissions: contents: read`。
 
@@ -35,7 +47,8 @@
 2. 在 Claude Code 裡執行 `/reload-plugins` 載入新版。
 3. 每個已 init 的專案，在專案根目錄執行 `python3 <AgentWorkFlow>/init.py --target . --upgrade`；要採用新版 profile 的新欄位，加 `--adopt-new-fields`。
 4. 把自訂設定裡的 `dev-pr-reviewer`、`tpm-upstream-analyst` 改成 `tpm-reviewer`、`tpm-researcher`。
-5. 在專案根目錄跑 `python3 .claude/teams/tools/build.py --check`，確認內嵌的 schema 與 profile 是最新的。
+5. 有放 merge gate CI 的專案：在 repo 設好 variable `AGENT_MERGER_BOT`；要凍結自動合併時設 `AGENT_AUTOMERGE_FROZEN=true`。有 required check 會被 skipped 的，列進 `auto_merge.allowed_skipped_checks`。
+6. 在專案根目錄跑 `python3 .claude/teams/tools/build.py --check`，確認內嵌的 schema 與 profile 是最新的。
 
 ## [0.1.0]
 

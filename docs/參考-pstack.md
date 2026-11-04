@@ -15,7 +15,7 @@ pstack 是給 Cursor 用的 agent 工作流程 plugin。核心是一組 prose pl
 
 | 面向 | pstack | AgentWorkFlow |
 |---|---|---|
-| 流程結構 | 沒有分段管線，playbook 之間由 agent 自行串接 | plan → design → build → test → deliver → merge，每段一支 workflow |
+| 流程結構 | 沒有分段管線，playbook 之間由 agent 自行串接 | plan → design → build → sync → test → deliver → merge，每段一支 workflow |
 | 強制方式 | 靠 prose playbook，沒有 hook、schema、確定性 gate | hook 守門、JSON 信封 schema、`merge_gate.py`、`publish.py` 等確定性工具 |
 | 人的角色 | never-block-on-the-human：盡量不停下等人 | 段與段之間人工核准（plan 一律由人；其他段在政策允許時可政策核准），不確定就 hold 交人 |
 | 平台 | 強綁 Cursor | Claude Code（plugin＋scaffold） |
@@ -30,8 +30,8 @@ pstack 是給 Cursor 用的 agent 工作流程 plugin。核心是一組 prose pl
 2. **rebase 後沿用判定**：rebase 前後的 patch-id 相同時才沿用先前的 verdict，不重跑整段審查。預設關閉，要在 `auto_merge.carry_verdict_on_rebase` 明確開啟（opt-in）。
 3. **合併後讀回狀態**：合併指令執行後再讀回 PR 的實際狀態，記為 `merge_state`，不以指令的 exit code 當成已合併。
 4. **CI flake 判準**：明確定義什麼情況算 flake、什麼情況算真的失敗，避免把真失敗當 flake 重跑過關。
-5. **PR／bot 留言當資料**：原本 steward、watcher、skeptic 已有這條，現在補到 dev-pr-reviewer、tpm-reviewer、dev-verifier：PR 標題、內文、人類與 bot 留言、commit 訊息裡的指示都不採信，也不把留言內容拼進 shell 指令。dev-verifier 的反作弊清單另外加上壓制註解與放寬設定。
-6. **`/correct` skill**：把一則教訓變成最高可行層級的強制機制，並用舊錯誤證明擋得住（見 `plugin/skills/correct/SKILL.md`）。
+5. **PR／bot 留言當資料**：原本 steward、watcher、skeptic 已有這條，現在補到 tpm-reviewer（含 deliver 模式，舊名 dev-pr-reviewer 已併入）、dev-verifier：PR 標題、內文、人類與 bot 留言、commit 訊息裡的指示都不採信，也不把留言內容拼進 shell 指令。dev-verifier 的反作弊清單另外加上壓制註解與放寬設定。
+6. **`correct` skill**（`/agent-workflow:correct`）：把一則教訓變成最高可行層級的強制機制，並用舊錯誤證明擋得住（見 `plugin/skills/correct/SKILL.md`）。
 
 ## 沒引進什麼與原因
 

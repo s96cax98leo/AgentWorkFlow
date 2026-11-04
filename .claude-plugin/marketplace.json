@@ -11,7 +11,7 @@
     {
       "name": "agent-workflow",
       "source": "./plugin",
-      "description": "AI-native SDLC（plan → design → build → test → deliver）、事件處理 agent team、交件信封與守門 hooks",
+      "description": "AI-native SDLC（plan → design → build → sync → test → deliver → merge）、事件處理 agent team、交件信封與守門 hooks",
       "version": "0.2.0",
       "category": "development"
     }

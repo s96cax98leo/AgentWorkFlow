@@ -6,12 +6,14 @@
 
 | 位置 | 內容 |
 |---|---|
-| plugin `agents/dev-*.md`（10 個） | 開發角色：spec-author、acceptance-tester、implementer、integrator、verifier、design-reviewer、security-reviewer、pr-reviewer、merge-steward（可信任的合併 agent）、release-watcher（合併後監看） |
-| plugin `agents/tpm-*.md`（6 個） | 通用角色：planner、researcher、upstream-analyst、reviewer、skeptic、writer |
-| plugin `hooks/` | 單一入口 `awf_hook.py`，有三個模式：`guard-shell`（Bash 與 PowerShell）、`guard-paths`（轉呼叫目標 repo 的 guard）、`envelope`。附測試 |
-| `.claude/workflows/sdlc-*.js`（7 支） | AI-native SDLC：plan、design、design-revise、build、test、deliver、merge（Workflow 工具只讀專案的 `.claude/workflows`） |
+| plugin `agents/dev-*.md`（9 個） | 開發角色：dev-spec-author、dev-acceptance-tester、dev-implementer、dev-integrator、dev-verifier、dev-design-reviewer、dev-security-reviewer、dev-merge-steward（可信任的合併 agent）、dev-release-watcher（合併後監看） |
+| plugin `agents/tpm-*.md`（5 個） | 通用角色：tpm-planner、tpm-researcher（含上游模式）、tpm-reviewer（含 SDLC 的 deliver 模式）、tpm-skeptic、tpm-writer |
+| plugin 的 2 個舊名薄殼 | 舊名 dev-pr-reviewer 已併入 tpm-reviewer、舊名 tpm-upstream-analyst 已併入 tpm-researcher；相容一版，下一版移除。專案還在用舊名時跑 `init.py --upgrade` |
+| plugin `hooks/` | 單一入口 `awf_hook.py`，有三個模式：`guard-shell`（Bash 與 PowerShell）、`guard-paths`（Edit、Write、NotebookEdit、Read、Grep；轉呼叫目標 repo 的 guard）、`envelope`。附測試 |
+| `.claude/workflows/sdlc-*.js`（8 支） | AI-native SDLC：plan、design、design-revise、build、sync、test、deliver、merge（Workflow 工具只讀專案的 `.claude/workflows`） |
 | `.claude/workflows/event-*.js`（8 支） | 簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看 |
 | `.claude/teams/rules.md` | 硬規則：通用規則＋專案規則 |
+| `.claude/teams/VERSION`、`.claude/teams/workflow.config` | init 寫下的模版版本與佔位符值；`init.py --upgrade` 讀它們，不要手改 |
 | `.claude/teams/guard.config.json` | 守門設定，包括：<br>・目錄：run、repo<br>・repo：上游、fork、禁止路徑<br>・規範：允許的分支前綴、受保護分支、任務編號前綴、署名行<br>・開關：主 session 開關、`auto_merge` |
 | `.claude/teams/methodology.json` | 本專案的開發規範 profile（init 依使用者的習慣產生）：各段做法、慣例、平行處理參數（`parallelism`）。`build.py` 會把它內嵌進 `sdlc-*.js`，改了要重跑 |
 | `.claude/teams/methodologies/` | 模版內建的 profile：`default`（模版原本的做法）、`lightweight`（範例）。新增 profile 時從這裡複製 |
@@ -26,28 +28,33 @@
 |---|---|---|---|
 | plan | `sdlc-plan` | 4 個 researcher 平行調研 → spec-author 寫 intent（需求能拆時附「範圍切分建議」）→ skeptic 挑錯 | 閘門：核准 intent |
 | design | `sdlc-design` | spec-author 出大綱（`plan-outline`）判斷規模。<br>・不拆：一人寫 spec、plan 與子任務。<br>・拆：每個子計劃一個 spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，再由一人彙整、核對介面與檔案所有權並 commit。<br>最後 skeptic 平行檢查一致性 | 閘門：核准 spec＋plan（要修改時跑 `sdlc-design-revise`） |
-| build | `sdlc-build` | 依 profile 決定先寫測試或後補測試。<br>子任務依相依分層，同一層各自開 worktree 平行實作，每層由 integrator 合併 | 中斷（halted）時交人 |
+| build | `sdlc-build` | 依 profile 決定先寫測試或後補測試。<br>子任務依相依分層，同一層各自開 worktree 平行實作，每層由 integrator 合併（有衝突走中轉分支） | 中斷（halted）時交人，用剩下的子任務（`remaining_subtasks`）重跑 |
+| sync | `sdlc-sync` | dev-integrator 用 `sync_branch.py` 讓分支跟上 base：已跟上不動；沒推送且沒衝突 rebase；已推送且沒衝突 merge base；有衝突從 base 開中轉分支解衝突（命名依 profile 的 `conventions.sync.transit_naming`），之後用 `publish.py --supersedes` 開 PR 取代原 PR。merge 因 PR 落後或衝突判 hold（`needs_sync`）後也跑這一段 | 中斷時交人；head 變了一律重跑 `sdlc-test`，之後各段用 `branch` 帶中轉分支名 |
 | test | `sdlc-test` | verifier 逐條驗收並做反作弊檢查；有子計劃時每個子計劃一個 verifier，另加一個整合分片，平行驗證後彙整成 `verifier.md`。<br>設計審查、安全審查同時進行。<br>失敗就修正，最多 2 輪；失敗分散在多個子計劃時平行修正，再合併 | 閘門：確認驗證結果 |
-| deliver | `sdlc-deliver` | pr-reviewer 從四個面向審查，skeptic 逐則反駁，writer 寫 PR 說明草稿與執行紀錄 | 閘門：推送、開 PR 由決策者決定 |
-| merge | `sdlc-merge` | `auto_merge` 啟用時，merge-steward 對照需求與證據，`merge_gate.py` 判定。<br>一致就合併；不一致就產出 followup 新需求並退回 PR | 合併後跑 `event-post-merge` |
+| deliver | `sdlc-deliver` | tpm-reviewer（deliver 模式）從四個面向審查，skeptic 逐則反駁，writer 寫 PR 說明草稿與執行紀錄 | 閘門：推送、開 PR 由決策者決定 |
+| merge | `sdlc-merge` | `auto_merge` 啟用時，merge-steward 對照需求與證據（綁審查時的 head，`reviewed_sha`），`merge_gate.py` 判定。<br>一致就合併；不一致就產出 followup 新需求並退回 PR；skeptic 缺件時 halted 交人 | 合併後跑 `event-post-merge` |
 
 - **平行參數**：在 `methodology.json` 的 `parallelism`。
   - `split_threshold`：預估子任務超過幾個就拆子計劃。
   - `max_sub_plans`：子計劃數上限。
   - `shard_verification`：有子計劃時驗證要不要分片。
 - **加入自己的 agent**：
-  - 用 `/add-agent` 設定，寫在 `methodology.json` 的 `extensions` 與 `guard.config.json` 的 `extension_agents`。
+  - 用 `/agent-workflow:add-agent`（`add-agent` skill）設定，寫在 `methodology.json` 的 `extensions` 與 `guard.config.json` 的 `extension_agents`。
   - 擴充 agent 和該段的內建 agent 平行執行，交 findings，結果寫在 `<run_dir>/ext-<name>.md`。
   - 只能套用唯讀類角色；沒登記守門角色時 `build.py` 會拒絕內嵌。
   - build、merge 段不開放擴充。
 - **halted 時停下交人**：子計劃範圍重疊或相依循環、彙整後默默少了子任務、彙整時改了驗證結果或各分片驗的不是同一個 HEAD，workflow 都會回傳 `halted: true`。
+- **缺件不是「沒有發現」**：任何 agent 沒交件時記為 missing；審查、反駁、比對類的步驟缺件一律 halted（rules.md 規則 26）。各段閘門摘要要列出 missing。
 - **worktree**：
   - epic：`<repo>/.worktrees/<epic>`，分支 `{{BRANCH_PREFIX}}<epic>`。
   - 子任務：`<repo>/.worktrees/<epic>--<task>`，分支 `{{BRANCH_PREFIX}}<epic>--<task>`。
   - 平行修正：`<repo>/.worktrees/<epic>--fix<輪>-<子計劃>`。
   - `.worktrees/` 要加進目標 repo 的 `.gitignore`。
 - **產出**：寫在目標 repo 的 `specs/<epic>/`，有 `specs/_templates/` 就照範本。產出哪些文件照 profile 決定，例如 intent、spec、plan、progress、verifier、design-review、security-review；拆子計劃時另有 `outline.md` 和 `sub/<id>/`。
-- **閘門紀錄**：`python3 .claude/teams/tools/save_run.py init|stage|approve|status <run_dir> …`。全自動流程用 `approve --by policy` 時，工具會讀該段的實際結果：有沒通過的條目、反作弊發現、阻擋性問題、halted，都不能自動核准。
+- **閘門紀錄**：`python3 .claude/teams/tools/save_run.py init|stage|approve|abandon|status <run_dir> …`。
+  - 重存某一段會清掉該段的核准；核准要整條閘門鏈都通過（test 不能跳過 design 的核准）。
+  - 全自動流程用 `approve --by policy` 時，工具會讀該段的實際結果：有沒通過的條目、反作弊發現、阻擋性問題或 blocker／important 發現、skeptic 推翻、agent 缺件、halted，都不能自動核准。plan 段一律由人核准。
+  - 需求取消用 `abandon --reason … --by … --at …`：之後任何一段都不能核准，`publish.py` 也拒絕推送。
 - **維護**：上游變動、需求變動、決策落地、Demo 前檢查發現要開發的事，會產出 intent 草稿，回到 `sdlc-plan`。
 
 ## 交接：JSON 信封
@@ -86,6 +93,8 @@
 - **上游與禁止路徑**：
   - 擋推到 `upstream_repos`、擋對它做 gh 寫入；gh 寫入要明確寫 `--repo <fork_repo>`。
   - 擋寫入、移動、刪除 `forbidden_paths`。
+- **機敏檔**：Read、Grep 與 shell 讀 `.env`、金鑰、憑證的內容一律擋（主 session 也擋）；要判斷有無只能用 `grep -q`。
+- **驗收測試**：`acceptance_test_dirs`（預設 `tests/acceptance`、`e2e`）裡的檔案 dev-implementer 不能寫。
 - **分支**：新分支只能用 `allowed_branch_prefixes`；不 force push、不用 `--no-verify`；不直接推 `protected_branches`。
 - **主 session**：由兩個開關控制。
   - `main_session_git_rules`：分支規則。
@@ -93,8 +102,10 @@
   - `auto_merge` 啟用時，主 session 一律不能合併或核准。
 - **合併與核准**：
   - 核准（`--approve`、API 送 APPROVE）對任何人一律擋。
-  - 合併只放行 `auto_merge.merger_role`（預設 `agent-workflow:dev-merge-steward`），而且必須全部符合：在白名單內、帶 `--match-head-commit`、merge-audit 有相同 SHA 的 merge 紀錄、沒有凍結；上游 repo 另外要有 `upstream_authorized_by`。
-  - 真正的信任邊界在伺服器端（ruleset、gate App 的 required check、CODEOWNERS）。
+  - 合併只放行 `auto_merge.merger_role`（預設 `agent-workflow:dev-merge-steward`），而且必須全部符合：在白名單內、帶 `--match-head-commit`、merge-audit 有相同 SHA 的 merge 紀錄、沒有凍結；上游 repo 另外要有 `upstream_authorized_by`（`{by, link, scope, expires}`，過期或日期讀不懂都算沒有）。
+  - `allowed_skipped_checks`：列在這裡的 check 被 skipped／neutral 時才算通過，預設空＝一律不算通過。
+  - 凍結檔 `freeze_file` 由 tpm-writer 寫 `frozen=true`，解凍由人做。CI 看不到本機的凍結檔，要凍結時人要同時設 repo variable `AGENT_AUTOMERGE_FROZEN`。
+  - 真正的信任邊界在伺服器端（ruleset、gate App 的 required check、CODEOWNERS）；hook 可以被繞過。
 - **角色寫入範圍**：
   - tpm-writer：`writer_dirs` 與 repo 的 `specs/<epic>/*.md`。
   - 其他 tpm-*：`runs_dir`。
@@ -104,6 +115,7 @@
   - 轉呼叫前去掉 git 的 `-C` 等全域選項。
   - worktree 裡沒有 guard 時，改用主 repo 的。
 - **沒有設定檔時**：只套用角色規則，不擋主 session。
+- **hook 失敗時**：跑不起來（找不到 Python、逾時）放行；跑得起來但輸入壞掉或 shell 指令超過 128KB 擋下；guard 模組壞掉改用內建的最小規則（擋 push、合併、approve、GitHub API 寫入）；交件 hook 出錯時放行。要「跑不起來也擋」用 `--hooks project`。
 
 ## hooks 只註冊一次
 
@@ -124,10 +136,11 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `save_run.py` | run 目錄與閘門紀錄：init、stage（存回傳並驗證信封）、approve、status |
 | `check_envelope.py` | 單獨驗證一個信封 |
 | `check_rules.py` | 檢查文件與 commit 是否符合硬規則（`--audience owner|external`、`--git`） |
-| `merge_gate.py` | 確定性的 merge gate：複核需求對照、head SHA、checks、測試數、風險、上限、白名單、凍結，並寫入 `merge-audit.jsonl` |
+| `merge_gate.py` | 確定性的 merge gate：複核需求對照、head SHA（`--reviewed-sha`）、checks、測試數、風險、上限、白名單、凍結，並寫入 `merge-audit.jsonl`。CI 用 `--merged-today`（GitHub API 算的當日合併數）與 `--frozen`（repo variable 的凍結狀態） |
+| `sync_branch.py` | 決定怎麼跟上 base（rebase、merge 或中轉分支），並檢查中轉分支沒有殘留衝突標記與夾帶改動 |
 | `publish.py` | 確定性推送：只推 fork 的功能分支，推送前掃機敏值，依閘門判定後開 PR，並寫入 `publish-audit.jsonl` |
 | `checklist.py` | 可驗證的 checklist：以驗證指令的實際結果打勾 |
-| `check_workflows.mjs` | 乾跑所有 workflow，包括子計劃、分片驗證、平行修正等情境 |
+| `check_workflows.mjs` | 乾跑所有 workflow，包括子計劃、分片驗證、平行修正、缺件等情境（情境在 `tools/scenarios/<workflow>.mjs`） |
 | `check_agents.py` | 檢查 `tpm-*`／`dev-*` agent 的格式 |
 | `schemalib.py` | hook、golden-set、merge gate 共用的驗證器 |
 
@@ -139,11 +152,12 @@ python3 .claude/teams/tools/check_agents.py --plugin-dir <plugin>
 python3 <plugin>/hooks/tests/run.py --project .
 python3 .claude/teams/tools/merge_gate.py --selftest
 python3 .claude/teams/tools/publish.py --selftest
+python3 .claude/teams/tools/sync_branch.py --selftest
 ```
 
 ## 新增一種事件
 1. 照 `event-*.js` 的骨架寫 workflow：拆工或固定角度 → 平行處理 → skeptic → writer。schema 用 `/*@schema:<payload>*/ null /*@end*/` 標記，agentType 寫 `NS + 'tpm-…'`。
-2. 跑 `build.py` 和 `check_workflows.mjs`。
+2. 跑 `build.py` 和 `check_workflows.mjs`；乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
 3. 在 `tpm-team` skill 的事件對照表加一列。
 4. 需要新的 payload 時，放到 `schemas/payloads/`，並在 `golden-set/` 補正例和反例。
 

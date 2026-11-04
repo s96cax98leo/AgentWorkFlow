@@ -89,7 +89,7 @@
     },
     "extensions": {
       "type": "array",
-      "description": "使用者自己的 agent 加進 SDLC 某一段（工作流程擴充，不是開發規範）：和該段內建的 agent 平行執行，交 findings；blocker／important 的發現會擋住政策核准。每個 agent 也要登記在 guard.config.json 的 extension_agents（build.py --check 會核對）。用 /add-agent 設定",
+      "description": "使用者自己的 agent 加進 SDLC 某一段（工作流程擴充，不是開發規範）：和該段內建的 agent 平行執行，交 findings；blocker／important 的發現會擋住政策核准。每個 agent 也要登記在 guard.config.json 的 extension_agents（build.py --check 會核對）。用 add-agent skill（/agent-workflow:add-agent）設定",
       "items": {
         "type": "object",
         "required": ["name", "agent", "stage", "instructions"],

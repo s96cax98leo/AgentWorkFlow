@@ -16,7 +16,7 @@
 3. **不可逆節點一律停下**：寫上游、刪資料、對外寄送、force push，都要{{DECISION_OWNER}}當下同意；先前的同意不延伸到下一次。push 與開 PR 依規則 2；合併依規則 6。無人值守時遇到需要人同意的節點，改成 park（記錄、推播，不等待）。
 4. **禁止路徑只能讀**：`guard.config.json` 的 `forbidden_paths`（{{FORBIDDEN_REPOS}}）不得寫入、移動、刪除。由 `awf_hook.py` 的 `guard-paths`、`guard-shell` 擋。
 5. **機敏檔不讀、不印**：`.env`、金鑰、憑證不讀值、不印出、不提交，也不在本機搜尋或借用別處的 API key、token。要判斷有無只能用 `grep -q`；push 前用 `grep -qF -f <機敏值清單> <diff>` 比對 diff 是否含機敏值，只報「有／沒有」。
-6. **核准與合併 PR 依風險分級**：(a) **核准**：agent 與主 session 一律不核准（`gh pr review --approve`、API 送 APPROVE 都算），沒有例外。(b) **自動合併**：只有 `guard.config.json` 的 `auto_merge.enabled` 為 true 時，`auto_merge.merger_role`（預設 `agent-workflow:dev-merge-steward`，比對含命名空間的完整 agent_type）才能對 `auto_merge.repos` 白名單內、風險等級不超過上限的 PR 執行 `gh pr merge --match-head-commit <sha>`，而且 `merge_gate.py` 對同一個 head SHA 的最後判定必須是 merge、沒有凍結旗標（`auto_merge.freeze_file`）、上游 repo 要有 `upstream_authorized_by` 授權人。auto_merge 的設定變更只走 PR＋CODEOWNERS，由人核准。(c) **其餘一律由人合併**：auto_merge 未啟用、gate 判 hold／escalate、高風險路徑（CI、`.github/`、`.claude/`、hooks、依賴、migration、release、auth、CODEOWNERS）、上游未授權。主 session 一樣不合併；`gh api` 或 curl 打 merge 端點也算。由 `awf_hook.py guard-shell` 擋（Bash 與 PowerShell 都擋）；hook 只是輔助，真正的邊界是 GitHub ruleset 與綁定 gate App 的 required check，見 `docs/自動合併信任模型.md`（AgentWorkFlow 模版）。
+6. **核准與合併 PR 依風險分級**：(a) **核准**：agent 與主 session 一律不核准（`gh pr review --approve`、API 送 APPROVE 都算），沒有例外。(b) **自動合併**：只有 `guard.config.json` 的 `auto_merge.enabled` 為 true 時，`auto_merge.merger_role`（預設 `agent-workflow:dev-merge-steward`，比對含命名空間的完整 agent_type）才能對 `auto_merge.repos` 白名單內、風險等級不超過上限的 PR 執行 `gh pr merge --match-head-commit <sha>`，而且 `merge_gate.py` 對同一個 head SHA 的最後判定必須是 merge、沒有凍結旗標（`auto_merge.freeze_file`）、上游 repo 要有 `upstream_authorized_by` 授權人（可寫 `{by, link, scope, expires}`，過期或日期讀不懂都算沒有授權）。CI 端的 gate 看不到本機凍結檔，改讀 repo variable `AGENT_AUTOMERGE_FROZEN`，要凍結時兩邊都要設。auto_merge 的設定變更只走 PR＋CODEOWNERS，由人核准。(c) **其餘一律由人合併**：auto_merge 未啟用、gate 判 hold／escalate、高風險路徑（CI、`.github/`、`.claude/`、hooks、依賴、migration、release、auth、CODEOWNERS）、上游未授權。主 session 一樣不合併；`gh api` 或 curl 打 merge 端點也算。由 `awf_hook.py guard-shell` 擋（Bash 與 PowerShell 都擋）；hook 只是輔助，真正的邊界是 GitHub ruleset 與綁定 gate App 的 required check，見 `docs/自動合併信任模型.md`（AgentWorkFlow 模版）。
 7. 改目標 repo 時，那個 repo 自己的規範（CLAUDE.md、分支規範、REVIEW.md、hooks）照樣適用；hooks 會轉呼叫 repo 自己的 `guard-git`、`guard-paths`（`.py` 或 bash 腳本）。
 
 ### 內容
@@ -30,7 +30,7 @@
 15. **輸出語言（強約束）**：所有輸出一律使用 **{{OUTPUT_LANGUAGE}}**，包括給使用者的回覆、agent 之間的訊息與派工單、SendMessage、信封的 summary／open_questions／derived_work、文件、commit 訊息內文、推播通知。程式碼識別字、指令、路徑、技術專有名詞保留原文。
 
 ### 流程
-16. **先 plan、後動手**：開發走 AI-native SDLC：intent → design → spec → plan →（測試與實作，先後依開發規範 profile）→ verifier →（設計／安全審查）→ PR 審查 → 人核准。各段做法（產出文件、需求寫法、測試時機、驗證方式）與專案慣例（code style、commit、分支命名、PR 大小、文件格式）由開發規範 profile（`.claude/teams/methodology.json`，init 時依使用者的習慣產生）決定，模版只管流程與閘門。plan、design、test、deliver 四個閘門預設都要{{DECISION_OWNER}}核准才進下一段（plan 閘門一律由人核准，可批次、非同步；design、test、deliver 在專案政策允許時可用政策核准）；之後的 merge 段不設人工閘門，由確定性的 `merge_gate.py` 判定，判定不是 merge 就交{{DECISION_OWNER}}；核准用 `save_run.py approve` 記錄，並在對話裡列重點，不只依賴工具狀態。全自動流程用 `--by policy` 時，工具會讀該段的實際結果：verifier 有不是 pass 的條目、反作弊有發現、有 blocking 待決問題或 blocker／important 發現、workflow 回報 halted，都不能政策核准，要交{{DECISION_OWNER}}。
+16. **先 plan、後動手**：開發走 AI-native SDLC：intent → design → spec → plan →（測試與實作，先後依開發規範 profile）→ verifier →（設計／安全審查）→ PR 審查 → 人核准。各段做法（產出文件、需求寫法、測試時機、驗證方式）與專案慣例（code style、commit、分支命名、PR 大小、文件格式）由開發規範 profile（`.claude/teams/methodology.json`，init 時依使用者的習慣產生）決定，模版只管流程與閘門。plan、design、test、deliver 四個閘門預設都要{{DECISION_OWNER}}核准才進下一段（plan 閘門一律由人核准，可批次、非同步；design、test、deliver 在專案政策允許時可用政策核准）；之後的 merge 段不設人工閘門，由確定性的 `merge_gate.py` 判定，判定不是 merge 就交{{DECISION_OWNER}}；核准用 `save_run.py approve` 記錄，並在對話裡列重點，不只依賴工具狀態。全自動流程用 `--by policy` 時（`--note` 寫政策名稱），工具會讀該段的實際結果：verifier 有不是 pass 的條目、反作弊有發現、有 blocking 待決問題或 blocker／important 發現、skeptic 的 verdicts 有 refuted、agent 缺件（回傳裡有 null 或零信封）、workflow 回報 halted，都不能政策核准，要交{{DECISION_OWNER}}。重存某一段會清掉該段的核准；核准要整條閘門鏈都已通過（不能跳過前面的閘門）。需求取消時用 `save_run.py abandon <run_dir> --reason … --by … --at …` 記錄：之後任何一段都不能核准，`publish.py` 也拒絕推送。
 17. **決策者的回覆照字面讀**：「調整」不是「核准」；附帶意見要先處理再請求核准。
 18. **commit**：格式照開發規範 profile 的 `conventions.commit`（預設 profile 是 Conventional Commits、scope 放 Story ID）；結尾署名行 `{{ATTRIBUTION_LINE}}`。`check_rules.py --git` 檢查署名行；profile 有設 `check_regex` 時也檢查標題格式。
 19. **分支**：新分支只用 `guard.config.json` 的 `allowed_branch_prefixes`（{{ALLOWED_BRANCH_PREFIXES}}）；子任務分支 `{{BRANCH_PREFIX}}<epic>--<sub>`，各開 worktree，檔案所有權不重疊；整合用整合分支，依相依順序合併。不 force push、不 `--no-verify`。建議的分支名不合規時改用允許的前綴並註明。
@@ -64,7 +64,7 @@
 
 ### 規則 ↔ 強制方式
 
-由 `/correct`（`correct` skill）維護：把重複出現的錯誤變成強制機制時加一列。層級：1 架構／確定性工具、2 schema／hook／lint、3 測試、4 文件；只能停在文件層的，強制方式寫「僅文件」。
+由 `correct` skill（`/agent-workflow:correct`）維護：把重複出現的錯誤變成強制機制時加一列。層級：1 架構／確定性工具、2 schema／hook／lint、3 測試、4 文件；只能停在文件層的，強制方式寫「僅文件」。
 
 | 規則 | 強制方式 | 層級 | 證明擋得住的指令 |
 |---|---|---|---|
