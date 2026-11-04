@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-build',
   description: 'AI-native SDLC 第 3 段 Build：依開發規範 profile（methodology）決定測試時機（測試先行＝先寫會失敗的測試；否則實作後補驗證測試）→ 依相依分層、每層子任務在各自 worktree 平行實作 → integrator 合併到 {{BRANCH_PREFIX}}<epic>',
-  whenToUse: 'sdlc-design 的 spec＋plan 核准之後；args 加 subtasks（sdlc-design 回傳的 design.payload.subtasks）；sdlc-sync 走過中轉分支後退回 build 時加 branch（中轉分支名）；halted 後續跑只傳回傳的 remaining_subtasks',
+  whenToUse: 'sdlc-design 的 spec＋plan 核准之後；args 加 subtasks（sdlc-design 回傳的 design.payload.subtasks）；sdlc-sync 走過中轉分支後退回 build 時加 branch（中轉分支名）；halted 後續跑 subtasks 只傳回傳的 remaining_subtasks，並把回傳的 integrated 傳成 args.integrated',
   phases: [
     { title: 'Red', detail: 'profile 的 build.test_first=true 時：dev-acceptance-tester 每個 test 子任務一個，平行寫會失敗的測試，合進整合分支後才實作' },
     { title: 'Implement', detail: 'dev-implementer：同一層的子任務平行，各自 worktree' },
@@ -90,8 +90,10 @@ function layerByDeps(items, o = {}) {
   return { layers, unknown: [], cycle: [] }
 }
 /*@end*/
-// 指向清單外的相依忽略（ignoreUnknown，沿用原本做法）；指向不屬於 Build 的子任務會排不進任何一層，算缺項停下
-const { layers, cycle } = layerByDeps(work, { satisfied: tests.map((s) => s.id), known: ids, ignoreUnknown: true })
+// 相依指向清單外的子任務一律停下（gate 只會更嚴）；續跑時已合進整合分支的子任務由 args.integrated 明列，視為已滿足
+const PRIOR = A.integrated || []
+const { layers, unknown, cycle } = layerByDeps(work, { satisfied: [...tests.map((s) => s.id), ...PRIOR], known: new Set([...ids, ...PRIOR]) })
+if (unknown.length) return { halted: true, halt_reason: `子任務相依指向不存在的子任務：${unknown.join('、')}`, unknown, branch: BRANCH, next: '確認 subtasks 是否完整；續跑時已合進整合分支的子任務要用 args.integrated 列出' }
 if (cycle.length) throw new Error(`子任務相依有循環或缺項：${cycle.join('、')}`)
 log(`${TEST_FIRST ? 'Red（測試先行）' : 'Tests（實作後補驗證測試）'} ${tests.length} 個；實作分 ${layers.length} 層：${layers.map((l) => l.map((s) => s.id).join('+')).join(' → ')}`)
 
@@ -137,8 +139,8 @@ const halt = (reason) => {
   const missing = results.failures.filter((f) => f.result === 'no_result').map((f) => f.where.startsWith('integrate:') ? f.where : `${f.where}:${f.task_id}`)
   return {
     stage: 'build', halted: true, halt_reason: reason, gate: null, missing,
-    integrated: [...integrated], remaining_subtasks: remaining,
-    next: `處理 failures 的原因後續跑：重跑 sdlc-build，args.subtasks 只傳 remaining_subtasks（${remaining.map((s) => s.id).join('、') || '無'}；已合進 ${BRANCH} 的 ${[...integrated].join('、') || '無'} 不要重傳），其他 args 照舊${A.branch ? `（含 branch=${A.branch}）` : ''}。子任務 worktree 已存在會沿用；要從頭重做某個子任務就先移除它的 worktree 與分支。`,
+    integrated: [...PRIOR, ...integrated], remaining_subtasks: remaining,
+    next: `處理 failures 的原因後續跑：重跑 sdlc-build，args.subtasks 只傳 remaining_subtasks（${remaining.map((s) => s.id).join('、') || '無'}），args.integrated 傳已合進 ${BRANCH} 的 [${[...PRIOR, ...integrated].join('、') || '無'}]（不要重傳成 subtasks），其他 args 照舊${A.branch ? `（含 branch=${A.branch}）` : ''}。子任務 worktree 已存在會沿用；要從頭重做某個子任務就先移除它的 worktree 與分支。`,
     ...results,
   }
 }

@@ -21,4 +21,16 @@ export default [
     fakes: { write: () => null },
     expect: (r) => (r.out && !r.out.halted && (r.out.missing || []).includes('write') ? [] : ['writer 缺件要列進 missing']),
   },
+  {
+    // 同一則發現判了多次：每一則都 refuted 才算推翻（只會更嚴）
+    name: 'skeptic 對同一發現判定不一：保留',
+    fakes: {
+      'review:bugs': () => ({ status: 'done', summary: 'x', payload: { findings: [{ id: 'f1', severity: 'important', confidence: 0.9, title: '邊界', file: 'a.py', line: 1, evidence: 'a.py:1' }] } }),
+      'verify:bugs': () => ({ status: 'done', summary: 'x', payload: { verdicts: [{ target_id: 'f1', refuted: true, reason: 'a' }, { target_id: 'f1', refuted: false, reason: 'b' }] } }),
+    },
+    expect: (r) => {
+      const ids = ((r.out || {}).findings || []).map((f) => f.id)
+      return ids.includes('f1') && (r.out || {}).dropped === 0 ? [] : [`判定不一時 f1 應保留：${JSON.stringify({ ids, dropped: (r.out || {}).dropped })}`]
+    },
+  },
 ]

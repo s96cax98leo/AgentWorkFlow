@@ -67,7 +67,7 @@ const PR_SIZE = CONV.pr_size || {}
 const PR_RULE = PR_SIZE.max_files || PR_SIZE.max_lines
   ? `- PR 大小：profile 的上限是 ${[PR_SIZE.max_lines ? `${PR_SIZE.max_lines} 行` : '', PR_SIZE.max_files ? `${PR_SIZE.max_files} 個檔` : ''].filter(Boolean).join('或')}（量法：${PR_SIZE.scope || '依 profile'}）。預計改動超過時，依 PR 大小規劃拆 PR：在 plan 寫拆成幾個依序可合的 PR、每個 PR 含哪些子任務。\n`
   : ''
-// 使用者加進這一段的自己的 agent（profile 的 extensions，用 /add-agent 設定）：和內建 agent 平行執行，交 findings；
+// 使用者加進這一段的自己的 agent（profile 的 extensions，用 add-agent skill 設定）：和內建 agent 平行執行，交 findings；
 // blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
 const EXT = (MP.extensions || []).filter((e) => e.stage === 'design')
 const extJob = (e, ctx, phaseName) => () => agent(

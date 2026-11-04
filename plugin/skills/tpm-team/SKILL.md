@@ -104,7 +104,7 @@ agent 沒交件（失敗、逾時、被中止）不等於「沒有發現」。�
 |---|---|---|
 | plan | 把 intent.md 的重點與 skeptic 的質疑列給使用者 | 使用者核准 intent。要送上游的需求，intent 要 `{{DECISION_OWNER}}` 核准，並記錄由誰核准 |
 | design | 把 spec 的驗收條件、子任務與相依圖、analyze 的發現列給使用者；有拆子計劃時一併列出子計劃（範圍、相依）與拆的理由 | 使用者核准 spec＋plan（退回時走 `sdlc-design-revise`） |
-| build | 沒有閘門，直接進 sync。halted 時停下交人，處理 failures 後用 `subtasks=remaining_subtasks` 重跑（已合進整合分支的不重傳） | — |
+| build | 沒有閘門，直接進 sync。halted 時停下交人，處理 failures 後用 `subtasks=remaining_subtasks`、`integrated=<回傳的 integrated>` 重跑（已合進整合分支的不重傳；相依指向清單外又沒列在 integrated 的子任務會停下） | — |
 | sync | 沒有閘門。列出選到的策略（none、rebase、merge、transit）與理由；transit 時列出衝突檔與分類。halted 時停下交人 | strategy 不是 none 時 head 已變，test 要驗同步後的 head；走了中轉分支時的 `branch` 規則見下方「sdlc-sync 之後」 |
 | test | 列出 pass／fail／not_verifiable 與審查發現 | 使用者確認結果（fail 或 not_verifiable 要人決定） |
 | deliver | 列出審查發現、PR 說明草稿、執行紀錄 | **推 fork、開 PR 要使用者當下同意**；寫入上游要另外再同意一次；agent 不核准 |

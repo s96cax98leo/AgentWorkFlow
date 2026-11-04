@@ -15,7 +15,7 @@
   --upgrade   升級已 init 過的專案（建議的更新方式）：模版檔一律換成這版（含你改過的工具檔），使用者的設定保留：
                 .claude/teams/methodology.json：不動；列出這版內建 profile 新增、你的 profile 還沒有的欄位與預設值
                 .claude/teams/guard.config.json：你的值一律保留，只補上這版新增的鍵（說明文字 _說明 換成新版）
-                .claude/teams/rules.md：「## 專案規則」段（含 /correct 的對照表）之後保留，前面的通用規則更新
+                .claude/teams/rules.md：「## 專案規則」段（含 correct skill 的對照表）之後保留，前面的通用規則更新
                 CLAUDE.md（init 產生的）與 .claude/teams/agent-workflow.CLAUDE.md：「## 專案特定」段之後保留
               沒給 --config 時用 init 記下的 .claude/teams/workflow.config，不詢問。會顯示 .claude/teams/VERSION 的舊版 → 新版
   --adopt-new-fields

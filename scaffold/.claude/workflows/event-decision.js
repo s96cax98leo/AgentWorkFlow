@@ -29,14 +29,14 @@ function haltMissing(base, stage, missing, extra = {}) {
 
 // 把 verdicts（target_id 對事項 id）對回 list。
 // 預設：skeptic 沒判到的事項當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時以最後一則為準。
-// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留），同一 target_id 只要有一則 refuted 就算推翻。
+// opts.unansweredKept＝true：只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻（只會更嚴）。
 // 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
 function judgeVerdicts(list, challenge, opts = {}) {
   const verdicts = (((challenge || {}).payload || {}).verdicts) || []
   const last = new Map(verdicts.map((x) => [x.target_id, x]))
-  const anyRefuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
   const ok = opts.unansweredKept
-    ? (i) => !anyRefuted.has(i.id)
+    ? (i) => !last.has(i.id) || upheld.has(i.id)
     : (i) => last.has(i.id) && !last.get(i.id).refuted
   return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !last.has(i.id)).map((i) => i.id) }
 }

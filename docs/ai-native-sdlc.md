@@ -103,7 +103,7 @@
 | args | 同上，加 `subtasks`（design 回傳的 `design.payload.subtasks`） |
 | agent | `dev-acceptance-tester`（Red）→ `dev-implementer`（每層平行）→ `dev-integrator`（每層） |
 | 重試 | 每個子任務 `blocked` 時最多重派 2 次，並附上一輪的結果；`needs_decision` 不重試，直接交人 |
-| 停止 | 任何一層有子任務沒完成就 halted，停下交人，不往下一層走；處理完後用回傳的 `remaining_subtasks` 當 `subtasks` 重跑。整合時有衝突走中轉分支 |
+| 停止 | 任何一層有子任務沒完成就 halted，停下交人，不往下一層走；處理完後用回傳的 `remaining_subtasks` 當 `subtasks`、`integrated` 當 `integrated` 重跑；相依指向清單外又沒列在 `integrated` 的子任務一律停下。整合時有衝突走中轉分支 |
 | 閘門 | 沒有，直接進 test |
 
 ### 同步段（`sdlc-sync`）

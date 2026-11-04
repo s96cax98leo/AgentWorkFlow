@@ -44,4 +44,28 @@ export default [
       return o.halted && (o.missing || []).includes('integrate:layer1') && rem.includes('t1') && rem.includes('t2') ? [] : [`integrator 缺件應 halted 並把沒合進去的 t1、t2 留在 remaining：${JSON.stringify({ halted: o.halted, missing: o.missing, rem })}`]
     },
   },
+  {
+    // 相依指向清單外的子任務：一律停下，不派任何實作
+    name: '相依指向不存在的子任務：halted',
+    args: { subtasks: [{ id: 't2', title: '前端', kind: 'code', owns: ['apps/b.tsx'], depends_on: ['tX'], acceptance: ['vitest b'] }] },
+    expect: (r) => {
+      const o = out(r)
+      const errs = []
+      if (!o.halted || !/tX/.test(o.halt_reason || '')) errs.push(`應 halted 並寫出 tX：${JSON.stringify({ halted: o.halted, why: o.halt_reason })}`)
+      if (r.labels.some((l) => l.startsWith('Implement:'))) errs.push('停下前不該派實作')
+      return errs
+    },
+  },
+  {
+    // 續跑：只傳 remaining_subtasks，已合進去的 t1 用 args.integrated 列出，t3 才排得進去
+    name: '續跑：args.integrated 列出已合進去的子任務',
+    args: { subtasks: [{ id: 't3', title: '整合畫面', kind: 'code', owns: ['apps/c.tsx'], depends_on: ['t1', 't2'], acceptance: ['e2e c'] }], integrated: ['t1', 't2'] },
+    expect: (r) => {
+      const o = out(r)
+      const errs = []
+      if (o.halted) errs.push(`不該中斷：${o.halt_reason}`)
+      if (!r.labels.includes('Implement:t3')) errs.push(`沒有派 t3：${r.labels.join(',')}`)
+      return errs
+    },
+  },
 ]
