@@ -48,7 +48,9 @@ argument-hint: <agent 名稱或想做的事（可省略）>
    | `tpm-reviewer`（預設，最嚴） | 只能寫 run 目錄 | 大部分審查、檢查 |
    | `tpm-researcher` | 只能寫 run 目錄 | 調研 |
    | `tpm-skeptic` | 只能寫 run 目錄 | 反駁、挑錯 |
-   | `dev-verifier`、`dev-pr-reviewer`、`dev-security-reviewer`、`dev-design-reviewer` | 目標 repo 與 run 目錄 | 要在 repo 裡留報告的檢查 |
+   | `dev-verifier`、`dev-security-reviewer`、`dev-design-reviewer` | 目標 repo 與 run 目錄 | 要在 repo 裡留報告的檢查 |
+
+   `dev-pr-reviewer` 是舊名，已併入 `tpm-reviewer`，照 `tpm-reviewer` 套用（只能寫 run 目錄）。
 
    不論選哪個，都不能 push、不能對 GitHub 寫入、不能合併或核准；填其他值會被當成 `tpm-reviewer`。
 3. **派工內容**（`instructions`）：要檢查或調研什麼、依據哪些檔、什麼算 blocker／important、什麼只算 nit。寫成一段自足的派工單，不要依賴對話脈絡。
