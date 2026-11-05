@@ -30,7 +30,7 @@ argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 
 
 | 使用者說的 | 事件 | workflow | 必要 args |
 |---|---|---|---|
-| 開發、實作、照 Story／需求做 | 需求開發（SDLC） | `sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge` | repo、epic、requirement、base、run_dir |
+| 開發、修 bug、改需求、重構、升依賴、改文件、補測試、效能、調研、回退 | 需求開發（SDLC，依 recipe 分流，見 §1.1） | `sdlc-plan` 先 triage，再依 recipe 走 `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge` 中的必要段 | repo、epic、requirement、base、run_dir（可加 recipe、modifiers、size） |
 | 跑簡報、照 `{{TASK_ID_PREFIX}}xxxx` 做 | 簡報 | `event-brief`（裡面的程式子任務再走 SDLC） | brief、run_dir |
 | 上游、main 前進、CI 失敗 | 上游變動 | `event-upstream` | what、repo、run_dir |
 | 會議、逐字稿 | 會議 | `event-meeting` | source、run_dir |
@@ -40,7 +40,7 @@ argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 
 | demo 前、彩排 | Demo 前檢查 | `event-demo-check` | target、run_dir（可加 script、date） |
 | 要比較 ≥3 個方案、要給決策者選 | 方案辯論 | `team-debate` skill | — |
 | design 段被退回要改 | 設計修訂（stage 仍記 `design`） | `sdlc-design-revise` | repo、epic、run_dir、decisions、issues（有子計劃時加 sub_plans） |
-| 線上出事要緊急修 | hotfix（見 §3.2） | `sdlc-plan` → … → `sdlc-merge`，不跳段 | 同需求開發 |
+| 線上出事要緊急修 | hotfix（見 §3.2） | `sdlc-plan`（recipe=hotfix）→ build → test → deliver → merge，結案前要開後續 run | 同需求開發 |
 | 需求取消、不做了 | 取消 run | `save_run.py abandon`（見 §3.1） | run_dir、原因 |
 | 分支落後 main、PR 有衝突、要跟上 main | 跟上 base（SDLC 同步段） | `sdlc-sync` | repo、epic、run_dir（可加 base、branch、strategy、date、pr） |
 | 合併這個 PR、PR 開好了要合 | 合併（SDLC 合併段） | `sdlc-merge` | repo、pr、run_dir（可加 gh_repo、base、epic、evidence、requirements、findings、tests_before、tests_after） |
@@ -55,6 +55,34 @@ argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 
 - 簡報檔在 `{{BRIEFS_DIR}}/`；任務編號照簡報原文，**不自編編號**（編號由 `{{TASK_AUTHORITY}}` 給）。
 - 目標 repo 只能是 `{{REPOS_DIR}}/` 下我方的 clone（例如 `{{FORK_REPO}}` 的本機 clone）；`{{FORBIDDEN_REPOS}}` 一律拒絕。
 - 客戶資料邊界：不同客戶的目錄不得交叉引用。
+
+### 1.1 SDLC 依需求類型分流（recipe）
+
+完整 SDLC 很耗時間與 token，所以 `sdlc-plan` 第一步先理解需求（triage：派 1 個 `tpm-planner`），建議這次走哪個 recipe；**由人在 plan 閘門選定，工具只准往上升級**。recipe 定義在開發規範 profile 的 `recipes`／`modifiers`（使用者可改），內建 11 個：
+
+| recipe | 情境 | 走的段 | plan 段做法（plan_mode） |
+|---|---|---|---|
+| feature | 新功能 | plan → design → build → sync → test → deliver → merge | feature（size=small 時調研 2 個角度、不拆子計劃） |
+| bugfix | 回報 bug、錯誤行為 | plan → build → sync → test → deliver → merge | diagnose：重現、根因（附 檔案:行號）；修正＋回歸測試 |
+| change | 需求變更（CR）、改既有功能 | 全部 7 段 | impact：先盤點既有驗收條件要改、留、刪哪些；design 只寫差異；test 加跑受影響舊驗收條件的回歸 |
+| hotfix | 線上事故 | plan → build → test → deliver → merge | diagnose（1 個調研角度）；**結案前一定要開後續 run** |
+| refactor | 不改行為的重構 | plan → build → sync → test → deliver → merge | invariants：列出不能改變的行為，驗行為等價 |
+| deps | 依賴升級 | plan → build → sync → test → deliver → merge | changelog：破壞性變更；一定做安全審查 |
+| docs | 只改文件、說明、文案 | plan → build → deliver → merge | research（1 個）；build 只能有 doc 子任務 |
+| test-only | 補測試、修 flaky | plan → build → test → deliver → merge | research（1 個）；不能改產品程式 |
+| perf | 效能 | 全部 7 段 | baseline：先量基線，前後對照 |
+| spike | 調研、可行性 | plan | research；不能推送 |
+| revert | 合併後回退 | plan → build → test → deliver → merge | revert：讀 `event-post-merge` 的提案；build 只跑 git revert |
+
+modifiers 疊在 recipe 上、只會加嚴：`ui`（一定設計審查）、`security`（一定安全審查）、`migration`（加回 design 段與回滾計畫）、`public_api`（加回 design 段檢查相容性）、`large`（四個調研角度、可拆子計劃）。
+
+- **不管哪個 recipe，都不能省**：plan 段的 intent（必要節由 `save_run.py stage plan` 檢查，缺節不能核准）、plan 閘門的人工核准、每張派工單引用 `rules.md`、每個 agent 的執行紀錄、`merge_gate.py`、只推 fork。
+- **使用者已經講明類型**（例如「修這個 bug」「CR：…」）時，args 直接帶 `recipe`（與 `modifiers`、`size`），`sdlc-plan` 不派 triage。**續跑**既有的 run 時，從 `run.json` 的 `recipe` 帶入，不重新分類。
+- **plan 閘門要列**：triage 的理解與理由（附出處）、信心與替代選項、選定的 recipe 與要走的段、預估派幾個 agent、執行紀錄索引的路徑。triage 信心低（< 0.7）時 workflow 會先用 feature，請使用者在閘門選。
+- **之後的段**：args 一律帶同一組 `recipe`、`modifiers`、`size`（取自 `run.json`）；各段回傳的 `next` 依 recipe 指向下一段，沒有的段不跑。沒有 design 段的 recipe，`sdlc-plan` 會回傳 `subtasks`，直接交給 `sdlc-build`；驗收條件以 intent.md 為準。
+- **升級（escalate）**：中途發現範圍比想的大（例如 docs 其實要改程式、bugfix 碰到 migration），用
+  `python3 .claude/teams/tools/save_run.py escalate <run_dir> --recipe <名> [--modifiers a,b] --by <誰> --at <ISO 時間> --reason "<理由>"`。
+  只准加嚴；新加的段之後已做完的段會改成 stale，要重跑。降級一律拒絕，要降級只能 abandon 後重開 run。`publish.py` 與 `merge_gate.py --recipe` 會用實際的 diff 反查，recipe 不夠就拒推／hold，提示用 escalate。
 
 ### 各事件的準備
 
@@ -110,7 +138,7 @@ agent 沒交件（失敗、throw、逾時、被中止）不等於「沒有發現
 | deliver | 列出審查發現、PR 說明草稿、執行紀錄 | **推 fork、開 PR 要使用者當下同意**；寫入上游要另外再同意一次；agent 不核准 |
 | merge | 列出需求對照表、skeptic 判出的不一致、gate 理由；未合併時列出新需求文件（`<run_dir>/followups/`） | 進入 merge 段要使用者同意（guard.config.json 的 `auto_merge` 要已啟用）。只有 `dev-merge-steward` 能合併，而且要 `merge_gate.py` 判 merge；不一致時 PR 已退回，新需求走 `event-reqs-change`（需求要改）或回到 SDLC 對應段落（實作要補），修好後重跑 `sdlc-merge`。合併後跑 `event-post-merge` |
 
-- 每段的閘門重點都要列出回傳的 `missing`（見 §2「缺件與 halted」）。
+- 每段的閘門重點都要列出回傳的 `missing`（見 §2「缺件與 halted」），以及 `save_run.py stage` 產生的執行紀錄索引（`<run_dir>/<段>/執行紀錄索引.md`）：每個 agent 的紀錄檔與成果檔，使用者靠這些文件確認正確性。紀錄檔缺了算缺件，不能政策核准。
 - 閘門重點一定要**在對話裡列出來**，不能只依賴工具狀態；工具可能把計畫記成「已核准」但決策者沒看到。
 - 段與段之間核准後才進下一段；使用者回「調整」不是核准。決策需要決策者時用 PushNotification 推到手機。
 - design 退回時跑 `sdlc-design-revise`：它記在 `design` 段（回傳 `stage: 'design'`、`round: 'revise'`），`save_run.py stage` 用 stage 名稱 `design`，核准也記在 `design`。
@@ -144,9 +172,10 @@ python3 .claude/teams/tools/save_run.py abandon <run_dir> --reason "<為什麼�
 
 ### 3.2 hotfix
 
-hotfix 一樣走完整的 SDLC（plan → design → build → sync → test → deliver → merge），不跳段，只是範圍縮到修這一個問題：
-- 可以縮短的：intent 與 spec 只寫這個缺陷的重現、預期行為與驗收條件；design 不拆子計劃；只派必要的審查。
-- **不能省的閘門**：intent 核准、spec＋plan 核准、test 結果確認（要有重現缺陷的測試，修正後轉綠）、推 fork／開 PR 的當下同意，以及 merge 段的需求對照與 `merge_gate.py`。不用 `--by policy` 跳過人。
+hotfix 用 `recipe=hotfix`：plan → build → test → deliver → merge（沒有 design、sync），範圍縮到修這一個問題：
+- intent 只寫這個缺陷的現象、重現步驟、預期行為、根因與驗收條件（缺節不能核准）；deliver 只審 bugs 軸。
+- **不能省的閘門**：intent 核准（一律由人）、test 結果確認（要有重現缺陷的測試，修正後轉綠）、推 fork／開 PR 的當下同意，以及 merge 段的需求對照與 `merge_gate.py`。不用 `--by policy` 跳過人。
+- **後續 run**：hotfix 跳過的 design、sync 與完整審查，要另開一個 run（通常 recipe=bugfix 或 change）補齊。記錄：`python3 .claude/teams/tools/save_run.py followup <run_dir> --run <後續 run 目錄> --by <誰> --at <ISO 時間>`；沒有記錄後續 run 時 `save_run.py close` 會拒絕結案。
 - 合併後一律跑 `event-post-merge` 監看。凍結期間不跑合併，hotfix 也一樣，由人解凍或由人合併。
 
 ### 3.3 事件轉 SDLC 的交接（to_sdlc）
