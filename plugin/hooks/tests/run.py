@@ -905,6 +905,28 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     pair(0, "I5 tpm-researcher 讀 test.json 放行", "cat _tpm/runs/x/test.json", "Get-Content _tpm/runs/x/test.json", agent=RSR)
     pair(0, "I5 主 session 用 shell 寫 test.json 放行", "echo '{}' > _tpm/runs/x/test.json", "Set-Content -Path _tpm/runs/x/test.json -Value '{}'")
 
+    # I7：runs_dir 底下的 context.md 與任何位置的 執行紀錄索引.md，所有 team agent 都不能寫；主 session 放行
+    for who in (WRT, IMP):
+        short = who.rsplit(":", 1)[-1]
+        tool(2, f"I7 {short} Write context.md", "Write", {"file_path": str(H1W / "_tpm/runs/x/context.md")}, who)
+        tool(2, f"I7 {short} Edit context.md", "Edit", {"file_path": str(H1W / "_tpm/runs/x/context.md")}, who)
+        tool(2, f"I7 {short} Write 執行紀錄索引.md", "Write", {"file_path": str(H1W / "_tpm/runs/x/執行紀錄索引.md")}, who)
+        tool(2, f"I7 {short} Write repo 裡的 執行紀錄索引.md", "Write", {"file_path": str(H1R / "docs/執行紀錄索引.md")}, who)
+        pair(2, f"I7 {short} 用 shell 寫 context.md", "echo x >> _tpm/runs/x/context.md",
+             "Add-Content -Path _tpm/runs/x/context.md -Value x", agent=who)
+        pair(2, f"I7 {short} cd 進 run 目錄再寫 context.md", "cd _tpm/runs/x && echo x > context.md",
+             "Set-Location _tpm/runs/x; Set-Content -Path context.md -Value x", agent=who)
+        pair(2, f"I7 {short} 用 shell 寫 執行紀錄索引.md", "cp a.md repos/app/執行紀錄索引.md",
+             "Copy-Item a.md repos/app/執行紀錄索引.md", agent=who)
+        pair(0, f"I7 {short} 讀 context.md 放行", "cat _tpm/runs/x/context.md", "Get-Content _tpm/runs/x/context.md", agent=who)
+    tool(0, "I7 tpm-writer 寫 runs_dir/<run>/deliver/x.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/deliver/x.md")}, WRT)
+    tool(0, "I7 dev-implementer 寫 repo 的 context.md 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "docs/context.md")}, IMP)
+    tool(0, "I7 主 session Write context.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/context.md")})
+    tool(0, "I7 主 session Write 執行紀錄索引.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/執行紀錄索引.md")})
+    pair(0, "I7 tpm-writer 用 shell 寫 runs_dir/<run>/deliver/x.md 放行", "echo x > _tpm/runs/x/deliver/x.md",
+         "Set-Content -Path _tpm/runs/x/deliver/x.md -Value x", agent=WRT)
+    pair(0, "I7 主 session 用 shell 寫 context.md 放行", "echo x > _tpm/runs/x/context.md", "Set-Content -Path _tpm/runs/x/context.md -Value x")
+
     # ------------------------------------------------------------ 交件信封
     E = "envelope"
     ok_env = '{"status":"done","summary":"s","artifacts":[],"evidence":[],"confidence":0.9,"open_questions":[],"derived_work":[],"payload":{}}'

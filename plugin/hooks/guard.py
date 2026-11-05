@@ -610,6 +610,9 @@ RUN_STAGES = frozenset({
 RUN_STATE_FILES = frozenset({"run.json", *(f"{s}.json" for s in RUN_STAGES)})
 STAGE_JSON_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:" + "|".join(re.escape(s) for s in sorted(RUN_STAGES, key=len, reverse=True))
                                  + r")\W{0,16}\.json\b", re.I)
+# context.md（runs_dir 底下，所有 agent 共用的背景，能寫等於持久注入指令）與執行紀錄索引.md（任何位置）只由主 session 跑 save_run.py 產生
+CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])context\W{0,16}\.md\b", re.I)
+RUN_INDEX_FRAGMENT = re.compile(r"執行紀錄索引")
 
 
 def agent_writes_state(seg: str, cwd: Path | None = None) -> bool:
@@ -617,10 +620,13 @@ def agent_writes_state(seg: str, cwd: Path | None = None) -> bool:
     cwd 在 runs_dir 底下時也算「在 run 目錄裡」（cd 進去再寫 test.json）。<段>.json 只在 run 目錄的情境下比對（避免誤擋 repo 裡的 test.json）。"""
     in_runs_cwd = bool(RUNS) and cwd is not None and fold((rel_to_workspace(cwd) or "") + "/").startswith(fold(RUNS))
     near_runs = in_runs_cwd or (bool(RUNS) and fold(RUNS.rstrip("/")) in fold(norm(seg)))
+    probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", seg, flags=re.I)
+    # 執行紀錄索引.md 不論在哪個目錄都擋（不需要 run 目錄的情境）
+    if RUN_INDEX_FRAGMENT.search(probe) and (WRITE_API.search(probe) or SHELL_WRITE.search(probe)):
+        return True
     if not (INTERP.search(seg) or near_runs):
         return False
-    probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", seg, flags=re.I)
-    frag = STATE_FRAGMENT.search(probe) or (near_runs and STAGE_JSON_FRAGMENT.search(probe))
+    frag = STATE_FRAGMENT.search(probe) or (near_runs and (STAGE_JSON_FRAGMENT.search(probe) or CONTEXT_FRAGMENT.search(probe)))
     return bool(frag and (WRITE_API.search(probe) or SHELL_WRITE.search(probe)))
 
 
@@ -1487,6 +1493,10 @@ def check_paths(data: dict) -> None:
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
     if role and RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in RUN_STATE_FILES:
         block(f"{agent} 不能寫 {path.name}（{RUNS} 底下的 run.json、<段>.json 是 save_run.py 寫的閘門資料，publish.py 與政策核准會重讀）")
+    if role and ((RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) == "context.md")
+                 or fold(path.name) == fold("執行紀錄索引.md")):
+        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md 是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
+              "都只由主 session 跑 save_run.py 產生）")
     if role in awf_config.RECORD_ONLY_ROLES:
         # 只寫執行紀錄的角色：只能寫 <runs_dir>/<run>/<段>/<檔名>.md（白名單，照原樣比對；至少兩層子目錄，上一層是段名）；
         # run.json、<段>.json、稽核紀錄、凍結檔已在上面擋；context.md、執行紀錄索引.md 是 save_run.py 產生的，也不能寫。
