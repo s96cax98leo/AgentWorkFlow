@@ -1,6 +1,6 @@
 // sdlc-build.js 的乾跑情境：走預設乾跑碰不到的分支。
 
-import { SAMPLE_SUBTASKS, recipeScenarios } from './_helpers.mjs'
+import { FIX_SUBTASKS, SAMPLE_SUBTASKS, recipeScenarios } from './_helpers.mjs'
 
 const NONE = () => null
 const out = (r) => r.out || {}
@@ -114,7 +114,7 @@ export default [
   },
   // recipe：每個包含 build 的內建 recipe 一個情境；子任務種類要符合 build_kinds（docs 只有 doc、test-only 只有 test）
   ...recipeScenarios('build', (n) => ({
-    args: n === 'docs' ? { subtasks: SAMPLE_SUBTASKS('doc') } : n === 'test-only' ? { subtasks: SAMPLE_SUBTASKS('test') } : n === 'revert' ? { revert_commits: ['abc1234'] } : {},
+    args: n === 'bugfix' || n === 'hotfix' ? { subtasks: FIX_SUBTASKS() } : n === 'docs' ? { subtasks: [{ id: 't0', title: '改文件', kind: 'doc', owns: ['docs/a.md'], depends_on: [], acceptance: ['連結檢查通過'] }] } : n === 'test-only' ? { subtasks: SAMPLE_SUBTASKS('test') } : n === 'revert' ? { revert_commits: ['abc1234'] } : {},
     expect: n === 'revert'
       ? (r) => Object.entries(r.prompts).filter(([l]) => l.startsWith('Implement')).every(([, p]) => /git revert --no-edit abc1234/.test(p) && !/讓已合進整合分支的驗收測試轉綠/.test(p)) ? [] : ['revert 的實作派工單要只跑 git revert abc1234']
       : undefined,

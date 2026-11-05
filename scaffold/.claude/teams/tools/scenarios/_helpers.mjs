@@ -53,6 +53,11 @@ export const SAMPLE_SUBTASKS = (kind) => [
   { id: 't2', title: '前端', kind: 'code', owns: ['apps/b.tsx'], depends_on: [], acceptance: ['vitest b'] },
   { id: 't3', title: '整合畫面', kind: 'code', owns: ['apps/c.tsx'], depends_on: ['t1', 't2'], acceptance: ['e2e c'] },
 ].map((s) => (kind ? { ...s, kind } : s))
+// 小修正的典型子任務（重現測試＋修正一支程式）：bugfix、hotfix 的情境用它，量測才貼近實際派工數
+export const FIX_SUBTASKS = () => [
+  { id: 't0', title: '重現測試', kind: 'test', owns: ['tests/test_a.py'], depends_on: [], acceptance: ['重現測試先紅'] },
+  { id: 't1', title: '修正', kind: 'code', owns: ['services/a.py'], depends_on: ['t0'], acceptance: ['重現測試轉綠'] },
+]
 // recipe 的下一段（沒有就 null）
 export const recipeNextOf = (name, stage) => { const s = RECIPE_STAGES[name]; const i = s.indexOf(stage); return i >= 0 && i + 1 < s.length ? s[i + 1] : null }
 // 回傳的 next 要指向 recipe 的下一段（merge 不檢查字面），也不能提到 recipe 沒有的 design／sync
