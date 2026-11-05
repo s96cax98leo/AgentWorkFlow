@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-build',
   description: 'AI-native SDLC 第 3 段 Build：依開發規範 profile（methodology）決定測試時機（測試先行＝先寫會失敗的測試；否則實作後補驗證測試）→ 依相依分層、每層子任務在各自 worktree 平行實作 → integrator 合併到 {{BRANCH_PREFIX}}<epic>',
-  whenToUse: 'sdlc-design 的 spec＋plan 核准之後；args 加 subtasks（sdlc-design 回傳的 design.payload.subtasks）；sdlc-sync 走過中轉分支後退回 build 時加 branch（中轉分支名）；halted 後續跑 subtasks 只傳回傳的 remaining_subtasks，並把回傳的 integrated 傳成 args.integrated',
+  whenToUse: 'sdlc-design 的 spec＋plan 核准之後（recipe 沒有 design 段時是 sdlc-plan 核准之後）；args 加 subtasks，可加 recipe／modifiers／size（沒給＝feature）、revert_commits（recipe=revert 要 revert 的 commit）（sdlc-design 回傳的 design.payload.subtasks）；sdlc-sync 走過中轉分支後退回 build 時加 branch（中轉分支名）；halted 後續跑 subtasks 只傳回傳的 remaining_subtasks，並把回傳的 integrated 傳成 args.integrated',
   phases: [
     { title: 'Red', detail: 'profile 的 build.test_first=true 時：dev-acceptance-tester 每個 test 子任務一個，平行寫會失敗的測試，合進整合分支後才實作' },
     { title: 'Implement', detail: 'dev-implementer：同一層的子任務平行，各自 worktree' },
@@ -116,12 +116,128 @@ const CODE_STYLE = CONV.code_style ? `code style：${CONV.code_style.description
 
 const A = args || {}
 for (const k of ['repo', 'epic', 'run_dir', 'subtasks']) if (!A[k]) throw new Error(`缺 args.${k}`)
+// recipe（需求類型）：args.recipe／modifiers／size 決定這次走哪些段、派哪些角色；沒給 recipe＝feature（完整流程，和改版前一樣）
+/*@snippet:recipe*/
+// ── 片段 recipe（.claude/teams/tools/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 規則和 tools/recipe.py 完全一致（golden-set/recipes/*.json 兩邊都跑，結果要相同）：
+//   profile 沒有 recipes（舊版）或指定的 recipe 不存在 → 當成 feature 完整流程（只會更嚴）；
+//   每個 recipe 都有 plan 段（intent 不能省）；size=small 套 recipe 的 small 覆寫；modifiers 只會加嚴；
+//   不認得的 modifier 記在 errors（呼叫端要停下交人）。
+
+function recipeSdlc() { return ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge'] }
+function recipeLevel(x) { return ({ never: 0, auto: 1, always: 2 })[x] ?? 1 }
+function recipeFallbackFeature() {
+  return {
+    description: '新功能：完整 7 段（改版前的預設流程）', stages: recipeSdlc(), plan_mode: 'feature',
+    research_angles: ['requirement', 'specs-adr', 'code-contracts', 'upstream'], design_lenses: ['coverage', 'plan', 'system-design'],
+    test: { design_review: 'auto', security_review: 'auto', modes: ['verify'] }, deliver_axes: ['standards', 'spec', 'bugs', 'history'],
+    build_kinds: ['code', 'test', 'doc'], publishable: true, followup: false, split: true,
+  }
+}
+function recipeBuiltinModifiers() {
+  return {
+    ui: { description: '有畫面改動：一定做設計審查', test: { design_review: 'always' } },
+    security: { description: '有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查', test: { security_review: 'always' }, deliver_axes: ['bugs'] },
+    migration: { description: '資料庫 migration：強制 design 段與回滾計畫、一定做安全審查', add_stages: ['design'], design_lenses: ['coverage', 'plan', 'rollback'], test: { security_review: 'always', modes: ['regression'] } },
+    public_api: { description: '公開 API 或對外契約：強制 design 段檢查相容性，deliver 加歷史軸', add_stages: ['design'], design_lenses: ['coverage', 'plan', 'compat'], deliver_axes: ['spec', 'history'] },
+    large: { description: '範圍大：允許拆子計劃、調研四個角度全開', research_angles: ['requirement', 'specs-adr', 'code-contracts', 'upstream'], split: true },
+  }
+}
+function recipeOrder(stages) { const s = new Set(stages || []); return recipeSdlc().filter((x) => s.has(x)) }
+function recipeUnion(a, b) { const out = [...(a || [])]; for (const x of b || []) if (!out.includes(x)) out.push(x); return out }
+function recipeStricter(a, b) { return recipeLevel(a) >= recipeLevel(b) ? a : b }
+
+// 回 { name, requested, resolved_from, modifiers, size, errors, stages, plan_mode, research_angles, design_lenses, test, deliver_axes, build_kinds, publishable, followup, split }
+function resolveRecipe(profile, name, modifiers, size) {
+  const recipes = (profile || {}).recipes || {}
+  const modsDef = (profile || {}).modifiers || {}
+  const hasRecipes = Object.keys(recipes).length > 0
+  const hasMods = Object.keys(modsDef).length > 0
+  const errors = []
+  const requested = name || 'feature'
+  let base, used, src
+  if (recipes[requested]) { base = recipes[requested]; used = requested; src = 'profile' }
+  else if (recipes.feature) { base = recipes.feature; used = 'feature'; src = name && name !== 'feature' ? `profile（${requested} 不存在，當成 feature）` : 'profile' }
+  else { base = recipeFallbackFeature(); used = 'feature'; src = !hasRecipes ? 'fallback（profile 沒有 recipes）' : `fallback（${requested} 不存在）` }
+  const r = JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'small'))))
+  const t = r.test || {}
+  r.test = { design_review: t.design_review || 'auto', security_review: t.security_review || 'auto', modes: [...(t.modes || [])] }
+  if (!r.research_angles) r.research_angles = []
+  if (!r.design_lenses) r.design_lenses = []
+  if (!r.deliver_axes) r.deliver_axes = []
+  if (!r.build_kinds) r.build_kinds = ['code', 'test', 'doc']
+  if (r.publishable === undefined) r.publishable = true
+  if (r.followup === undefined) r.followup = false
+  if (r.split === undefined) r.split = false
+  if (!(r.stages || []).includes('plan')) errors.push(`recipe ${used} 沒有 plan 段（intent 不能省），改加上 plan`)
+  r.stages = recipeOrder(['plan', ...(r.stages || [])])
+  if (size === 'small' && base.small && typeof base.small === 'object') {
+    if (base.small.research_angles) r.research_angles = [...base.small.research_angles]
+    if (base.small.split !== undefined) r.split = !!base.small.split
+  }
+  const applied = []
+  const builtin = recipeBuiltinModifiers()
+  for (const m of modifiers || []) {
+    const md = modsDef[m] || (!hasMods ? builtin[m] : undefined)
+    if (!md) { errors.push(`不認得的 modifier：${m}`); continue }
+    applied.push(m)
+    r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages))
+    r.research_angles = recipeUnion(r.research_angles, md.research_angles)
+    r.design_lenses = recipeUnion(r.design_lenses, md.design_lenses)
+    r.deliver_axes = recipeUnion(r.deliver_axes, md.deliver_axes)
+    const mt = md.test || {}
+    for (const k of ['design_review', 'security_review']) if (mt[k]) r.test[k] = recipeStricter(mt[k], r.test[k])
+    r.test.modes = recipeUnion(r.test.modes, mt.modes)
+    if (md.split) r.split = true
+  }
+  if (r.stages.includes('design') && !r.design_lenses.length) r.design_lenses = ['coverage', 'plan']
+  if (r.stages.includes('test') && !r.test.modes.includes('verify')) r.test.modes = ['verify', ...r.test.modes]
+  return { ...r, name: used, requested, resolved_from: src, modifiers: applied, size: size || '', errors }
+}
+
+// new 不比 old 鬆就回 []；否則列出變鬆的地方
+function recipeStricterErrors(nw, old) {
+  const errs = []
+  for (const [key, what] of [['stages', '段'], ['design_lenses', 'design lens'], ['deliver_axes', 'deliver 審查軸']]) {
+    const lost = (old[key] || []).filter((x) => !(nw[key] || []).includes(x))
+    if (lost.length) errs.push(`少了${what}：${lost.join('、')}`)
+  }
+  const lostModes = ((old.test || {}).modes || []).filter((x) => !((nw.test || {}).modes || []).includes(x))
+  if (lostModes.length) errs.push(`少了測試模式：${lostModes.join('、')}`)
+  for (const k of ['design_review', 'security_review']) {
+    const a = (nw.test || {})[k] || 'auto'; const b = (old.test || {})[k] || 'auto'
+    if (recipeLevel(a) < recipeLevel(b)) errs.push(`${k} 從 ${b} 降成 ${a}`)
+  }
+  return errs
+}
+
+// recipe 的下一段（沒有就回 null）；workflow 的 next 欄位用它，不寫死段名
+function recipeNext(r, stage) {
+  const s = (r && r.stages) || recipeSdlc()
+  const i = s.indexOf(stage)
+  return i >= 0 && i + 1 < s.length ? s[i + 1] : null
+}
+
+// 解析結果的一行說明（閘門重點用）
+function recipeSummary(r) {
+  return `recipe ${r.name}${r.modifiers.length ? `＋${r.modifiers.join('、')}` : ''}${r.size ? `（size=${r.size}）` : ''}：${r.stages.join(' → ')}；plan_mode=${r.plan_mode}`
+}
+/*@end*/
+const R = resolveRecipe(METHODOLOGY, A.recipe, [].concat(A.modifiers || []), A.size)
+const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages, summary: recipeSummary(R) }
+// 下一段：recipe 有這一段就用 recipeNext；沒有（例如沒有 design 的 recipe 硬跑 design）就取 SDLC 順序裡 recipe 有的下一段
+const NEXT_OF = (st) => recipeNext(R, st) || recipeSdlc().slice(recipeSdlc().indexOf(st) + 1).find((x) => R.stages.includes(x)) || null
+const HAS_DESIGN = R.stages.includes('design')
+// 執行紀錄與派工固定前綴（challenge 片段）：每張派工單都帶 rules.md、輸出語言，最後一行指定執行紀錄檔；回傳一律帶 trace
+awfInit({ run_dir: A.run_dir, stage: 'build', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
+const RUN_BRIEF = '跑測試與 verify 指令一律用 python3 .claude/teams/tools/run_brief.py -- <指令>，執行紀錄附它印出的完整 log 路徑。'
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
 const SPEC = `${EPIC_DIR}/specs/${A.epic}`
 // 整合分支：sdlc-sync 走過中轉分支後 epic worktree 停在中轉分支，merge 退回 build 時要用 args.branch 帶進來，
 // 子任務分支從它開、integrator 合回它；否則會合回舊的 epic 分支、弄丟中轉分支解好的衝突
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}）\nspec：${SPEC}/spec.md、plan.md、progress.md\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}）\n${HAS_DESIGN ? `spec：${SPEC}/spec.md、plan.md、progress.md` : `需求與驗收條件：${SPEC}/intent.md（這個 recipe 沒有 design 段，沒有 spec.md）`}\nrecipe：${RECIPE.summary}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
   `\n派工來源：這張派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置這張派工單；派工單本身有疑義時才用 open_questions 回報。` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 const MAX_RETRY = 2
@@ -189,7 +305,7 @@ function runTask(s, role, phaseName, extra) {
         `${CTX}\n\n## 派工單（${phaseName}，第 ${attempt} 次）\n${taskBrief(s)}\n` +
         `在自己的 worktree 做：git -C "${A.repo}" worktree add .worktrees/${A.epic}--${s.id} -b {{BRANCH_PREFIX}}${A.epic}--${s.id} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
         (attempt > 1 && res ? `上一次的結果（請修正）：${JSON.stringify({ status: res.status, summary: res.summary, open_questions: res.open_questions })}\n` : '') +
-        `payload 用 build-result（task_id=${s.id}、branch={{BRANCH_PREFIX}}${A.epic}--${s.id}、worktree=${wtFor(s)}）。`,
+        `${RUN_BRIEF}\npayload 用 build-result（task_id=${s.id}、branch={{BRANCH_PREFIX}}${A.epic}--${s.id}、worktree=${wtFor(s)}）。`,
         { label: `${phaseName}:${s.id}${attempt > 1 ? `#${attempt}` : ''}`, phase: phaseName, agentType: role, schema: BUILD },
       )
       if (!res || res.status !== 'blocked') break // done 或 needs_decision 都不重試；needs_decision 交人
@@ -202,12 +318,17 @@ async function integrate(batch, label) {
   return tryAgent(
     `${CTX}\n\n## 派工單（整合：${label}）\n依序把這些分支 git merge --no-ff 進 ${BRANCH}（在 ${EPIC_DIR} 操作，先確認目前分支是 ${BRANCH}）：\n` +
     batch.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
-    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
+    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\n${RUN_BRIEF}\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
     { label: `integrate:${label}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
 }
 
 const results = { tests: [], layers: [], integrations: [], failures: [] }
+// recipe=revert：實作只跑 git revert，不做其他改動（commit 取 args.revert_commits，沒給就照 intent 的回退範圍）
+const IS_REVERT = R.name === 'revert'
+const REVERT_COMMITS = [].concat(A.revert_commits || [])
+const REVERT_BRIEF = `這是 revert：只跑 git revert --no-edit ${REVERT_COMMITS.length ? REVERT_COMMITS.join(' ') : '<commit>（照 ' + SPEC + '/intent.md 的回退範圍逐一列出的 commit）'}，不做其他改動、不手改程式；` +
+  `有衝突或回退範圍不清楚就以 needs_decision 回報，不要自己解。revert 完跑本子任務範圍的 verify 指令，結果寫進 tests[]。`
 
 // 失敗（null）或沒交 done 的 agent 不能默默丟掉：記進 failures，並以 halted: true 停下，不進下一層。
 // save_run.py 讀到 halted 就把 build 段記成 blocked。
@@ -222,14 +343,18 @@ const halt = (reason) => {
     stage: 'build', halted: true, halt_reason: reason, gate: null, missing, branch: BRANCH,
     integrated: [...PRIOR, ...integrated], remaining_subtasks: remaining,
     next: `處理 failures 的原因後續跑：重跑 sdlc-build，args.subtasks 只傳 remaining_subtasks（${remaining.map((s) => s.id).join('、') || '無'}），args.integrated 傳已合進 ${BRANCH} 的 [${[...PRIOR, ...integrated].join('、') || '無'}]（不要重傳成 subtasks），其他 args 照舊${A.branch ? `（含 branch=${A.branch}）` : ''}。子任務 worktree 已存在會沿用；要從頭重做某個子任務就先移除它的 worktree 與分支。`,
-    ...results,
+    ...results, recipe: RECIPE, trace: awfTrace(),
   }
 }
 // 開工前的結構檢查（還沒派任何 agent）：一律停下交人，回傳和其他 halted 一致（integrated、remaining_subtasks、branch、next）
-const preHalt = (reason, next, extra) => ({ ...halt(reason), ...extra, next })
+const preHalt = (reason, next, extra) => ({ ...halt(reason), ...extra, next, trace: awfTrace() })
+if (R.errors.length) return preHalt(`recipe 解析有錯：${R.errors.join('；')}`, '修正 args.recipe／modifiers（或 profile 的 recipes）後重跑 sdlc-build', { recipe_errors: R.errors })
+// recipe 的 build_kinds：子任務種類超出就開工前停下（例如 docs 只能有 doc、test-only 只能有 test）；publish／merge_gate 另依實際 diff 反查
+const badKinds = [...tests, ...work].filter((s) => !R.build_kinds.includes(s.kind))
+if (badKinds.length) return preHalt(`子任務種類超出 recipe ${R.name} 允許的 build_kinds（${R.build_kinds.join('、') || '無'}）：${badKinds.map((s) => `${s.id}(${s.kind})`).join('、')}`, `改用涵蓋這些種類的 recipe（save_run.py escalate）或修正子任務後重跑 sdlc-build`, { bad_kinds: badKinds.map((s) => s.id) })
 if (unknown.length) return preHalt(`子任務相依指向不存在的子任務：${unknown.join('、')}`, '確認 subtasks 是否完整；續跑時已合進整合分支的子任務要用 args.integrated 列出', { unknown })
 if (onSkipped.length) return preHalt(`依賴不屬於 Build 的子任務：${onSkipped.join('、')}`, '這些子任務（research／check／decision 等）不在 Build 裡做：先在對應流程完成並確認結果，再把它們列進 args.integrated（視為已滿足）後重跑 sdlc-build，或修正 depends_on', { skipped_deps: onSkipped })
-if (cycle.length) return preHalt(`子任務相依有循環：${cycle.join('、')}`, '修正 subtasks 的 depends_on（回 sdlc-design 或交人）後重跑 sdlc-build', { cycle })
+if (cycle.length) return preHalt(`子任務相依有循環：${cycle.join('、')}`, `修正 subtasks 的 depends_on（回 ${HAS_DESIGN ? 'sdlc-design' : 'sdlc-plan'} 或交人）後重跑 sdlc-build`, { cycle })
 log(`${TEST_FIRST ? 'Red（測試先行）' : 'Tests（實作後補驗證測試）'} ${tests.length} 個；實作分 ${layers.length} 層：${layers.map((l) => l.map((s) => s.id).join('+')).join(' → ')}`)
 
 function settle(subs, res, where) {
@@ -270,8 +395,8 @@ if (TEST_FIRST && tests.length) {
 for (let i = 0; i < layers.length; i++) {
   phase('Implement')
   const layer = layers[i]
-  const res = await parallel(layer.map((s) => () => runTask(s, NS + 'dev-implementer', 'Implement',
-    `${TEST_FIRST ? '讓已合進整合分支的驗收測試轉綠，不得修改驗收測試' : '依 spec 的驗收條件實作（驗證測試在實作後由 dev-acceptance-tester 補）'}；` +
+  const res = await parallel(layer.map((s) => () => runTask(s, NS + 'dev-implementer', 'Implement', IS_REVERT ? REVERT_BRIEF :
+    `${TEST_FIRST ? '讓已合進整合分支的驗收測試轉綠，不得修改驗收測試' : `依 ${HAS_DESIGN ? 'spec' : 'intent.md'} 的驗收條件實作（驗證測試在實作後由 dev-acceptance-tester 補）`}；` +
     `單元測試：${STAGE.unit_tests || '依目標 repo 慣例'}；只改擁有的檔案；本子任務範圍的 verify 指令全綠才 commit（${commitFor('feat', A.epic)}）；更新 progress.md 對應項。`)))
   results.layers.push(res)
   const ok = settle(layer, res, `layer${i + 1}`)
@@ -290,4 +415,7 @@ if (!TEST_FIRST && tests.length) {
   if (h) return h
 }
 
-return { stage: 'build', halted: false, missing: [], branch: BRANCH, test_first: TEST_FIRST, gate: null, next: `sdlc-sync → sdlc-test${A.branch ? `（args 帶 branch=${BRANCH}）` : ''}`, ...results, red: TEST_FIRST ? results.tests : [] }
+// 下一段依 recipe：有 sync 就 sync → 它的下一段；沒有 sync 就直接指向 test（沒有 test 就 deliver）
+const NX = NEXT_OF('build')
+const BUILD_NEXT = [NX, NX === 'sync' ? NEXT_OF('sync') : null].filter(Boolean).map((x) => `sdlc-${x}`).join(' → ') || '沒有下一段'
+return { stage: 'build', halted: false, missing: [], branch: BRANCH, test_first: TEST_FIRST, gate: null, next: `${BUILD_NEXT}${A.branch ? `（args 帶 branch=${BRANCH}）` : ''}`, ...results, red: TEST_FIRST ? results.tests : [], recipe: RECIPE, trace: awfTrace() }

@@ -114,13 +114,130 @@ const PR_SIZE = CONV.pr_size || {}
 
 const A = args || {}
 for (const k of ['repo', 'epic', 'run_dir', 'decisions', 'issues']) if (!A[k]) throw new Error(`缺 args.${k}`)
+// recipe（需求類型）：args.recipe／modifiers／size 決定這次走哪些段、派哪些角色；沒給 recipe＝feature（完整流程，和改版前一樣）
+/*@snippet:recipe*/
+// ── 片段 recipe（.claude/teams/tools/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 規則和 tools/recipe.py 完全一致（golden-set/recipes/*.json 兩邊都跑，結果要相同）：
+//   profile 沒有 recipes（舊版）或指定的 recipe 不存在 → 當成 feature 完整流程（只會更嚴）；
+//   每個 recipe 都有 plan 段（intent 不能省）；size=small 套 recipe 的 small 覆寫；modifiers 只會加嚴；
+//   不認得的 modifier 記在 errors（呼叫端要停下交人）。
+
+function recipeSdlc() { return ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge'] }
+function recipeLevel(x) { return ({ never: 0, auto: 1, always: 2 })[x] ?? 1 }
+function recipeFallbackFeature() {
+  return {
+    description: '新功能：完整 7 段（改版前的預設流程）', stages: recipeSdlc(), plan_mode: 'feature',
+    research_angles: ['requirement', 'specs-adr', 'code-contracts', 'upstream'], design_lenses: ['coverage', 'plan', 'system-design'],
+    test: { design_review: 'auto', security_review: 'auto', modes: ['verify'] }, deliver_axes: ['standards', 'spec', 'bugs', 'history'],
+    build_kinds: ['code', 'test', 'doc'], publishable: true, followup: false, split: true,
+  }
+}
+function recipeBuiltinModifiers() {
+  return {
+    ui: { description: '有畫面改動：一定做設計審查', test: { design_review: 'always' } },
+    security: { description: '有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查', test: { security_review: 'always' }, deliver_axes: ['bugs'] },
+    migration: { description: '資料庫 migration：強制 design 段與回滾計畫、一定做安全審查', add_stages: ['design'], design_lenses: ['coverage', 'plan', 'rollback'], test: { security_review: 'always', modes: ['regression'] } },
+    public_api: { description: '公開 API 或對外契約：強制 design 段檢查相容性，deliver 加歷史軸', add_stages: ['design'], design_lenses: ['coverage', 'plan', 'compat'], deliver_axes: ['spec', 'history'] },
+    large: { description: '範圍大：允許拆子計劃、調研四個角度全開', research_angles: ['requirement', 'specs-adr', 'code-contracts', 'upstream'], split: true },
+  }
+}
+function recipeOrder(stages) { const s = new Set(stages || []); return recipeSdlc().filter((x) => s.has(x)) }
+function recipeUnion(a, b) { const out = [...(a || [])]; for (const x of b || []) if (!out.includes(x)) out.push(x); return out }
+function recipeStricter(a, b) { return recipeLevel(a) >= recipeLevel(b) ? a : b }
+
+// 回 { name, requested, resolved_from, modifiers, size, errors, stages, plan_mode, research_angles, design_lenses, test, deliver_axes, build_kinds, publishable, followup, split }
+function resolveRecipe(profile, name, modifiers, size) {
+  const recipes = (profile || {}).recipes || {}
+  const modsDef = (profile || {}).modifiers || {}
+  const hasRecipes = Object.keys(recipes).length > 0
+  const hasMods = Object.keys(modsDef).length > 0
+  const errors = []
+  const requested = name || 'feature'
+  let base, used, src
+  if (recipes[requested]) { base = recipes[requested]; used = requested; src = 'profile' }
+  else if (recipes.feature) { base = recipes.feature; used = 'feature'; src = name && name !== 'feature' ? `profile（${requested} 不存在，當成 feature）` : 'profile' }
+  else { base = recipeFallbackFeature(); used = 'feature'; src = !hasRecipes ? 'fallback（profile 沒有 recipes）' : `fallback（${requested} 不存在）` }
+  const r = JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'small'))))
+  const t = r.test || {}
+  r.test = { design_review: t.design_review || 'auto', security_review: t.security_review || 'auto', modes: [...(t.modes || [])] }
+  if (!r.research_angles) r.research_angles = []
+  if (!r.design_lenses) r.design_lenses = []
+  if (!r.deliver_axes) r.deliver_axes = []
+  if (!r.build_kinds) r.build_kinds = ['code', 'test', 'doc']
+  if (r.publishable === undefined) r.publishable = true
+  if (r.followup === undefined) r.followup = false
+  if (r.split === undefined) r.split = false
+  if (!(r.stages || []).includes('plan')) errors.push(`recipe ${used} 沒有 plan 段（intent 不能省），改加上 plan`)
+  r.stages = recipeOrder(['plan', ...(r.stages || [])])
+  if (size === 'small' && base.small && typeof base.small === 'object') {
+    if (base.small.research_angles) r.research_angles = [...base.small.research_angles]
+    if (base.small.split !== undefined) r.split = !!base.small.split
+  }
+  const applied = []
+  const builtin = recipeBuiltinModifiers()
+  for (const m of modifiers || []) {
+    const md = modsDef[m] || (!hasMods ? builtin[m] : undefined)
+    if (!md) { errors.push(`不認得的 modifier：${m}`); continue }
+    applied.push(m)
+    r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages))
+    r.research_angles = recipeUnion(r.research_angles, md.research_angles)
+    r.design_lenses = recipeUnion(r.design_lenses, md.design_lenses)
+    r.deliver_axes = recipeUnion(r.deliver_axes, md.deliver_axes)
+    const mt = md.test || {}
+    for (const k of ['design_review', 'security_review']) if (mt[k]) r.test[k] = recipeStricter(mt[k], r.test[k])
+    r.test.modes = recipeUnion(r.test.modes, mt.modes)
+    if (md.split) r.split = true
+  }
+  if (r.stages.includes('design') && !r.design_lenses.length) r.design_lenses = ['coverage', 'plan']
+  if (r.stages.includes('test') && !r.test.modes.includes('verify')) r.test.modes = ['verify', ...r.test.modes]
+  return { ...r, name: used, requested, resolved_from: src, modifiers: applied, size: size || '', errors }
+}
+
+// new 不比 old 鬆就回 []；否則列出變鬆的地方
+function recipeStricterErrors(nw, old) {
+  const errs = []
+  for (const [key, what] of [['stages', '段'], ['design_lenses', 'design lens'], ['deliver_axes', 'deliver 審查軸']]) {
+    const lost = (old[key] || []).filter((x) => !(nw[key] || []).includes(x))
+    if (lost.length) errs.push(`少了${what}：${lost.join('、')}`)
+  }
+  const lostModes = ((old.test || {}).modes || []).filter((x) => !((nw.test || {}).modes || []).includes(x))
+  if (lostModes.length) errs.push(`少了測試模式：${lostModes.join('、')}`)
+  for (const k of ['design_review', 'security_review']) {
+    const a = (nw.test || {})[k] || 'auto'; const b = (old.test || {})[k] || 'auto'
+    if (recipeLevel(a) < recipeLevel(b)) errs.push(`${k} 從 ${b} 降成 ${a}`)
+  }
+  return errs
+}
+
+// recipe 的下一段（沒有就回 null）；workflow 的 next 欄位用它，不寫死段名
+function recipeNext(r, stage) {
+  const s = (r && r.stages) || recipeSdlc()
+  const i = s.indexOf(stage)
+  return i >= 0 && i + 1 < s.length ? s[i + 1] : null
+}
+
+// 解析結果的一行說明（閘門重點用）
+function recipeSummary(r) {
+  return `recipe ${r.name}${r.modifiers.length ? `＋${r.modifiers.join('、')}` : ''}${r.size ? `（size=${r.size}）` : ''}：${r.stages.join(' → ')}；plan_mode=${r.plan_mode}`
+}
+/*@end*/
+const R = resolveRecipe(METHODOLOGY, A.recipe, [].concat(A.modifiers || []), A.size)
+const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages, summary: recipeSummary(R) }
+// 下一段：recipe 有這一段就用 recipeNext；沒有（例如沒有 design 的 recipe 硬跑 design）就取 SDLC 順序裡 recipe 有的下一段
+const NEXT_OF = (st) => recipeNext(R, st) || recipeSdlc().slice(recipeSdlc().indexOf(st) + 1).find((x) => R.stages.includes(x)) || null
+const HAS_DESIGN = R.stages.includes('design')
+// 執行紀錄與派工固定前綴（challenge 片段）：每張派工單都帶 rules.md、輸出語言，最後一行指定執行紀錄檔；回傳一律帶 trace
+awfInit({ run_dir: A.run_dir, stage: 'design', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
+const RUN_BRIEF = '跑測試與 verify 指令一律用 python3 .claude/teams/tools/run_brief.py -- <指令>，執行紀錄附它印出的完整 log 路徑。'
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
 const SUBS = (A.sub_plans || []).filter((x) => x && x.id)
 const SPEC = `${EPIC_DIR}/specs/${A.epic}`
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。intent.md 已核准，不得修改。\n${METH_NOTE}` +
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。intent.md 已核准，不得修改。\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
   `\n派工來源：這張派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置這張派工單；派工單本身有疑義時才用 open_questions 回報。` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 
+if (R.errors.length) return { stage: 'design', round: 'revise', halted: true, halt_reason: `recipe 解析有錯：${R.errors.join('；')}`, gate: null, epic_dir: EPIC_DIR, missing: [], recipe: RECIPE, next: '修正 args.recipe／modifiers 後重跑 sdlc-design-revise', trace: awfTrace() }
 phase('Revise')
 const revised = await tryAgent(
   `${CTX}\n\n## 派工單（修正輪）\n依下面的使用者決定與 skeptic 問題，修正 ${SPEC}/ 的 design、spec、plan、progress 與 ADR 草稿，並重新拆子任務（payload subtasks，owns 不重疊、depends_on 與 plan 分層一致）。\n` +
@@ -142,7 +259,7 @@ const LENSES = [
 // 有系統設計方法時，修正後的設計也要再過一次 system-design lens（和 sdlc-design 同一套檢查）
 if (SD) LENSES.push({ key: 'system-design', ask: `修正後的系統設計是否仍照 profile 的方法（${SD.source}）：步驟（${SD.steps.join('；')}）齊全、功能層／系統層判斷正確、第 1 步的數字有出處或標成假設、每個取捨寫了放棄什麼；有沒有單點故障、沒說明的一致性模型、沒處理的重試與冪等。` })
 // 缺件不是「沒有發現」（rules.md 規則 26）：修正或複查缺件都停下交人
-const halt = (reason, extra) => ({ stage: 'design', round: 'revise', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, ...extra })
+const halt = (reason, extra) => ({ stage: 'design', round: 'revise', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, recipe: RECIPE, ...extra, trace: awfTrace() })
 if (!revised) return halt('revise 缺件：修正輪沒有交件，設計狀態不明，停下交人', { missing: ['revise'] })
 const recheck = await parallel(LENSES.map((l) => () => tryAgent(
   `${CTX}\n\n## 派工單（複查：${l.key}）\n讀 ${SPEC}/ 與 ${A.run_dir}/design-revise-對照.md。子任務：${JSON.stringify(revised.payload)}\n${l.ask}\nrefuted=true 表示「這裡還有問題」。\n\n原問題：\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}\n使用者決定：\n${A.decisions.join('\n')}`,
@@ -151,4 +268,4 @@ const recheck = await parallel(LENSES.map((l) => () => tryAgent(
 const missing = LENSES.map((l) => `recheck:${l.key}`).filter((l, i) => !recheck[i])
 if (missing.length) return halt(`複查類 agent 缺件：${missing.join('、')}，修正沒經過完整複查，停下交人`, { missing, analysis: recheck.filter(Boolean) })
 
-return { stage: 'design', round: 'revise', halted: false, missing: [], gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, analysis: recheck }
+return { stage: 'design', round: 'revise', halted: false, missing: [], gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, analysis: recheck, recipe: RECIPE, next: `spec＋plan 核准後跑 sdlc-${NEXT_OF('design')}（args 加 subtasks＝design.payload.subtasks，recipe 照舊）`, trace: awfTrace() }

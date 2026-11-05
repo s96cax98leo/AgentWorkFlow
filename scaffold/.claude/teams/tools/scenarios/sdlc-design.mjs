@@ -1,5 +1,5 @@
 // sdlc-design.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { ENV, SUB_PLANS, extScenario } from './_helpers.mjs'
+import { ENV, SUB_PLANS, extScenario, recipeScenarios } from './_helpers.mjs'
 
 export default [
     extScenario('ext:db2'),
@@ -101,5 +101,29 @@ export default [
         'subplan:ui': ENV({ epic: 'demo', subtasks: [{ id: 'ui-t1', title: 'x', kind: 'code', owns: ['apps/b.tsx'], depends_on: ['@api'], acceptance: ['x'] }] }),
       },
       expect: (r) => (r.out && r.out.halted && /指向自己/.test(r.out.halt_reason || '') && !r.labels.includes('consolidate') ? [] : [`@api 指向自己要停下：${JSON.stringify(r.out && { halted: r.out.halted, why: r.out.halt_reason })}`]),
+    },
+    // recipe：design lens 取自 recipe.design_lenses；change（plan_mode=impact）要 delta spec 與 delta lens
+    ...recipeScenarios('design', (n) => ({
+      expect: (r) => {
+        const e = []
+        const want = { feature: ['coverage', 'plan', 'system-design'], change: ['coverage', 'plan', 'delta'], perf: ['coverage', 'plan', 'system-design'] }[n]
+        const got = r.labels.filter((l) => l.startsWith('analyze:')).map((l) => l.slice(8)).sort()
+        if (JSON.stringify(got) !== JSON.stringify([...want].sort())) e.push(`${n} 的 design lens 應為 ${want.join('、')}：${got.join('、')}`)
+        if (n === 'change' && !/delta spec/.test(r.prompts.design || '')) e.push('change 的 spec 作者派工單要求寫 delta spec')
+        if (n !== 'change' && /delta spec/.test(r.prompts.design || '')) e.push(`${n} 不該要求 delta spec`)
+        return e
+      },
+    })),
+    {
+      name: 'recipe:bugfix+migration',
+      args: { recipe: 'bugfix', modifiers: ['migration'] },
+      expect: (r) => {
+        const e = []
+        if (r.out.halted) e.push(`不該 halted：${r.out.halt_reason}`)
+        if (!r.labels.includes('analyze:rollback')) e.push(`migration 要派 rollback lens：${r.labels.join(',')}`)
+        if (r.labels.includes('outline')) e.push('bugfix 的 split=false，不該派大綱')
+        if (!/sdlc-build/.test(r.out.next || '') || /sdlc-design/.test(r.out.next || '')) e.push(`next 應指向 sdlc-build：${r.out.next}`)
+        return e
+      },
     },
 ]

@@ -1,5 +1,7 @@
 // sdlc-build.js 的乾跑情境：走預設乾跑碰不到的分支。
 
+import { SAMPLE_SUBTASKS, recipeScenarios } from './_helpers.mjs'
+
 const NONE = () => null
 const out = (r) => r.out || {}
 // 缺件情境不覆寫 profile：smoke_init 會用乾跑經過的 phases 檢查 test_first 開關，斷言要在兩種順序下都成立
@@ -109,5 +111,27 @@ export default [
       const rem = (o.remaining_subtasks || []).map((s) => s.id)
       return o.halted && (o.missing || []).some((l) => l.includes('t2')) && rem.includes('t2') ? [] : [`實作 throw 要 halted、missing 列出 t2：${JSON.stringify({ halted: o.halted, missing: o.missing, rem })}`]
     },
+  },
+  // recipe：每個包含 build 的內建 recipe 一個情境；子任務種類要符合 build_kinds（docs 只有 doc、test-only 只有 test）
+  ...recipeScenarios('build', (n) => ({
+    args: n === 'docs' ? { subtasks: SAMPLE_SUBTASKS('doc') } : n === 'test-only' ? { subtasks: SAMPLE_SUBTASKS('test') } : n === 'revert' ? { revert_commits: ['abc1234'] } : {},
+    expect: n === 'revert'
+      ? (r) => Object.entries(r.prompts).filter(([l]) => l.startsWith('Implement')).every(([, p]) => /git revert --no-edit abc1234/.test(p) && !/讓已合進整合分支的驗收測試轉綠/.test(p)) ? [] : ['revert 的實作派工單要只跑 git revert abc1234']
+      : undefined,
+  })),
+  {
+    name: 'recipe:docs 有 code 子任務',
+    args: { recipe: 'docs' },
+    expect: (r) => (r.out && r.out.halted && /kinds/.test(r.out.halt_reason || '') && !r.labels.length ? [] : [`docs 有 code 子任務要開工前 halted（kinds）：${JSON.stringify(r.out && { halted: r.out.halted, why: r.out.halt_reason, labels: r.labels })}`]),
+  },
+  {
+    name: 'recipe:test-only 有 code 子任務',
+    args: { recipe: 'test-only' },
+    expect: (r) => (r.out && r.out.halted && /kinds/.test(r.out.halt_reason || '') && !r.labels.length ? [] : [`test-only 有 code 子任務要開工前 halted（kinds）：${JSON.stringify(r.out && { halted: r.out.halted, why: r.out.halt_reason, labels: r.labels })}`]),
+  },
+  {
+    name: 'recipe:不認得的 modifier：halted',
+    args: { recipe: 'bugfix', modifiers: ['nope'] },
+    expect: (r) => (r.out && r.out.halted && /nope/.test(r.out.halt_reason || '') && !r.labels.length ? [] : [`不認得的 modifier 要 halted：${JSON.stringify(r.out && r.out.halt_reason)}`]),
   },
 ]
