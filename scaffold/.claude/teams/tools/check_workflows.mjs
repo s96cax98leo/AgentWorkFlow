@@ -77,7 +77,7 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
     agent: async (prompt, opts = {}) => {
       agents++
       labels.push(opts.label)
-      prompts[opts.label] = typeof prompt === 'string' ? prompt.slice(0, 6000) : ''
+      prompts[opts.label] = typeof prompt === 'string' ? prompt : ''
       if (typeof prompt !== 'string' || !prompt) errs.push('agent() 的 prompt 空白')
       if (opts.phase && !titles.has(opts.phase)) errs.push(`opts.phase「${opts.phase}」不在 meta.phases`)
       if (opts.agentType && extAgents.has(opts.agentType)) {
@@ -148,7 +148,7 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
     const scErrs = [...r.errs, ...(sc.expect ? sc.expect(r) : [])]
     if (sc.expect) errs.push(...sc.expect(r).map((e) => `[情境：${sc.name}] ${e}`))
     report[f] = report[f] || { phases: [...titles], scenarios: [] }
-    report[f].scenarios.push({ name: sc.name, ok: scErrs.length === 0, halted: !!(r.out && r.out.halted), labels: r.labels, visited: r.visited, prompts: r.prompts, out: r.out && typeof r.out === 'object' ? Object.fromEntries(Object.entries(r.out).filter(([, v]) => typeof v !== 'object' || v === null)) : null })
+    report[f].scenarios.push({ name: sc.name, ok: scErrs.length === 0, halted: !!(r.out && r.out.halted), labels: r.labels, visited: r.visited, prompts: r.prompts, out: r.out && typeof r.out === 'object' ? JSON.parse(JSON.stringify(r.out)) : null })
   }
   if (errs.length) { failed++; console.log(`FAIL ${f}\n  - ${[...new Set(errs)].join('\n  - ')}`) }
   else console.log(`ok   ${f}（乾跑 ${agents} 個 agent；phases: ${visited.join('→') || '-'}）`)
