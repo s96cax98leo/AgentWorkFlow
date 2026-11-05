@@ -39,7 +39,7 @@
 - **commands 改成薄殼**：流程集中到 `tpm-team` skill。
 - **文件**：README 補〈更新與釘版本〉；`docs/自訂與擴充.md` 補〈升級已 init 的專案〉；佔位符 `WORKSPACE_DIR` 已移除（工作區根目錄就是 `--target`）。
 - **閘門紀錄修正**：核准與 merge gate 的紀錄寫法修正，稽核紀錄與實際決策一致。
-- **CI**：三平台跑 Python 3.12，另在 ubuntu 跑 3.9 與 3.13；所有 action 釘 commit SHA；頂層 `permissions: contents: read`。
+- **CI**：三平台跑 Python 3.12，另在 ubuntu 跑 3.9（ubuntu-22.04，latest 已沒有 3.9）與 3.13；所有 action 釘 commit SHA；頂層 `permissions: contents: read`。
 
 ### 升級步驟
 

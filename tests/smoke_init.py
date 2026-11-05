@@ -557,7 +557,7 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
         return
     new_ver = json.loads((ROOT / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     ok(f"--upgrade 結束碼 0，顯示 0.1.0 → {new_ver}") if f"0.1.0 → {new_ver}" in out else bad("--upgrade 沒顯示舊版 → 新版", out)
-    ok("--upgrade 沒給 --config 時沿用 .claude/teams/workflow.config") if "teams/workflow.config" in out else bad("--upgrade 沒沿用 init 記下的設定值", out)
+    ok("--upgrade 沒給 --config 時沿用 .claude/teams/workflow.config") if "teams/workflow.config" in out.replace("\\", "/") else bad("--upgrade 沒沿用 init 記下的設定值", out)
     vf = (teams / "VERSION").read_text(encoding="utf-8").strip()
     ok(f"升級後 VERSION＝{vf}") if vf == new_ver else bad(f"升級後 VERSION 是 {vf}，不是 {new_ver}")
 

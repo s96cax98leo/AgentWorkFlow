@@ -22,7 +22,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.12"]
         include:
-          - os: ubuntu-latest
+          # ubuntu-latest（26.04 起）沒有 3.9 的預建版本，支援下限改在 22.04 跑
+          - os: ubuntu-22.04
             python: "3.9"
           - os: ubuntu-latest
             python: "3.13"
