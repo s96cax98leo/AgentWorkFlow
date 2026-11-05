@@ -303,6 +303,21 @@ def methodology_errors(doc: dict) -> list[str]:
     names = [e.get("name") for e in doc.get("extensions") or [] if isinstance(e, dict)]
     for n in sorted({x for x in names if names.count(x) > 1}, key=str):
         errs.append(f"extensions：name {n} 重複")
+    recipes = doc.get("recipes") if isinstance(doc.get("recipes"), dict) else {}
+    for rn, r in recipes.items():
+        if not isinstance(r, dict):
+            continue
+        stages = r.get("stages") if isinstance(r.get("stages"), list) else []
+        # intent 不能省（I1）：每個 recipe 都要有 plan 段
+        if "plan" not in stages:
+            errs.append(f"recipes.{rn}：stages 沒有 plan（每個 recipe 都要產出 intent、由人在 plan 閘門核准）")
+        # 會寫程式的 recipe 一定要經過 build、deliver（審查）、merge（gate）
+        if r.get("build_kinds", ["code"]) and r.get("publishable", True) is not False:
+            lost = [x for x in ("build", "deliver", "merge") if x not in stages]
+            if lost:
+                errs.append(f"recipes.{rn}：會產生改動的 recipe 一定要有 {'、'.join(lost)} 段")
+        if "test" in stages and "build" not in stages:
+            errs.append(f"recipes.{rn}：有 test 段就要有 build 段")
     req = doc.get("requirements") if isinstance(doc.get("requirements"), dict) else {}
     if req.get("source") == "command" and not str(req.get("command") or "").strip():
         errs.append("requirements.source=command 時要設 command")

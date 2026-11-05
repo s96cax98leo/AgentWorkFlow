@@ -1,0 +1,57 @@
+{
+ "recipe": "bugfix",
+ "modifiers": [
+  "migration"
+ ],
+ "paths": [
+  "db/migrations/001.sql",
+  "src/a.py"
+ ],
+ "expect": {
+  "name": "bugfix",
+  "stages": [
+   "plan",
+   "design",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "diagnose",
+  "research_angles": [
+   "requirement",
+   "code-contracts"
+  ],
+  "design_lenses": [
+   "coverage",
+   "plan",
+   "rollback"
+  ],
+  "test": {
+   "design_review": "auto",
+   "security_review": "always",
+   "modes": [
+    "verify",
+    "regression"
+   ]
+  },
+  "deliver_axes": [
+   "spec",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [
+   "migration"
+  ],
+  "errors": [],
+  "shortfalls": []
+ }
+}

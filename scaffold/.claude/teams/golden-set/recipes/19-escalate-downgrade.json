@@ -1,0 +1,58 @@
+{
+ "recipe": "bugfix",
+ "old": {
+  "recipe": "feature"
+ },
+ "expect": {
+  "name": "bugfix",
+  "stages": [
+   "plan",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "diagnose",
+  "research_angles": [
+   "requirement",
+   "code-contracts"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify",
+    "regression"
+   ]
+  },
+  "deliver_axes": [
+   "spec",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": [],
+  "escalate_errors": [
+   "新 recipe bugfix 少了段：design（降級一律拒絕；要降級只能 abandon 後重開 run）"
+  ],
+  "merged_stages": [
+   "plan",
+   "design",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "merged_ok": true
+ }
+}

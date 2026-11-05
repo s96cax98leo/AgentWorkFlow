@@ -531,6 +531,8 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     meth_p, guard_p, rules_p = teams / "methodology.json", teams / "guard.config.json", teams / "rules.md"
     meth = json.loads(meth_p.read_text(encoding="utf-8"))
     meth["conventions"].pop("sync", None)  # 模擬舊版 profile 沒有這個欄位
+    meth.pop("recipes", None)  # 0.3.0 之前的 profile 沒有 recipes／modifiers（一律走 feature 完整流程）
+    meth.pop("modifiers", None)
     meth["conventions"]["pr_size"] = {"max_lines": 123, "max_files": 7}
     meth_p.write_text(json.dumps(meth, ensure_ascii=False, indent=2), encoding="utf-8")
     guard = json.loads(guard_p.read_text(encoding="utf-8"))
@@ -569,6 +571,7 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     m2 = json.loads(meth_p.read_text(encoding="utf-8"))
     ok("升級：methodology.json 原樣保留") if m2 == meth else bad("升級：methodology.json 被改了")
     ok("升級：列出缺少的 profile 欄位 conventions.sync 與預設值") if "conventions.sync" in out and "--adopt-new-fields" in out else bad("升級：沒列出缺少的 conventions.sync", out)
+    ok("升級：列出缺少的 recipes、modifiers（沒補之前一律走 feature 完整流程）") if "recipes" in out and "modifiers" in out else bad("升級：沒列出缺少的 recipes／modifiers", out)
     g2 = json.loads(guard_p.read_text(encoding="utf-8"))
     kept = (g2.get("main_session_git_rules") is False and g2["auto_merge"].get("upstream_authorized_by") == guard["auto_merge"]["upstream_authorized_by"]
             and g2.get("extension_agents", {}).get("acme-db-reviewer") == "tpm-reviewer")
@@ -587,6 +590,7 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     m3 = json.loads(meth_p.read_text(encoding="utf-8"))
     good = r.returncode == 0 and "sync" in m3["conventions"] and m3["conventions"]["pr_size"] == {"max_lines": 123, "max_files": 7}
     ok("升級：--adopt-new-fields 補上 conventions.sync，既有的 pr_size 不變") if good else bad("升級：--adopt-new-fields 不對：", r.stdout + r.stderr)
+    ok("升級：--adopt-new-fields 補上 recipes（11 個）與 modifiers") if len(m3.get("recipes") or {}) == 11 and m3.get("modifiers") else bad(f"升級：recipes 沒補上：{sorted(m3.get('recipes') or {})}")
     r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=t)
     ok("--adopt-new-fields 後 build.py --check") if r.returncode == 0 else bad("--adopt-new-fields 後 build.py --check 失敗：", r.stdout + r.stderr)
 

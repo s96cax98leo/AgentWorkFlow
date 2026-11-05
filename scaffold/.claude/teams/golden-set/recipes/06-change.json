@@ -1,0 +1,50 @@
+{
+ "recipe": "change",
+ "expect": {
+  "name": "change",
+  "stages": [
+   "plan",
+   "design",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "impact",
+  "research_angles": [
+   "requirement",
+   "specs-adr",
+   "code-contracts"
+  ],
+  "design_lenses": [
+   "coverage",
+   "plan",
+   "delta"
+  ],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify",
+    "regression"
+   ]
+  },
+  "deliver_axes": [
+   "standards",
+   "spec",
+   "bugs",
+   "history"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": true,
+  "modifiers": [],
+  "errors": []
+ }
+}

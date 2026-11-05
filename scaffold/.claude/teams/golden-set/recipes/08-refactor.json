@@ -1,0 +1,43 @@
+{
+ "recipe": "refactor",
+ "expect": {
+  "name": "refactor",
+  "stages": [
+   "plan",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "invariants",
+  "research_angles": [
+   "code-contracts",
+   "specs-adr"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify",
+    "equivalence"
+   ]
+  },
+  "deliver_axes": [
+   "standards",
+   "bugs",
+   "history"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": []
+ }
+}

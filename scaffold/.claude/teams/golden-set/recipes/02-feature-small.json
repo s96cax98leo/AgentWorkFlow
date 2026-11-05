@@ -1,0 +1,49 @@
+{
+ "recipe": "feature",
+ "size": "small",
+ "expect": {
+  "name": "feature",
+  "stages": [
+   "plan",
+   "design",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "feature",
+  "research_angles": [
+   "requirement",
+   "code-contracts"
+  ],
+  "design_lenses": [
+   "coverage",
+   "plan",
+   "system-design"
+  ],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify"
+   ]
+  },
+  "deliver_axes": [
+   "standards",
+   "spec",
+   "bugs",
+   "history"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": []
+ }
+}

@@ -1,0 +1,48 @@
+{
+ "recipe": "deps",
+ "paths": [
+  "package.json",
+  "package-lock.json",
+  "src/a.ts"
+ ],
+ "expect": {
+  "name": "deps",
+  "stages": [
+   "plan",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "changelog",
+  "research_angles": [
+   "requirement",
+   "code-contracts"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "auto",
+   "security_review": "always",
+   "modes": [
+    "verify",
+    "regression"
+   ]
+  },
+  "deliver_axes": [
+   "standards",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": [],
+  "shortfalls": []
+ }
+}
