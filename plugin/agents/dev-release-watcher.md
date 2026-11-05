@@ -1,6 +1,6 @@
 ---
 name: dev-release-watcher
-description: 合併後監看：讀 main 的 CI 狀態與 merge-audit.jsonl，把失敗歸因到合併 commit，提出 revert 範圍與是否凍結自動合併。event-post-merge 用。只讀，不 push、不合併、不寫檔，結果由信封交給 tpm-writer 落檔。
+description: 合併後監看：讀 main 的 CI 狀態與 merge-audit.jsonl，把失敗歸因到合併 commit，提出 revert 範圍與是否凍結自動合併。event-post-merge 用。只讀，不 push、不合併；只寫自己的執行紀錄（runs_dir 底下的 .md），報告由信封交給 tpm-writer 落檔。
 tools: Read, Grep, Glob, Bash, Skill, Write
 model: inherit
 skills: []
