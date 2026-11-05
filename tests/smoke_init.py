@@ -11,6 +11,11 @@
   6. merge gate CI 預設不放，加 --with-merge-gate 才放
   7. 套用到既有專案：帶使用者 agent、skill、command、同名 workflow、settings、CLAUDE.md、CI 的暫存專案跑兩次 init，
      原檔逐位元保留、CLAUDE.md 只追加一段引用、settings 合併且不重複、使用者 agent 不受 hook 規則影響、預設沒有 merge gate CI
+  8. 版本：plugin.json、marketplace.json（metadata 與 plugins[]）、init 寫的 .claude/teams/VERSION 三處一致
+  9. 佔位符雙向一致：scaffold 用到的 ⊆ workflow.config.example（加 init 自己算的），且 example 的每一個 scaffold 都有用到
+ 10. 升級：init → 自訂 methodology／guard.config／〈專案規則〉並弄舊模版檔 → --upgrade → 自訂保留、模版檔更新、
+     列出缺少的 profile 欄位、--adopt-new-fields 只補缺的，build.py --check 與 golden-set 通過；--force 也保留自訂；
+     自訂 RUNS_DIR init 後跑沒給 --config 的 --force，workflow 的 runs 路徑與 workflow.config 紀錄都不變
 用法：python3 tests/smoke_init.py [設定檔]   （預設 workflow.config.example）
 環境變數 KEEP=1 時保留暫存目錄方便除錯。
 """
@@ -50,6 +55,14 @@ REQUIRED = [
     ".claude/teams/methodologies/default.json",
     *[f".claude/workflows/{w}.js" for w in WORKFLOWS],
 ]
+
+SELFTEST_REQUIRED = ("merge_gate.py", "publish.py", "sync_branch.py", "checklist.py")
+
+
+def selftest_tools(tools: Path) -> list[Path]:
+    """tools/ 裡有實作 --selftest 的 .py（原始碼出現 "--selftest" 字串）。"""
+    return sorted(p for p in tools.glob("*.py") if '"--selftest"' in p.read_text(encoding="utf-8"))
+
 
 fail = False
 GH_EXPR = re.compile(r"\$\{\{.*?\}\}")  # GitHub Actions 的 ${{ … }} 運算式不是佔位符
@@ -180,21 +193,14 @@ def check_tools(target: Path) -> None:
             ok(f"check_workflows.mjs：{last_line(r.stdout)}") if r.returncode == 0 else bad("check_workflows.mjs 失敗：", r.stdout + r.stderr)
         else:
             skip("沒有 node，略過 check_workflows.mjs")
-    if (target / ".claude/teams/tools/merge_gate.py").is_file():
-        r = run([PY, ".claude/teams/tools/merge_gate.py", "--selftest"], cwd=target)
-        ok(f"merge_gate.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("merge_gate.py --selftest 失敗：", r.stdout + r.stderr)
-    else:
-        bad("缺 .claude/teams/tools/merge_gate.py")
-    if (target / ".claude/teams/tools/publish.py").is_file():
-        r = run([PY, ".claude/teams/tools/publish.py", "--selftest"], cwd=target)
-        ok(f"publish.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("publish.py --selftest 失敗：", r.stdout + r.stderr)
-    else:
-        bad("缺 .claude/teams/tools/publish.py")
-    if (target / ".claude/teams/tools/sync_branch.py").is_file():
-        r = run([PY, ".claude/teams/tools/sync_branch.py", "--selftest"], cwd=target)
-        ok(f"sync_branch.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("sync_branch.py --selftest 失敗：", r.stdout + r.stderr)
-    else:
-        bad("缺 .claude/teams/tools/sync_branch.py")
+    # 有 --selftest 的工具全部跑（自動發現：新增 selftest 不用改這裡）；必備的幾支缺了算失敗
+    tools = target / ".claude/teams/tools"
+    for must in SELFTEST_REQUIRED:
+        if not (tools / must).is_file():
+            bad(f"缺 .claude/teams/tools/{must}")
+    for tool in selftest_tools(tools):
+        r = run([PY, f".claude/teams/tools/{tool.name}", "--selftest"], cwd=target)
+        ok(f"{tool.name} --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad(f"{tool.name} --selftest 失敗：", r.stdout + r.stderr)
     # plugin 安裝模式：agent 在模版的 plugin/agents，不在專案 .claude/agents
     if (target / ".claude/teams/tools/check_agents.py").is_file():
         r = run([PY, ".claude/teams/tools/check_agents.py", "--plugin-dir", str(ROOT / "plugin")], cwd=target)
@@ -460,11 +466,169 @@ def check_project_hooks(target: Path) -> None:
         ok(f"settings.json 的 shell 守門：{cmd}")
     else:
         bad(f"settings.json 的 shell 守門不對：{shell}")
+    paths = pre.get("Edit|Write|NotebookEdit|Read|Grep", {})
+    ok("settings.json 的 guard-paths 也守 Read、Grep") if paths.get("command", "").rstrip().endswith("guard-paths") else bad(f"settings.json 的 guard-paths matcher 不含 Read|Grep：{sorted(pre)}")
+    for name, h in (("guard-shell", shell), ("guard-paths", paths)):
+        exe = h.get("command", "").replace("& ", "", 1).strip().split('"')
+        abs_py = len(exe) > 1 and Path(exe[1]).is_absolute()
+        good = abs_py and h.get("timeout") == 10 and h.get("onFailure") == "block"
+        ok(f"{name}：Python 絕對路徑、timeout 10、onFailure block") if good else bad(f"{name} 的 hook 設定不對（要 Python 絕對路徑、timeout 10、onFailure block）：{h}")
     if os.name == "nt":
         ok("Windows：hook 指定 PowerShell 執行") if shell.get("shell") == "powershell" else bad("Windows 的 hook 沒有指定 shell: powershell")
     # 用專案裡複製出去的那份 hooks 跑完整 hook 測試（也會檢查 settings.json 的註冊）
     r = run([PY, str(ROOT / "plugin" / "hooks" / "tests" / "run.py"), "--project", str(target), "--hooks-dir", str(hooks)], cwd=target)
     ok(f"專案內 hooks 的 hook 測試：{last_line(r.stdout)}") if r.returncode == 0 else bad("專案內 hooks 的 hook 測試失敗：", r.stdout + r.stderr)
+
+
+def check_versions(target: Path) -> None:
+    print("== 版本（plugin.json、marketplace.json、.claude/teams/VERSION） ==")
+    try:
+        pv = json.loads((ROOT / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8")).get("version")
+        mk = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        bad(f"讀不到 plugin.json 或 marketplace.json：{e}")
+        return
+    vf = target / ".claude/teams/VERSION"
+    found = {"plugin.json": pv, "marketplace metadata": mk.get("metadata", {}).get("version"),
+             **{f"marketplace plugins[{p.get('name')}]": p.get("version") for p in mk.get("plugins", [])},
+             "VERSION": vf.read_text(encoding="utf-8").strip() if vf.is_file() else None}
+    if pv and len(set(found.values())) == 1:
+        ok(f"版本一致：{pv}（plugin.json、marketplace.json、.claude/teams/VERSION）")
+    else:
+        bad(f"版本不一致：{found}（發佈時三處要一起遞增，否則使用者收不到更新）")
+
+
+def check_placeholders() -> None:
+    print("== 佔位符雙向一致（scaffold ↔ workflow.config.example） ==")
+    sys.path.insert(0, str(ROOT))
+    import init as init_mod  # noqa: E402  只為了拿 COMPUTED 與 read_kv，不執行 main
+    used: set[str] = set()
+    for p in (ROOT / "scaffold").rglob("*"):
+        if p.is_file() and "__pycache__" not in p.parts:
+            try:
+                used |= set(init_mod.PH.findall(p.read_text(encoding="utf-8")))
+            except UnicodeDecodeError:
+                continue
+    conf = set(init_mod.read_kv(ROOT / "workflow.config.example"))
+    computed = set(init_mod.COMPUTED)
+    extra_used, unused = sorted(used - conf - computed), sorted(conf - used)
+    ok(f"scaffold 用到的佔位符都在 workflow.config.example（{len(used - computed)} 個，另有 init 自算 {len(computed)} 個）") if not extra_used \
+        else bad(f"scaffold 用到、workflow.config.example 沒有的佔位符：{extra_used}")
+    ok("workflow.config.example 的每個鍵 scaffold 都有用到") if not unused else bad(f"workflow.config.example 有、scaffold 沒用到的佔位符：{unused}")
+
+
+RULE_MARK = "- 示範專案規則：ACME 的 API 一律帶 trace id。"
+CLAUDE_SPECIFIC = "- 示範專案特定：ACME 的部署窗口是週二。"
+
+
+def check_upgrade(work: Path, config: Path, env: dict) -> None:
+    print("\n== 升級（init → 自訂 → 弄舊模版檔 → --upgrade） ==")
+    t = work / "project-upgrade"
+    t.mkdir()
+    if not init(t, config, env=env):
+        return
+    teams = t / ".claude/teams"
+    meth_p, guard_p, rules_p = teams / "methodology.json", teams / "guard.config.json", teams / "rules.md"
+    meth = json.loads(meth_p.read_text(encoding="utf-8"))
+    meth["conventions"].pop("sync", None)  # 模擬舊版 profile 沒有這個欄位
+    meth["conventions"]["pr_size"] = {"max_lines": 123, "max_files": 7}
+    meth_p.write_text(json.dumps(meth, ensure_ascii=False, indent=2), encoding="utf-8")
+    guard = json.loads(guard_p.read_text(encoding="utf-8"))
+    guard["main_session_git_rules"] = False
+    guard["auto_merge"]["upstream_authorized_by"] = {"acme/app": {"by": "示範決策者", "link": "https://example.com/acme", "scope": "feature/*", "expires": "2099-01-01"}}
+    guard["extension_agents"]["acme-db-reviewer"] = "tpm-reviewer"
+    guard["auto_merge"].pop("carry_verdict_on_rebase", None)  # 模擬舊版 guard.config 缺新鍵
+    guard_p.write_text(json.dumps(guard, ensure_ascii=False, indent=2), encoding="utf-8")
+    rules_p.write_text(rules_p.read_text(encoding="utf-8") + "\n" + RULE_MARK + "\n", encoding="utf-8")
+    claude = t / "CLAUDE.md"
+    claude.write_text(claude.read_text(encoding="utf-8") + "\n" + CLAUDE_SPECIFIC + "\n", encoding="utf-8")
+    # 弄舊模版：工具檔被改過、通用規則被改過、少一支 workflow、多一個這版已不提供的工具、版本戳是舊的
+    tool = teams / "tools/schemalib.py"
+    tool.write_text(tool.read_text(encoding="utf-8") + "\n# 舊版殘留\n", encoding="utf-8")
+    rules_p.write_text(rules_p.read_text(encoding="utf-8").replace("## 專案規則", "（舊版通用規則）\n\n## 專案規則", 1), encoding="utf-8")
+    (t / ".claude/workflows/sdlc-sync.js").unlink()
+    (teams / "tools/old_tool.py").write_text("# 舊版才有的工具\n", encoding="utf-8")
+    (teams / "VERSION").write_text("0.1.0\n", encoding="utf-8")
+
+    r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--upgrade"], cwd=t.parent, env=env)
+    out = r.stdout + r.stderr
+    if r.returncode != 0:
+        bad("init.py --upgrade 失敗：", out)
+        return
+    new_ver = json.loads((ROOT / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
+    ok(f"--upgrade 結束碼 0，顯示 0.1.0 → {new_ver}") if f"0.1.0 → {new_ver}" in out else bad("--upgrade 沒顯示舊版 → 新版", out)
+    ok("--upgrade 沒給 --config 時沿用 .claude/teams/workflow.config") if "teams/workflow.config" in out.replace("\\", "/") else bad("--upgrade 沒沿用 init 記下的設定值", out)
+    vf = (teams / "VERSION").read_text(encoding="utf-8").strip()
+    ok(f"升級後 VERSION＝{vf}") if vf == new_ver else bad(f"升級後 VERSION 是 {vf}，不是 {new_ver}")
+
+    src_tool = (ROOT / "scaffold/.claude/teams/tools/schemalib.py").read_text(encoding="utf-8")
+    good = tool.read_text(encoding="utf-8") == src_tool and (t / ".claude/workflows/sdlc-sync.js").is_file()
+    ok("升級：被改過的工具檔換成新版、缺的 workflow 補上") if good else bad("升級：模版檔沒有更新")
+    ok("升級：列出這版已不提供的舊檔（old_tool.py，不刪）") if "old_tool.py" in out and (teams / "tools/old_tool.py").is_file() else bad("升級：沒列出舊版殘留的工具檔", out)
+
+    m2 = json.loads(meth_p.read_text(encoding="utf-8"))
+    ok("升級：methodology.json 原樣保留") if m2 == meth else bad("升級：methodology.json 被改了")
+    ok("升級：列出缺少的 profile 欄位 conventions.sync 與預設值") if "conventions.sync" in out and "--adopt-new-fields" in out else bad("升級：沒列出缺少的 conventions.sync", out)
+    g2 = json.loads(guard_p.read_text(encoding="utf-8"))
+    kept = (g2.get("main_session_git_rules") is False and g2["auto_merge"].get("upstream_authorized_by") == guard["auto_merge"]["upstream_authorized_by"]
+            and g2.get("extension_agents", {}).get("acme-db-reviewer") == "tpm-reviewer")
+    ok("升級：guard.config.json 的 main_session_git_rules、upstream_authorized_by、extension_agents 保留") if kept else bad(f"升級：guard.config.json 的自訂值不見了：{g2}")
+    ok("升級：guard.config.json 補上新版新增的鍵（auto_merge.carry_verdict_on_rebase）") if g2["auto_merge"].get("carry_verdict_on_rebase") is False else bad("升級：guard.config.json 沒補上新鍵")
+    rules = rules_p.read_text(encoding="utf-8")
+    ok("升級：rules.md〈專案規則〉之後保留、前面的通用規則更新") if RULE_MARK in rules and "（舊版通用規則）" not in rules else bad("升級：rules.md 的〈專案規則〉沒保留或通用規則沒更新")
+    ok("升級：CLAUDE.md〈專案特定〉之後保留") if CLAUDE_SPECIFIC in claude.read_text(encoding="utf-8") else bad("升級：CLAUDE.md 的〈專案特定〉不見了")
+
+    r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=t)
+    ok("升級後 build.py --check") if r.returncode == 0 else bad("升級後 build.py --check 失敗：", r.stdout + r.stderr)
+    r = run(golden_argv(), cwd=t)
+    ok(f"升級後 golden-set：{last_line(r.stdout + r.stderr)}") if r.returncode == 0 else bad("升級後 golden-set 失敗：", r.stdout + r.stderr)
+
+    r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--upgrade", "--adopt-new-fields"], cwd=t.parent, env=env)
+    m3 = json.loads(meth_p.read_text(encoding="utf-8"))
+    good = r.returncode == 0 and "sync" in m3["conventions"] and m3["conventions"]["pr_size"] == {"max_lines": 123, "max_files": 7}
+    ok("升級：--adopt-new-fields 補上 conventions.sync，既有的 pr_size 不變") if good else bad("升級：--adopt-new-fields 不對：", r.stdout + r.stderr)
+    r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=t)
+    ok("--adopt-new-fields 後 build.py --check") if r.returncode == 0 else bad("--adopt-new-fields 後 build.py --check 失敗：", r.stdout + r.stderr)
+
+    tool.write_text(tool.read_text(encoding="utf-8") + "\n# 舊版殘留\n", encoding="utf-8")
+    if init(t, config, "--force", env=env):
+        g4 = json.loads(guard_p.read_text(encoding="utf-8"))
+        good = (json.loads(meth_p.read_text(encoding="utf-8")) == m3 and g4.get("main_session_git_rules") is False
+                and g4.get("extension_agents", {}).get("acme-db-reviewer") == "tpm-reviewer" and RULE_MARK in rules_p.read_text(encoding="utf-8")
+                and tool.read_text(encoding="utf-8") == src_tool)
+        ok("--force：模版檔更新，methodology、guard.config、〈專案規則〉照升級規則保留") if good else bad("--force 蓋掉了使用者的設定")
+    check_force_keeps_values(work, config, env)
+
+
+def check_force_keeps_values(work: Path, config: Path, env: dict) -> None:
+    """升級：用自訂 RUNS_DIR init，再跑沒給 --config 的 --force：佔位符沿用紀錄檔，workflow 裡的 runs 路徑與紀錄檔都不變。"""
+    print("\n== 升級：--force 沒給 --config 時沿用 init 記下的佔位符值 ==")
+    t = work / "project-force-values"
+    t.mkdir()
+    custom = work / "custom.config"
+    custom_runs = "_acme/agent-runs"
+    lines = [f"RUNS_DIR={custom_runs}" if l.strip().startswith("RUNS_DIR") and "=" in l else l
+             for l in config.read_text(encoding="utf-8").splitlines()]
+    custom.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if not init(t, custom, env=env):
+        return
+    wf = t / ".claude/workflows/event-post-merge.js"
+    record = t / ".claude/teams/workflow.config"
+    want = f"const RUNS = '{custom_runs}'"
+    if want not in wf.read_text(encoding="utf-8") or read_kv(record, "RUNS_DIR") != custom_runs:
+        bad(f"自訂 RUNS_DIR 的 init 結果不對（{wf.name} 或 workflow.config 紀錄）")
+        return
+    r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--force"], cwd=t.parent, env=env)
+    if r.returncode != 0:
+        bad("init.py --force（沒給 --config）失敗：", r.stdout + r.stderr)
+        return
+    text = wf.read_text(encoding="utf-8")
+    ok(f"升級：--force 沒給 --config，workflow 的 runs 路徑仍是 {custom_runs}") if want in text else bad(
+        f"升級：--force 沒給 --config，workflow 的 runs 路徑被換掉了：{[l for l in text.splitlines() if 'const RUNS' in l]}")
+    got = read_kv(record, "RUNS_DIR")
+    ok("升級：--force 沒給 --config，workflow.config 紀錄沒被範例預設值覆寫") if got == custom_runs else bad(f"升級：--force 後 workflow.config 紀錄的 RUNS_DIR 變成 {got}")
+    g = json.loads((t / ".claude/teams/guard.config.json").read_text(encoding="utf-8"))
+    ok("升級：--force 後 guard.config.json 的 runs_dir 仍是自訂值") if g.get("runs_dir") == custom_runs else bad(f"升級：--force 後 runs_dir 變成 {g.get('runs_dir')}")
 
 
 def main(argv: list[str]) -> int:
@@ -494,6 +658,8 @@ def main(argv: list[str]) -> int:
         target.mkdir()
         init(target, config, env=env)
         check_output(target, runs_dir)
+        check_versions(target)
+        check_placeholders()
         check_tools(target)
         check_default_methodology(target)
         check_merge_gate_optin(target, config, env)
@@ -516,6 +682,7 @@ def main(argv: list[str]) -> int:
             check_project_hooks(target2)
 
         check_existing_project(work, config, env)
+        check_upgrade(work, config, env)
     finally:
         if os.environ.get("KEEP") == "1":
             print(f"保留暫存目錄：{work}")

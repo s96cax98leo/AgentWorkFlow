@@ -41,6 +41,8 @@ DEFAULTS = {
         "dev-pr-reviewer": "pr-reviewer",
         "tpm-reviewer": "pr-reviewer",
         "tpm-skeptic": "pr-reviewer",
+        # tpm-researcher（含上游模式）在本工作區只能寫 run 目錄；轉呼叫 repo 的 guard 時照唯讀審查角色套用
+        "tpm-researcher": "pr-reviewer",
         "tpm-upstream-analyst": "pr-reviewer",
         "dev-merge-steward": "merge-steward",
         "dev-release-watcher": "release-watcher",
@@ -54,6 +56,8 @@ DEFAULTS = {
     # 使用者加進 workflow 的自己的 agent（methodology.json 的 extensions）：{"完整 agent_type": "套用哪個模版角色的規則"}。
     # 登記後就算模版角色（推送、GitHub 寫入、寫入範圍照對應角色擋，信封也會驗）；只能對應 EXTENSION_ROLES。
     "extension_agents": {},
+    # 驗收測試目錄（工作區或 repo 內任一層的相對路徑）：dev-implementer 不能寫（驗收測試由 dev-acceptance-tester 寫）
+    "acceptance_test_dirs": ["tests/acceptance", "e2e"],
 }
 # auto_merge 預設關閉。開放條件見 guard.py 的 merge_exception() 與 docs/自動合併信任模型.md。
 AUTO_MERGE_DEFAULTS = {
@@ -62,12 +66,14 @@ AUTO_MERGE_DEFAULTS = {
     "merger_role": DEFAULT_NS + "dev-merge-steward",  # 唯一能合併的角色，比對完整 agent_type（含命名空間）
     "merge_method": "squash",  # steward 的 gh pr merge 必須帶對應旗標（--squash／--merge／--rebase）
     # 能寫凍結旗標的角色（完整 agent_type）：只能用 Write 寫入 {"frozen": true, …}；解凍（刪除、改成 false）由人做
-    "freeze_writers": [DEFAULT_NS + "tpm-writer", DEFAULT_NS + "dev-release-watcher"],
+    # dev-release-watcher 只讀、沒有 Write：凍結建議交信封，由 tpm-writer 寫到 freeze_file
+    "freeze_writers": [DEFAULT_NS + "tpm-writer"],
     "daily_cap": 5,
     "upstream_authorized_by": {},  # {"owner/repo": "授權人" 或 {"by", "link", "scope", "expires"}}；上游沒有授權人一律擋
     "freeze_file": "",  # 空＝<runs_dir>/auto-merge.freeze.json；內容 {"frozen": true, "reason": …}（event-post-merge 寫）
 }
-LIST_KEYS = ("upstream_repos", "forbidden_paths", "allowed_branch_prefixes", "writer_dirs", "team_agent_prefixes", "protected_branches")
+LIST_KEYS = ("upstream_repos", "forbidden_paths", "allowed_branch_prefixes", "writer_dirs", "team_agent_prefixes", "protected_branches",
+             "acceptance_test_dirs")
 BOOL_KEYS = ("main_session_git_rules", "main_session_github_rules")
 PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
 
@@ -121,16 +127,23 @@ def _bool(v, default: bool) -> bool:
 
 
 def load() -> dict:
-    """回傳合併預設後的設定；cfg["_configured"] 表示專案有設定檔。"""
+    """回傳合併預設後的設定；cfg["_configured"] 表示專案有設定檔。
+    設定檔存在但讀不到或不是 JSON 物件時 fail-closed：視為已設定（主 session 的合併、核准、寫稽核照擋），
+    其餘欄位用預設值，cfg["_broken"] 記下原因（守門擋下時會說明）。"""
     cfg = json.loads(json.dumps(DEFAULTS))
     cfg["_configured"] = False
+    cfg["_broken"] = ""
     p = config_path()
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError) as e:
             data = None
-        if isinstance(data, dict):
+            cfg["_broken"] = f"{type(e).__name__}"
+        if not isinstance(data, dict):
+            cfg["_configured"] = True
+            cfg["_broken"] = cfg["_broken"] or "不是 JSON 物件"
+        else:
             cfg["_configured"] = True
             for k, v in data.items():
                 if k.startswith("_"):
@@ -219,6 +232,13 @@ EXTENSION_ROLES = frozenset({
 })
 EXTENSION_FALLBACK = "tpm-reviewer"
 
+# 已合併的舊角色名（相容一版，下一版移除）：舊名照新角色的規則套用（寫入範圍、轉呼叫 repo guard 的對應）。
+# 舊名仍留在 RESERVED_ROLES 與 EXTENSION_ROLES，還沒升級的專案與擴充設定照樣被認得。
+ROLE_ALIASES = {
+    "dev-pr-reviewer": "tpm-reviewer",
+    "tpm-upstream-analyst": "tpm-researcher",
+}
+
 
 def extension_role(agent: str, cfg: dict) -> str:
     """登記在 extension_agents 的擴充 agent 回傳要套用的模版角色名；沒登記回空字串。比對完整 agent_type。"""
@@ -243,9 +263,12 @@ def is_team_agent(agent: str, cfg: dict) -> bool:
 
 
 def team_role(agent: str, cfg: dict) -> str:
-    """模版角色回傳去掉命名空間的角色名（例如 dev-implementer），擴充 agent 回傳它套用的角色，都不是回空字串。"""
+    """模版角色回傳去掉命名空間的角色名（例如 dev-implementer），擴充 agent 回傳它套用的角色，都不是回空字串。
+    已合併的舊名（ROLE_ALIASES）回傳併入的新角色名，守門照新角色的規則套用。"""
     if role_name(agent) not in RESERVED_ROLES:
         ext = extension_role(agent, cfg)
         if ext:
-            return ext
-    return role_name(agent) if is_team_agent(agent, cfg) else ""
+            return ROLE_ALIASES.get(ext, ext)
+    if not is_team_agent(agent, cfg):
+        return ""
+    return ROLE_ALIASES.get(role_name(agent), role_name(agent))

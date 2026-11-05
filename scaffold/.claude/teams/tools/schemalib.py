@@ -1,8 +1,9 @@
 """agent team 的 schema 工具：載入、組合（信封＋payload）、驗證。
 
-只支援 schemas/ 用到的 JSON Schema 關鍵字（type（可為陣列，含 null）、properties、required、enum、items、
-minItems、minLength、minimum、maximum），所以 hook 不必依賴第三方套件；
-golden-set/run.py 會拿官方 jsonschema 套件交叉比對，確保判斷一致。
+只支援 schemas/ 用到的 JSON Schema 關鍵字（SUPPORTED_KEYWORDS：type（可為陣列，含 null）、properties、required、
+enum、items、minItems、minLength、minimum、maximum、pattern、additionalProperties），所以 hook 不必依賴第三方套件；
+golden-set/run.py 會拿官方 jsonschema 套件交叉比對，確保判斷一致，並用 unsupported_keywords 確認 schema 沒有用到
+這裡不認得的關鍵字（不認得就等於沒檢查，gate 會默默變鬆）。format 在 2020-12 預設只是註記、不做驗證，和官方一致。
 
 獨立文件（不是信封 payload，例如開發規範 profile methodology）用 check_doc 驗。
 任務編號規則讀 ../guard.config.json 的 task_id_prefix、task_authority（init.py 產生）。
@@ -19,6 +20,10 @@ SCHEMA_DIR = TEAMS_DIR / "schemas"
 PAYLOAD_DIR = SCHEMA_DIR / "payloads"
 CONFIG = TEAMS_DIR / "guard.config.json"
 _PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
+# 測試專用：設成 dict 時覆蓋 guard.config.json 的同名鍵（golden-set 用它給 task_id_prefix，讓自編任務編號的反例實際跑到）
+CONFIG_OVERRIDE: dict | None = None
+# 子計劃 id 的格式（和 plan-outline.schema.json 的 pattern 一致）；子任務依賴寫「@<子計劃 id>」由 sdlc-design 展開
+SUB_PLAN_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 
 def config(path: Path | None = None) -> dict:
@@ -27,7 +32,9 @@ def config(path: Path | None = None) -> dict:
     try:
         data = json.loads((path or CONFIG).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {}
+        data = {}
+    if path is None and CONFIG_OVERRIDE and isinstance(data, dict):
+        data = {**data, **CONFIG_OVERRIDE}
     return {k: ("" if isinstance(v, str) and _PLACEHOLDER.search(v) else v) for k, v in data.items()} if isinstance(data, dict) else {}
 
 
@@ -72,6 +79,29 @@ def compose(payload: str | None) -> dict:
     return _strip_meta(env)
 
 
+SUPPORTED_KEYWORDS = {
+    "type", "properties", "required", "enum", "items", "minItems", "minLength", "minimum", "maximum",
+    "pattern", "additionalProperties",
+    # 註記類，不影響驗證
+    "$schema", "$id", "title", "description", "examples", "default", "format", "$comment",
+}
+
+
+def unsupported_keywords(schema, path: str = "$") -> list[str]:
+    """schema 裡 validate() 不認得的關鍵字（不認得＝沒檢查）。properties 底下的鍵是欄位名，不算關鍵字。"""
+    out: list[str] = []
+    if isinstance(schema, dict):
+        for k, v in schema.items():
+            if k not in SUPPORTED_KEYWORDS:
+                out.append(f"{path}.{k}")
+            if k == "properties" and isinstance(v, dict):
+                for name, sub in v.items():
+                    out += unsupported_keywords(sub, f"{path}.properties.{name}")
+            elif k in ("items", "additionalProperties") and isinstance(v, dict):
+                out += unsupported_keywords(v, f"{path}.{k}")
+    return out
+
+
 _TYPES = {
     "object": dict,
     "array": list,
@@ -96,6 +126,8 @@ def validate(data, schema: dict, path: str = "$") -> list[str]:
         errs.append(f"{path}：值 {data!r} 不在 {schema['enum']}")
     if isinstance(data, str) and "minLength" in schema and len(data) < schema["minLength"]:
         errs.append(f"{path}：不能是空字串")
+    if isinstance(data, str) and "pattern" in schema and not re.search(schema["pattern"], data):
+        errs.append(f"{path}：{data!r} 不符合格式 {schema['pattern']}")
     if isinstance(data, (int, float)) and not isinstance(data, bool):
         if "minimum" in schema and data < schema["minimum"]:
             errs.append(f"{path}：小於 {schema['minimum']}")
@@ -105,9 +137,18 @@ def validate(data, schema: dict, path: str = "$") -> list[str]:
         for key in schema.get("required", []):
             if key not in data:
                 errs.append(f"{path}：缺欄位 {key}")
-        for key, sub in schema.get("properties", {}).items():
+        props = schema.get("properties", {})
+        for key, sub in props.items():
             if key in data:
                 errs.extend(validate(data[key], sub, f"{path}.{key}"))
+        extra_rule = schema.get("additionalProperties", True)
+        for key in data:
+            if key in props:
+                continue
+            if extra_rule is False:
+                errs.append(f"{path}：不允許的欄位 {key}")
+            elif isinstance(extra_rule, dict):
+                errs.extend(validate(data[key], extra_rule, f"{path}.{key}"))
     if isinstance(data, list):
         if "minItems" in schema and len(data) < schema["minItems"]:
             errs.append(f"{path}：至少要 {schema['minItems']} 項")
@@ -144,7 +185,11 @@ def semantic_errors(env: dict) -> list[str]:
                     errs.append(f"子任務 {owner[f]} 與 {s.get('id')} 同時擁有 {f}（檔案所有權不得重疊）")
                 owner[f] = s.get("id")
             for d in s.get("depends_on") or []:
-                if d not in ids:
+                if isinstance(d, str) and d.startswith("@"):
+                    # 子計劃規劃時依賴別的子計劃，彙整時由 sdlc-design 展開成該子計劃的子任務
+                    if not SUB_PLAN_ID.fullmatch(d[1:]):
+                        errs.append(f"子任務 {s.get('id')} 的子計劃依賴格式不合法（要是 @<子計劃 id>）：{d}")
+                elif d not in ids:
                     errs.append(f"子任務 {s.get('id')} 依賴不存在的 {d}")
     errs.extend(merge_decision_errors(payload))
     errs.extend(plan_outline_errors(payload))
@@ -211,8 +256,10 @@ def plan_outline_errors(payload: dict) -> list[str]:
     deps = {s.get("id"): [d for d in s.get("depends_on") or []] for s in subs}
     for sid, ds in deps.items():
         for d in ds:
-            if d == sid or d not in deps:
-                errs.append(f"子計劃 {sid} 依賴不存在或是自己：{d}")
+            if d == sid:
+                errs.append(f"子計劃 {sid} 依賴自己")
+            elif d not in deps:
+                errs.append(f"子計劃 {sid} 依賴不存在的子計劃 {d}")
     # 相依不得有循環（拓撲排序排不完就是有循環）
     left = {k: {d for d in v if d in deps and d != k} for k, v in deps.items()}
     while left:

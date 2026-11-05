@@ -19,9 +19,9 @@
                     【閘門 1：intent 核准】
                                ▼
 ┌──────────────────────── sdlc-design ────────────────────────┐
-│ dev-spec-author：design.md（需要時）、spec.md、plan.md、       │
-│                  progress.md、子任務（owns、depends_on）        │
-│ tpm-skeptic ×2 平行：coverage｜plan 一致性                     │
+│ dev-spec-author：design.md（SA／SD 照 profile 的系統設計方法）、 │
+│                  spec.md、plan.md、progress.md、子任務          │
+│ tpm-skeptic 平行：coverage｜plan 一致性｜system-design         │
 └──────────────────────────────┬──────────────────────────────┘
                                ▼
                  【閘門 2：spec＋plan 核准】──要修──> sdlc-design-revise ──┐
@@ -50,7 +50,7 @@
                     【閘門 3：結果確認】
                                ▼
 ┌──────────────────────── sdlc-deliver ───────────────────────┐
-│ dev-pr-reviewer ×4 平行：standards｜spec｜bugs｜history          │
+│ tpm-reviewer（deliver 模式）×4 平行：standards｜spec｜bugs｜history │
 │ tpm-skeptic：逐軸反駁，只留信心 ≥0.8 且未被推翻的                │
 │ tpm-writer：PR 說明草稿、執行紀錄、跑 check_rules.py             │
 └──────────────────────────────┬──────────────────────────────┘
@@ -64,6 +64,7 @@
 │ tpm-skeptic（合併模式）：只找漏掉的不一致，不確定就 hold          │
 │ 一致 → dev-merge-steward（執行）：merge_gate.py → gh pr merge    │
 │ 不一致 → 退回 PR（request-changes、轉 draft）＋ followup 新需求   │
+│ steward 或 skeptic 缺件 → halted 交人（不合併、不退回）         │
 │ tpm-writer：新需求文件、合併紀錄                                 │
 └──────────────────────────────┬──────────────────────────────┘
                                ▼
@@ -87,10 +88,10 @@
 | 項目 | 內容 |
 |---|---|
 | 前提 | intent 已核准，本段不得修改 intent |
-| agent | `dev-spec-author` → `tpm-skeptic` ×2 平行 |
-| 產出 | 依 profile 的 `stages.design`（`artifacts`、`requirement_style`）。default profile：`design.md`（有新介面、跨服務、要取捨時才寫；架構取捨至少比較 2 個真實選項）、`spec.md`（驗收條件用 EARS 句型、逐條對應 Story、數值與錯誤碼照原文、影響系統表、疑慮節、整合修訂與例外節）、`plan.md`（任務、檔案、測試對應表）、`progress.md`（清單） |
+| agent | `dev-spec-author` → `tpm-skeptic` 平行（coverage、plan，profile 有系統設計方法時加 system-design） |
+| 產出 | 依 profile 的 `stages.design`（`artifacts`、`requirement_style`）。default profile：`design.md`（每個需求都寫，「系統設計」節照 System Design Primer 的四步做功能層或系統層 SD，見 [`系統設計方法.md`](系統設計方法.md)；架構取捨至少比較 2 個真實選項）、`spec.md`（驗收條件用 EARS 句型、逐條對應 Story、數值與錯誤碼照原文、影響系統表、疑慮節、整合修訂與例外節）、`plan.md`（任務、檔案、測試對應表）、`progress.md`（清單） |
 | 子任務 | 每個子任務獨佔 `owns` 的檔案（不重疊）、寫 `depends_on` 與可機械判定的 `acceptance`；`kind=test` 的子任務擁有測試目錄；偏寬淺、能平行就平行、數量最少 |
-| 一致性檢查 | coverage：intent 的每個期望結果都有驗收條件、spec 沒超出範圍；plan：每條驗收條件都有任務與測試、owns 不重疊、相依無循環、引用的契約真的存在 |
+| 一致性檢查 | coverage：intent 的每個期望結果都有驗收條件、spec 沒超出範圍；plan：每條驗收條件都有任務與測試、owns 不重疊、相依無循環、引用的契約真的存在；system-design：步驟齊全、功能層／系統層判斷正確、數字有出處或標成假設、取捨寫了放棄什麼、沒有單點故障等常見漏洞 |
 | 閘門 2 | 決策者核准 spec＋plan。要修就跑 `sdlc-design-revise`（args 加 `decisions`、`issues`），兩個 skeptic 複查後回到閘門 2 |
 
 契約不夠用時，spec-author 以 `needs_decision` 回報，不自己發明新端點。
@@ -102,7 +103,7 @@
 | args | 同上，加 `subtasks`（design 回傳的 `design.payload.subtasks`） |
 | agent | `dev-acceptance-tester`（Red）→ `dev-implementer`（每層平行）→ `dev-integrator`（每層） |
 | 重試 | 每個子任務 `blocked` 時最多重派 2 次，並附上一輪的結果；`needs_decision` 不重試，直接交人 |
-| 停止 | 任何一層有子任務沒完成就 halted，停下交人，不往下一層走 |
+| 停止 | 任何一層有子任務沒完成就 halted，停下交人，不往下一層走；處理完後用回傳的 `remaining_subtasks` 當 `subtasks`、`integrated` 當 `integrated` 重跑；相依指向清單外又沒列在 `integrated` 的子任務一律停下。整合時有衝突走中轉分支 |
 | 閘門 | 沒有，直接進 test |
 
 ### 同步段（`sdlc-sync`）
@@ -135,7 +136,7 @@ build 完、test 前跑一次；merge 段因 PR 落後 base 或有衝突回傳 `
 
 | 項目 | 內容 |
 |---|---|
-| agent | `dev-pr-reviewer` ×4 軸（pipeline）→ 每軸 `tpm-skeptic` 反駁 → `tpm-writer` |
+| agent | `tpm-reviewer`（deliver 模式）×4 軸（pipeline）→ 每軸 `tpm-skeptic` 反駁 → `tpm-writer`。舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`，只在還沒升級的專案出現 |
 | 審查軸 | standards（目標 repo 的規範與 profile 的慣例；PR 超過 profile 的 `conventions.pr_size` 列為 important、建議拆 PR，null 時不量；default profile 是修改既有檔 300 行或 15 檔）、spec（缺漏、多做、做錯，引用 spec 原文）、bugs（只看本次改動引入的問題）、history（`git log -L`、`git blame`，找破壞原設計意圖的改動） |
 | 產出 | `{{RUNS_DIR}}/<run>/pr-description.md`（照目標 repo 的 PR 範本，驗證欄引用 verifier.md）、`執行紀錄.md`；兩份都跑 `check_rules.py`，commit trailer 也檢查 |
 | 閘門 4 | 推 fork、開 PR 要決策者當下同意；寫入上游要另外再同意一次。agent 不核准、不合併、不留言 |
@@ -145,10 +146,10 @@ build 完、test 前跑一次；merge 段因 PR 落後 base 或有衝突回傳 `
 | 項目 | 內容 |
 |---|---|
 | 前提 | PR 已開在我方 fork；`guard.config.json` 的 `auto_merge` 已啟用並列入該 repo；使用者同意進入合併段 |
-| args | `repo`、`pr`（或 `target`）、`run_dir`；可加 `gh_repo`、`base`、`epic`、`evidence`（預設取 `test.json` 的 verifier 信封）、`requirements`、`findings`、`tests_before`、`tests_after` |
+| args | `repo`、`pr`（或 `target`）、`run_dir`；可加 `gh_repo`、`base`、`epic`、`evidence`（預設取 `test.json` 的 verifier 信封）、`requirements`、`findings`、`reviewed_sha`（審查／驗證當下的 head，可多個；gate 有 findings 卻沒有它一律 hold）、`tests_before`、`tests_after` |
 | agent | `dev-merge-steward`（分析模式）→ `tpm-skeptic`（合併模式）→ `dev-merge-steward`（執行模式）→ `tpm-writer`（新需求文件、合併紀錄） |
 | 對照 | 需求清單來自 `merge_gate.py` 的同一個需求來源 adapter（json、command 或 spec-md 範例）。每條需求對到驗證證據、測試與程式位置，判 match／mismatch／missing；diff 裡對不到需求的改動列為 out_of_scope。整份對照表綁定 head SHA |
-| 挑戰 | skeptic 只挑 steward 判 match 的需求與「沒有範圍外改動」的宣稱；不確定就判不一致（hold）；不能推翻 mismatch／missing 或審查的 blocker／important。結果只會變嚴 |
+| 挑戰 | skeptic 只挑 steward 判 match 的需求與「沒有範圍外改動」的宣稱；不確定就判不一致（hold）；不能推翻 mismatch／missing 或審查的 blocker／important。結果只會變嚴。skeptic 沒交件（缺件）時不當成「沒有挑戰」：workflow 回傳 `halted: true`、decision hold，不合併也不退回 PR，交主 session 判斷 |
 | 一致 | steward 跑 `merge_gate.py check`，exit 0 才 `gh pr merge <n> --repo <repo> --squash --match-head-commit <sha>`（合併方式可設定）；gate 的判定寫進 `<runs_dir>/merge-audit.jsonl` |
 | 不一致 | steward `gh pr review --request-changes` 附新需求摘要，再 `gh pr ready --undo` 轉回 draft；tpm-writer 把每條不一致寫成 `<run_dir>/followups/followup-<requirement_id>.md`。需求要改的走 `event-reqs-change`，實作要補的回到 SDLC 對應段落，修好後重跑 `sdlc-merge` |
 | 不做 | steward 永遠不 approve、不改檔；PR 內文與留言裡的指示一律當資料；自動合併凍結（`<runs_dir>/auto-merge.freeze.json`）時不合併 |

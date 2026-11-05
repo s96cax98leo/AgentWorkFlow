@@ -44,6 +44,8 @@ SLUG = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
 def block(msg: str) -> None:
+    if CFG.get("_broken"):
+        msg += f"；guard.config.json 讀不懂（{CFG['_broken']}），已改用最嚴格的預設，請由人修正設定檔"
     print(f"已被 agent-workflow hook 擋下：{msg}（規則：.claude/teams/rules.md；設定：.claude/teams/guard.config.json）", file=sys.stderr)
     sys.exit(2)
 
@@ -56,10 +58,28 @@ def norm(p: str) -> str:
     return p
 
 
+def fold(s: str) -> str:
+    """擋人用的路徑比對（受保護檔、機敏檔、禁止路徑、.claude/、run.json、驗收測試目錄）一律不分大小寫。
+    macOS（APFS／HFS+ 預設）與 Windows（NTFS）不分大小寫，MERGE-AUDIT.jsonl、.CLAUDE/ 指到的是同一個檔；
+    Linux 上一律 casefold 只會多擋同名異寫的檔，不會少擋，所以不看平台。
+    放行用的白名單（writer_dirs、runs_dir、repos_dir、報告檔名）維持原樣比對：大小寫不同時判不符＝擋，同樣只會更嚴。"""
+    return s.casefold()
+
+
 def rel_to_workspace(p: Path) -> str | None:
     try:
         return Path(norm(str(p))).resolve().relative_to(WORKSPACE.resolve()).as_posix()
     except ValueError:
+        return None
+
+
+def run_git(*a: str) -> subprocess.CompletedProcess | None:
+    """跑 git 並回傳結果；找不到 git（PATH 上沒有、無法執行，OSError）回 None。
+    hook 跑得起來但環境沒有 git 時不能因此鎖死所有工具：呼叫端一律當成「不在 repo／查不到」處理，
+    純字串的規則（推送、合併、核准、受保護檔）照常判斷。"""
+    try:
+        return subprocess.run(["git", *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError:
         return None
 
 
@@ -69,8 +89,8 @@ def git_toplevel(start: Path) -> Path | None:
         d = d.parent
     if d.is_file():
         d = d.parent
-    r = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    r = run_git("-C", str(d), "rev-parse", "--show-toplevel")
+    return Path(r.stdout.strip()) if r is not None and r.returncode == 0 and r.stdout.strip() else None
 
 
 GIT_GLOBAL_OPTS = re.compile(r"\bgit\s+(?:(?:-C|-c)\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s+|--(?:git-dir|work-tree|namespace)=\S+\s+|--no-pager\s+|--bare\s+)+")
@@ -83,8 +103,8 @@ def forward(top: Path | None, guard: str, data: dict) -> None:
     script = find_repo_guard(top, guard)
     if script is None:
         # worktree 從沒有 guard 的分支開出時，改用主 repo 的 guard（規則一樣適用）
-        r = subprocess.run(["git", "-C", str(top), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        main = Path(r.stdout.strip()).parent if r.returncode == 0 else None
+        r = run_git("-C", str(top), "rev-parse", "--path-format=absolute", "--git-common-dir")
+        main = Path(r.stdout.strip()).parent if r is not None and r.returncode == 0 else None
         script = find_repo_guard(main, guard) if main else None
         if script is None:
             return
@@ -111,6 +131,11 @@ def forward(top: Path | None, guard: str, data: dict) -> None:
     if r.returncode == 2:
         print(f"{r.stderr.strip()}（由 agent-workflow hook 轉呼叫 {top.name} 的 {script.name}）", file=sys.stderr)
         sys.exit(2)
+    if r.returncode != 0:
+        # repo 的 guard 自己出錯：無法確認是否允許，fail-closed
+        err = (r.stderr or "").strip()[-300:]
+        block(f"轉呼叫 {top.name} 的 {script.name} 出錯（exit {r.returncode}），無法確認這個動作是否允許，先擋下"
+              + (f"：{err}" if err else "") + "；請修正該 repo 的 guard 腳本")
 
 
 def find_repo_guard(top: Path, guard: str) -> Path | None:
@@ -158,13 +183,14 @@ def forbidden_entries() -> tuple[list[str], list[str]]:
 
 def under_forbidden(path: Path) -> str | None:
     rel = rel_to_workspace(path)
-    absp = Path(norm(str(path))).resolve().as_posix() if path.is_absolute() else None
+    rel = fold(rel) if rel is not None else None
+    absp = fold(Path(norm(str(path))).resolve().as_posix()) if path.is_absolute() else None
     for e in forbidden_entries()[0]:
         if os.path.isabs(e):
-            target = Path(e).resolve().as_posix()
+            target = fold(Path(e).resolve().as_posix())
             if absp and (absp == target or absp.startswith(target + "/")):
                 return e
-        elif rel is not None and (rel == e or rel.startswith(e + "/")):
+        elif rel is not None and (rel == fold(e) or rel.startswith(fold(e) + "/")):
             return e
     return None
 
@@ -179,6 +205,23 @@ GH_WRITE = re.compile(
     r"workflow\s+(?:run|enable|disable)|run\s+(?:rerun|cancel|delete)|"
     r"label\s+(?:create|edit|delete)|secret\s+(?:set|delete)|variable\s+(?:set|delete))\b"
 )
+# 會繞過守門的 gh 設定：alias（gh m 3 → pr merge）、extension（任意程式）。agent 與套用 GitHub 規則的主 session 都擋。
+GH_BYPASS = re.compile(r"\bgh\s+(?:alias\s+(?:set|import)|extension\s+(?:install|upgrade|exec|create)|ext\s+(?:install|upgrade|exec|create))\b")
+# 帳號層級的寫入：ssh／gpg 金鑰、gist、登入狀態。agent 一律擋；主 session 是使用者自己的帳號，不擋。
+GH_ACCOUNT_WRITE = re.compile(r"\bgh\s+(?:alias\s+(?:delete)|extension\s+(?:remove)|ssh-key\s+(?:add|delete)|gpg-key\s+(?:add|delete)|"
+                              r"gist\s+(?:create|new|edit|delete|rename)|auth\s+(?:login|logout|refresh|setup-git|switch))\b")
+# gh 的 --repo／-R 可以夾在子指令中間（gh pr --repo X merge 3）；比對前移到段落最後
+GH_INNER_REPO = re.compile(r"(\bgh(?:\.exe)?(?:\s+[a-z][\w-]*)?)\s+((?:-R|--repo)(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|[^\s;&|]+))(?=\s+[a-z])", re.I)
+
+
+def canon_gh(seg: str) -> str:
+    """gh --repo X pr merge 3、gh pr -R X merge 3 → gh pr merge 3 --repo X（其餘不動）。"""
+    for _ in range(4):
+        m = GH_INNER_REPO.search(seg)
+        if not m:
+            return seg
+        seg = seg[:m.start()] + m.group(1) + seg[m.end():] + " " + m.group(2)
+    return seg
 # 段落已依引號外的運算子切好，所以 lookahead 可以看整段（引號裡 URL 的 & 不會截斷判斷）
 GH_API_WRITE = re.compile(r"\bgh(?:\.exe)?\s+api\b(?=.*(?:-X\s*|--method[\s=]+)[\"']?(?:POST|PATCH|PUT|DELETE)|.*\s(?:-f|-F|--field|--raw-field|--input)[\s=])", re.I)
 DESTRUCTIVE = re.compile(r"\b(rm|mv|cp|sed\s+-i|git\s+(commit|checkout|reset|merge|pull|stash|clean)|tee|>)\b")
@@ -224,7 +267,18 @@ def segments(cmd: str) -> list[str]:
         cur.append(c)
         i += 1
     out.append("".join(cur))
-    return [x.strip() for x in out if x.strip()]
+    return [y for y in (_ungroup(x) for x in out) if y]
+
+
+def _ungroup(seg: str) -> str:
+    """去掉段落頭尾的子 shell「(」「)」與群組「{ 」「}」：(cd x && git push o HEAD:main) 拆段後，
+    第一段是 cd x、第二段是 git push o HEAD:main（不留下 main) 這種 refspec）。算術的 (( 不動，配對完整的 $(…) 不動。"""
+    s = seg.strip()
+    while s and ((s[0] == "(" and not s.startswith("((")) or (s[0] == "{" and (len(s) == 1 or s[1].isspace()))):
+        s = s[1:].lstrip()
+    while s and ((s[-1] == ")" and s.count(")") > s.count("(")) or (s[-1] == "}" and s.count("}") > s.count("{"))):
+        s = s[:-1].rstrip()
+    return s
 
 
 # ---------------------------------------------------------------- GitHub 合併／核准／REST 寫入
@@ -245,12 +299,21 @@ PS_WEB_WRITE = re.compile(r"(?:^|\s)(?:-Method\s+[\"']?(?:Post|Put|Patch|Delete)
 HTTPIE_WRITE = re.compile(r"(?:^|\s)(?:POST|PUT|PATCH|DELETE)\s|\s[\w.-]+:?=\S")
 
 
+# 直譯器：python -c、node -e、python - <<EOF 之類的內嵌程式可以直接打 GitHub API
+INTERP = re.compile(r"(?:^|[\s/\\(;&|`])(?:python[\d.]*|py|pypy[\d.]*|node|nodejs|deno|bun|ruby|perl|php|pwsh|powershell)(?:\.exe)?(?=\s|$)", re.I)
+
+
+def is_interp_review(text: str) -> bool:
+    """直譯器的內嵌程式（或同一條指令的 heredoc）碰到 reviews 端點：看不到送出的內容，一律當成核准（fail-closed）。"""
+    return bool(INTERP.search(text) and REVIEW_TARGET.search(text))
+
+
 def is_merge_cmd(text: str) -> bool:
     """合併 PR：gh pr merge（含 --auto），或用 API 打 merge 端點（REST／GraphQL；任何 method 寫法、旗標順序）。
     text 可以是一段或整條指令；傳整條時，用變數拼 URL（U=…/pulls/3/merge; gh api $U -X PUT）也抓得到。"""
     if GH_PR_MERGE.search(text):
         return True
-    return bool(API_CLIENT.search(text) and MERGE_TARGET.search(text))
+    return bool((API_CLIENT.search(text) or INTERP.search(text)) and MERGE_TARGET.search(text))
 
 
 def is_approve_cmd(seg: str) -> bool:
@@ -290,15 +353,45 @@ SUBST = re.compile(r"\$\(|`|<\(|\$\{")  # 指令替換、程序替換、變數�
 VALUE_FLAGS = ("--repo", "-R", "--match-head-commit", "-b", "--body", "-F", "--body-file", "-t", "--subject", "--author-email")
 
 
-def _flag(toks: list[str], *names: str) -> str | None:
-    """取旗標值：--repo x、--repo=x、-R x。沒有回 None。"""
-    for i, t in enumerate(toks):
+def _flag_values(toks: list[str], *names: str) -> list[str]:
+    """旗標每次出現的值（依出現順序）：--repo x、--repo=x、-R x、-Rx、-R=x，以及短旗標合寫（-sR x）。
+    旗標在最後、沒有值時記成空字串（出現次數照算）。"""
+    out: list[str] = []
+    i = 0
+    while i < len(toks):
+        t, step = toks[i], 1
         for n in names:
-            if t == n and i + 1 < len(toks):
-                return toks[i + 1]
+            if t == n:
+                out.append(toks[i + 1] if i + 1 < len(toks) else "")
+                step = 2
+                break
             if n.startswith("--") and t.startswith(n + "="):
-                return t.split("=", 1)[1]
-    return None
+                out.append(t.split("=", 1)[1])
+                break
+            if len(n) == 2 and n[0] == "-" and not t.startswith("--"):
+                m = re.match(rf"^-[A-Za-z]*{re.escape(n[1])}(.*)$", t)
+                if m:
+                    v = m.group(1)
+                    if v:
+                        out.append(v[1:] if v.startswith("=") else v)
+                    else:
+                        out.append(toks[i + 1] if i + 1 < len(toks) else "")
+                        step = 2
+                    break
+        i += step
+    return out
+
+
+def _flag(toks: list[str], *names: str) -> str | None:
+    """取旗標值（和 gh／argparse 一樣取最後一個）；沒有回 None。
+    同一旗標出現多次時，安全判斷要先用 _flag_dup() 拒絕，不能只看其中一個值。"""
+    vals = _flag_values(toks, *names)
+    return vals[-1] if vals else None
+
+
+def _flag_dup(toks: list[str], *names: str) -> bool:
+    """同一旗標（含別名混用，例如 -R 與 --repo）出現超過一次。"""
+    return len(_flag_values(toks, *names)) > 1
 
 
 def _gh_pr(seg: str, sub: str) -> tuple[str, int | None, list[str]] | None:
@@ -351,6 +444,14 @@ def frozen() -> str | None:
 
 
 METHOD_FLAGS = {"squash": ("--squash", "-s"), "merge": ("--merge", "-m"), "rebase": ("--rebase", "-r")}
+
+
+def dup_flag_problem(args: list[str], *groups: tuple[str, ...]) -> str | None:
+    """同一旗標出現超過一次（含 -R 與 --repo 混用）就拒絕：gh 取最後一個值，守門若只看其中一個就會被繞過。"""
+    for names in groups:
+        if _flag_dup(args, *names):
+            return f"{'／'.join(names)} 只能寫一次（重複出現時 gh 取最後一個值，無法確認實際目標）"
+    return None
 
 
 def upstream_auth(repo: str) -> str | None:
@@ -422,6 +523,9 @@ def merge_refusal(seg: str, data: dict) -> str | None:
     if not parsed:
         return "看不懂這個 gh pr merge"
     repo, pr, args = parsed
+    dup = dup_flag_problem(args, ("--repo", "-R"), ("--match-head-commit",))
+    if dup:
+        return dup
     if pr is None:
         return "要寫 PR 編號（或同一個 repo 的 PR URL）"
     if "--admin" in args:
@@ -468,6 +572,9 @@ def steward_write_refusal(seg: str, data: dict) -> str | None:
         if not parsed:
             continue
         repo, pr, args = parsed
+        dup = dup_flag_problem(args, ("--repo", "-R"))
+        if dup:
+            return dup
         if need and not any(a in need for a in args):
             return f"gh pr {sub} 只允許 {'／'.join(need)}"
         if sub == "review" and any(a in ("--approve", "-a", "--comment", "-c") or a.startswith("--approve=") for a in args):
@@ -488,6 +595,63 @@ SHELL_WRITE = re.compile(
 
 
 AUDIT_FILES = ("merge-audit.jsonl", "publish-audit.jsonl")  # merge_gate.py、publish.py 寫的稽核紀錄
+# agent 用直譯器或在 run 目錄寫入時，檔名可能被拆開（'merge-'+'audit.jsonl'）：只要同時出現寫入動作與這些片段就擋（保守判斷）
+STATE_FRAGMENT = re.compile(r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config", re.I)
+WRITE_API = re.compile(r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.write\b|write_text|write_bytes|>>?|\bFile\.(?:write|open)|out-file|set-content|add-content", re.I)
+
+
+def agent_writes_state(seg: str) -> bool:
+    """agent 用內嵌程式（或在 run 目錄裡）寫 run 狀態、稽核紀錄、凍結檔、守門設定，檔名拆開寫也算。"""
+    near_runs = bool(RUNS) and fold(RUNS.rstrip("/")) in fold(norm(seg))
+    if not (INTERP.search(seg) or near_runs):
+        return False
+    probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", seg, flags=re.I)
+    return bool(STATE_FRAGMENT.search(probe) and (WRITE_API.search(probe) or SHELL_WRITE.search(probe)))
+
+
+def freezes_only(text: str) -> bool:
+    """寫凍結檔的內容只會凍結（frozen: true），不刪、不搬、不寫 false。用在主 session 的 shell 寫入。"""
+    if re.search(r"\b(?:rm|mv|unlink|truncate|remove-item|move-item|clear-content)\b|os\.remove|shutil\.", text, re.I):
+        return False
+    return bool(re.search(r"frozen[\"'\\]*\s*:\s*true", text, re.I)) and not re.search(r"\bfalse\b|\bnull\b|\bnone\b", text, re.I)
+
+
+# 機敏檔（和 publish.py 的 SECRET_FILES 同一份清單）：Read、Grep、cat／Get-Content 等讀內容一律擋；grep -q 只判有無，放行
+# 不分大小寫（.ENV、ID_RSA、x.PEM 在 macOS／Windows 是同一個檔）；例外清單 SECRET_FILE_OK 維持區分大小寫（只會更嚴）
+SECRET_FILES = re.compile(r"(?:^|/)(?:\.env(?:\.[\w-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:pem|p12|pfx|key|keystore|jks)|\.npmrc|\.pypirc|credentials(?:\.json)?)$", re.I)
+SECRET_FILE_OK = re.compile(r"\.env\.(?:example|sample|template)$")
+SECRET_GLOB = re.compile(r"(?:^|[/{,])\.env|id_(?:rsa|dsa|ecdsa|ed25519)|\.(?:pem|p12|pfx|key|keystore|jks)\b|\.npmrc|\.pypirc|credentials", re.I)
+SECRET_READERS = {
+    "cat", "tac", "type", "get-content", "gc", "less", "more", "head", "tail", "bat", "nl", "strings", "xxd", "od", "hexdump",
+    "base64", "sed", "awk", "gawk", "cut", "sort", "uniq", "jq", "yq", "openssl", "format-hex", "fhx", "vi", "vim", "nano", "view",
+    "grep", "egrep", "fgrep", "rg", "ag", "select-string", "sls", "findstr",
+}
+GREP_LIKE = {"grep", "egrep", "fgrep", "rg", "ag", "select-string", "sls", "findstr"}
+
+
+def is_secret_path(p: str) -> bool:
+    p = norm(p.strip("\"'")).rstrip("/")
+    return bool(SECRET_FILES.search(p)) and not SECRET_FILE_OK.search(p)
+
+
+def reads_secret(seg: str) -> str | None:
+    """段落是否讀出機敏檔內容（cat .env、Get-Content .env、grep KEY .env…）。grep 類帶 -q／--quiet／-Quiet 只判有無，放行。"""
+    toks = shlex_tokens(seg)
+    i = 0
+    while i < len(toks) and (re.match(r"^[A-Za-z_]\w*=", toks[i]) or _cmd_name(toks[i]) in ("sudo", "command", "env", "nohup", "time", "xargs")):
+        i += 1
+    if i >= len(toks):
+        return None
+    name, args = _cmd_name(toks[i]), toks[i + 1:]
+    if name not in SECRET_READERS:
+        return None
+    hits = [a for a in args if not a.startswith("-") and is_secret_path(a)]
+    hits += [a.split("=", 1)[1] for a in args if a.startswith("-") and "=" in a and is_secret_path(a.split("=", 1)[1])]
+    if not hits:
+        return None
+    if name in GREP_LIKE and any(a.lower() in ("--quiet", "--silent", "-quiet", "/q") or re.match(r"^-[A-Za-z]*q[A-Za-z]*$", a) for a in args):
+        return None
+    return hits[0]
 
 
 def protected_target(text: str, is_path: bool) -> str | None:
@@ -495,18 +659,21 @@ def protected_target(text: str, is_path: bool) -> str | None:
     t = norm(text)
     freeze = AM["freeze_file"]
     freeze_name = freeze.rsplit("/", 1)[-1]
+    # 一律不分大小寫比對（fold）；回傳值用設定裡的原名，呼叫端拿它和 AM["freeze_file"]、AUDIT_FILES 比對
     if is_path:
-        rel = rel_to_workspace(Path(t)) or t
+        rel = fold(rel_to_workspace(Path(t)) or t)
         base = rel.rsplit("/", 1)[-1]
         if rel.endswith(".claude/teams/guard.config.json"):
             return "guard.config.json"
-        if base in AUDIT_FILES:
-            return base
-        if rel == freeze or base == freeze_name:
+        for a in AUDIT_FILES:
+            if base == a:
+                return a
+        if rel == fold(norm(freeze)) or base == fold(freeze_name):
             return freeze
         return None
+    ft = fold(t)
     for n in ("guard.config.json", *AUDIT_FILES, freeze_name):
-        if n and n in t:
+        if n and fold(n) in ft:
             return freeze if n == freeze_name else n
     return None
 
@@ -520,19 +687,30 @@ def shell_writes_protected(seg: str) -> str | None:
     return hit if SHELL_WRITE.search(probe) else None
 
 
-def push_target_branches(seg: str, d: Path) -> list[str]:
-    """git push 會更新的遠端分支名（去掉 + 與 refs/heads/）。--all／--mirror／--branches 回傳 ["*"]（涵蓋所有分支）。
-    沒寫 refspec 時用 @{push}，再退回目前分支；HEAD 換成目前分支名。"""
+PUSH_RE = re.compile(r"\bgit\b.*\b(?:push|send-pack)\b")
+
+
+def _push_args(seg: str) -> list[str] | None:
+    """git push／git send-pack 之後的參數；不是推送回 None。"""
     toks = tokens(seg)
-    if "push" not in toks:
+    for verb in ("push", "send-pack"):
+        if verb in toks:
+            return toks[toks.index(verb) + 1:]
+    return None
+
+
+def push_target_branches(seg: str, d: Path) -> list[str]:
+    """git push（或 send-pack）會更新的遠端分支名（去掉 + 與 refs/heads/）。--all／--mirror／--branches 回傳 ["*"]（涵蓋所有分支）。
+    沒寫 refspec 時用 @{push}，再退回目前分支；HEAD 換成目前分支名。"""
+    args = _push_args(seg)
+    if args is None:
         return []
-    args = toks[toks.index("push") + 1:]
     if any(a in ("--all", "--mirror", "--branches") for a in args):
         return ["*"]
     pos, k = [], 0
     while k < len(args):
         a = args[k]
-        if a in ("--repo", "-o", "--push-option", "--receive-pack", "--exec"):
+        if a in ("--repo", "-o", "--push-option", "--receive-pack", "--exec", "--remote"):
             k += 2
             continue
         if not a.startswith("-"):
@@ -540,8 +718,9 @@ def push_target_branches(seg: str, d: Path) -> list[str]:
         k += 1
 
     def git_out(*a: str) -> str:
-        r = subprocess.run(["git", "-C", str(d), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        return r.stdout.strip() if r.returncode == 0 else ""
+        # 找不到 git 時這個 push 本來就跑不起來，查不到目標分支＝不用擋（refspec 寫明的分支仍照字串判斷）
+        r = run_git("-C", str(d), *a)
+        return r.stdout.strip() if r is not None and r.returncode == 0 else ""
 
     refspecs = pos[1:]
     if not refspecs:
@@ -782,15 +961,57 @@ def ps_segments(cmd: str) -> list[str]:
     return [_join([x.replace("\\", "/") for x in t]) for t in _ps_parse(cmd) if t]
 
 
-def effective_dir(cmd: str, cwd: Path) -> Path:
+CD_CMDS = ("cd", "pushd", "chdir", "set-location", "sl", "push-location")
+
+
+def _resolve(base: Path, p: str) -> Path:
+    p = norm(p.strip("\"'"))
+    if p.startswith("~"):
+        p = os.path.expanduser(p)
+    q = Path(p)
+    return (q if q.is_absolute() else base / q).resolve()
+
+
+def seg_dirs(segs: list[str], cwd: Path) -> list[Path]:
+    """每一段實際作用的目錄：依序套用 cd／pushd／Set-Location（含子 shell 拆出來的段落），
+    git 段落再套 -C、--git-dir、--work-tree（-C 疊加；--git-dir 指到 .git 時取它的上層）。"""
+    out: list[Path] = []
     d = cwd
-    m = re.search(r"(?:^|&&|;)\s*cd\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd)
-    if m:
-        d = (cwd / m.group(1).strip("\"'")).resolve()
-    m = re.search(r"\bgit\s+-C\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd)
-    if m:
-        d = (cwd / m.group(1).strip("\"'")).resolve()
-    return d
+    for seg in segs:
+        toks = shlex_tokens(seg)
+        while toks and re.match(r"^[A-Za-z_]\w*=", toks[0]):
+            toks = toks[1:]
+        names = [_cmd_name(t) for t in toks]
+        if names and names[0] in CD_CMDS:
+            args = [t for t in toks[1:] if not t.startswith("-") or t == "-"]
+            if args and args[0] != "-":
+                d = _resolve(d, args[0])
+            out.append(d)
+            continue
+        g = d
+        if "git" in names:
+            k = names.index("git") + 1
+            while k < len(toks) and toks[k].startswith("-"):
+                t = toks[k]
+                val, step = None, 1
+                if t in ("-C", "--git-dir", "--work-tree") and k + 1 < len(toks):
+                    val, step = toks[k + 1], 2
+                elif t.startswith(("--git-dir=", "--work-tree=")):
+                    val = t.split("=", 1)[1]
+                elif t in ("-c", "--namespace", "--exec-path", "--config-env"):
+                    step = 2
+                if val is not None:
+                    v = _resolve(g, val)
+                    g = v.parent if t.startswith("--git-dir") and v.name == ".git" else v
+                k += step
+        out.append(g)
+    return out
+
+
+def effective_dir(cmd: str, cwd: Path) -> Path:
+    """整條指令最後作用的目錄（相容舊呼叫）。"""
+    dirs = seg_dirs(segments(cmd), cwd)
+    return dirs[-1] if dirs else cwd
 
 
 def tokens(seg: str) -> list[str]:
@@ -802,27 +1023,25 @@ def tokens(seg: str) -> list[str]:
 
 
 def push_target_urls(seg: str, d: Path) -> list[str]:
-    toks = tokens(seg)
-    if "push" not in toks:
+    args = _push_args(seg)
+    if args is None:
         return []
-    args = toks[toks.index("push") + 1:]
     remote = next((a for a in args if not a.startswith("-")), None)
     if remote is None:
-        r = subprocess.run(["git", "-C", str(d), "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        remote = r.stdout.strip().split("/")[0] if r.returncode == 0 else ""
+        r = run_git("-C", str(d), "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}")
+        remote = r.stdout.strip().split("/")[0] if r is not None and r.returncode == 0 else ""
     if not remote:
         return [""]
     if "://" in remote or "@" in remote:
         return [remote]
-    r = subprocess.run(["git", "-C", str(d), "remote", "get-url", "--all", "--push", remote], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return r.stdout.split() if r.returncode == 0 else [remote]
+    r = run_git("-C", str(d), "remote", "get-url", "--all", "--push", remote)
+    return r.stdout.split() if r is not None and r.returncode == 0 else [remote]
 
 
 def is_force_push(seg: str) -> bool:
-    toks = tokens(seg)
-    if "push" not in toks:
+    args = _push_args(seg)
+    if args is None:
         return False
-    args = toks[toks.index("push") + 1:]
     return any(a in ("-f", "--force") or a.startswith("--force-with-lease") or a.startswith("--force-if-includes")
                or (re.match(r"^-[a-zA-Z]*f[a-zA-Z]*$", a) is not None) or (a.startswith("+") and len(a) > 1) for a in args)
 
@@ -863,6 +1082,7 @@ def check_shell(data: dict) -> None:
         cmd = " ; ".join(segs)  # 正規化後的指令（Set-Location 已換成 cd），給 effective_dir 用
     else:
         segs = segments(cmd)
+    segs = [canon_gh(s) for s in segs]
     raw_agent = data.get("agent_type") or ""
     agent = awf_config.role_name(raw_agent)
     team = awf_config.is_team_agent(raw_agent, CFG)  # 模版角色；使用者自己的 agent 和主 session 同一套規則
@@ -871,15 +1091,20 @@ def check_shell(data: dict) -> None:
     gh_rules = team or (configured and CFG["main_session_github_rules"])
     am_on = configured and AM["enabled"]  # 信任模型：auto_merge 啟用時，主 session 不論開關都不能合併、核准
     cwd = Path(data.get("cwd") or WORKSPACE)
-    d = effective_dir(cmd, cwd)
+    dirs = seg_dirs(segs, cwd)
+    gitdirs = [dirs[i] for i, s in enumerate(segs) if re.search(r"\bgit\b", s)]
+    fdir = gitdirs[-1] if gitdirs else (dirs[-1] if dirs else cwd)  # 轉呼叫 repo guard 用的目錄
     fpaths, fslugs = forbidden_entries()
+    if (gh_rules or am_on) and is_interp_review(cmd):
+        block(f"{agent or '主 session'} 不能用直譯器（python -c、node -e、heredoc）打 PR reviews 端點；核准一律由人在 GitHub 上做")
     # steward 在 auto_merge 條件下允許的段落（合併、退回、留言、轉回 draft）；其餘段落照一般規則
     allowed = {i for i, s in enumerate(segs) if (merge_exception(s, agent, data) if GH_PR_MERGE.search(s)
                                                  else bool(GH_WRITE.search(s)) and steward_write_refusal(s, data) is None)}
     rest_cmd = " ; ".join(s for i, s in enumerate(segs) if i not in allowed)
 
     for i, seg in enumerate(segs):
-        if re.search(r"\bgit\b.*\bpush\b", seg):
+        d = dirs[i]
+        if PUSH_RE.search(seg):
             if team:
                 block(f"{agent} 不能 push；推送由主 session 在決策者當下同意後執行")
             for url in push_target_urls(seg, d):
@@ -901,6 +1126,30 @@ def check_shell(data: dict) -> None:
                     block(f"分支名 {b} 不在允許的前綴（{'、'.join(prefixes)}）；改用允許的前綴並在回報註明")
         who = agent or "主 session"
         ok = i in allowed
+        if team or configured:
+            sec = reads_secret(seg)
+            if sec:
+                block(f"{who} 不讀機敏檔 {sec} 的內容（.env、金鑰、憑證）；要判斷有無只能用 grep -q（rules.md 規則 5）")
+        if (gh_rules or am_on) and GH_BYPASS.search(seg):
+            block(f"{who} 不能設定 gh alias 或安裝／執行 gh extension（可以繞過守門）；需要時由人自己設定")
+        if team and (GH_BYPASS.search(seg) or GH_ACCOUNT_WRITE.search(seg)):
+            block(f"{agent} 不能改 GitHub 帳號層級的設定（alias、extension、ssh／gpg 金鑰、gist、登入）")
+        if team and re.search(r"(?:^|[\s/\\])merge_gate\.py\b", seg) and re.search(r"(?:^|\s)check(?:\s|$)", seg) and not is_steward(data):
+            block(f"{agent} 不能跑 merge_gate.py check；只有 {AM['merger_role'] or 'merger_role'}（完整 agent_type）能跑")
+        if team and re.search(r"(?:^|[\s/\\])save_run\.py\b", seg) and re.search(r"(?:^|\s)(?:approve|abandon)(?:\s|$)", seg):
+            block(f"{agent} 不能核准或放棄 run（save_run.py approve／abandon）；閘門由人（或主 session 依政策）處理")
+        if team and agent_writes_state(seg):
+            block(f"{agent} 不能寫 run.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")
+        for tool in ("publish.py", "merge_gate.py"):
+            if re.search(rf"(?:^|[\s/\\]){re.escape(tool)}\b", seg):
+                targs = shlex_tokens(seg)
+                # 每個出現的值都要檢查（argparse 取最後一個；只看第一個會被 --project-dir . --project-dir /外部 繞過）
+                for pd in _flag_values(targs, "--project-dir"):
+                    if _resolve(d, pd) != WORKSPACE.resolve():
+                        block(f"{tool} 的 --project-dir 只能是本專案（{WORKSPACE}），不能指到 {pd}")
+                for rd in (_flag_values(targs, "--runs-dir") if tool == "merge_gate.py" else []):
+                    if _resolve(WORKSPACE, rd) != (WORKSPACE / (CFG["runs_dir"] or "_tpm/runs")).resolve():
+                        block(f"merge_gate.py 的 --runs-dir 只能是 guard.config.json 的 runs_dir（{CFG['runs_dir']}）")
         if (gh_rules or am_on) and not ok and (is_merge_cmd(seg) or is_merge_cmd(rest_cmd)):
             why = merge_refusal(seg, data) if (AM["enabled"] and GH_PR_MERGE.search(seg)) else None
             block(f"{who} 不能合併 PR（gh pr merge、gh api／curl 打 merge 端點）" + (f"：{why}" if why else "")
@@ -916,6 +1165,8 @@ def check_shell(data: dict) -> None:
         prot = shell_writes_protected(seg) if (team or configured) else None
         if prot and team:
             block(f"{agent} 不能寫 {prot}（守門設定、gate 稽核紀錄與凍結檔只由人或確定性工具寫；auto_merge 設定改走 PR＋CODEOWNERS）")
+        if prot and configured and prot == AM["freeze_file"] and not freezes_only(seg):
+            block(f"主 session 不解凍自動合併（刪除凍結檔或寫 frozen=false）；解凍由人自己做（在提示列用 ! 執行，或手動編輯 {prot}）")
         if prot and (prot in AUDIT_FILES or (prot == "guard.config.json" and AM["enabled"])):
             block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
         if team and re.search(r"(?:^|[\s/\\])publish\.py\b", seg):
@@ -930,6 +1181,8 @@ def check_shell(data: dict) -> None:
                 if s and s in seg:
                     block(f"不允許對上游或禁止的 repo {s} 做寫入動作；要決策者當下明確同意並自己執行")
             if gh_rules and configured and GH_WRITE.search(seg):
+                if _flag_dup(shlex_tokens(seg), "--repo", "-R"):
+                    block("gh 寫入動作的 --repo／-R 只能寫一次（重複出現時 gh 取最後一個值，無法確認實際目標）")
                 fork = CFG.get("fork_repo") or ""
                 if fork and not re.search(rf"(?:-R|--repo)[\s=]+{re.escape(fork)}\b", seg):
                     block(f"gh 寫入動作要明確寫 --repo {fork}（在 fork 裡 gh 可能預設到上游）")
@@ -939,10 +1192,10 @@ def check_shell(data: dict) -> None:
                 block(f"gh api 寫入只能對 repos/{CFG['fork_repo']}/")
         for e in fpaths:
             names = {e, (WORKSPACE / e).as_posix()} if not os.path.isabs(e) else {e}
-            if any(n in seg for n in names) and DESTRUCTIVE.search(seg):
+            if any(fold(n) in fold(seg) for n in names) and DESTRUCTIVE.search(seg):
                 block(f"不動 {e}（禁止路徑，只能讀）")
 
-    forward(git_toplevel(d), "guard-git", data)
+    forward(git_toplevel(fdir), "guard-git", data)
 
 
 # ---------------------------------------------------------------- Edit／Write
@@ -954,7 +1207,14 @@ def spec_doc_pattern() -> re.Pattern:
 def writes_freeze(data: dict) -> bool:
     """freeze_writers 用 Write 寫入的內容是 {"frozen": true, …}（只能凍結，不能解凍；Edit／NotebookEdit 一律不算）。"""
     a = data.get("agent_type") or ""
-    if a not in AM["freeze_writers"] or not awf_config.is_team_agent(a, CFG) or data.get("tool_name") != "Write":
+    if a not in AM["freeze_writers"] or not awf_config.is_team_agent(a, CFG):
+        return False
+    return write_is_freeze(data)
+
+
+def write_is_freeze(data: dict) -> bool:
+    """這次是用 Write 寫入 {"frozen": true, …}（只凍結）。"""
+    if data.get("tool_name") != "Write":
         return False
     try:
         body = json.loads((data.get("tool_input") or {}).get("content") or "")
@@ -963,7 +1223,34 @@ def writes_freeze(data: dict) -> bool:
     return isinstance(body, dict) and body.get("frozen") is True
 
 
+# 唯讀審查角色只能寫自己的報告（與 run 目錄）：檔名樣式；design／security reviewer 另可寫 evidence/
+REVIEW_REPORTS = {
+    "dev-verifier": re.compile(r"verifier(?:-[\w.-]+)?\.md"),
+    "dev-security-reviewer": re.compile(r"security-review\.md"),
+    "dev-design-reviewer": re.compile(r"design-review\.md"),
+}
+
+
+def check_read(data: dict) -> None:
+    """Read（file_path）、Grep（path、glob）讀機敏檔：主 session 與 agent 都擋（沒有設定檔時只擋模版角色）。"""
+    ti = data.get("tool_input") or {}
+    raw_agent = data.get("agent_type") or ""
+    if not (CFG["_configured"] or awf_config.is_team_agent(raw_agent, CFG)):
+        return
+    who = awf_config.role_name(raw_agent) or "主 session"
+    for key in ("file_path", "path", "notebook_path"):
+        v = ti.get(key)
+        if isinstance(v, str) and v and is_secret_path(v):
+            block(f"{who} 不讀機敏檔 {v}（.env、金鑰、憑證）；要判斷有無只能在 shell 用 grep -q（rules.md 規則 5）")
+    g = ti.get("glob")
+    if isinstance(g, str) and SECRET_GLOB.search(g) and not SECRET_FILE_OK.search(g):
+        block(f"{who} 不搜尋機敏檔（glob {g}）；要判斷有無只能在 shell 用 grep -q（rules.md 規則 5）")
+
+
 def check_paths(data: dict) -> None:
+    if data.get("tool_name") in ("Read", "Grep"):
+        check_read(data)
+        return
     ti = data.get("tool_input") or {}
     fp = ti.get("file_path") or ti.get("notebook_path") or ""
     if not fp:
@@ -984,20 +1271,38 @@ def check_paths(data: dict) -> None:
         if not (prot == AM["freeze_file"] and writes_freeze(data)):
             block(f"{agent} 不能寫 {prot}（守門設定、稽核紀錄與凍結檔只由人或確定性工具寫；凍結檔只有 "
                   f"{'、'.join(AM['freeze_writers']) or 'freeze_writers'} 能用 Write 寫入 frozen=true；auto_merge 設定改走 PR＋CODEOWNERS）")
+    elif prot and CFG["_configured"] and prot == AM["freeze_file"] and not write_is_freeze(data):
+        block(f"主 session 不解凍自動合併（刪除凍結檔、寫 frozen=false 或用 Edit 改）；解凍由人自己做（手動編輯 {prot}）")
     elif prot and CFG["_configured"] and (prot in AUDIT_FILES or (prot == "guard.config.json" and AM["enabled"])):
         block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
+    if role and fold(path.name) == "run.json" and (not RUNS or fold(rel or "").startswith(fold(RUNS))):
+        block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
     if role == "tpm-writer":
-        ok = rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None)
+        # 凍結檔照 auto_merge.freeze_file 的實際設定（可能不在 writer_dirs 裡）；能不能寫已由上面的 writes_freeze 判定
+        # 只認設定的那個路徑本身（同名的其他檔不算）
+        is_freeze = prot == AM["freeze_file"] and path.resolve() == freeze_path().resolve() and writes_freeze(data)
+        ok = is_freeze or (rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None))
         if not ok:
             block(f"tpm-writer 只能寫 {'、'.join(CFG['writer_dirs'])} 與 repo 的 specs/<epic>/*.md（{rel or fp}）")
     elif role.startswith("tpm-"):
         if not (rel is not None and RUNS and rel.startswith(RUNS)):
             block(f"{agent} 只能寫 {RUNS or 'run 目錄'}（{rel or fp}）")
     elif role.startswith("dev-"):
-        ok = rel is not None and ((rel.startswith(REPOS) if REPOS else not rel.startswith(".claude/")) or (RUNS and rel.startswith(RUNS)))
+        # .claude/ 是黑名單（不分大小寫：.CLAUDE/hooks 在 macOS／Windows 是同一個目錄）；repos_dir、runs_dir 是白名單，照原樣比對
+        ok = rel is not None and ((rel.startswith(REPOS) if REPOS else not fold(rel).startswith(".claude/")) or (RUNS and rel.startswith(RUNS)))
         if not ok:
             where = f"{REPOS}<repo>/" if REPOS else "工作區（.claude/ 除外）"
             block(f"{agent} 只能改 {where} 與 {RUNS}（{rel or fp}）")
+        in_runs = bool(RUNS) and rel.startswith(RUNS)
+        pat = REVIEW_REPORTS.get(role)
+        if pat and not in_runs and not pat.fullmatch(path.name) and not (role != "dev-verifier" and "/evidence/" in "/" + rel):
+            block(f"{agent} 是唯讀審查角色，只能寫自己的報告（{pat.pattern}）"
+                  + ("與 specs/<epic>/evidence/" if role != "dev-verifier" else "") + f"及 {RUNS}，不能改產品程式或測試（{rel}）")
+        if role == "dev-implementer":
+            for t in CFG.get("acceptance_test_dirs") or []:
+                t = t.strip("/")
+                if t and fold(f"/{t}/") in fold("/" + rel):
+                    block(f"{agent} 不能改驗收測試（{t}/；acceptance_test_dirs），驗收測試由 dev-acceptance-tester 寫（{rel}）")
     forward(git_toplevel(path.parent), "guard-paths", data)
 
 

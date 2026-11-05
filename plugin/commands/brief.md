@@ -7,11 +7,11 @@ argument-hint: <簡報檔路徑或任務編號>
 
 $ARGUMENTS
 
-照 `tpm-team` skill 的規矩執行（先用 Skill 工具載入 `tpm-team`）：
+用 Skill 工具載入 `tpm-team`（以 plugin 安裝時名稱是 `agent-workflow:tpm-team`），把這件事當成「簡報」事件交給它處理。
 
-1. **讀設定與簡報**：`.claude/teams/rules.md`、`.claude/teams/guard.config.json`；簡報在 `briefs_dir`（預設 `_tpm/briefs`）。只給編號時，在 `briefs_dir` 找檔名以該編號開頭的檔；找不到或有多個就問使用者。**不自編任務編號**。
-2. **讀簡報全文**，特別是硬規矩與驗收標準段；不明確的地方列出來用選項式提問。
-3. **先列計畫，等核准**：workflow `event-brief`、args（`brief`、`run_dir`＝`<runs_dir>/<YYYYMMDD>-brief-<短名>`）、預計開幾個 agent、哪些子任務是程式（會轉 SDLC，各自再過閘門）、不可逆節點。簡報建議的分支名不符合 `allowed_branch_prefixes` 時，改用允許的前綴並在計畫裡註明。
-4. **執行**：`save_run.py init` → `Workflow({name: "event-brief", args: {...}})` → `save_run.py stage` 驗證信封。
-5. **回報**：每個 agent 的 status／summary、所有 open_questions（blocking 的用 AskUserQuestion）、skeptic 推翻的發現、對簡報驗收標準的自我驗收結果、derived_work（只列，不編號，交上層系統）。
-6. 不可逆動作一律停下等使用者當下同意。
+交給 skill 前先整理好輸入：
+- 簡報：使用者給的是檔案路徑就照用；只給任務編號就記下編號，由 skill 在簡報目錄找檔。不自編編號。
+- 使用者另外提到的限制、期限、要先做或不做的子任務，原話保留。
+- 看不懂或缺的資訊，用選項式提問問清楚再交出去，不要猜。
+
+流程、閘門與回報方式一律照 `tpm-team` skill，這支指令不另外規定。所有回覆用專案設定的輸出語言（預設繁體中文）。

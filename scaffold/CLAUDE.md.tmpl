@@ -1,4 +1,4 @@
-<!-- agent-workflow：由 init.py 從模版產生（AgentWorkFlow 的 scaffold/CLAUDE.md.tmpl）；可以自由修改，重跑 init 不會覆蓋（加 --force 才會） -->
+<!-- agent-workflow：由 init.py 從模版產生（AgentWorkFlow 的 scaffold/CLAUDE.md.tmpl）；可以自由修改；init.py --upgrade 或 --force 只更新「## 專案特定」之前的內容，整份覆寫要加 --overwrite-user-files -->
 # {{PROJECT_NAME}}
 
 {{CLIENT_NAME}} 的專案工作區，用 `agent-workflow` plugin 的 agent team 做需求開發（AI-native SDLC）與事件處理，入口是 `tpm-team` skill。本檔只列每次都要記得的重點：
@@ -14,14 +14,15 @@
 - 需求開發依序走：`sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge`。
 - plan、design、test、deliver 四個閘門都要 {{DECISION_OWNER}} 核准。用 `python3 .claude/teams/tools/save_run.py approve` 記錄，並在對話裡列出重點，不能只依賴工具狀態。
 - {{DECISION_OWNER}} 的回覆照字面讀：「調整」不是「核准」，附帶的意見要先處理。
-- workflow 回傳 `halted: true` 時，停下來交給 {{DECISION_OWNER}}，不要自行重跑繞過。
+- workflow 回傳 `halted: true` 時，停下來交給 {{DECISION_OWNER}}，不要自行重跑繞過。agent 缺件（missing）不是「沒有發現」，閘門摘要要列出來。
+- 需求取消時用 `save_run.py abandon` 記錄，之後不再核准或推送。
 
 ## 平行處理
 - 計劃太大時，`sdlc-design` 會拆成子計劃，由多個 agent 平行規劃再彙整。
 - `sdlc-build` 會讓沒有相依的子任務各自開 worktree 平行實作，再合併。
 - 有子計劃時，`sdlc-test` 會分片平行驗證；修正也平行進行，再合併。
 - 觸發門檻在 `.claude/teams/methodology.json` 的 `parallelism`。
-- 團隊自己的 agent 可以加進 plan、design、test、deliver 任一段：用 `/add-agent` 設定，寫在 `methodology.json` 的 `extensions`，守門角色登記在 `guard.config.json` 的 `extension_agents`。
+- 團隊自己的 agent 可以加進 plan、design、test、deliver 任一段：用 `/agent-workflow:add-agent`（`add-agent` skill）設定，寫在 `methodology.json` 的 `extensions`，守門角色登記在 `guard.config.json` 的 `extension_agents`。
 
 ## 不可逆節點
 - push、開 PR、寫上游（{{UPSTREAM_REPO}}）、刪資料、對外寄送：一律停下，等 {{DECISION_OWNER}} 當下同意。先前的同意不延伸到下一次。

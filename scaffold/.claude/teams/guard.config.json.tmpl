@@ -1,5 +1,5 @@
 {
-  "_說明": "agent-workflow hooks 與 .claude/teams/tools 共用的設定（init.py 由 workflow.config 產生）。清單欄位可寫 JSON 陣列或逗號分隔字串；空字串＝不設定。agent 一律不能改這個檔；team_agent_namespaces＋team_agent_prefixes 決定哪些 agent 套模版角色規則（使用者自己沒有命名空間的 dev-*／tpm-* agent 不套；清單加 \"\" 回到舊行為）；main_session_git_rules／main_session_github_rules 為 false 時放寬主 session 的 git／GitHub 限制（auto_merge 啟用時主 session 仍不能合併、核准、直接 push 受保護分支，上游與禁止的 repo 一律擋）；auto_merge 啟用後主 session 也不直接改，變更走 PR＋CODEOWNERS（docs/自動合併信任模型.md）。",
+  "_說明": "agent-workflow hooks 與 .claude/teams/tools 共用的設定（init.py 由 workflow.config 產生）。清單欄位可寫 JSON 陣列或逗號分隔字串；空字串＝不設定。agent 一律不能改這個檔；team_agent_namespaces＋team_agent_prefixes 決定哪些 agent 套模版角色規則（使用者自己沒有命名空間的 dev-*／tpm-* agent 不套；清單加 \"\" 回到舊行為）；acceptance_test_dirs 是驗收測試目錄（dev-implementer 不能寫）；main_session_git_rules／main_session_github_rules 為 false 時放寬主 session 的 git／GitHub 限制（auto_merge 啟用時主 session 仍不能合併、核准、直接 push 受保護分支，上游與禁止的 repo 一律擋）；auto_merge 啟用後主 session 也不直接改，變更走 PR＋CODEOWNERS（docs/自動合併信任模型.md）。",
   "project_name": "{{PROJECT_NAME}}",
   "runs_dir": "{{RUNS_DIR}}",
   "briefs_dir": "{{BRIEFS_DIR}}",
@@ -20,23 +20,25 @@
   "forbidden_trailers": ["Co-Authored-By"],
   "team_agent_prefixes": ["tpm-", "dev-"],
   "team_agent_namespaces": ["{{AGENT_NS}}"],
+  "acceptance_test_dirs": ["tests/acceptance", "e2e"],
   "extension_agents": {
-    "_說明": "使用者加進 workflow 的自己的 agent（methodology.json 的 extensions）：\"完整 agent_type\": \"套用哪個模版角色的規則\"，例如 \"acme-db-reviewer\": \"tpm-reviewer\"。登記後推送、GitHub 寫入、寫入範圍都照該角色擋，交件信封也會驗證。只能對應唯讀類角色（tpm-researcher、tpm-reviewer、tpm-skeptic、dev-verifier、dev-pr-reviewer、dev-security-reviewer、dev-design-reviewer），其他值一律改套 tpm-reviewer。用 /add-agent 設定。"
+    "_說明": "使用者加進 workflow 的自己的 agent（methodology.json 的 extensions）：\"完整 agent_type\": \"套用哪個模版角色的規則\"，例如 \"acme-db-reviewer\": \"tpm-reviewer\"。登記後推送、GitHub 寫入、寫入範圍都照該角色擋，交件信封也會驗證。只能對應唯讀類角色（tpm-researcher、tpm-reviewer、tpm-skeptic、dev-verifier、dev-security-reviewer、dev-design-reviewer；舊名 dev-pr-reviewer 照 tpm-reviewer 套用），其他值一律改套 tpm-reviewer。用 add-agent skill（/agent-workflow:add-agent）設定。"
   },
   "auto_merge": {
-    "_說明": "預設關閉。啟用前先完成 docs/自動合併信任模型.md 的啟用前檢查清單（ruleset、gate App、CODEOWNERS）。repos：白名單與各 repo 的風險上限（low／medium／high）；merger_role、freeze_writers 比對完整 agent_type（含命名空間）；merge_method 是 steward 合併時必須帶的方式（squash／merge／rebase）；upstream_authorized_by：上游 repo 對應上游維護者的書面授權（by、link、scope、expires），沒有就一律擋；freeze_file 的內容是 frozen=true 時凍結（event-post-merge 寫；freeze_writers 只能寫 frozen=true，解凍由人做）；small_lines、large_lines、large_files 是 merge_gate 的風險分級行數門檻；carry_verdict_on_rebase 為 true 時，rebase 後 patch-id 相同（gate 自己用 git 算）才沿用原本的對照與驗證結果，預設 false＝head 一變就 hold。",
+    "_說明": "預設關閉。啟用前先完成 docs/自動合併信任模型.md 的啟用前檢查清單（ruleset、gate App、CODEOWNERS）。repos：白名單與各 repo 的風險上限（low／medium／high）；merger_role、freeze_writers 比對完整 agent_type（含命名空間）；merge_method 是 steward 合併時必須帶的方式（squash／merge／rebase）；upstream_authorized_by：上游 repo 對應上游維護者的書面授權（by、link、scope、expires），沒有就一律擋；freeze_file 的內容是 frozen=true 時凍結（event-post-merge 由 tpm-writer 寫到 freeze_file 設定的路徑，不受 writer_dirs 限制；freeze_writers 只能寫 frozen=true，解凍由人做；dev-release-watcher 只讀，不在 freeze_writers）；small_lines、large_lines、large_files 是 merge_gate 的風險分級行數門檻；carry_verdict_on_rebase 為 true 時，rebase 後 patch-id 相同（gate 自己用 git 算）才沿用原本的對照與驗證結果，預設 false＝head 一變就 hold；allowed_skipped_checks 列出 skipped／neutral 也算通過的 check 名稱，預設 []＝skipped、neutral 一律不算通過。",
     "enabled": false,
     "repos": {},
     "merger_role": "{{AGENT_NS}}dev-merge-steward",
     "merge_method": "squash",
-    "freeze_writers": ["{{AGENT_NS}}tpm-writer", "{{AGENT_NS}}dev-release-watcher"],
+    "freeze_writers": ["{{AGENT_NS}}tpm-writer"],
     "daily_cap": 5,
     "upstream_authorized_by": {},
     "freeze_file": "{{RUNS_DIR}}/auto-merge.freeze.json",
     "small_lines": 100,
     "large_lines": 400,
     "large_files": 20,
-    "carry_verdict_on_rebase": false
+    "carry_verdict_on_rebase": false,
+    "allowed_skipped_checks": []
   },
   "requirements": {
     "_說明": "merge_gate 的需求來源 adapter：source 是 json（path 指向需求清單）、command（團隊腳本輸出需求清單 JSON）或 spec-md（內建範例，逐行抓 ID）。path、command 都空時改讀開發規範 profile（.claude/teams/methodology.json）的 requirements；兩邊都沒設時 gate 一律 hold。這裡有設時以這裡為準。",

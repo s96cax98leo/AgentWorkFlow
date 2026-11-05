@@ -1,6 +1,9 @@
-# AgentWorkFlow 模版本身的 CI：三個作業系統都跑 tests/run_all.py
-# （去客戶化掃描、init 煙霧測試含 golden-set／build.py --check／check_workflows.mjs／check_agents.py、hook 測試）。
+# AgentWorkFlow 模版本身的 CI：在三個作業系統跑 tests/run_all.py
+# （去客戶化掃描、init 煙霧測試含 golden-set／build.py --check／check_workflows.mjs／check_agents.py、
+# hook 測試、tests/check_*.py，例如供應鏈檢查 check_supply.py）。
 # Windows 用 pwsh 執行，確認不依賴 bash。
+# 主矩陣用 Python 3.12；另在 ubuntu 跑支援範圍的兩端 3.9 與 3.13。
+# 所有 action 都釘 40 字元 commit SHA，註解保留對應的版本標籤；由 .github/dependabot.yml 每週提更新。
 name: ci
 
 on:
@@ -12,25 +15,36 @@ permissions:
 
 jobs:
   test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12"]
+        include:
+          # ubuntu-latest（26.04 起）沒有 3.9 的預建版本，支援下限改在 22.04 跑
+          - os: ubuntu-22.04
+            python: "3.9"
+          - os: ubuntu-latest
+            python: "3.13"
     runs-on: ${{ matrix.os }}
     steps:
       - name: 保留 LF 換行（Windows 預設 autocrlf 會把 checkout 的檔案改成 CRLF）
         run: git config --global core.autocrlf false
 
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 
+      # pip 會依 Python 版本挑相容的 jsonschema（3.9 也有支援的版本），不用分開處理。
       - name: 安裝 golden-set 需要的 jsonschema
         run: python -m pip install --disable-pip-version-check jsonschema
 

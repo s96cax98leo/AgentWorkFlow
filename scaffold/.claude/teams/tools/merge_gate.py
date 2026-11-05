@@ -34,7 +34,8 @@ hook 與目標專案 CI 都呼叫它；只有判定 merge 時 exit 0。只用標
       --tests-before N --tests-after N \\
       [--findings <審查發現 JSON> ...] [--reviewed-sha SHA ...] [--base-sha SHA] [--git-dir <repo>] \\
       [--requirements <路徑>] [--requirements-source json|command|spec-md] \\
-      [--timestamp <ISO 8601>] [--project-dir <專案根>] [--runs-dir <目錄>] [--no-audit]
+      [--timestamp <ISO 8601>] [--project-dir <專案根>] [--runs-dir <目錄>] [--no-audit] \\
+      [--merged-today N] [--frozen <理由>]
   python3 .claude/teams/tools/merge_gate.py --selftest
 
 輸出：stdout 一個 JSON（decision、reasons、escalations、followups、risk_tier…）。
@@ -44,6 +45,13 @@ hook 與目標專案 CI 都呼叫它；只有判定 merge 時 exit 0。只用標
 auto_merge.carry_verdict_on_rebase（預設 false）開啟且有 --base-sha 時，對照／驗證／審查的 SHA 和目前 head 不同，
 gate 會自己用 git 算兩邊的 patch-id，相同才沿用 verdict（寫進 reasons 與 carried），否則照舊 hold。
 凍結旗標 auto_merge.freeze_file（預設 <runs_dir>/auto-merge.freeze.json，內容 {"frozen": true, …}）存在且 frozen 不是 false 時一律 hold，和 hook 讀同一個檔。
+CI 端（base checkout 裡沒有本機的 runs_dir）改用 --frozen <理由>（由 repo variable 帶入）與 --merged-today N（由 GitHub API 算出）：
+  --frozen 有給就 hold；--merged-today 和本機 audit 的當日合併數取大者與 daily_cap 比較，不是非負整數就 hold。
+SHA 綁定：證據沒有 commit 時 hold；有 --findings 卻沒有 --reviewed-sha 時 hold（不知道審的是哪個 commit）。
+required checks：skipped／neutral 預設不算通過，只有列在 auto_merge.allowed_skipped_checks 的才算。
+上游授權：upstream_authorized_by 的值可以是字串或 {"by", "link", "scope", "expires": "YYYY-MM-DD"}；過期或日期讀不懂都和沒有授權人一樣 escalate，和 hook 一致。
+判定日（每日上限與授權過期共用）＝max(--timestamp 的日期, 系統的 UTC 日期)：--timestamp 只能往後推，不能用舊日期規避。
+diff 解析：改名／複製記前後兩個路徑、刪除的檔也記；支援 git 的引號路徑；解析不了的標頭或行數對不上一律 hold。
 """
 
 from __future__ import annotations
@@ -55,7 +63,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -68,7 +76,9 @@ DEFAULT_SMALL_LINES = 100   # low 等級的改動行數上限
 DEFAULT_LARGE_LINES = 400   # 超過就是 high
 DEFAULT_LARGE_FILES = 20
 EXIT = {"merge": 0, "hold": 1, "escalate": 3}
-PASS_CHECK = {"success", "neutral", "skipped", "pass"}
+PASS_CHECK = {"success", "pass"}
+# skipped／neutral 預設不算通過（required check 被跳過＝沒驗到）；只有列在 auto_merge.allowed_skipped_checks 的 check 名稱才算
+SKIP_CHECK = {"skipped", "skipping", "skip", "neutral"}
 
 # 動到就交給人（escalate）的路徑：CI、.github、hooks、gate、release、版本檔、依賴與鎖檔、migration、auth、CODEOWNERS
 SENSITIVE = [
@@ -146,6 +156,41 @@ def _list(v) -> list[str]:
     if isinstance(v, str):
         return [x.strip() for x in v.split(",") if x.strip()]
     return [x for x in (v or []) if isinstance(x, str) and x.strip()]
+
+
+def judgment_day(timestamp: str | None) -> str:
+    """判定日（YYYY-MM-DD）：max(--timestamp 的日期, 系統的 UTC 日期)。
+    --timestamp 可以由呼叫端傳入，只能把「今天」往後推（更嚴），不能用舊日期規避每日上限或讓過期的上游授權復活；
+    讀不懂時用系統日期。"""
+    today = datetime.now(timezone.utc).date()
+    try:
+        given = date.fromisoformat(str(timestamp or "")[:10])
+    except ValueError:
+        given = today
+    return max(given, today).isoformat()
+
+
+def upstream_auth(am: dict, repo: str, today: str) -> tuple[str | None, str]:
+    """上游授權人（和 hook 的 guard.upstream_auth 同語意）：回傳 (授權人或 None, 沒有時的理由)。
+    值可以是字串，或 {"by", "link", "scope", "expires": "YYYY-MM-DD"}；過期、日期讀不懂、by 空白都算沒有。
+    today 是 judgment_day() 算出的判定日；讀不懂時以系統日期（UTC）為準。"""
+    auth = am.get("upstream_authorized_by") if isinstance(am.get("upstream_authorized_by"), dict) else {}
+    v = auth.get(repo)
+    if isinstance(v, dict):
+        exp = str(v.get("expires") or "").strip()
+        if exp:
+            try:
+                ref = date.fromisoformat(today[:10])
+            except ValueError:
+                ref = datetime.now(timezone.utc).date()
+            try:
+                if date.fromisoformat(exp[:10]) < ref:
+                    return None, f"授權過期（expires {exp[:10]}，判定日 {ref.isoformat()}）"
+            except ValueError:
+                return None, f"授權的 expires 讀不懂（{exp}），當成過期"
+        v = v.get("by")
+    v = str(v or "").strip()
+    return (v, "") if v else (None, "沒有授權人")
 
 
 # ------------------------------------------------------------------ 需求來源 adapter
@@ -303,37 +348,197 @@ def normalize_findings(data) -> list[dict]:
     return [f for f in data if isinstance(f, dict)] if isinstance(data, list) else []
 
 
+# git 的 C 風格引號路徑（core.quotePath）：非 ASCII、tab、換行、引號、反斜線會被包成 "…" 並跳脫
+_C_ESC = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
+def _c_unquote(s: str, i: int) -> tuple[str | None, int]:
+    """s[i] 是開頭的引號；回傳 (還原跳脫後的字串, 結尾引號之後的位置)。格式不對回 (None, i)。"""
+    out = bytearray()
+    j = i + 1
+    while j < len(s):
+        c = s[j]
+        if c == '"':
+            return out.decode("utf-8", errors="replace"), j + 1
+        if c == "\\":
+            if re.fullmatch(r"[0-3][0-7]{2}", s[j + 1:j + 4]):
+                out.append(int(s[j + 1:j + 4], 8))
+                j += 4
+                continue
+            e = s[j + 1:j + 2]
+            if e and e in _C_ESC:
+                out.append(_C_ESC[e])
+                j += 2
+                continue
+            return None, i
+        out.extend(c.encode("utf-8", errors="surrogateescape"))
+        j += 1
+    return None, i
+
+
+def _path_field(s: str) -> str | None:
+    """---／+++／rename／copy 行的路徑：引號路徑還原跳脫；沒引號的取到第一個 tab 為止（含 tab 的檔名 git 一定加引號）。"""
+    if s.startswith('"'):
+        p, end = _c_unquote(s, 0)
+        return p if p is not None and (end == len(s) or s[end] == "\t") else None
+    return s.split("\t", 1)[0] or None
+
+
+def _strip_prefix(p: str | None, prefix: str) -> str | None:
+    if p is None or p == "/dev/null":
+        return p
+    return p[len(prefix):] if p.startswith(prefix) and len(p) > len(prefix) else None
+
+
+def _git_header(rest: str) -> tuple[str, str] | None:
+    """「diff --git 」之後的部分 → (舊路徑, 新路徑)（去掉 a/、b/）。有歧義或格式不對回 None，呼叫端 hold。"""
+    if rest.startswith('"'):
+        a, end = _c_unquote(rest, 0)
+        if a is None or rest[end:end + 1] != " ":
+            return None
+        tail = rest[end + 1:]
+        if tail.startswith('"'):
+            b, end2 = _c_unquote(tail, 0)
+            if end2 != len(tail):
+                return None
+        else:
+            b = tail
+    elif rest.endswith('"'):
+        a = b = None
+        for m in re.finditer(' "', rest):
+            q, end = _c_unquote(rest, m.start() + 1)
+            if q is not None and end == len(rest):
+                a, b = rest[:m.start()], q
+                break
+    else:
+        n = len(rest)
+        if n % 2 == 1 and rest[n // 2] == " " and rest[2:n // 2] == rest[n // 2 + 3:]:
+            a, b = rest[:n // 2], rest[n // 2 + 1:]  # 沒改名：兩邊相同，檔名有空白也切得開
+        else:
+            cuts = [m.start() for m in re.finditer(" b/", rest)]
+            if len(cuts) != 1:
+                return None  # 改名且檔名含「 b/」：切法不只一種
+            a, b = rest[:cuts[0]], rest[cuts[0] + 1:]
+    a, b = _strip_prefix(a, "a/"), _strip_prefix(b, "b/")
+    if not a or not b or "/dev/null" in (a, b):
+        return None
+    return a, b
+
+
 def parse_diff(text: str) -> dict:
-    """git diff 輸出 → {files: {path: [added, deleted]}, added_lines: [(path, line)]}。"""
+    """git diff 輸出 → {files: {path: [added, deleted]}, added_lines: [(path, line)], entries: [...], errors: [...]}。
+
+    - files 同時記改名／複製前後的路徑與刪除的檔案：風險等級要看到檔案「從哪裡移出來」。
+    - 路徑支援 git 的 C 風格引號（非 ASCII、tab 等檔名），還原 octal 跳脫。
+    - 依 hunk 標頭的行數判斷哪些是內容行：新增行內容以「++ 」開頭時整行是「+++ 」，不能當成檔案標頭；
+      只有 hunk 外、緊接在「--- 」之後的「+++ 」才是標頭。
+    - 解析不了的 diff --git 標頭、---／+++ 標頭、hunk 標頭，或行數對不上（diff 被截斷）都記進 errors，呼叫端一律 hold。
+    entries：每個 diff --git 區塊一筆 {old, new, deleted, added, binary}（publish.py 掃機敏檔名也用它）。
+    """
     files: dict[str, list[int]] = {}
     added: list[tuple[str, str]] = []
-    cur, old = None, None
-    for line in text.splitlines():
+    errors: list[str] = []
+    entries: list[dict] = []
+    cur: str | None = None
+    ent: dict | None = None
+    left = [0, 0]   # 目前 hunk 還剩的 舊／新 行數
+    minus = None    # 上一行是「--- 」標頭時，記 (它的路徑,)
+
+    def touch(p: str | None) -> None:
+        if p and p != "/dev/null":
+            files.setdefault(p, [0, 0])
+
+    def new_entry(old: str | None, new: str | None) -> dict:
+        e = {"old": old, "new": new, "deleted": False, "added": False, "binary": False}
+        entries.append(e)
+        return e
+
+    lines = text.split("\n")  # 不用 splitlines：內容裡的 \f、\x1c、U+2028 等不能拆行，否則 hunk 行數會錯
+    if lines and lines[-1] == "":
+        lines.pop()
+    for n, line in enumerate(lines, 1):
+        if left[0] > 0 or left[1] > 0:
+            c = line[:1]
+            if c == "+" and left[1] > 0:
+                left[1] -= 1
+                files[cur][0] += 1
+                added.append((cur, line[1:]))
+                continue
+            if c == "-" and left[0] > 0:
+                left[0] -= 1
+                files[cur][1] += 1
+                continue
+            if c in (" ", "") and left[0] > 0 and left[1] > 0:
+                left[0] -= 1
+                left[1] -= 1
+                continue
+            if c == "\\":
+                continue
+            errors.append(f"第 {n} 行：hunk 行數和標頭對不上（diff 可能被截斷或竄改）")
+            left = [0, 0]
+        prev_minus, minus = minus, None
         if line.startswith("diff --git "):
-            m = re.match(r"diff --git a/(.+?) b/(.+)$", line)
-            cur = m.group(2) if m else None
-            old = m.group(1) if m else None
-            if cur:
-                files.setdefault(cur, [0, 0])
+            hdr = _git_header(line[len("diff --git "):])
+            if hdr is None:
+                errors.append(f"第 {n} 行：解析不了的 diff --git 標頭：{line[:200]!r}")
+                cur, ent = None, new_entry(None, None)
+            else:
+                cur, ent = hdr[1], new_entry(*hdr)
+                touch(hdr[0])
+                touch(hdr[1])
+        elif line.startswith("@@"):
+            m = HUNK.match(line)
+            if not m or cur is None:
+                errors.append(f"第 {n} 行：{'解析不了的 hunk 標頭' if not m else 'hunk 前面沒有可辨認的檔案標頭'}：{line[:120]!r}")
+                continue
+            left = [int(g) if g is not None else 1 for g in m.groups()]  # 「-3」省略行數＝1
         elif line.startswith("--- "):
-            p = line[4:].strip()
-            old = p[2:] if p.startswith("a/") else old
-        elif line.startswith("+++ "):
-            p = line[4:].strip()
-            new = p[2:] if p.startswith("b/") else None
-            if new is None and old:  # 刪除檔案
-                new = old
-            if new and new != cur:
-                if cur in files and files[cur] == [0, 0]:
-                    files.pop(cur)
-                cur = new
-                files.setdefault(cur, [0, 0])
-        elif cur and line.startswith("+"):
-            files[cur][0] += 1
-            added.append((cur, line[1:]))
-        elif cur and line.startswith("-"):
-            files[cur][1] += 1
-    return {"files": files, "added_lines": added}
+            p = _strip_prefix(_path_field(line[4:]), "a/")
+            if p is None:
+                errors.append(f"第 {n} 行：解析不了的 --- 標頭：{line[:200]!r}")
+            minus = (p,)
+        elif line.startswith("+++ ") and prev_minus is not None:
+            old, new = prev_minus[0], _strip_prefix(_path_field(line[4:]), "b/")
+            if new is None:
+                errors.append(f"第 {n} 行：解析不了的 +++ 標頭：{line[:200]!r}")
+                continue
+            if ent is None:
+                ent = new_entry(old, new)
+            if new == "/dev/null":
+                ent["deleted"] = True
+            elif old == "/dev/null":
+                ent["added"] = True
+            touch(old)
+            touch(new)
+            cur = new if new != "/dev/null" else old
+        elif line.startswith(("rename from ", "copy from ", "rename to ", "copy to ")):
+            side = "old" if line.split(" ", 2)[1] == "from" else "new"
+            p = _path_field(line.split(" ", 2)[2])
+            if p is None:
+                errors.append(f"第 {n} 行：解析不了的改名／複製路徑：{line[:200]!r}")
+                continue
+            touch(p)
+            if ent is not None:
+                ent[side] = p
+            if side == "new":
+                cur = p
+        elif line.startswith("deleted file mode") and ent is not None:
+            ent["deleted"] = True
+        elif line.startswith("new file mode") and ent is not None:
+            ent["added"] = True
+        elif (line.startswith("Binary files ") or line == "GIT binary patch") and ent is not None:
+            ent["binary"] = True
+        elif line.startswith("+"):
+            # hunk 外的新增行（格式不對或被竄改）：照樣當新增行掃描，不放過
+            if cur is None:
+                errors.append(f"第 {n} 行：不屬於任何檔案的新增行")
+            else:
+                files[cur][0] += 1
+                added.append((cur, line[1:]))
+    if left[0] > 0 or left[1] > 0:
+        errors.append("diff 在 hunk 中間結束（可能被截斷）")
+    return {"files": files, "added_lines": added, "entries": entries, "errors": errors}
 
 
 def risk_tier(diff: dict, am: dict) -> tuple[str, list[str]]:
@@ -471,8 +676,12 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
             hold.append("驗證證據是空的")
         if inp.get("anti_cheat"):
             hold.append(f"反作弊檢查有發現：{inp['anti_cheat'][:5]}")
-        if inp.get("evidence_commit") and head and inp["evidence_commit"] != head:
+        if not inp.get("evidence_commit"):
+            hold.append("驗證證據沒有 commit（不知道驗的是哪個 commit，無法綁定 head SHA；fail-closed）")
+        elif head and inp["evidence_commit"] != head:
             sha_mismatch(inp["evidence_commit"], "驗證時")
+    if inp.get("findings_given") and not inp.get("reviewed_shas"):
+        hold.append("有審查發現（--findings）卻沒有 reviewed-sha（不知道審的是哪個 commit；fail-closed）")
     for s in inp.get("reviewed_shas") or []:
         if head and s != head:
             sha_mismatch(s, "審查時")
@@ -481,9 +690,21 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
     if need("checks", "required checks 狀態"):
         if not inp["checks"]:
             hold.append("沒有任何 required check")
-        failed = [f"{n}={s}" for n, s in inp["checks"] if s.lower() not in PASS_CHECK]
+        allowed = set(_list(am.get("allowed_skipped_checks")))
+        failed, skipped = [], []
+        for n, s in inp["checks"]:
+            st = s.strip().lower()
+            if st in PASS_CHECK:
+                continue
+            if st in SKIP_CHECK:
+                if n not in allowed:
+                    skipped.append(f"{n}={s}")
+                continue
+            failed.append(f"{n}={s}")
         if failed:
             hold.append(f"required checks 未通過：{failed}")
+        if skipped:
+            hold.append(f"required checks 被跳過或 neutral（不算通過；要放行請列進 auto_merge.allowed_skipped_checks）：{skipped}")
 
     # 5. 留存的 important／blocker 發現（不確定就停：skeptic 推翻也不算數，要真的修掉、重審後不再出現）
     sev = [f"{f.get('id')}({f.get('severity')})" for f in inp.get("findings") or [] if f.get("severity") in ("important", "blocker")]
@@ -499,6 +720,8 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
     tier = "high"
     if need("diff", "diff"):
         diff = inp["diff"]
+        if diff.get("errors"):
+            hold.append(f"diff 解析不了，無法確認改了哪些檔與新增了什麼（fail-closed）：{diff['errors'][:3]}")
         skips = [f"{p}: {l.strip()[:80]}" for p, l in diff["added_lines"] if SKIP.search(l)]
         if skips:
             hold.append(f"新增 skip／only／fixme：{skips[:5]}")
@@ -522,16 +745,32 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
             esc.append(f"風險等級 {tier} 超過 {repo} 的上限 {cap_tier}")
     if tier == "high" and not any("高風險" in e or "過大" in e for e in esc):
         esc.append("風險等級 high 一律交給人")
+    day = judgment_day(inp.get("timestamp"))
     if repo in _list(cfg.get("upstream_repos")):
-        auth = am.get("upstream_authorized_by") if isinstance(am.get("upstream_authorized_by"), dict) else {}
-        if not str(auth.get(repo) or "").strip():
-            esc.append(f"{repo} 是上游 repo，沒有 upstream_authorized_by 授權人")
+        who, why = upstream_auth(am, repo, day)
+        if not who:
+            esc.append(f"{repo} 是上游 repo，upstream_authorized_by 沒有有效的授權人：{why}")
     if inp.get("frozen"):
-        hold.append(f"自動合併已凍結（{inp['frozen']} 存在；解凍由人處理）")
+        hold.append(f"自動合併已凍結（{inp['frozen']}；解凍由人處理）")
+    if inp.get("frozen_arg"):
+        hold.append(f"自動合併已凍結（--frozen：{inp['frozen_arg']}；解凍由人處理）")
     cap = am.get("daily_cap")
-    cap = DEFAULT_DAILY_CAP if cap in (None, "") else int(cap)
-    day = (inp.get("timestamp") or "")[:10]
+    try:
+        cap = DEFAULT_DAILY_CAP if cap in (None, "") else int(cap)
+    except (TypeError, ValueError):
+        hold.append(f"auto_merge.daily_cap 不是整數（{cap!r}），fail-closed")
+        cap = 0
     merged_today = sum(1 for a in audit_lines if a.get("decision") == "merge" and str(a.get("timestamp", ""))[:10] == day)
+    ext = inp.get("merged_today")
+    if ext is not None:
+        try:
+            n = int(str(ext).strip())
+        except ValueError:
+            n = -1
+        if n < 0:
+            hold.append(f"當日已合併數讀不懂（--merged-today {ext!r}），fail-closed")
+        else:
+            merged_today = max(merged_today, n)
     if merged_today >= cap:
         hold.append(f"超過每日合併上限：今天（{day}）已合併 {merged_today} 次，上限 {cap}")
 
@@ -592,6 +831,8 @@ def patch_id(git_dir: Path, base: str, sha: str) -> str | None:
 def gather(a: argparse.Namespace, cfg: dict, proj: Path) -> dict:
     inp: dict = {"repo": a.repo, "pr": a.pr, "head_sha": a.head_sha, "reviewed_shas": a.reviewed_sha or [], "base_sha": a.base_sha,
                  "tests_before": a.tests_before, "tests_after": a.tests_after,
+                 "findings_given": bool(a.findings), "merged_today": a.merged_today,
+                 "frozen_arg": (a.frozen or "").strip() or None,
                  "timestamp": a.timestamp or datetime.now(timezone.utc).isoformat(timespec="seconds")}
     errors = []
 
@@ -700,19 +941,26 @@ def _selftest() -> int:
 
         good_rows = [row(r["id"], r["text"]) for r in reqs]
         good_ev = [{"requirement_id": r["id"], "result": "pass", "evidence": "1 passed"} for r in reqs]
-        test_diff = "diff --git a/tests/test_export.py b/tests/test_export.py\n--- a/tests/test_export.py\n+++ b/tests/test_export.py\n@@ -1 +1,2 @@\n+def test_csv():\n+    assert export() == 'csv'\n"
 
-        def run(name, want, cfg=None, files=None, args=None, expect_followup=None, audit=False):
+        def evw(items, commit=SHA):  # 證據要帶驗證時的 commit，才能綁 head SHA
+            return {"commit": commit, "results": items}
+        def mk_diff(path: str, plus: list[str], minus: list[str] = ()) -> str:  # 行數和 hunk 標頭一致的 diff（parse_diff 會核對行數）
+            return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -{1 if minus else 0},{len(minus)} +1,{len(plus)} @@\n"
+                    + "".join(f"-{l}\n" for l in minus) + "".join(f"+{l}\n" for l in plus))
+        test_lines = ["def test_csv():", "    assert export() == 'csv'"]
+        test_diff = mk_diff("tests/test_export.py", test_lines)
+
+        def run(name, want, cfg=None, files=None, args=None, expect_followup=None, audit=False, why=None):
             nonlocal ok
             write_cfg(cfg or base_cfg)
-            files = {"decision.json": decision(good_rows), "evidence.json": good_ev,
+            files = {"decision.json": decision(good_rows), "evidence.json": evw(good_ev),
                      "checks.json": [{"name": "ci", "state": "SUCCESS"}], "diff.txt": test_diff, **(files or {})}
             for fn, body in files.items():
                 (proj / fn).write_text(body if isinstance(body, str) else json.dumps(body, ensure_ascii=False), encoding="utf-8")
             argv = ["check", "--project-dir", str(proj), "--decision", str(proj / "decision.json"), "--repo", "acme-fork/app",
                     "--pr", "3", "--head-sha", SHA, "--evidence", str(proj / "evidence.json"), "--checks", str(proj / "checks.json"),
                     "--diff", str(proj / "diff.txt"), "--tests-before", "10", "--tests-after", "11",
-                    "--timestamp", "2026-10-24T09:00:00+00:00", *([] if audit else ["--no-audit"]), *(args or [])]
+                    "--timestamp", "2099-10-24T09:00:00+00:00", *([] if audit else ["--no-audit"]), *(args or [])]
             r = subprocess.run([sys.executable, str(Path(__file__).resolve()), *argv], capture_output=True, text=True,
                                encoding="utf-8", env={**os.environ, "PYTHONUTF8": "1"})
             try:
@@ -724,6 +972,9 @@ def _selftest() -> int:
             if expect_followup and not any(f.get("requirement_id") == expect_followup for f in res.get("followups") or []):
                 good = False
                 res["reasons"].append(f"缺 {expect_followup} 的 followup")
+            if why and not any(why in r for r in res.get("reasons") or []):  # 判定要因為這條理由，不是剛好被別的理由擋下
+                good = False
+                res["reasons"].append(f"理由裡沒有「{why}」")
             print(f"  [{'通過' if good else '失敗'}] {name}：{got}（預期 {'／'.join(want)}）" + ("" if good else f" {res['reasons']}"))
             ok = ok and good
             return res
@@ -734,11 +985,11 @@ def _selftest() -> int:
         spec_ev = [{"requirement_id": "AC-1", "result": "pass", "evidence": "ok"}, {"requirement_id": "AC-2", "result": "pass", "evidence": "ok"}]
         run("traceability 全部一致（spec-md 範例 adapter）→ merge", ("merge",),
             cfg={**base_cfg, "requirements": {"source": "spec-md", "path": "specs/demo/spec.md"}},
-            files={"decision.json": decision(spec_rows), "evidence.json": spec_ev})
+            files={"decision.json": decision(spec_rows), "evidence.json": evw(spec_ev)})
         run("traceability 全部一致（command 需求來源：團隊自訂腳本）→ merge", ("merge",),
             cfg={**base_cfg, "requirements": {"source": "command", "command": [sys.executable, str(gen)]}},
             files={"decision.json": decision([row("ISSUE-7", "登入頁顯示錯誤訊息")]),
-                   "evidence.json": [{"requirement_id": "ISSUE-7", "result": "pass", "evidence": "e2e ok"}]})
+                   "evidence.json": evw([{"requirement_id": "ISSUE-7", "result": "pass", "evidence": "e2e ok"}])})
         # guard.config.json 沒設 requirements（path、command 都空）時，改讀開發規範 profile（methodology.json）的需求來源
         meth = proj / ".claude/teams/methodology.json"
         meth.write_text(json.dumps({"name": "acme-demo", "requirements": {"source": "command", "command": [sys.executable, str(gen)]}},
@@ -746,7 +997,7 @@ def _selftest() -> int:
         res = run("traceability 全部一致（需求來源取自 methodology profile：command 需求來源）→ merge", ("merge",),
                   cfg={**base_cfg, "requirements": {"source": "json", "path": "", "command": ""}},
                   files={"decision.json": decision([row("ISSUE-7", "登入頁顯示錯誤訊息")]),
-                         "evidence.json": [{"requirement_id": "ISSUE-7", "result": "pass", "evidence": "e2e ok"}]})
+                         "evidence.json": evw([{"requirement_id": "ISSUE-7", "result": "pass", "evidence": "e2e ok"}])})
         good = str(res.get("requirements_source", "")).startswith("command")
         print(f"  [{'通過' if good else '失敗'}] methodology profile 的需求來源被採用（requirements_source={res.get('requirements_source')}）")
         ok = ok and good
@@ -757,11 +1008,11 @@ def _selftest() -> int:
             files={"decision.json": decision([good_rows[0], row("REQ-2", "超過一萬筆時提示縮小範圍", "mismatch")], "hold", fu)},
             expect_followup="REQ-2")
         res = run("traceability mismatch（steward 宣稱 merge、驗證卻 fail）→ hold 並產出 followup", ("hold",),
-                  files={"evidence.json": [good_ev[0], {"requirement_id": "REQ-2", "result": "fail", "evidence": "沒有提示"}]},
+                  files={"evidence.json": evw([good_ev[0], {"requirement_id": "REQ-2", "result": "fail", "evidence": "沒有提示"}])},
                   expect_followup="REQ-2")
         run("traceability 漏列（需求清單有 REQ-2，對照表沒有）→ hold", ("hold",),
             files={"decision.json": decision([good_rows[0]])}, expect_followup="REQ-2")
-        run("traceability 證據缺這條需求 → hold", ("hold",), files={"evidence.json": [good_ev[0]]}, expect_followup="REQ-2")
+        run("traceability 證據缺這條需求 → hold", ("hold",), files={"evidence.json": evw([good_ev[0]])}, expect_followup="REQ-2")
         oos = [{"location": "src/billing.py", "change": "改了計費"}]
         run("traceability out_of_scope（對不到需求的改動）→ hold", ("hold",),
             files={"decision.json": decision(good_rows, "hold", [{"requirement_id": "out_of_scope", "expected": "x", "actual": "y", "adjustment": "z"}], oos)},
@@ -769,7 +1020,7 @@ def _selftest() -> int:
         run("head SHA 不符（對照時與目前不同）→ hold", ("hold",), files={"decision.json": decision(good_rows, sha="b" * 40)})
         run("head SHA 不符（審查時與目前不同）→ hold", ("hold",), args=["--reviewed-sha", "c" * 40])
         run("測試數減少 → hold", ("hold",), args=["--tests-before", "12"])
-        skip_diff = test_diff + "+@pytest.mark.skip(reason='flaky')\n+def test_big():\n+    pass\n"
+        skip_diff = mk_diff("tests/test_export.py", test_lines + ["@pytest.mark.skip(reason='flaky')", "def test_big():", "    pass"])
         run("新增 skip → hold", ("hold",), files={"diff.txt": skip_diff})
         run("新增 it.only → hold", ("hold",), files={"diff.txt": test_diff.replace("+def test_csv():", "+it.only('csv', () => {})")})
         ci_diff = "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -1 +1 @@\n-on: push\n+on: pull_request\n"
@@ -778,9 +1029,36 @@ def _selftest() -> int:
         run("改依賴鎖檔 → escalate", ("escalate",), files={"diff.txt": lock_diff})
         jest_diff = "diff --git a/jest.config.js b/jest.config.js\n--- a/jest.config.js\n+++ b/jest.config.js\n@@ -1 +1 @@\n-coverageThreshold: 90\n+coverageThreshold: 50\n"
         run("改測試／覆蓋率設定（jest.config.js）→ escalate", ("escalate",), files={"diff.txt": jest_diff})
-        run("新增 # noqa → escalate", ("escalate",), files={"diff.txt": test_diff + "+import os  # noqa: F401\n"})
+        run("新增 # noqa → escalate", ("escalate",), files={"diff.txt": mk_diff("tests/test_export.py", test_lines + ["import os  # noqa: F401"])})
         run("新增 eslint-disable → escalate", ("escalate",),
             files={"diff.txt": test_diff.replace("+def test_csv():", "+// eslint-disable-next-line no-unused-vars")})
+        # ── A-2／A-3：diff 解析（改名前後路徑、刪除、引號路徑、「++ 」開頭的新增行、解析不了一律 hold）
+        mv_out = ("diff --git a/.github/workflows/deploy.yml b/docs/deploy.md\nsimilarity index 100%\n"
+                  "rename from .github/workflows/deploy.yml\nrename to docs/deploy.md\n")
+        run("把敏感檔改名移出 .github（只有 rename，0 行）→ escalate（看舊路徑）", ("escalate",), files={"diff.txt": test_diff + mv_out}, why="改到高風險路徑：.github/workflows/deploy.yml")
+        q = '"a/.github/\\346\\270\\254\\350\\251\\246.yml" "b/docs/\\346\\270\\254\\350\\251\\246.md"'
+        mv_quoted = (f"diff --git {q}\nsimilarity index 100%\n"
+                     'rename from ".github/\\346\\270\\254\\350\\251\\246.yml"\nrename to "docs/\\346\\270\\254\\350\\251\\246.md"\n')
+        run("引號路徑（非 ASCII 檔名）的敏感檔改名移出 → escalate（還原 octal 跳脫）", ("escalate",),
+            files={"diff.txt": test_diff + mv_quoted}, why="改到高風險路徑：.github/測試.yml")
+        rm_sens = ("diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS\ndeleted file mode 100644\nindex 1111111..0000000\n"
+                   "--- a/.github/CODEOWNERS\n+++ /dev/null\n@@ -1 +0,0 @@\n-* @acme/owners\n")
+        run("刪除敏感檔（CODEOWNERS）→ escalate", ("escalate",), files={"diff.txt": test_diff + rm_sens}, why="改到高風險路徑：.github/CODEOWNERS")
+        qskip = ('diff --git "a/tests/\\346\\270\\254\\350\\251\\246.py" "b/tests/\\346\\270\\254\\350\\251\\246.py"\nnew file mode 100644\n'
+                 '--- /dev/null\n+++ "b/tests/\\346\\270\\254\\350\\251\\246.py"\n@@ -0,0 +1,2 @@\n+@pytest.mark.skip(reason=\'flaky\')\n+def test_x(): pass\n')
+        run("引號路徑（非 ASCII 測試檔）新增 skip → hold（新增行不能被忽略）", ("hold",), files={"diff.txt": test_diff + qskip}, why="tests/測試.py: @pytest.mark.skip")
+        plus3 = mk_diff("tests/test_export.py", test_lines + ["++ it.only('csv', () => {})"])
+        run("新增行內容以「++ 」開頭（整行是 +++）不能當成檔案標頭 → hold", ("hold",), files={"diff.txt": plus3}, why="新增 skip／only／fixme")
+        run("解析不了的 diff --git 標頭（沒有 a/ b/ 前綴）→ hold", ("hold",),
+            files={"diff.txt": test_diff + "diff --git x.py y.py\n--- x.py\n+++ y.py\n@@ -0,0 +1 @@\n+print(1)\n"}, why="解析不了的 diff --git 標頭")
+        run("diff 在 hunk 中間被截斷 → hold", ("hold",), files={"diff.txt": test_diff.replace("+1,2 @@", "+1,5 @@")}, why="可能被截斷")
+        pd = parse_diff('diff --git "a/caf\\303\\251 x\\t.txt" "b/caf\\303\\251 x\\t.txt"\n--- "a/caf\\303\\251 x\\t.txt"\n'
+                        '+++ "b/caf\\303\\251 x\\t.txt"\n@@ -0,0 +1 @@\n+hi\n'
+                        "diff --git a/my file.txt b/my file.txt\n--- a/my file.txt\n+++ b/my file.txt\n@@ -1 +1 @@\n-a\n+b\n")
+        good = (pd["files"] == {"café x\t.txt": [1, 0], "my file.txt": [1, 1]} and pd.get("errors") == []
+                and pd["added_lines"] == [("café x\t.txt", "hi"), ("my file.txt", "b")])
+        print(f"  [{'通過' if good else '失敗'}] parse_diff 還原引號路徑的 octal 與 \\t 跳脫、檔名含空白（{pd['files']} {pd.get('errors')}）")
+        ok = ok and good
         # rebase 後沿用 verdict：在暫存 git repo 做 feature commit A，main 前進後 cherry-pick 成 A2（patch 相同），另做 C（patch 不同）
         gd = proj / "gitrepo"
         gd.mkdir()
@@ -809,30 +1087,99 @@ def _selftest() -> int:
         carry_cfg = {**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "carry_verdict_on_rebase": True}}
         rb = ["--head-sha", sha_a2, "--base-sha", base1, "--git-dir", str(gd)]
         res = run("rebase 後 patch-id 相同、carry 開啟 → merge（沿用 verdict）", ("merge",), cfg=carry_cfg,
-                  files={"decision.json": decision(good_rows, sha=sha_a)}, args=rb)
+                  files={"decision.json": decision(good_rows, sha=sha_a), "evidence.json": evw(good_ev, sha_a)}, args=rb)
         good = any("沿用 verdict" in r for r in res.get("reasons") or [])
         print(f"  [{'通過' if good else '失敗'}] 沿用 verdict 寫進 reasons（{res.get('reasons')}）")
         ok = ok and good
-        run("rebase 後 patch-id 相同、carry 關閉 → hold", ("hold",), files={"decision.json": decision(good_rows, sha=sha_a)}, args=rb)
+        run("rebase 後 patch-id 相同、carry 關閉 → hold", ("hold",), files={"decision.json": decision(good_rows, sha=sha_a), "evidence.json": evw(good_ev, sha_a)}, args=rb)
         run("rebase 後 patch 不同、carry 開啟 → hold", ("hold",), cfg=carry_cfg,
-            files={"decision.json": decision(good_rows, sha=sha_a)}, args=["--head-sha", sha_c, "--base-sha", base1, "--git-dir", str(gd)])
+            files={"decision.json": decision(good_rows, sha=sha_a), "evidence.json": evw(good_ev, sha_a)}, args=["--head-sha", sha_c, "--base-sha", base1, "--git-dir", str(gd)])
         run("carry 開啟但沒給 base → hold", ("hold",), cfg=carry_cfg,
-            files={"decision.json": decision(good_rows, sha=sha_a)}, args=["--head-sha", sha_a2, "--git-dir", str(gd)])
+            files={"decision.json": decision(good_rows, sha=sha_a), "evidence.json": evw(good_ev, sha_a)}, args=["--head-sha", sha_a2, "--git-dir", str(gd)])
         run("carry 開啟但舊 commit 不存在（算不出 patch-id）→ hold", ("hold",), cfg=carry_cfg,
             files={"decision.json": decision(good_rows, sha="d" * 40)}, args=rb)
         run("required check 失敗 → hold", ("hold",), files={"checks.json": [{"name": "ci", "state": "FAILURE"}]})
         run("驗證有 anti_cheat 發現 → hold", ("hold",),
             files={"evidence.json": {"commit": SHA, "anti_cheat": ["tests/test_export.py:3 斷言被放寬"], "results": good_ev}})
-        run("留存 important 發現 → hold", ("hold",), args=["--findings", str(proj / "findings.json")],
+        run("留存 important 發現 → hold", ("hold",), args=["--findings", str(proj / "findings.json"), "--reviewed-sha", SHA],
             files={"findings.json": {"lens": "bugs", "findings": [{"id": "B1", "severity": "important", "claim": "c", "location": "a:1", "recommendation": "r", "confidence": 0.9}]}})
         run("repo 不在白名單 → escalate", ("escalate",), cfg={**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "repos": {}}})
         run("required checks 輸入讀不到（fail-closed）→ hold", ("hold",), files={"checks.json": "not json"})
+        # ── M1：SHA 綁定的輸入缺漏一律 hold
+        run("證據沒有 commit（無法綁定 head SHA）→ hold", ("hold",), files={"evidence.json": good_ev}, why="驗證證據沒有 commit")
+        run("證據的 commit 是 n/a（等同沒有 commit）→ hold", ("hold",), files={"evidence.json": evw(good_ev, "n/a")}, why="驗證證據沒有 commit")
+        nofind = {"lens": "bugs", "findings": [{"id": "N1", "severity": "nit", "claim": "c", "location": "a:1", "recommendation": "r", "confidence": 0.9}]}
+        run("有 findings 卻沒有 reviewed-sha → hold", ("hold",), args=["--findings", str(proj / "findings.json")], files={"findings.json": nofind}, why="沒有 reviewed-sha")
+        run("有 findings 且 reviewed-sha 等於 head（只有 nit）→ merge", ("merge",),
+            args=["--findings", str(proj / "findings.json"), "--reviewed-sha", SHA], files={"findings.json": nofind})
+        run("SHA 不符（驗證證據的 commit 與目前 head 不同）→ hold", ("hold",), files={"evidence.json": evw(good_ev, "e" * 40)}, why="head SHA 不符：驗證時")
+        # ── M2：skipped／neutral 預設不算通過
+        run("skipped 不算通過（required check 被跳過）→ hold", ("hold",),
+            files={"checks.json": [{"name": "ci", "state": "SUCCESS"}, {"name": "e2e", "conclusion": "skipped"}]}, why="被跳過或 neutral")
+        run("neutral 也不算通過 → hold", ("hold",),
+            files={"checks.json": [{"name": "ci", "state": "SUCCESS"}, {"name": "lint", "conclusion": "neutral"}]}, why="被跳過或 neutral")
+        allow_cfg = {**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "allowed_skipped_checks": ["e2e"]}}
+        run("allowed_skipped_checks 有列的 check 被跳過 → merge", ("merge",), cfg=allow_cfg,
+            files={"checks.json": [{"name": "ci", "state": "SUCCESS"}, {"name": "e2e", "conclusion": "skipped"}]})
+        run("allowed_skipped_checks 沒列的 check 被跳過 → hold", ("hold",), cfg=allow_cfg,
+            files={"checks.json": [{"name": "ci", "state": "SUCCESS"}, {"name": "lint", "conclusion": "skipped"}]}, why="被跳過或 neutral")
+        run("allowed_skipped_checks 不放行 failure → hold", ("hold",), cfg=allow_cfg,
+            files={"checks.json": [{"name": "ci", "state": "SUCCESS"}, {"name": "e2e", "conclusion": "failure"}]}, why="未通過")
+        # ── M3／M4：上游授權（判定日 2099-10-24）
+        up = ["--repo", "acme-up/app"]
+        up_files = {"decision.json": decision(good_rows, repo="acme-up/app")}
+
+        def up_cfg(auth):
+            return {**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "upstream_authorized_by": auth}}
+        run("上游 repo 沒有授權人 → escalate", ("escalate",), cfg=up_cfg({}), files=up_files, args=up, why="沒有授權人")
+        run("上游 repo 授權人空白（by 是空字串）→ escalate", ("escalate",), cfg=up_cfg({"acme-up/app": {"by": " ", "expires": "2099-12-31"}}),
+            files=up_files, args=up, why="沒有授權人")
+        run("上游 repo 授權過期（expires 早於判定日）→ escalate", ("escalate",),
+            cfg=up_cfg({"acme-up/app": {"by": "示範維護者", "link": "https://example.com/acme/1", "expires": "2099-10-23"}}),
+            files=up_files, args=up, why="授權過期")
+        run("上游 repo 授權過期日讀不懂 → escalate", ("escalate",), cfg=up_cfg({"acme-up/app": {"by": "示範維護者", "expires": "明年"}}),
+            files=up_files, args=up, why="讀不懂")
+        run("上游 repo 授權有效（expires 當天仍有效）→ merge", ("merge",),
+            cfg=up_cfg({"acme-up/app": {"by": "示範維護者", "expires": "2099-10-24"}}), files=up_files, args=up)
+        run("上游 repo 授權人是字串 → merge", ("merge",), cfg=up_cfg({"acme-up/app": "示範維護者"}), files=up_files, args=up)
+        # ── A-9：判定日＝max(--timestamp, 系統 UTC 日期)。selftest 其餘案例用 2099 年的 --timestamp（晚於系統日期）保持可重現；
+        #    這裡故意傳舊日期，期待值只依賴「系統日期晚於 2000-01-01」，跨午夜也只會更晚，不會 flaky
+        sys_today = datetime.now(timezone.utc).date()
+        old_ts = ["--timestamp", "2000-01-01T00:00:00+00:00"]
+        run("--timestamp 用舊日期不能讓已過期的上游授權復活（expires 昨天）→ escalate", ("escalate",),
+            cfg=up_cfg({"acme-up/app": {"by": "示範維護者", "expires": (sys_today - timedelta(days=1)).isoformat()}}),
+            files=up_files, args=up + old_ts, why="授權過期")
+        # ── M4：其餘條件
+        run("steward 判 escalate → escalate（gate 不放寬）", ("escalate",), files={"decision.json": decision(good_rows, "escalate")}, why="steward 判 escalate")
+        run("auto_merge 關閉 → escalate", ("escalate",), cfg={**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "enabled": False}}, why="auto_merge 未啟用")
+        src_diff = mk_diff("src/export.py", ["def export():", "    return 'csv'"])
+        run("風險超過上限（medium 改動、repo 上限 low）→ escalate", ("escalate",),
+            cfg={**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "repos": {"acme-fork/app": "low"}}}, files={"diff.txt": src_diff}, why="超過 acme-fork/app 的上限")
+        run("風險 medium 在上限內 → merge", ("merge",), files={"diff.txt": src_diff})
+        big_diff = mk_diff("src/big.py", [f"x{i} = {i}" for i in range(500)])
+        run("diff 過大（超過 large_lines）→ escalate", ("escalate",), files={"diff.txt": big_diff}, why="diff 過大")
+        run("diff 為空 → hold", ("hold",), files={"diff.txt": ""}, why="diff 是空的")
+        (proj / "empty_reqs.json").write_text("[]", encoding="utf-8")
+        run("需求清單空 → hold", ("hold",), cfg={**base_cfg, "requirements": {"source": "json", "path": "empty_reqs.json"}},
+            files={"decision.json": decision([])}, why="需求清單是空的")
+        run("多出需求 ID（對照表有需求清單沒有的 REQ-9）→ hold", ("hold",),
+            files={"decision.json": decision(good_rows + [row("REQ-9", "清單裡沒有的需求")])}, why="需求清單裡沒有的 ID")
+        # ── M5：CI 帶入的凍結與當日合併數
+        run("--frozen（CI 由 repo variable 帶入）→ hold", ("hold",), args=["--frozen", "repo variable AGENT_AUTOMERGE_FROZEN=true"], why="已凍結")
+        run("--merged-today 已達上限 → hold", ("hold",), args=["--merged-today", "2"], why="每日合併上限")
+        run("--merged-today 未達上限 → merge", ("merge",), args=["--merged-today", "1"])
+        run("--merged-today 讀不懂（API 失敗）→ hold", ("hold",), args=["--merged-today", "unknown"], why="--merged-today")
         # 每日上限：先清掉 selftest 前面寫的紀錄，再放入今天已合併 2 次（上限 2）
         audit = proj / "_tpm/runs/merge-audit.jsonl"
         audit.parent.mkdir(parents=True, exist_ok=True)
-        audit.write_text("".join(json.dumps({"timestamp": "2026-10-24T0{}:00:00+00:00".format(i), "repo": "acme-fork/app", "pr": i,
+        audit.write_text("".join(json.dumps({"timestamp": "2099-10-24T0{}:00:00+00:00".format(i), "repo": "acme-fork/app", "pr": i,
                                              "head_sha": SHA, "decision": "merge", "reasons": []}) + "\n" for i in (1, 2)), encoding="utf-8")
-        run("超過每日上限 → hold", ("hold",))
+        run("超過每日上限 → hold", ("hold",), why="每日合併上限")
+        # 系統日期今天（與明天，防跨午夜）已合併 2 次：用舊的 --timestamp 也不能規避
+        audit.write_text("".join(json.dumps({"timestamp": f"{d.isoformat()}T0{i}:00:00+00:00", "repo": "acme-fork/app", "pr": i,
+                                             "head_sha": SHA, "decision": "merge", "reasons": []}) + "\n"
+                                 for d in (sys_today, sys_today + timedelta(days=1)) for i in (1, 2)), encoding="utf-8")
+        run("--timestamp 用舊日期不能規避每日上限（系統日期今天已合併 2 次）→ hold", ("hold",), args=old_ts, why="每日合併上限")
         audit.write_text("", encoding="utf-8")
         frz = proj / "_tpm/runs/auto-merge.freeze.json"
         frz.write_text(json.dumps({"frozen": True, "reason": "main CI 在合併後轉紅（示範）"}, ensure_ascii=False), encoding="utf-8")
@@ -891,10 +1238,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--diff", help="git diff <base>...<head> 的輸出檔")
     c.add_argument("--tests-before", type=int)
     c.add_argument("--tests-after", type=int)
-    c.add_argument("--timestamp", help="ISO 8601；預設系統時間（UTC）")
+    c.add_argument("--timestamp", help="ISO 8601；預設系統時間（UTC）。判定日取它和系統 UTC 日期的較晚者")
     c.add_argument("--project-dir", help="專案根目錄（預設 CLAUDE_PROJECT_DIR，或本檔所在專案）")
     c.add_argument("--runs-dir", help="覆蓋 guard.config.json 的 runs_dir")
     c.add_argument("--no-audit", action="store_true", help="不寫 merge-audit.jsonl（只供除錯）")
+    c.add_argument("--merged-today", help="當日（UTC，判定日＝max(--timestamp, 系統日期)）已合併數，CI 用 GitHub API 算出；和本機 audit 的計數取大者，不是非負整數就 hold")
+    c.add_argument("--frozen", help="凍結理由；有給（非空）就 hold。CI 從 repo variable 讀凍結狀態時帶入")
     a = p.parse_args(argv)
     return cmd_check(a)
 

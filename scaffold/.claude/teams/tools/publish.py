@@ -9,8 +9,13 @@ hook 會擋 tpm-*／dev-* 執行這支；主 session 呼叫時 hook 只看到「
   2. 分支名要符合 allowed_branch_prefixes，不能是 protected_branches（預設 main、master）或 PR 的 base。不 force push。
   3. 推送前掃 diff（<remote>/<base>...<分支>）新增的行：常見金鑰樣式、私鑰區塊、機敏檔名，
      以及 --secrets-file 列的機敏值（逐字比對）。命中就拒絕，只報檔名與樣式名稱，不印出值。
-  4. 依政策判定能不能推：--run 的 run.json 裡該段（預設 deliver）要 done 且已核准，前面有閘門的段也都要已核准；
-     核准是 --by policy 時，重跑 save_run.policy_violations 讀該段實際結果，有任何違規就拒絕。
+     diff 用 merge_gate.parse_diff 解析（引號路徑、改名、「++ 」開頭的新增行）；機敏檔名比對每個 diff --git 區塊，
+     再比對 git diff --name-only --diff-filter=ACMRT，所以二進位檔與空檔也會命中；diff 解析不了一律拒絕。
+  4. 依政策判定能不能推（和 save_run.py 共用同一套判定）：run 已取消（save_run.py abandon）一律拒絕；
+     固定要求整條閘門鏈到 deliver：plan、design、test、deliver 都要在 run.json 裡，每一段都要 done、有閘門的都要已核准
+     （save_run.chain_errors），deliver 一定要已核准。--stage 只能是 deliver 或更後面的段（例如 merge，要求它也 done），
+     給更前面的段或不是 SDLC 的段一律拒絕，不能用來降低要求。到該段為止任何一段的核准是 --by policy 時，
+     重跑 save_run.policy_violations 讀該段實際結果（skeptic 推翻、agent 缺件、blocking 問題等），有任何違規就拒絕。
   5. git push <remote> refs/heads/<分支>:refs/heads/<分支>，再 gh pr create --repo <fork>。
      有 --supersedes N 時，PR 說明末尾加一行「取代 #N」；舊 PR 由人關閉，本工具不執行 gh pr close。
   6. 每次執行（含拒絕、dry-run）append 一行到 <runs_dir>/publish-audit.jsonl。
@@ -39,6 +44,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import merge_gate  # noqa: E402
 import save_run  # noqa: E402
 import schemalib  # noqa: E402
 
@@ -148,21 +154,24 @@ def check_remote(repo: Path, remote: str, cfg: dict) -> str:
     return urls[0]
 
 
-def scan_secrets(diff: str, literals: list[str]) -> list[str]:
-    """回傳命中的「檔名：樣式名稱」；不回傳值本身。只看新增的行與新增的檔名。"""
+def secret_file(path: str) -> bool:
+    return bool(path) and path != "/dev/null" and bool(SECRET_FILES.search(path)) and not SECRET_FILE_OK.search(path)
+
+
+def scan_secrets(diff: str, literals: list[str], names: list[str] | None = None) -> list[str]:
+    """回傳命中的「檔名：樣式名稱」；不回傳值本身。看新增的行與留下來的檔名（新增、修改、改名或複製後的路徑）。
+
+    diff 用 merge_gate.parse_diff 解析（和 gate 同一套：引號路徑、改名、「++ 」開頭的新增行）；
+    機敏檔名從每個 diff --git 區塊比對，所以沒有 ---／+++ 行的二進位檔（Binary files … differ）與空檔也會命中。
+    names：git diff --name-only --diff-filter=ACMRT 的結果，再比對一次（diff 文字解析出問題時的第二道）。
+    diff 解析不了就當成命中（無法確認沒有機敏值，fail-closed）。"""
     hits: list[str] = []
-    cur = "?"
+    parsed = merge_gate.parse_diff(diff)
+    hits += [f"diff：{e}，無法確認沒有機敏值" for e in parsed["errors"]]
+    kept = [e["new"] for e in parsed["entries"] if not e["deleted"] and e["new"]]
+    hits += [f"{p}：機敏檔名" for p in [*kept, *(names or [])] if secret_file(p)]
     compiled = [(name, re.compile(p)) for name, p in SECRET_PATTERNS]
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
-            p = line[4:].strip()
-            cur = p[2:] if p.startswith("b/") else p
-            if cur != "/dev/null" and SECRET_FILES.search(cur) and not SECRET_FILE_OK.search(cur):
-                hits.append(f"{cur}：機敏檔名")
-            continue
-        if not line.startswith("+"):
-            continue
-        body = line[1:]
+    for cur, body in parsed["added_lines"]:
         for name, rx in compiled:
             if rx.search(body):
                 hits.append(f"{cur}：{name}")
@@ -171,8 +180,17 @@ def scan_secrets(diff: str, literals: list[str]) -> list[str]:
     return sorted(set(hits))
 
 
-def check_policy(run_dir: Path | None, stage: str) -> str:
-    """回傳核准紀錄的摘要；不能推就 raise Refused。"""
+MIN_STAGE = "deliver"  # 推送是 deliver 之後的動作：閘門鏈固定要求到 deliver
+
+
+def check_policy(run_dir: Path | None, stage: str = MIN_STAGE) -> str:
+    """回傳核准紀錄的摘要；不能推就 raise Refused。
+
+    固定要求整條閘門鏈到 deliver（含）都 done、有閘門的都已核准；--stage 只能指定 deliver 或更後面的段（更嚴），
+    給更前面的段、或不是 SDLC 的段一律拒絕（不能用 --stage 降低要求）。"""
+    sdlc = save_run.SDLC
+    if stage not in sdlc or sdlc.index(stage) < sdlc.index(MIN_STAGE):
+        raise Refused(f"--stage {stage!r} 不行：推送前至少要 {MIN_STAGE} 段核准，--stage 只能是 {'、'.join(sdlc[sdlc.index(MIN_STAGE):])}")
     if run_dir is None:
         raise Refused("沒有 --run：推送前要有 run.json 的閘門紀錄")
     f = run_dir / "run.json"
@@ -180,30 +198,40 @@ def check_policy(run_dir: Path | None, stage: str) -> str:
         data = json.loads(f.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         raise Refused(f"讀不到 {f}：{e}") from e
+    if data.get("abandoned"):
+        raise Refused(save_run.abandoned_error(data) + "，不推送")
     stages = data.get("stages") or {}
-    st = stages.get(stage)
-    if not isinstance(st, dict):
-        raise Refused(f"run.json 沒有 {stage} 這一段")
-    if st.get("status") != "done":
-        raise Refused(f"{stage} 狀態是 {st.get('status')}，不是 done")
-    appr = st.get("approved")
-    if not appr:
-        raise Refused(f"{stage} 還沒核准（save_run.py approve）")
-    if stage in save_run.SDLC:
-        for prev in save_run.SDLC[: save_run.SDLC.index(stage)]:
-            ps = stages.get(prev) or {}
-            if ps.get("status") != "done" or (ps.get("gate") and not ps.get("approved")):
-                raise Refused(f"前面的 {prev} 段沒有 done 或沒有核准")
-    if appr.get("by") == "policy" or appr.get("kind") == "policy":
-        sf = run_dir / f"{stage}.json"
+    # 有閘門的段（plan、design、test、deliver）一段都不能少；chain_errors 只略過舊 run 沒有的 sync
+    missing = [s for s in sdlc[: sdlc.index(stage) + 1] if (s in save_run.GATED or s in (MIN_STAGE, stage)) and not isinstance(stages.get(s), dict)]
+    if missing:
+        raise Refused(f"run.json 沒有 {'、'.join(missing)} 這{'幾' if len(missing) > 1 else '一'}段")
+    for s in dict.fromkeys([MIN_STAGE, stage]):
+        st = stages[s]
+        if st.get("status") != "done":
+            raise Refused(f"{s} 狀態是 {st.get('status')}，不是 done")
+        if (s == MIN_STAGE or st.get("gate")) and not st.get("approved"):
+            raise Refused(f"{s} 還沒核准（save_run.py approve）")
+    appr = stages[MIN_STAGE]["approved"] if isinstance(stages[MIN_STAGE]["approved"], dict) else {}
+    chain = save_run.chain_errors(stages, stage)
+    if chain:
+        raise Refused("閘門鏈不完整：" + "；".join(chain[:5]))
+    # 到 stage 為止凡是政策核准的段，都重跑同一套政策判定（run.json 可能被手改，不信任紀錄本身）
+    for s in [x for x in sdlc[: sdlc.index(stage) + 1] if isinstance(stages.get(x), dict)]:
+        a2 = stages[s].get("approved") or {}
+        if not isinstance(a2, dict):
+            raise Refused(f"{s} 段的核准紀錄格式不對（{a2!r}），不採信")
+        if a2.get("by") != "policy" and a2.get("kind") != "policy":
+            continue
+        sf = run_dir / f"{s}.json"
         try:
             result = json.loads(sf.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             raise Refused(f"政策核准要讀 {sf.name}，讀不到：{e}") from e
-        errs = save_run.policy_violations(stage, result)
+        errs = save_run.policy_violations(s, result)
         if errs:
-            raise Refused("政策判定不通過：" + "；".join(errs[:5]))
-    return f"{stage} 由 {appr.get('by')} 核准（{appr.get('kind', '')} @ {appr.get('at', '')}）"
+            raise Refused(f"{s} 段政策判定不通過：" + "；".join(errs[:5]))
+    tail = f"；要求到 {stage} 段，已 done" if stage != MIN_STAGE else ""
+    return f"{MIN_STAGE} 由 {appr.get('by')} 核准（{appr.get('kind', '')} @ {appr.get('at', '')}）{tail}"
 
 
 # ------------------------------------------------------------------ 主流程
@@ -250,18 +278,24 @@ def publish(a: argparse.Namespace) -> tuple[int, dict]:
         base_ref = f"refs/remotes/{a.remote}/{a.base}"
         if git(repo, "rev-parse", "--verify", base_ref + "^" + "{commit}").returncode:
             raise Refused(f"找不到 {a.remote}/{a.base}（先 git fetch {a.remote} {a.base}），無法掃 diff")
-        d = git(repo, "diff", "--no-color", "--no-ext-diff", f"{base_ref}...refs/heads/{a.branch}")
+        rng = f"{base_ref}...refs/heads/{a.branch}"
+        # 明寫 a/、b/ 前綴：使用者設了 diff.noprefix／diff.mnemonicPrefix 時 parse_diff 認不得標頭，會一律拒絕
+        d = git(repo, "diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", rng)
         if d.returncode:
             raise Refused(f"git diff 失敗：{d.stderr.strip()[-200:]}")
         if not d.stdout.strip():
             raise Refused(f"{a.branch} 相對 {a.remote}/{a.base} 沒有改動")
+        nm = git(repo, "diff", "--name-only", "-z", "--no-ext-diff", "--diff-filter=ACMRT", rng)
+        if nm.returncode:
+            raise Refused(f"git diff --name-only 失敗：{nm.stderr.strip()[-200:]}")
+        names = [n for n in nm.stdout.split("\0") if n]
         literals = []
         if a.secrets_file:
             try:
                 literals = [l.strip() for l in Path(a.secrets_file).read_text(encoding="utf-8").splitlines() if l.strip()]
             except OSError as e:
                 raise Refused(f"讀不到 --secrets-file：{e}") from e
-        hits = scan_secrets(d.stdout, literals)
+        hits = scan_secrets(d.stdout, literals, names)
         if hits:
             raise Refused(f"diff 疑似含機敏值（{len(hits)} 處）：" + "、".join(hits[:10]))
         rec["reasons"].append(check_policy(run_dir, a.stage))
@@ -368,6 +402,15 @@ def _selftest() -> int:
         (repo / "config.py").write_text(f"AWS_KEY = '{key}'\n", encoding="utf-8")
         g("add", "-A")
         g("commit", "-qm", "feat: 設定")
+        # A-4：沒有 ---／+++ 行的機敏檔（二進位憑證、空的 .env），以及內容以「++ 」開頭的金鑰行（整行是 +++，舊版當成標頭）
+        for br, fn, data in (("feature/p12", "certs/client.p12", b"\x00\x01\x02\xff binary"), ("feature/emptyenv", ".env", b""),
+                             ("feature/plus3", "notes.md", f"++ {key}\n".encode())):
+            g("checkout", "-q", "main")
+            g("checkout", "-qb", br)
+            (repo / fn).parent.mkdir(parents=True, exist_ok=True)
+            (repo / fn).write_bytes(data)
+            g("add", "-A")
+            g("commit", "-qm", f"feat: {fn}")
         g("checkout", "-q", "main")
         g("branch", "wip/x", "feature/export")
 
@@ -375,7 +418,8 @@ def _selftest() -> int:
         body.write_text("示範 PR 說明\n", encoding="utf-8")
         base = {"summary": "s", "artifacts": [], "evidence": [], "confidence": 1, "open_questions": [], "derived_work": []}
 
-        def make_run(name: str, deliver_by: str | None = "使用者", deliver_payload: dict | None = None) -> Path:
+        def make_run(name: str, deliver_by: str | None = "使用者", deliver_payload: dict | None = None,
+                     deliver_extra: dict | None = None) -> Path:
             rd = proj / "_tpm/runs" / name
             sp = str(HERE / "save_run.py")
             sub = lambda *a, stdin="": subprocess.run([sys.executable, sp, *a], input=stdin, capture_output=True, text=True, encoding="utf-8")
@@ -385,7 +429,10 @@ def _selftest() -> int:
                 if stage == "test":
                     payload = {"commit": "a" * 40, "scope_covered": "全部", "scope_skipped": "none", "anti_cheat": [],
                                "criteria": [{"id": "AC-1", "criterion": "c", "command": "true", "result": "pass", "evidence": "e"}]}
-                sub("stage", str(rd), stage, stdin=json.dumps([{**base, "status": "done", "payload": payload}]))
+                res = {"x": [{**base, "status": "done", "payload": payload}]}
+                if stage == "deliver" and deliver_extra:
+                    res.update(deliver_extra)
+                sub("stage", str(rd), stage, stdin=json.dumps(res))
                 if stage == "deliver" and deliver_by is None:
                     break
                 if stage == "deliver" and deliver_by == "policy-forged":
@@ -401,8 +448,14 @@ def _selftest() -> int:
         finding = {"lens": "bugs", "findings": [{"id": "B1", "severity": "important", "claim": "c", "location": "a:1",
                                                  "recommendation": "r", "confidence": 0.9}]}
         forged = make_run("r-forged", deliver_by="policy-forged", deliver_payload=finding)
+        refuted = {"verdicts": [{"target_id": "PR 說明", "refuted": True, "reason": "漏列驗收條件"}]}
+        skeptic = make_run("r-skeptic", deliver_by="policy-forged", deliver_payload=refuted)
+        lost = make_run("r-lost", deliver_by="policy-forged", deliver_extra={"docs": None})
+        dropped = make_run("r-abandon")
+        subprocess.run([sys.executable, str(HERE / "save_run.py"), "abandon", str(dropped), "--reason", "需求取消",
+                        "--by", "使用者", "--at", "t"], capture_output=True, text=True, encoding="utf-8")
 
-        def case(name: str, want: str, **kw) -> dict:
+        def case(name: str, want: str, why: str | None = None, **kw) -> dict:
             nonlocal ok
             args = {"repo_dir": str(repo), "branch": "feature/export", "run": str(good_run), "title": "docs: 匯出說明",
                     "body_file": str(body), "base": "main", "remote": "origin", "stage": "deliver", "draft": False,
@@ -411,6 +464,9 @@ def _selftest() -> int:
             args.update(kw)
             code, rec = publish(argparse.Namespace(**args))
             good = rec["decision"] == want and (code == 0) == (want in ("published", "dry-run", "pushed"))
+            if why and not any(why in r for r in rec["reasons"]):  # 要因為這條理由拒絕，不是剛好被別的理由擋下
+                good = False
+                rec["reasons"].append(f"理由裡沒有「{why}」")
             verbose = (not good) or bool(os.environ.get("AWF_VERBOSE"))
             print(f"  [{'通過' if good else '失敗'}] {name}：{rec['decision']}（預期 {want}）" + (f" {rec['reasons']}" if verbose else ""))
             ok = ok and good
@@ -449,8 +505,35 @@ def _selftest() -> int:
         lit = root / "secrets.txt"
         lit.write_text("匯出 CSV\n", encoding="utf-8")
         case("diff 含 --secrets-file 列的值 → 拒絕", "refused", secrets_file=str(lit))
+        case("新增二進位憑證檔（.p12，diff 只有 Binary files 行）→ 拒絕", "refused", why="certs/client.p12：機敏檔名", branch="feature/p12")
+        case("新增空的 .env（diff 沒有 ---／+++ 行）→ 拒絕", "refused", why=".env：機敏檔名", branch="feature/emptyenv")
+        rec = case("新增行內容以「++ 」開頭的金鑰（整行是 +++）→ 拒絕", "refused", why="notes.md：AWS access key", branch="feature/plus3")
+        good = key not in json.dumps(rec, ensure_ascii=False)
+        print(f"  [{'通過' if good else '失敗'}] 「++ 」開頭的金鑰命中也不印出值")
+        ok = ok and good
+        # A-7：--stage 只能要求 deliver 或更後面的段；給更前面的段不能降低要求
+        case("--stage test（比 deliver 前面，deliver 還沒核准）→ 拒絕", "refused", why="--stage 'test' 不行", run=str(unapproved), stage="test")
+        case("--stage plan（比 deliver 前面）→ 拒絕", "refused", why="--stage 'plan' 不行", stage="plan")
+        case("--stage run（不是 SDLC 的段）→ 拒絕", "refused", why="--stage 'run' 不行", stage="run")
+        mpend = proj / "_tpm/runs/r-merge-pending"
+        mpend.mkdir(parents=True)
+        data = json.loads((good_run / "run.json").read_text(encoding="utf-8"))
+        data["stages"]["merge"] = {"status": "pending", "gate": False}
+        (mpend / "run.json").write_text(json.dumps(data), encoding="utf-8")
+        case("--stage merge（更嚴：merge 段還沒 done）→ 拒絕", "refused", why="merge 狀態是 pending", stage="merge", run=str(mpend))
+        case("--stage merge（deliver 已核准、merge 已 done）→ dry-run 通過", "dry-run", why="要求到 merge 段", stage="merge", dry_run=True)
+        nodeliver = proj / "_tpm/runs/r-nodeliver"
+        nodeliver.mkdir(parents=True)
+        data = json.loads((good_run / "run.json").read_text(encoding="utf-8"))
+        data["stages"].pop("deliver")
+        data["stages"].pop("design")
+        (nodeliver / "run.json").write_text(json.dumps(data), encoding="utf-8")
+        case("run.json 少了有閘門的 deliver、design 段（手改）→ 拒絕", "refused", why="run.json 沒有 design、deliver", run=str(nodeliver))
         case("deliver 段還沒核准 → 拒絕", "refused", run=str(unapproved))
         case("政策核准但實際結果有 important 發現 → 拒絕", "refused", run=str(forged))
+        case("政策核准但 skeptic 推翻了產出 → 拒絕", "refused", run=str(skeptic))
+        case("政策核准但 agent 缺件（docs: null）→ 拒絕", "refused", run=str(lost))
+        case("run 已 abandon（需求取消）→ 拒絕", "refused", run=str(dropped))
         case("沒有 --run → 拒絕", "refused", run=None)
         cfg_up = {**cfg, "fork_repo": "acme-up/app"}
         (proj / ".claude/teams/guard.config.json").write_text(json.dumps(cfg_up), encoding="utf-8")
@@ -459,7 +542,7 @@ def _selftest() -> int:
         audit = proj / "_tpm/runs/publish-audit.jsonl"
         recs = [json.loads(l) for l in audit.read_text(encoding="utf-8").splitlines() if l.strip()]
         need = {"timestamp", "repo", "branch", "base", "head_sha", "run", "stage", "decision", "reasons", "pr_url"}
-        good = len(recs) == 12 and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
+        good = len(recs) == 24 and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
         print(f"  [{'通過' if good else '失敗'}] publish-audit.jsonl 每次執行都有一行、欄位齊全（{len(recs)} 行）")
         ok = ok and good
     GIT, GH = ["git"], ["gh"]
@@ -482,7 +565,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--repo-dir", required=True, help="目標 repo（或 worktree）目錄")
     c.add_argument("--branch", required=True, help="要推的本機分支（遠端用同名）")
     c.add_argument("--run", help="run 目錄（含 run.json）；沒有就拒絕")
-    c.add_argument("--stage", default="deliver", help="要求已核准的段（預設 deliver）")
+    c.add_argument("--stage", default="deliver", help="閘門鏈要求到哪一段（預設 deliver；只能是 deliver 或更後面的段，不能降低要求）")
     c.add_argument("--base", default="main", help="PR 的 base 分支（預設 main）")
     c.add_argument("--remote", default="origin", help="指向 fork 的 remote（預設 origin）")
     c.add_argument("--title")

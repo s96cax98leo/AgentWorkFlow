@@ -10,6 +10,14 @@ build 後變成 `/*@schema:subtasks*/ {...完整 JSON...} /*@end*/`。名稱是 
 build 後換成專案 .claude/teams/methodology.json 的內容（init.py 依選定的 profile 與使用者回答的慣例產生）。
 沒有 methodology.json（例如模版本身的 scaffold）時保留 null，workflow 改用中性指引（依目標 repo 既有慣例）。
 改了 methodology.json 就要重跑 build.py；--check 會抓到不一致。
+
+多支 workflow 共用的程式放在 tools/snippets/<名>.js，用片段標記內嵌：
+    /*@snippet:challenge*/
+    /*@end*/
+build 後中間換成片段檔的內容（標記保留，可重跑）。片段只定義函式（不能有頂層 await），
+需要的值一律用參數傳進去，不讀 workflow 的區域變數。片段開頭可寫 `// @requires: <名>[, <名>]`，
+引用它的 workflow 必須也引用這些片段。片段檔不存在、內容有 `/*@` 或佔位符（雙大括號）、頂層有 await 都會 exit 1。
+改了片段就要重跑 build.py；--check 會抓到片段和 workflow 內嵌的內容不一致（漂移）。
 profile 的 extensions（使用者自己的 agent）必須登記在 guard.config.json 的 extension_agents，否則不內嵌（exit 1）。
 
 用法：
@@ -31,6 +39,36 @@ WF_DIR = Path(__file__).resolve().parents[2] / "workflows"
 METHODOLOGY = schemalib.TEAMS_DIR / "methodology.json"
 MARK = re.compile(r"/\*@schema:([a-z-]+)\*/.*?/\*@end\*/", re.S)
 METH_MARK = re.compile(r"/\*@methodology\*/.*?/\*@end\*/", re.S)
+SNIPPET_DIR = Path(__file__).resolve().parent / "snippets"
+SNIP_MARK = re.compile(r"/\*@snippet:([a-z0-9-]+)\*/.*?/\*@end\*/", re.S)
+REQUIRES = re.compile(r"^//\s*@requires:\s*(.+)$", re.M)
+
+
+class SnippetError(Exception):
+    pass
+
+
+def load_snippet(name: str, cache: dict) -> str:
+    """讀 snippets/<name>.js；不存在或內容不合規則就丟 SnippetError（main 轉成 exit 1）。"""
+    if name in cache:
+        return cache[name]
+    p = SNIPPET_DIR / f"{name}.js"
+    if not p.is_file():
+        raise SnippetError(f"片段檔不存在：{p}")
+    text = p.read_text(encoding="utf-8").replace("\r\n", "\n").strip("\n")
+    if "/*@" in text:
+        raise SnippetError(f"片段 {name} 不能含 /*@ 標記（會和內嵌標記混淆）")
+    if "{" * 2 in text:
+        raise SnippetError(f"片段 {name} 不能含佔位符（雙大括號）：片段不經 init 換值，workflow 用到的值一律用參數傳進去")
+    top_await = [ln for ln in text.split("\n") if ln[:1] not in ("", " ", "\t", "/", "*", "}", ")", "]") and re.search(r"\bawait\b", ln)]
+    if top_await:
+        raise SnippetError(f"片段 {name} 有頂層 await（片段只定義函式，由 workflow 呼叫）：{top_await[0].strip()}")
+    cache[name] = text
+    return text
+
+
+def snippet_requires(text: str) -> list[str]:
+    return [n.strip() for m in REQUIRES.finditer(text) for n in m.group(1).split(",") if n.strip()]
 
 
 def load_methodology():
@@ -61,7 +99,18 @@ def unregistered_extensions(methodology) -> list[str]:
     return [f"{e.get('name')}（{e.get('agent')}）" for e in exts if e.get("agent") not in registered]
 
 
-def render(text: str, methodology=None) -> str:
+def render_snippets(text: str, cache: dict) -> str:
+    used = SNIP_MARK.findall(text)
+    for name in used:
+        for req in snippet_requires(load_snippet(name, cache)):
+            if req not in used:
+                raise SnippetError(f"片段 {name} 需要片段 {req}，workflow 沒有引用 /*@snippet:{req}*/")
+    return SNIP_MARK.sub(lambda m: f"/*@snippet:{m.group(1)}*/\n{load_snippet(m.group(1), cache)}\n/*@end*/", text)
+
+
+def render(text: str, methodology=None, cache: dict | None = None) -> str:
+    text = render_snippets(text, {} if cache is None else cache)
+
     def sub(m: re.Match) -> str:
         name = m.group(1)
         schema = schemalib.compose(None if name == "envelope" else name)
@@ -79,11 +128,16 @@ def main() -> int:
     missing = unregistered_extensions(methodology)
     if missing:
         print("methodology.json 的 extensions 有 agent 沒登記在 guard.config.json 的 extension_agents：" + "、".join(missing)
-              + "（登記要套用哪個模版角色的規則，例如 \"tpm-reviewer\"；可以用 /add-agent 設定）")
+              + "（登記要套用哪個模版角色的規則，例如 \"tpm-reviewer\"；可以用 add-agent skill（/agent-workflow:add-agent）設定）")
         return 1
+    cache: dict = {}
     for f in files:
         old = f.read_text(encoding="utf-8")
-        new = render(old, methodology)
+        try:
+            new = render(old, methodology, cache)
+        except SnippetError as e:
+            print(f"{f.name}：{e}")
+            return 1
         if new != old:
             stale.append(f.name)
             if not check:
@@ -91,7 +145,7 @@ def main() -> int:
                 with open(f, "w", encoding="utf-8", newline="") as fh:
                     fh.write(new)
     if check and stale:
-        print("workflow 內嵌的 schema 或開發規範 profile 跟 schemas/、methodology.json 不一致：" + "、".join(stale) + "（請跑 build.py）")
+        print("workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：" + "、".join(stale) + "（請跑 build.py）")
         return 1
     prof = f"（開發規範 profile：{methodology.get('name')}）" if methodology else "（沒有 methodology.json，workflow 用中性指引）"
     print(("檢查" if check else "已更新") + f"：{len(files)} 支 workflow{prof}" + ("，全部一致" if check else f"，改了 {len(stale)} 支"))

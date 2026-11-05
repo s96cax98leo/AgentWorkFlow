@@ -23,7 +23,7 @@
 
 ### 目標
 
-- 讓 AI-native SDLC 無人值守跑完：plan → design → build → test → deliver → 合併。
+- 讓 AI-native SDLC 無人值守跑完：plan → design → build → sync → test → deliver → merge。
 - 讓 agent 審查並合併 PR，範圍原本包含上游 repo。原因是人類審查的速度跟不上 PR 開出來的速度。
 
 ### 現況（已查證）
@@ -124,6 +124,13 @@
 - 審查結果綁定 commit SHA；合併時的 head 必須和審查時相同。
 - gate 從受保護的 base 分支執行，不執行 PR 自帶的 gate。
 - 稽核紀錄除了寫在本機，也寫成 GitHub 上的 check 或留言。
+
+### 7. 後續補充（0.2.0 實作時確定的做法）
+
+- **sync 段**：build 之後、test 之前多一段 `sdlc-sync`，讓分支跟上 base（rebase、merge 或中轉分支）。merge 段因 PR 落後或衝突判 hold（`needs_sync`）時也回到 sync。head 一變就重跑 test，審查結果仍綁新的 head（`--reviewed-sha`）。
+- **CI 端的凍結**：CI 的 runner 看不到本機的凍結檔，所以 gate 改讀 repo variable `AGENT_AUTOMERGE_FROZEN`（`--frozen`）。沒設或 `false` 才算未凍結，其他值一律凍結。
+- **CI 端的每日上限**：CI 每次都是新的 runner，沒有本機的 merge-audit，所以用 GitHub API（`gh pr list --state merged`）算當天由 `AGENT_MERGER_BOT` 合併的 PR 數，以 `--merged-today` 傳給 gate；查不到就 hold。
+- **hook 的定位**：hook 跑不起來時放行，避免鎖死所有專案；需要更嚴的專案用 project 模式。信任邊界仍在伺服器端，見 [`自動合併信任模型.md`](自動合併信任模型.md)。
 
 ## 後果
 

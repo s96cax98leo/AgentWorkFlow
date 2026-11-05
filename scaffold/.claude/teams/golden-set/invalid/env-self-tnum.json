@@ -1,6 +1,10 @@
 {
- "needs_task_prefix": true,
  "payload": null,
+ "semantic": true,
+ "config": {
+  "task_id_prefix": "DEMO-"
+ },
+ "expect": "不可自編任務編號",
  "data": {
   "status": "done",
   "summary": "範例",
@@ -17,9 +21,8 @@
   "confidence": 0.9,
   "open_questions": [],
   "derived_work": [
-   "{{TASK_ID_PREFIX}}0399 補測試"
+   "DEMO-0399 補測試"
   ],
   "payload": {}
- },
- "semantic": true
+ }
 }

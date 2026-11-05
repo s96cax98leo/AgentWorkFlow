@@ -10,6 +10,60 @@ export const meta = {
 
 // plugin 的 agent 帶命名空間（init.py 依 workflow.config 的 AGENT_NS 填入；agents 放專案 .claude/agents 時填空字串）
 const NS = '{{AGENT_NS}}'
+// tryAgent：agent 失敗（throw）時當成缺件回 null（challenge 片段）
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
+// workflow 裡所有 agent() 都改走這個，不要讓 throw 繞過缺件處理或把整支 workflow 打斷。
+function tryAgent(prompt, opts) {
+  try {
+    return Promise.resolve(agent(prompt, opts)).catch((e) => { log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`); return null })
+  } catch (e) {
+    log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`)
+    return Promise.resolve(null)
+  }
+}
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。兩種模式都往嚴的方向判，但「嚴」的方向相反：
+// 預設：kept 是被採信的結論（例如抽出的決議、事項），要每一則判定都沒推翻才採信：
+//   skeptic 沒判到的當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時，只要有一則 refuted 就列 doubted。
+// opts.unansweredKept＝true：kept 是保留下來、會擋住的問題（例如審查發現），要每一則判定都推翻才拿掉：
+//   只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const answered = new Set(verdicts.map((x) => x.target_id))
+  const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
+  const refuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !answered.has(i.id) || upheld.has(i.id)
+    : (i) => answered.has(i.id) && !refuted.has(i.id)
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !answered.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
 
 const SUBTASKS = /*@schema:subtasks*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["epic","subtasks"],"properties":{"epic":{"type":"string"},"subtasks":{"type":"array","minItems":1,"items":{"type":"object","required":["id","title","kind","owns","depends_on","acceptance"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"kind":{"type":"string","enum":["code","test","doc","research","check","decision"]},"owns":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptance":{"type":"array","items":{"type":"string"}},"story_ids":{"type":"array","items":{"type":"string"}},"sub_plan":{"type":"string"}}}}}}}} /*@end*/
 const VERDICTS = /*@schema:verdicts*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string"}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["target_id","refuted","reason"],"properties":{"target_id":{"type":"string"},"refuted":{"type":"boolean"},"reason":{"type":"string"},"counter_evidence":{"type":"string"}}}}}}}} /*@end*/
@@ -19,6 +73,7 @@ const VERDICTS = /*@schema:verdicts*/ {"type":"object","required":["status","sum
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 const STAGE = ((MP.stages || {}).design) || {}
+const SD = STAGE.system_design || null
 const CONV = MP.conventions || {}
 const METH_NOTE = METHODOLOGY
   ? `開發規範 profile：${MP.name}（.claude/teams/methodology.json；各段做法與慣例以它為準）。文件格式：${(CONV.doc_format || {}).format || '依目標 repo'}。`
@@ -40,11 +95,12 @@ const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 
 phase('Revise')
-const revised = await agent(
+const revised = await tryAgent(
   `${CTX}\n\n## 派工單（修正輪）\n依下面的使用者決定與 skeptic 問題，修正 ${SPEC}/ 的 design、spec、plan、progress 與 ADR 草稿，並重新拆子任務（payload subtasks，owns 不重疊、depends_on 與 plan 分層一致）。\n` +
   (SUBS.length ? `這個 epic 拆成了子計劃（${SUBS.map((x) => x.id).join('、')}）：子計劃文件在 ${SPEC}/sub/<id>/，大綱在 ${SPEC}/outline.md；修正時保留子任務的 sub_plan 欄位與「<子計劃 id>-」開頭的 id，owns 不得超出該子計劃的範圍。\n` : '') +
   `每一條問題都要處理：修正，或說明為什麼不改（附依據）。處理對照表寫到 ${A.run_dir}/design-revise-對照.md（問題 → 處理 → 改了哪裡）。\n` +
   `需求／驗收條件的寫法照 profile：${STAGE.requirement_style || '目標 repo 既有的 spec 寫法'}。\n` +
+  (SD ? `系統設計照 profile 的方法（${SD.source}）：${SD.steps.join('；')}。功能層：${SD.feature_scope}。系統層：${SD.system_scope}。修正後的設計仍要符合。\n` : '') +
   (PR_SIZE.max_files || PR_SIZE.max_lines ? `預計改動超過 profile 的 PR 大小上限（${[PR_SIZE.max_lines ? `${PR_SIZE.max_lines} 行` : '', PR_SIZE.max_files ? `${PR_SIZE.max_files} 個檔` : ''].filter(Boolean).join('或')}；量法：${PR_SIZE.scope || '依 profile'}）時，在 plan 寫拆 PR 的規劃（例如分 2 包）。\n` : '') +
   `commit（${commitFor('docs', A.epic)}，內容是依閘門 2 修正 design、spec、plan；結尾 {{ATTRIBUTION_LINE}}）。不 push。\n\n` +
   `## 使用者在閘門 2 的決定\n${A.decisions.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\n## skeptic 的問題（${A.issues.length} 條）\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}`,
@@ -56,9 +112,16 @@ const LENSES = [
   { key: 'resolved', ask: `逐條確認上面 ${A.issues.length} 條問題是否真的修好（打開檔案看，不採信對照表的自述）；target_id 用原問題編號。` },
   { key: 'regression', ask: '修正有沒有造成新的落差：intent ↔ spec ↔ plan ↔ 子任務 owns／depends_on ↔ 測試對應表 ↔ 契約；使用者決定有沒有被正確落實。' },
 ]
-const recheck = revised ? await parallel(LENSES.map((l) => () => agent(
+// 有系統設計方法時，修正後的設計也要再過一次 system-design lens（和 sdlc-design 同一套檢查）
+if (SD) LENSES.push({ key: 'system-design', ask: `修正後的系統設計是否仍照 profile 的方法（${SD.source}）：步驟（${SD.steps.join('；')}）齊全、功能層／系統層判斷正確、第 1 步的數字有出處或標成假設、每個取捨寫了放棄什麼；有沒有單點故障、沒說明的一致性模型、沒處理的重試與冪等。` })
+// 缺件不是「沒有發現」（rules.md 規則 26）：修正或複查缺件都停下交人
+const halt = (reason, extra) => ({ stage: 'design', round: 'revise', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, ...extra })
+if (!revised) return halt('revise 缺件：修正輪沒有交件，設計狀態不明，停下交人', { missing: ['revise'] })
+const recheck = await parallel(LENSES.map((l) => () => tryAgent(
   `${CTX}\n\n## 派工單（複查：${l.key}）\n讀 ${SPEC}/ 與 ${A.run_dir}/design-revise-對照.md。子任務：${JSON.stringify(revised.payload)}\n${l.ask}\nrefuted=true 表示「這裡還有問題」。\n\n原問題：\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}\n使用者決定：\n${A.decisions.join('\n')}`,
   { label: `recheck:${l.key}`, phase: 'Recheck', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
-))) : []
+)))
+const missing = LENSES.map((l) => `recheck:${l.key}`).filter((l, i) => !recheck[i])
+if (missing.length) return halt(`複查類 agent 缺件：${missing.join('、')}，修正沒經過完整複查，停下交人`, { missing, analysis: recheck.filter(Boolean) })
 
-return { stage: 'design', round: 'revise', gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, analysis: recheck.filter(Boolean) }
+return { stage: 'design', round: 'revise', halted: false, missing: [], gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, analysis: recheck }

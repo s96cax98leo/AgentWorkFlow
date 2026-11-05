@@ -3,7 +3,7 @@ export const meta = {
   description: 'AI-native SDLC 第 5 段 Deploy：四軸平行審查 → 每則發現由 skeptic 反駁 → 只留信心 ≥0.8 且未被推翻的 → 寫 PR 說明草稿與執行紀錄；推送與開 PR 由使用者決定',
   whenToUse: 'sdlc-test 的結果確認之後；sdlc-sync 走了中轉分支時 args 加 branch（中轉分支名）',
   phases: [
-    { title: 'Review', detail: 'dev-pr-reviewer 四軸平行（standards、spec、bugs、history）' },
+    { title: 'Review', detail: 'tpm-reviewer（deliver 模式）四軸平行（standards、spec、bugs、history）' },
     { title: 'Verify', detail: 'tpm-skeptic 逐則反駁' },
     { title: 'Write', detail: 'tpm-writer 寫 PR 說明草稿與執行紀錄、跑 check_rules' },
   ],
@@ -53,43 +53,146 @@ const AXES = [
   { key: 'bugs', ask: '只看這次改動引入的邏輯、邊界、回歸、併發與錯誤處理問題。' },
   { key: 'history', ask: '對改動處 git log -L／git blame，找出破壞原本設計意圖的改動。' },
 ]
-// 使用者加進這一段的自己的 agent（profile 的 extensions，用 /add-agent 設定）：和內建 agent 平行執行，交 findings；
+// 使用者加進這一段的自己的 agent（profile 的 extensions，用 add-agent skill 設定）：和內建 agent 平行執行，交 findings；
 // blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
 const EXT = (MP.extensions || []).filter((e) => e.stage === 'deliver')
-const extJob = (e, ctx, phaseName) => () => agent(
+const extJob = (e, ctx, phaseName) => () => tryAgent(
   `${ctx}\n\n## 派工單（擴充 agent：${e.name}）\n${e.instructions}\n` +
   `只讀不改：不改程式、測試與 spec，不 push、不對 GitHub 寫入。詳細結果寫到 ${A.run_dir}/ext-${e.name}.md。` +
   `payload 用 findings（lens=${e.name}）：每則附 0–1 信心與嚴重度；會擋住上線或合併的列 blocker／important（會擋住政策核准），其餘列 nit／info。`,
   { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema: FINDINGS },
 )
-const key = (f) => `${(f.location || '').replace(/:\d+.*/, '')}|${(f.claim || '').slice(0, 40)}`
+/*@snippet:challenge*/
+// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
+// 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
+
+// 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
+// workflow 裡所有 agent() 都改走這個，不要讓 throw 繞過缺件處理或把整支 workflow 打斷。
+function tryAgent(prompt, opts) {
+  try {
+    return Promise.resolve(agent(prompt, opts)).catch((e) => { log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`); return null })
+  } catch (e) {
+    log(`agent ${(opts || {}).label || ''} 失敗，當成缺件：${(e && e.message) || e}`)
+    return Promise.resolve(null)
+  }
+}
+
+// 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
+function haltMissing(base, stage, missing, extra = {}) {
+  return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
+}
+
+// 把 verdicts（target_id 對事項 id）對回 list。兩種模式都往嚴的方向判，但「嚴」的方向相反：
+// 預設：kept 是被採信的結論（例如抽出的決議、事項），要每一則判定都沒推翻才採信：
+//   skeptic 沒判到的當成未驗證，和被推翻的一起列 doubted；同一 target_id 判了多次時，只要有一則 refuted 就列 doubted。
+// opts.unansweredKept＝true：kept 是保留下來、會擋住的問題（例如審查發現），要每一則判定都推翻才拿掉：
+//   只有明確 refuted 的才列 doubted（沒判到的保留）；同一 target_id 判了多次時，每一則都 refuted 才算推翻。
+// 回 { kept, doubted, unanswered }，unanswered 是沒被判到的事項 id。
+function judgeVerdicts(list, challenge, opts = {}) {
+  const verdicts = (((challenge || {}).payload || {}).verdicts) || []
+  const answered = new Set(verdicts.map((x) => x.target_id))
+  const upheld = new Set(verdicts.filter((x) => !x.refuted).map((x) => x.target_id))
+  const refuted = new Set(verdicts.filter((x) => x.refuted).map((x) => x.target_id))
+  const ok = opts.unansweredKept
+    ? (i) => !answered.has(i.id) || upheld.has(i.id)
+    : (i) => answered.has(i.id) && !refuted.has(i.id)
+  return { kept: list.filter(ok), doubted: list.filter((i) => !ok(i)), unanswered: list.filter((i) => !answered.has(i.id)).map((i) => i.id) }
+}
+
+// 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
+async function challengeList(list, o) {
+  const label = o.label || 'challenge'
+  if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
+  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  if (!challenge || !challenge.payload) {
+    if (o.missing) o.missing.push(label)
+    return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
+  }
+  return { challenge, lacking: false, ...judgeVerdicts(list, challenge, o) }
+}
+/*@end*/
+/*@snippet:review-skeptic*/
+// @requires: challenge
+// ── 片段 review-skeptic（.claude/teams/tools/snippets/review-skeptic.js）：審查 agent 交 findings 後，派 skeptic 逐則反駁 ──
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// 用到 challenge 片段的 judgeVerdicts 與 tryAgent，引用本片段的 workflow 也要引用 challenge 片段。
+// 缺件（rules.md 規則 26）：審查或反駁的 agent 回 null 或交件無效時記進 missing（回傳的 missing 欄位是 label）；
+// 缺件不是「沒有發現」也不是「沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label。
+
+// 審查交件 → 信心 ≥ minConfidence（預設 0.8）的發現；prefix 有給時 id 改成 <prefix>:<id>（多批合併時 skeptic 的 target_id 才不會撞號）。
+// 缺件回 { fs: null, missing: label }，有給 missing 陣列時也記進去。
+function takeFindings(r, label, o = {}) {
+  if (!r || !r.payload) {
+    if (o.missing) o.missing.push(label)
+    return { fs: null, missing: label }
+  }
+  const min = o.minConfidence === undefined ? 0.8 : o.minConfidence
+  const fs = (r.payload.findings || []).filter((f) => f.confidence >= min).map((f) => (o.prefix ? { ...f, id: `${o.prefix}:${f.id}` } : f))
+  return { fs, missing: null }
+}
+
+// 派一個 skeptic 反駁一批發現；fs 是空的就不派。回 Promise<{ kept, dropped, missing }>，missing 是缺件的 label（沒缺件為 null）。
+// o：{ prompt, label, phase='Verify', agentType, schema, unansweredKept（見 judgeVerdicts）, keepOnMissing }
+// keepOnMissing＝true：反駁缺件時發現全部留在 kept（不能當成被推翻）；否則 kept 為空。兩種都要由呼叫端依 missing 停下。
+function verifyFindings(fs, o) {
+  if (!fs.length) return Promise.resolve({ kept: [], dropped: [], missing: null })
+  return tryAgent(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema })
+    .then((v) => {
+      if (!v || !v.payload) return { kept: o.keepOnMissing ? fs : [], dropped: [], missing: o.label }
+      const j = judgeVerdicts(fs, v, { unansweredKept: o.unansweredKept })
+      return { kept: j.kept, dropped: j.doubted, missing: null }
+    })
+}
+
+// 多批反駁後的發現去重（同檔、同主張前 40 字算同一則），保留先出現的；每則加上 field 欄位（例如 lens、axis）標出來自哪一批。
+function dedupeFindings(groups, field) {
+  const seen = new Set()
+  const kept = []
+  for (const g of groups) {
+    for (const f of g.kept) {
+      const k = `${(f.location || '').replace(/:\d+.*/, '')}|${(f.claim || '').slice(0, 40)}`
+      if (!seen.has(k)) { seen.add(k); kept.push({ [field]: g[field], ...f }) }
+    }
+  }
+  return kept
+}
+/*@end*/
 
 // 擴充 agent 和四軸一起審，發現一樣經 skeptic 反駁
 const reviewed = await pipeline(
   [...AXES, ...EXT.map((e) => ({ key: e.name, ext: e }))],
-  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥0.8 的。`, 'Review')() : agent(`${CTX}\n\n## 派工單（審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
-    { label: `review:${a.key}`, phase: 'Review', agentType: NS + 'dev-pr-reviewer', schema: FINDINGS }),
+  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥0.8 的。`, 'Review')() : tryAgent(`${CTX}\n\n## 派工單（deliver 模式，審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
+    { label: `review:${a.key}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS }),
   (r, a) => {
-    const fs = (r && r.payload.findings || []).filter((f) => f.confidence >= 0.8)
+    // 缺件不是「沒有發現」（rules.md 規則 26）：審查軸缺件記下 label，不能當成空清單
+    const { fs, missing: lacking } = takeFindings(r, a.ext ? `ext:${a.key}` : `review:${a.key}`)
+    if (!fs) return { axis: a.key, kept: [], dropped: [], missing: lacking }
     if (!fs.length) return { axis: a.key, kept: [], dropped: [] }
-    return agent(`${CTX}\n\n## 派工單\n逐則試著反駁下列 ${a.key} 軸的發現（打開 location 看實際程式），不確定就判 refuted=true：\n${JSON.stringify(fs)}`,
-      { label: `verify:${a.key}`, phase: 'Verify', agentType: NS + 'tpm-skeptic', schema: VERDICTS })
-      .then((v) => {
-        const refuted = new Set((v && v.payload.verdicts || []).filter((x) => x.refuted).map((x) => x.target_id))
-        return { axis: a.key, kept: fs.filter((f) => !refuted.has(f.id)), dropped: fs.filter((f) => refuted.has(f.id)) }
-      })
+    // 反駁缺件：發現全部保留（keepOnMissing，不能當成被推翻），但這一軸沒經過反駁，整段停下
+    // 這一段只把明確 refuted 的發現拿掉（unansweredKept），沒被判到的保留
+    return verifyFindings(fs, {
+      prompt: `${CTX}\n\n## 派工單\n逐則試著反駁下列 ${a.key} 軸的發現（打開 location 看實際程式），不確定就判 refuted=true：\n${JSON.stringify(fs)}`,
+      label: `verify:${a.key}`, phase: 'Verify', agentType: NS + 'tpm-skeptic', schema: VERDICTS, unansweredKept: true, keepOnMissing: true,
+    }).then((res) => ({ axis: a.key, ...res }))
   },
 )
-const seen = new Set()
-const kept = []
-for (const r of reviewed.filter(Boolean)) for (const f of r.kept) { const k = key(f); if (!seen.has(k)) { seen.add(k); kept.push({ axis: r.axis, ...f }) } }
+const AXIS_LABELS = [...AXES.map((a) => `review:${a.key}`), ...EXT.map((e) => `ext:${e.name}`)]
+const missing = reviewed.map((r, i) => (r ? r.missing : AXIS_LABELS[i])).filter(Boolean)
+const kept = dedupeFindings(reviewed.filter(Boolean), 'axis')
 const dropped = reviewed.filter(Boolean).reduce((n, r) => n + r.dropped.length, 0)
 log(`保留 ${kept.length} 則；被 skeptic 推翻 ${dropped} 則`)
+// 審查或反駁缺件：不寫 PR 說明（避免草稿寫成「審過、沒有發現」），停下交人
+if (missing.length) return { stage: 'deliver', halted: true, halt_reason: `審查／反駁類 agent 缺件：${missing.join('、')}（缺件不是沒有發現），停下交人`, missing, gate: null, findings: kept, dropped, docs: null }
 
 phase('Write')
-const docs = await agent(
+const docs = await tryAgent(
   `${CTX}\n\n## 派工單\n1. 照目標 repo 的 .github/pull_request_template.md 寫 PR 說明草稿到 ${A.run_dir}/pr-description.md（驗證欄引用 specs/${A.epic}/verifier.md）。\n2. 寫執行紀錄到 ${A.run_dir}/執行紀錄.md（產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作（不編號））。\n3. 審查發現（已通過 skeptic）：${JSON.stringify(kept)}\n4. 兩份都跑 python3 .claude/teams/tools/check_rules.py，並對 ${A.repo} 跑 --git ${A.repo} ${BASE}..${BRANCH} 檢查 commit（署名行${COMMIT.check_regex ? '，以及 profile 的 commit 標題格式' : ''}），修到通過；commit 不符時只回報，不改寫歷史。payload 用 docs，rule_check 填結果。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
 )
 
-return { stage: 'deliver', gate: '推 fork／開 PR 由使用者當下決定；寫入上游另需再次同意；agent 不核准、不合併', findings: kept, dropped, docs }
+// writer 不是審查類：缺件列進 missing（PR 說明與執行紀錄沒寫），閘門照常但要補寫
+return { stage: 'deliver', halted: false, missing: docs ? [] : ['write'], gate: '推 fork／開 PR 由使用者當下決定；寫入上游另需再次同意；agent 不核准、不合併', findings: kept, dropped, docs }

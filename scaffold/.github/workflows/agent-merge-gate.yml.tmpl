@@ -11,6 +11,8 @@
 # 目標 repo 的 ruleset（Settings → Rules → Rulesets，套用到 main）必須設定：
 #   1. Require status checks to pass：加入 agent-merge-gate/decision，來源（source）選 gate App，不要選 any source。
 #      勾 Require branches to be up to date；有用 merge queue 時也在 merge_group 重跑（本檔已觸發）。
+#      merge_group 時 check run 回報在 queue 的暫存 commit（github.event.merge_group.head_sha），queue 才看得到；
+#      gate 判定仍綁 PR head（--head-sha），steward 的對照與驗證證據都是對 PR head 做的。
 #   2. Do not allow bypassing the above settings（bypass list 留空，admin 也不能繞過）。
 #   3. Restrict updates：只有 merger App（以及人）能更新 main；禁止 force push、禁止刪除。
 #   4. Require a pull request before merging：
@@ -22,7 +24,22 @@
 # 需要的設定（Settings → Secrets and variables → Actions）：
 #   vars.AGENT_GATE_APP_ID             gate App 的 App ID（只需要 Checks: write、Pull requests: read、Contents: read）
 #   secrets.AGENT_GATE_APP_PRIVATE_KEY gate App 的私鑰
-#   vars.AGENT_MERGER_BOT              merger App 的 bot 帳號（例如 acme-merger[bot]）；gate 只採信它貼在 PR 的輸入
+#   vars.AGENT_MERGER_BOT              merger App 的 bot 帳號（例如 acme-merger[bot]）；gate 只採信它貼在 PR 的輸入，
+#                                      每日上限也只算它合併的 PR
+#   vars.AGENT_AUTOMERGE_FROZEN        自動合併的凍結開關（CI 端唯一的凍結來源）。沒設或設成 false＝未凍結；
+#                                      其他任何值（true、1、寫錯字）一律當成凍結，gate 判 hold。
+#                                      凍結：gh variable set AGENT_AUTOMERGE_FROZEN --body true（或在 Settings → Variables 新增）
+#                                      解凍（由人做）：gh variable set AGENT_AUTOMERGE_FROZEN --body false
+#                                      本機的凍結檔（_tpm/runs/auto-merge.freeze.json）在 gitignore 裡，base checkout 看不到，
+#                                      所以 event-post-merge 建議凍結時，人要同時設這個 variable，CI 才會擋。
+#
+# 每日上限（guard.config.json 的 auto_merge.daily_cap）：CI 每次都是全新的 runner，沒有本機的 merge-audit.jsonl，
+# 所以改用 GitHub API 算「今天（UTC）由 merger App 合併進 base 的 PR 數」，以 --merged-today 傳給 gate；
+# 查詢失敗時傳 unknown，gate 判 hold（fail-closed）。
+#
+# 供應鏈：所有 action 都釘 40 字元 commit SHA（註解是對應的版本號）。升級時用
+#   gh api repos/<owner>/<repo>/git/matching-refs/tags/<tag> 查 SHA，再改這裡；dependabot 的 github-actions 也能自動提 PR。
+# 權限：頂層只給 contents: read，gate job 再加它需要的唯讀權限；寫 check run 用的是 gate App 的 token，不是 GITHUB_TOKEN。
 #
 # gate 的輸入：
 #   - 需求清單：base 分支上 guard.config.json 的 requirements（json／command／spec-md adapter）；沒設 path／command 時用 base 分支上
@@ -47,8 +64,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
-  checks: read
 
 concurrency:
   group: agent-merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
@@ -59,10 +74,14 @@ jobs:
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
     steps:
       - name: 取得 gate App 的 token
         id: app
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.AGENT_GATE_APP_ID }}
           private-key: ${{ secrets.AGENT_GATE_APP_PRIVATE_KEY }}
@@ -75,6 +94,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_FROM_EVENT: ${{ github.event.pull_request.number || github.event.issue.number }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "merge_group" ]; then
@@ -84,10 +104,20 @@ jobs:
             PR="$PR_FROM_EVENT"
           fi
           test -n "$PR"
-          gh api "repos/$REPO/pulls/$PR" --jq '"pr=\(.number)\nbase_ref=\(.base.ref)\nbase_sha=\(.base.sha)\nhead_sha=\(.head.sha)"' >> "$GITHUB_OUTPUT"
+          INFO="$(gh api "repos/$REPO/pulls/$PR" --jq '"pr=\(.number)\nbase_ref=\(.base.ref)\nbase_sha=\(.base.sha)\nhead_sha=\(.head.sha)"')"
+          printf '%s\n' "$INFO" >> "$GITHUB_OUTPUT"
+          # check run 要回報在「這次要合進去的 commit」上：merge_group 時是 queue 的暫存 commit（ruleset 在 queue 裡看的是它），
+          # 其他事件是 PR head。gate 的 --head-sha 一律用 PR head（steward 對照、驗證證據綁的是它）。
+          if [ "$EVENT" = "merge_group" ]; then
+            printf '%s' "$QUEUE_SHA" | grep -Eq '^[0-9a-f]{40}$'  # 取不到 queue commit 就失敗（fail-closed），不回報到別的 commit
+            REPORT_SHA="$QUEUE_SHA"
+          else
+            REPORT_SHA="$(printf '%s\n' "$INFO" | sed -n 's/^head_sha=//p')"
+          fi
+          echo "report_sha=$REPORT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: checkout 受保護的 base 分支（gate 與設定都從這裡來）
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.pr.outputs.base_ref }}
           fetch-depth: 0
@@ -103,7 +133,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gate"
           git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
           test "$(git rev-parse refs/remotes/pr/head)" = "$HEAD_SHA"
-          git diff --no-color --no-ext-diff "origin/$BASE_REF...$HEAD_SHA" > "$RUNNER_TEMP/gate/diff.txt"
+          # 明寫 a/、b/ 前綴：merge_gate 的 diff 解析認不得標頭時一律 hold
+          git diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "origin/$BASE_REF...$HEAD_SHA" > "$RUNNER_TEMP/gate/diff.txt"
 
       - name: 收集 required checks 與 merger App 貼的 gate 輸入
         env:
@@ -141,6 +172,30 @@ jobs:
                   (out / key).write_text(str(data[key]), encoding="utf-8")
           PY
 
+      - name: 算今天（UTC）merger App 已合併的 PR 數（每日上限用）
+        id: today
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          MERGER_BOT: ${{ vars.AGENT_MERGER_BOT }}
+        run: |
+          set -uo pipefail
+          TODAY="$(date -u +%Y-%m-%d)"
+          echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_OUTPUT"
+          # 搜尋 merged:>=今天 的 PR，再依 mergedBy 篩出 merger App（GraphQL 的 bot login 不帶 [bot]，兩邊都去掉再比）
+          if [ -n "$MERGER_BOT" ] && LIST="$(gh pr list --repo "$REPO" --state merged --base "$BASE_REF" \
+                --search "merged:>=$TODAY" --limit 200 --json number,mergedBy,mergedAt)"; then
+            N="$(printf '%s' "$LIST" | python3 -c 'import json,sys
+          norm = lambda s: (s or "").replace("[bot]", "")
+          rows = json.load(sys.stdin)
+          print(sum(1 for r in rows if norm((r.get("mergedBy") or {}).get("login")) == norm(sys.argv[1])))' "$MERGER_BOT")" || N=unknown
+          else
+            N=unknown
+          fi
+          echo "今天（${TODAY}）merger App 已合併：${N}"
+          echo "merged_today=$N" >> "$GITHUB_OUTPUT"
+
       - name: 跑 merge_gate.py check（base 分支上的版本）
         id: gate
         env:
@@ -148,11 +203,22 @@ jobs:
           PR: ${{ steps.pr.outputs.pr }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          MERGED_TODAY: ${{ steps.today.outputs.merged_today }}
+          GATE_TS: ${{ steps.today.outputs.timestamp }}
+          FROZEN: ${{ vars.AGENT_AUTOMERGE_FROZEN }}
         run: |
           set -uo pipefail
           OUT="$RUNNER_TEMP/gate"
           ARGS=(check --project-dir "$GITHUB_WORKSPACE" --runs-dir "$OUT/runs" --repo "$REPO" --pr "$PR" --head-sha "$HEAD_SHA"
-                --checks "$OUT/checks.json" --diff "$OUT/diff.txt" --base-sha "$BASE_SHA")
+                --checks "$OUT/checks.json" --diff "$OUT/diff.txt" --base-sha "$BASE_SHA"
+                --merged-today "${MERGED_TODAY:-unknown}")
+          # 當日合併數和「今天」要用同一個時間點算，避免跨午夜時兩邊對不上
+          [ -n "${GATE_TS:-}" ] && ARGS+=(--timestamp "$GATE_TS")
+          # 凍結：repo variable 沒設或是 false 才算未凍結，其他值一律凍結（fail-closed）
+          case "$(printf '%s' "${FROZEN:-}" | tr '[:upper:]' '[:lower:]')" in
+            ""|false) ;;
+            *) ARGS+=(--frozen "repo variable AGENT_AUTOMERGE_FROZEN=$FROZEN") ;;
+          esac
           # --base-sha 只在 auto_merge.carry_verdict_on_rebase 開啟時用到；rebase 前的舊 commit 不在這個 checkout 裡時算不出 patch-id，一律 hold
           [ -f "$OUT/decision.json" ] && ARGS+=(--decision "$OUT/decision.json")
           [ -f "$OUT/evidence.json" ] && ARGS+=(--evidence "$OUT/evidence.json")
@@ -169,13 +235,15 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          REPORT_SHA: ${{ steps.pr.outputs.report_sha }}
           GATE_EXIT: ${{ steps.gate.outputs.exit }}
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/gate"
+          test -n "$REPORT_SHA"
           if [ "$GATE_EXIT" = "0" ]; then CONCLUSION=success; else CONCLUSION=failure; fi
-          python3 - "$OUT/result.json" "$CONCLUSION" "$HEAD_SHA" > "$OUT/check.json" <<'PY'
+          # 回報位置：merge_group 時是 queue commit（github.event.merge_group.head_sha），其他事件是 PR head
+          python3 - "$OUT/result.json" "$CONCLUSION" "$REPORT_SHA" > "$OUT/check.json" <<'PY'
           import json, sys
           try:
               res = json.load(open(sys.argv[1], encoding="utf-8"))

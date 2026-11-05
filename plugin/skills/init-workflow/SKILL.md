@@ -13,15 +13,23 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 每一步先說明要做什麼，等使用者同意再執行。提問用選項式（AskUserQuestion），每題附預設值，使用者可以直接接受。
 
 ## 1. 確認位置
-找到 AgentWorkFlow 模版根目錄（有 `init.py`、`workflow.config.example`、`scaffold/` 的那個目錄；plugin 安裝在 `${CLAUDE_PLUGIN_ROOT}`，模版根目錄是它的上一層）。找不到就問使用者。
+找到 AgentWorkFlow 模版根目錄（有 `init.py`、`workflow.config.example`、`scaffold/` 的那個目錄）。`${CLAUDE_PLUGIN_ROOT}` 指向 plugin 快取（`~/.claude/plugins/cache/…`），裡面只有 plugin 目錄、沒有 `init.py`，不能從它往上找。依序試：
+
+1. 讀 `~/.claude/plugins/known_marketplaces.json`（Windows：`%USERPROFILE%\.claude\plugins\known_marketplaces.json`），取 `agentworkflow` 這一項的 `installLocation`。從本機路徑加入的 marketplace，這就是模版 repo 本身。
+2. 試 `~/.claude/plugins/marketplaces/agentworkflow/`（從 GitHub 加入的 marketplace clone 在這裡）。
+3. 都找不到，或找到的目錄裡沒有 `init.py` 與 `scaffold/`，就問使用者模版 repo 在哪裡（例如自己 clone 的位置）。
+
+找到後讀 `plugin/.claude-plugin/plugin.json` 的 `version`，告訴使用者要套用的模版版本。
 
 ## 2. 檢查目標專案
+目標專案已經有 `.claude/teams/` 時，它已 init 過：讀 `.claude/teams/VERSION`（沒有＝0.2.0 以前的版本），和第 1 步的模版版本比較，建議改走升級（第 5 步的 `--upgrade`），不要重新問一輪設定。
+
 列出目標專案已存在的 `.claude/teams/`（含 `methodology.json`）、`.claude/workflows/`、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json`。已存在的檔案**不覆蓋**，先列給使用者決定。init.py 對既有專案的預設做法：`.claude/agents`、`skills`、`commands` 不碰；既有的 `CLAUDE.md` 只在結尾追加一行 `@.claude/teams/agent-workflow.CLAUDE.md` 引用；既有的 `settings.json` 深度合併（使用者的值優先）；不是模版產生的同名 workflow 保留。使用者要整份換成模版版本時才加 `--overwrite-user-files`。也列出專案 `.claude/agents/` 裡叫 `dev-*`／`tpm-*` 的 agent，告訴使用者它們不會被當成模版角色（模版角色都帶 `agent-workflow:` 命名空間）。
 
 ## 3. 問專案設定（workflow.config）
 把 `workflow.config.example` 複製成目標專案的 `workflow.config`，逐項確認：
 - 專案與客戶泛稱（`PROJECT_NAME`、`CLIENT_NAME`；範例一律用虛構的「示範客戶 ACME」）
-- 目錄：`WORKSPACE_DIR`、`REPOS_DIR`、`RUNS_DIR`（預設 `_tpm/runs`）、`BRIEFS_DIR`（預設 `_tpm/briefs`）
+- 目錄：`REPOS_DIR`、`RUNS_DIR`（預設 `_tpm/runs`）、`BRIEFS_DIR`（預設 `_tpm/briefs`）
 - repo：`UPSTREAM_REPO`（唯讀）、`FORK_REPO`（推送目標）、`FORBIDDEN_REPOS`（絕對不能碰）
 - 流程：`TASK_ID_PREFIX`、`TASK_AUTHORITY`、`DECISION_OWNER`、`STAKEHOLDER`
 - 輸出：`OUTPUT_LANGUAGE`（預設繁體中文）、`ATTRIBUTION_LINE`（預設 `Assisted-by: Claude`）
@@ -66,13 +74,14 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 
 ## 5. 跑 init
 `python3 <模版根目錄>/init.py --target <目標專案> --config <目標專案>/workflow.config --answers <答案檔>`（Windows 用 `py -3` 或 `python`）。執行前把指令列給使用者看。可選參數：
-- `--force`：覆蓋已存在的模版檔（`.claude/teams/` 等；只有在第 2 步使用者同意覆蓋時才加；沒加時已存在的 `methodology.json` 會保留）。使用者的 `CLAUDE.md`、`settings.json` 加 `--force` 也只會合併
-- `--overwrite-user-files`：連使用者的檔案也整份覆蓋（只有使用者明確要求重設時才加）
+- `--upgrade`：升級已 init 的專案（第 2 步發現舊版時用）。模版檔換成新版；`methodology.json` 不動、`guard.config.json` 保留使用者的值只補新鍵、`rules.md` 的〈專案規則〉段之後保留；沒給 `--config` 時沿用 init 記下的 `.claude/teams/workflow.config`。輸出會列出新版內建 profile 有、專案 profile 沒有的欄位，給使用者看過、同意後再加 `--adopt-new-fields` 重跑補上（只補缺的，既有值不改）
+- `--force`：覆蓋已存在的模版檔（`.claude/teams/` 等；只有在第 2 步使用者同意覆蓋時才加）。使用者設定的保留規則同 `--upgrade`：`methodology.json`、`guard.config.json`、〈專案規則〉不會被整份換掉。沒給 `--config` 時一樣沿用 `.claude/teams/workflow.config`。使用者的 `CLAUDE.md`、`settings.json` 加 `--force` 也只會合併
+- `--overwrite-user-files`：連使用者的檔案也整份覆蓋，包括 `methodology.json`、`guard.config.json`、〈專案規則〉（只有使用者明確要求重設時才加）
 - `--with-merge-gate`：放 merge gate CI（預設不放；沒有 gate App 時會讓每個 PR 失敗，只有使用者已完成 docs/自動合併信任模型.md 的檢查清單才加）
 - `--hooks plugin|project`：hooks 用 plugin 內建的，或複製到專案（Windows 建議 project）
 - `--with-mcp`：一併產生 `.mcp.json`
 
-init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 schema 驗過，再跑 `build.py` 內嵌進 `sdlc-*.js`。
+init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 schema 驗過，再跑 `build.py` 內嵌進 `sdlc-*.js`；並寫入 `.claude/teams/VERSION`（模版版本）與 `.claude/teams/workflow.config`（這次用的佔位符值，之後 `--upgrade`、`--force` 沒給 `--config` 時沿用）。
 
 ## 6. 驗證
 - 產出的檔案裡不應再有未替換的 `{{…}}`：`grep -rn '{{[A-Z_]*}}' <目標專案>/.claude <目標專案>/CLAUDE.md`。
@@ -83,6 +92,6 @@ init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 sc
 ## 7. 後續
 - 告訴使用者：之後要改開發規範或慣例，直接改 `.claude/teams/methodology.json`，再跑 `python3 .claude/teams/tools/build.py`；格式與新增 profile 的方式見模版的 `docs/自訂與擴充.md`〈自訂開發規範〉。
 - 安裝 plugin（若尚未）：照模版 README 的安裝段。
-- 問使用者有沒有自己的 agent 想加進 workflow（例如團隊自己的審查或調研 agent）：有的話接著跑 `/add-agent`（`add-agent` skill）幫他設定。
+- 問使用者有沒有自己的 agent 想加進 workflow（例如團隊自己的審查或調研 agent）：有的話接著跑 `/agent-workflow:add-agent`（`add-agent` skill）幫他設定。
 - 有設計正本時，複製 plugin 的 `design-system-template` skill 成專案自己的設計系統 skill，並登記在〈專案規則〉。
 - 這些都只寫目標專案；不推送、不提交，提交由使用者決定。
