@@ -1229,7 +1229,7 @@ def selftest() -> int:
         c3, out3 = call("close", d_feat, "--by", "human", "--at", "t")
         finish(d_feat)
         c4, out4 = call("close", d_feat, "--by", "human", "--at", "t")
-        check("hotfix 後續：有 followup_run 且整條流程走完才能 close（feature 不需要後續 run，但同樣要走完）",
+        check("hotfix 後續：有 followup_run 可以 close（整條流程也要走完；feature 不需要後續 run，但同樣要走完）",
               c2 == 0 and data["followup_run"]["run"] == d_follow and data["closed"] == {"by": "human", "at": "t"} and c3 != 0 and c4 == 0,
               out2 + out3 + out4)
         # escalate 不能清掉後續義務（X3 I1）

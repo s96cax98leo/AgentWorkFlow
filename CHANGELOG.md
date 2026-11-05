@@ -11,7 +11,8 @@
 ### 破壞性變更
 
 - **publish.py 依 recipe 檢查**：推送前用實際 diff 反查 run 的 recipe（docs 改了程式、碰到 migration 沒有 design、改依賴沒有安全審查、spike 要推送），不夠就拒推，要先 `save_run.py escalate`。閘門鏈改依 recipe 判斷：recipe 裡有、run.json 卻沒有的段一律判錯（原本會略過）。
-- **4 個唯讀角色新增 Write**：tpm-reviewer、tpm-skeptic、dev-release-watcher、tpm-planner 要寫自己的執行紀錄；hook 只准它們寫 runs_dir 底下的 .md（run.json、merge-audit、凍結檔一律擋）。dev-merge-steward 仍沒有 Write。
+- **4 個唯讀角色新增 Write**：tpm-reviewer、tpm-skeptic、dev-release-watcher、tpm-planner 要寫自己的執行紀錄；hook 只准它們用 Write 寫當前 run 某一段底下的 `.md`（`<runs_dir>/<run>/<段>/`），shell 一律不能寫檔（重導向、cp、sed -i、直譯器內嵌寫檔、PowerShell 寫檔 cmdlet 等；`run_brief.py --log` 指到 runs_dir 的 .log 例外）。dev-merge-steward 仍沒有 Write。
+- **hook 對所有 team agent 更嚴**：`save_run.py` 只能跑 `status`；不能寫任何位置的 `.claude/teams/`、`methodology.json`、`guard.config.json`（用這套流程開發會改到 `.claude/teams/` 的專案，這部分要由主 session 改）；不能寫 runs_dir 的 `run.json`、`<段>.json`、`context.md` 與任何 `執行紀錄索引.md`。
 - **信封有長度上限**：summary 400 字、evidence 12 則、evidence.result 300 字；超過的交件會被 schema 與 hook 擋下。
 - **intent 必要節**：`save_run.py stage plan` 檢查 intent.md 有沒有目標、範圍、不做的事、驗收條件（加上 plan_mode 專屬的節），缺節不能核准。內建 profile 的 intent 範本已改成這四節。
 - **閘門依 recipe 核對（獨立審查後補強）**：
