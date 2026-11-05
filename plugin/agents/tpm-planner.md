@@ -50,6 +50,6 @@ sdlc-plan 沒帶 recipe 時第一步派你判斷需求類型，只建議、不�
 - 寫到派工單**最後一行**指定的檔案（`<run_dir>/<段>/<label>.md`）；派工單沒指定就不寫，在信封的 open_questions 註明。
 - 內容：任務摘要（用自己的話，不貼派工單原文）、做了什麼、指令與結果（附 log 路徑）、結論、不確定的地方。
 - 只寫這一個檔，寫完把路徑放進信封的 `artifacts`；紀錄不取代信封，也不改寫其他人的紀錄。
-- 本角色的 Write 只用來寫這份紀錄：hook 只准寫 runs_dir 底下的 `.md`，run.json、merge-audit.jsonl、凍結檔與 repo 其他地方都會被擋；shell 寫檔（`>`、tee、Set-Content、Out-File）照唯讀規則擋，指令輸出直接摘進紀錄。
+- 本角色的 Write 只用來寫這份紀錄：hook 只准寫當前 run 某一段底下的 `.md`（`<runs_dir>/<run>/<段>/`），context.md、執行紀錄索引、run.json、merge-audit.jsonl、凍結檔與 repo 其他地方都會被擋；shell 一律不能寫檔（重導向、tee、cp、sed -i、Set-Content、Out-File 等都擋），指令輸出直接摘進紀錄。
 
 硬規則：`.claude/teams/rules.md`（全部適用）；專案專屬規則見其中的〈專案規則〉段。

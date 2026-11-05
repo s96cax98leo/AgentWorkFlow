@@ -232,7 +232,8 @@ def merge_stricter(new: dict, old: dict) -> dict:
     for k in ("design_review", "security_review"):
         t[k] = _stricter(t.get(k, "auto"), ot.get(k, "auto"))
     t["modes"] = _union(t.get("modes"), ot.get("modes"))
-    m["followup"] = bool(new.get("followup")) or (bool(old.get("followup")) and set(new.get("stages") or []) <= set(old.get("stages") or []))
+    # 後續 run 的義務只能保留、不能因 escalate 消失（X3 I1）：升級後是否補完整流程，由 close 檢查整條流程是否完成
+    m["followup"] = bool(new.get("followup")) or bool(old.get("followup"))
     m["modifiers"] = _union(new.get("modifiers"), old.get("modifiers"))
     return m
 
@@ -244,27 +245,42 @@ def escalate_errors(new: dict, old: dict) -> list[str]:
 
 
 # ------------------------------------------------------------------ diff 形狀
-DOC = re.compile(r"(^|/)docs?/|\.(md|mdx|rst|txt|adoc)$", re.I)
-TEST = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)/|(^|/)test_[^/]+$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$", re.I)
-MIGRATION = re.compile(r"(^|/)migrations?/", re.I)
+# 分類一律往嚴的方向判（X3 I6）：認不出來的都算 code。
+# - doc：只認文件副檔名；.txt 只有在 docs/ 底下才算（CMakeLists.txt、requirements*.txt 不是文件）。
+# - test：根目錄的測試目錄（tests/、test/、__tests__/、e2e/、spec/）底下的檔，或任何位置的測試檔名；
+#   巢狀的 src/spec/、app/test/ 底下不是測試檔名的檔算 code。
+# - migration、manifest（依賴宣告與鎖檔）、agent_config（agent 與 CI 設定）可和其他類並存，各自要求更嚴的流程。
+DOC_EXT = re.compile(r"\.(md|mdx|rst|adoc)$", re.I)
+DOC_TXT = re.compile(r"^docs?/.*\.txt$", re.I)
+TEST_ROOT = re.compile(r"^(tests?|__tests__|e2e|spec)/", re.I)
+TEST_NAME = re.compile(r"(^|/)test_[^/]+\.[a-z]+$|_test\.[a-z]+$|_spec\.[a-z]+$|\.(test|spec)\.[a-z]+$|(^|/)conftest\.py$", re.I)
+MIGRATION = re.compile(r"(^|/)migrations?/|(^|/)db/migrate/|(^|/)alembic/|(^|/)(flyway|liquibase)/|\.sql$", re.I)
 MANIFEST = re.compile(
     r"(^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|npm-shrinkwrap\.json|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile\.lock|Cargo\.lock|go\.sum"
-    r"|Gemfile\.lock|composer\.lock|packages\.lock\.json|package\.json|pyproject\.toml|setup\.py|setup\.cfg|requirements[^/]*\.txt|Pipfile|go\.mod"
-    r"|Cargo\.toml|Gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?)$", re.I)
+    r"|Gemfile\.lock|composer\.lock|packages\.lock\.json|package\.json|pyproject\.toml|setup\.py|setup\.cfg|requirements[^/]*\.txt|constraints[^/]*\.txt"
+    r"|Pipfile|go\.mod|Cargo\.toml|Gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|gradle\.lockfile|libs\.versions\.toml"
+    r"|[^/]+\.csproj|[^/]+\.fsproj|Directory\.Packages\.props|packages\.config|mix\.exs|mix\.lock|pubspec\.(yaml|lock)|Podfile(\.lock)?"
+    r"|Package\.(swift|resolved)|deno\.(json|jsonc|lock)|vcpkg\.json|conanfile\.(txt|py)|flake\.lock)$"
+    r"|(^|/)requirements/[^/]+\.(txt|in)$", re.I)
+AGENT_CONFIG = re.compile(r"^\.claude/|^\.github/|(^|/)(CLAUDE|AGENTS)\.md$|(^|/)\.mcp\.json$", re.I)
 
 
 def classify(path: str) -> set[str]:
     p = path.replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
     cats = set()
     if MIGRATION.search(p):
         cats.add("migration")
     if MANIFEST.search(p):
         cats.add("manifest")
-    if TEST.search(p):
+    if AGENT_CONFIG.search(p):
+        cats.add("agent_config")
+    if TEST_NAME.search(p) or (TEST_ROOT.search(p) and not cats):
         cats.add("test")
-    elif DOC.search(p):
+    elif (DOC_EXT.search(p) or DOC_TXT.search(p)) and not cats:
         cats.add("doc")
-    elif not cats:
+    elif not cats & {"test", "doc"}:
         cats.add("code")
     return cats
 
@@ -286,6 +302,8 @@ def diff_shortfalls(r: dict, paths) -> list[str]:
         out.append(f"改到 migration（{'、'.join(by['migration'][:3])}），需要 design 段與回滾計畫（加 modifier migration）")
     if by.get("manifest") and (r.get("test") or {}).get("security_review") != "always":
         out.append(f"改到依賴宣告或鎖檔（{'、'.join(by['manifest'][:3])}），需要安全審查（用 deps recipe 或加 modifier security）")
+    if by.get("agent_config") and (r.get("test") or {}).get("security_review") != "always":
+        out.append(f"改到 agent 或 CI 設定（{'、'.join(by['agent_config'][:3])}），需要安全審查（加 modifier security）")
     return out
 
 
@@ -347,11 +365,13 @@ def main(argv: list[str]) -> int:
         run = json.loads((Path(_opt(argv, "--run")) / "run.json").read_text(encoding="utf-8"))
         repo = _opt(argv, "--repo") or run.get("target_repo") or "."
         base = _opt(argv, "--base", "origin/main")
-        p = subprocess.run(["git", "-C", repo, "diff", "--name-only", f"{base}...HEAD"], capture_output=True, text=True)
+        # --name-status：改名與刪除的舊路徑也算進來（X3 M2：src/app.py 搬到 docs/app.py 不能被當成只改文件）
+        p = subprocess.run(["git", "-C", repo, "diff", "--name-status", "-M", f"{base}...HEAD"], capture_output=True, text=True)
         if p.returncode != 0:
             print(f"讀不到 diff：{p.stderr.strip()}（fail-closed）", file=sys.stderr)
             return 1
-        errs = diff_shortfalls(recipe_of_run(run), [x for x in p.stdout.splitlines() if x.strip()])
+        paths = [x for ln in p.stdout.splitlines() if ln.strip() for x in ln.split("\t")[1:] if x.strip()]
+        errs = diff_shortfalls(recipe_of_run(run), paths)
         for e in errs:
             print(f"recipe 不足：{e}（要升級就用 save_run.py escalate）", file=sys.stderr)
         print("diff 形狀和 recipe 相符" if not errs else f"共 {len(errs)} 項不符")
@@ -420,7 +440,7 @@ def selftest() -> int:
           escalate_errors(feat, bug) == [] and not stricter_or_equal(merged, bug) and not stricter_or_equal(merged, feat)
           and "regression" in merged["test"]["modes"])
     check("escalate：feature → bugfix 少了 design 段，拒絕", escalate_errors(bug, feat) != [])
-    check("escalate：hotfix → bugfix 不再需要後續 run；docs → bugfix 保留 doc", merge_stricter(bug, resolve(bi, "hotfix"))["followup"] is False)
+    check("escalate：hotfix → bugfix 仍保留後續 run 的義務（不能靠升級清掉）", merge_stricter(bug, resolve(bi, "hotfix"))["followup"] is True)
     check("size=small 只影響 feature 的調研角度", resolve(bi, "feature", size="small")["research_angles"] == ["requirement", "code-contracts"])
     docs = resolve(bi, "docs")
     check("docs 改程式 → 不符", diff_shortfalls(docs, ["src/a.py"]) != [] and diff_shortfalls(docs, ["docs/a.md", "README.md"]) == [])
@@ -446,6 +466,17 @@ def selftest() -> int:
             bad += 1
             check(f"golden {p.name}", False, json.dumps(diff, ensure_ascii=False)[:400])
     check(f"golden 案例全部相符（{len(cases)} 個）", bad == 0)
+    # X3 I6：這些路徑以前會被當成文件或測試而放行
+    docs_r, tonly, bugr = resolve(bi, "docs"), resolve(bi, "test-only"), resolve(bi, "bugfix")
+    sneak_docs = ["lib/docs/render.py", "src/doc/api.ts", "docs/conf.py", "CMakeLists.txt", ".claude/teams/rules.md", ".claude/agents/a.md", "CLAUDE.md"]
+    sneak_test = ["src/spec/handler.rb", "pkg/e2e/main.go", "app/test/server.go"]
+    sneak_bug = ["db/migrate/1.rb", "alembic/versions/a.py", "x.sql", "gradle/libs.versions.toml", "requirements/base.txt", "a.csproj",
+                 "Directory.Packages.props", "mix.lock", "pubspec.lock", "constraints.txt", ".github/workflows/ci.yml"]
+    leaked = [p for p in sneak_docs if not diff_shortfalls(docs_r, [p])] + [p for p in sneak_test if not diff_shortfalls(tonly, [p])] \
+        + [p for p in sneak_bug if not diff_shortfalls(bugr, [p])]
+    check("diff 形狀：程式藏在 docs/、spec/ 目錄、.txt、agent／CI 設定、各語言的 migration 與依賴宣告都會被抓到", not leaked, str(leaked))
+    check("diff 形狀：正常的文件、測試照樣放行",
+          not diff_shortfalls(docs_r, ["docs/a.md", "README.md", "docs/robots.txt"]) and not diff_shortfalls(tonly, ["tests/helpers.py", "src/a.test.ts", "e2e/tests/a.spec.ts"]))
     print("recipe selftest：" + ("全部通過" if ok else "有失敗"))
     return 0 if ok else 1
 

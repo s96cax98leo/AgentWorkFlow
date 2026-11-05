@@ -14,6 +14,14 @@
 - **4 個唯讀角色新增 Write**：tpm-reviewer、tpm-skeptic、dev-release-watcher、tpm-planner 要寫自己的執行紀錄；hook 只准它們寫 runs_dir 底下的 .md（run.json、merge-audit、凍結檔一律擋）。dev-merge-steward 仍沒有 Write。
 - **信封有長度上限**：summary 400 字、evidence 12 則、evidence.result 300 字；超過的交件會被 schema 與 hook 擋下。
 - **intent 必要節**：`save_run.py stage plan` 檢查 intent.md 有沒有目標、範圍、不做的事、驗收條件（加上 plan_mode 專屬的節），缺節不能核准。內建 profile 的 intent 範本已改成這四節。
+- **閘門依 recipe 核對（獨立審查後補強）**：
+  - 有 recipe 的 run：workflow 回傳的 recipe（name、modifiers、段）要和 run.json 鎖定的一致，不一致記成 invalid；回傳一定要帶 trace，trace 的 `ok` 不是 true 算缺件；recipe 要求的角色（`security_review`／`design_review=always` 的審查者、dev-verifier、每條 deliver 軸）沒交件就不能政策核准。
+  - 開發規範 profile 只認工具所在專案的 `.claude/teams/methodology.json`，不再從 run 目錄往上找；profile 不合規則（例如 recipe 沒有 plan）一律判錯。
+  - 核准（plan 以外）、publish、`merge_gate.py --recipe` 會用 profile 重算 recipe，run.json 的 `recipe.resolved` 比重算結果鬆（少段、多 build_kinds、拿掉 followup 等）就拒絕。
+  - `merge_gate.py --recipe` 只接受 run.json，而且 plan 要已核准；稽核紀錄多記 recipe 名稱與雜湊。
+  - `save_run.py close` 要整條流程走完（各段 done、有閘門的已核准、merge done）；hotfix 的後續義務不會因 escalate 消失；後續 run 不能是已取消或本身也是 hotfix 的 run。
+  - 舊 run（沒有 recipe）plan 核准後，不能用 `stage plan` 補記比 feature 少段的 recipe。
+  - diff 分類更嚴：`.txt` 只有在 docs/ 底下才算文件；巢狀的 `spec/`、`test/` 目錄不算測試；agent 與 CI 設定（`.claude/`、`.github/`、`CLAUDE.md`）要安全審查；補上多種語言的 migration 與依賴宣告；migration 與依賴宣告也算產品程式。
 - **workflow 回傳多了 `trace`**，派工單開頭多了一段固定的共同規則、最後一行是執行紀錄檔路徑；「派工來源」那段改放 rules.md 規則 27。
 
 ### 新增

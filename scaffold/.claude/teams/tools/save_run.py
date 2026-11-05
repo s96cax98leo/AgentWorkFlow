@@ -20,7 +20,7 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
         一份信封都沒有（agent 缺件）記成 invalid，不能核准。
         回傳物件帶 halted（流程中斷）時，stage 一律記成 blocked。
         stage plan：回傳物件的 recipe（至少 name、modifiers、size，可帶 reasons）寫進 run.json；resolved 由本工具用
-          recipe.resolve 重算（profile 預設往上找 <run_dir> 的上層目錄裡第一個 .claude/teams/methodology.json，找不到用內建節；--profile 可指定），
+          recipe.resolve 重算（profile 預設是這支工具所在專案的 .claude/teams/methodology.json，不從 run 目錄往上找；找不到用內建節；--profile 可指定），
           stages 依 recipe 重建；context.md 追加 recipe 一行摘要。recipe 已鎖定（plan 核准過）或 escalate 過時不能再換，要改走 escalate。
           intent 檢查（一定要有 intent）：intent 信封 payload.documents 裡 kind=intent 的檔（相對路徑以回傳的 epic_dir 為基準）
           不存在、或缺必要的節（四節＋該 plan_mode 的專屬節，profile 可覆寫）→ invalid，不能核准。
@@ -29,7 +29,7 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
           ok=true 但紀錄檔不存在 → 記進該段 missing_records（缺件：不能政策核准；人工核准可以但會警告）。
           dev-merge-steward（沒有 Write 工具）的紀錄由本工具依它的信封代寫（標明「由 save_run 代寫」）。
           回傳沒有 trace（舊 workflow）只印警告，不判缺件。
-    python3 save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間> [--note <備註>]
+    python3 save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間> [--note <備註>] [--profile <檔>]（plan 以外的段會用 profile 重算 recipe，resolved 被改鬆就拒絕）
         只有狀態 done 的段能核准；recipe 裡 SDLC 前面的每一段都要 done，有閘門的都要已核准（整條閘門鏈，
         不只緊鄰的前一段：build、sync 沒有閘門，不能讓 test 跳過 design 的核准）。recipe 裡有、run.json 卻沒有的段判錯
         （只有沒有 recipe 的舊 run 容許缺 sync）；recipe 沒有的段（skipped）不檢查。已取消的 run 不能核准。
@@ -227,8 +227,10 @@ def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, lis
                 missing.append(f"{label} 的紀錄檔 {record} 不存在")
         elif okv is False:
             status = "agent 沒有交件（失敗或交件無效）"
+            missing.append(f"{label} 沒有交件（失敗或交件無效）")
         else:
             status = "未完成（ok 不是 true／false）"
+            missing.append(f"{label} 未完成（trace 的 ok 不是 true）")
         arts = [a for a in (env or {}).get("artifacts") or [] if isinstance(a, str) and _norm(a) != _norm(record)
                 and not _norm(a).endswith("/" + f"{stage}/{Path(record).name}")] if env else []
         rows.append({"label": label, "agent_type": t.get("agent_type") or "", "phase": t.get("phase") or "",
@@ -301,8 +303,58 @@ def policy_violations(stage: str, result, run: Path | None = None) -> list[str]:
             if p.get("anti_cheat"):
                 errs.append(f"反作弊有 {len(p['anti_cheat'])} 項發現")
     if run is not None:
-        _, _, miss = process_trace(Path(run), stage, result, write=False)
+        has_trace, _, miss = process_trace(Path(run), stage, result, write=False)
         errs += [f"執行紀錄缺件：{m}" for m in miss]
+        data = None
+        try:
+            data = load(Path(run))
+        except (OSError, ValueError):
+            errs.append("讀不到 run.json，無法依 recipe 核對（fail-closed）")
+        if data is not None and has_recipe(data) and stage in SDLC and stage != "plan":
+            if not has_trace:
+                errs.append("執行紀錄缺件：這個 run 有 recipe，回傳卻沒有 trace（無法核對每個 agent 的紀錄）")
+            errs += recipe_mismatch(data, result)
+            errs += required_roles_missing(data, stage, result)
+    return errs
+
+
+def recipe_mismatch(data: dict, result) -> list[str]:
+    """workflow 回傳的 recipe 要和 run.json 鎖定的 resolved 一致（name、modifiers、stages），不一致代表 workflow 用了別的 recipe 裁減（X3 B1）。"""
+    want = data["recipe"]
+    res = want.get("resolved") or {}
+    got = result.get("recipe") if isinstance(result, dict) else None
+    if not isinstance(got, dict):
+        return [f"回傳沒有 recipe：無法確認 workflow 依 run.json 鎖定的 recipe {want.get('name')} 裁減"]
+    errs = []
+    if got.get("name") != want.get("name"):
+        errs.append(f"回傳的 recipe 是 {got.get('name')}，run.json 鎖定的是 {want.get('name')}")
+    if sorted(_mods(got.get("modifiers"))) != sorted(want.get("modifiers") or []):
+        errs.append(f"回傳的 modifiers {got.get('modifiers')} 和 run.json 的 {want.get('modifiers')} 不一致")
+    if list(got.get("stages") or []) != list(res.get("stages") or []):
+        errs.append(f"回傳的段 {got.get('stages')} 和 run.json 的 {res.get('stages')} 不一致")
+    return errs
+
+
+# recipe 要求「一定要派」的角色：test 段依 test.*_review=always，deliver 段依 deliver_axes（label review:<軸>）
+REVIEW_ROLES = {"security_review": "dev-security-reviewer", "design_review": "dev-design-reviewer"}
+
+
+def required_roles_missing(data: dict, stage: str, result) -> list[str]:
+    res = data["recipe"].get("resolved") or {}
+    trace = result.get("trace") if isinstance(result, dict) and isinstance(result.get("trace"), list) else []
+    done = [t for t in trace if isinstance(t, dict) and t.get("ok") is True]
+    errs = []
+    if stage == "test":
+        t = res.get("test") or {}
+        for key, role in REVIEW_ROLES.items():
+            if t.get(key) == "always" and not any(str(x.get("agent_type") or "").endswith(role) for x in done):
+                errs.append(f"recipe 要求 {key}=always，trace 裡沒有交件的 {role}")
+        if not any(str(x.get("agent_type") or "").endswith("dev-verifier") for x in done):
+            errs.append("trace 裡沒有交件的 dev-verifier")
+    if stage == "deliver":
+        for axis in res.get("deliver_axes") or []:
+            if not any(str(x.get("label") or "") == f"review:{axis}" for x in done):
+                errs.append(f"recipe 的 deliver 軸 {axis} 沒有交件的審查（trace 沒有 review:{axis}）")
     return errs
 
 
@@ -312,16 +364,16 @@ def has_recipe(data: dict) -> bool:
     return isinstance(rec, dict) and isinstance(rec.get("resolved"), dict)
 
 
+PROJECT_PROFILE = Path(__file__).resolve().parent.parent / "methodology.json"
+
+
 def load_profile_for(run: Path, argv: list[str]) -> tuple[dict | None, str]:
-    """開發規範 profile：--profile，否則往上找 <run> 上層目錄的 .claude/teams/methodology.json；找不到用 None（內建節）。
-    --profile 指定了卻讀不到、或檔案存在卻不是 JSON 物件，回傳錯誤（fail-closed）。"""
+    """開發規範 profile：--profile，否則只認和這支工具同一個專案的 <專案>/.claude/teams/methodology.json
+    （工具裝在 <專案>/.claude/teams/tools/）；找不到用 None（內建節）。
+    不從 run 目錄往上找：runs_dir 底下被放一份 .claude/teams/methodology.json 就能劫持 recipe 解析（X3 B2）。
+    --profile 指定了卻讀不到、檔案不是 JSON 物件、或不符合 profile 的語意規則，回傳錯誤（fail-closed）。"""
     given = opt(argv, "--profile")
-    if given:
-        path = Path(given)
-    else:
-        # runs_dir 可能是一層（_runs/）或兩層（預設 _tpm/runs/）：往上找第一個有 .claude/teams/methodology.json 的目錄
-        path = next((d / ".claude" / "teams" / "methodology.json" for d in run.resolve().parents
-                     if (d / ".claude" / "teams" / "methodology.json").is_file()), Path("/nonexistent/methodology.json"))
+    path = Path(given) if given else PROJECT_PROFILE
     if not path.is_file():
         return None, (f"--profile {given} 不存在" if given else "")
     try:
@@ -330,6 +382,9 @@ def load_profile_for(run: Path, argv: list[str]) -> tuple[dict | None, str]:
         return None, f"讀不到開發規範 profile {path}：{e}"
     if not isinstance(prof, dict):
         return None, f"開發規範 profile {path} 不是 JSON 物件"
+    errs = schemalib.methodology_errors(prof)
+    if errs:
+        return None, f"開發規範 profile {path} 不合規則：{'；'.join(errs[:3])}"
     return prof, ""
 
 
@@ -409,6 +464,47 @@ def intent_errors(result, profile: dict | None, plan_mode: str) -> list[str]:
         if miss:
             errs.append(f"intent 缺必要的節（plan_mode={plan_mode}）：{'、'.join(miss)}（{raw}）")
     return errs
+
+
+def recipe_tamper_errors(data: dict, argv: list[str] | None = None) -> list[str]:
+    """run.json 的 recipe.resolved 不能比「用專案 profile 依 name、modifiers、size 重算」的結果鬆（X3 M1：手改 resolved 少段）。
+    escalate 只會加嚴，所以合法的 resolved 一定 stricter_or_equal 於重算結果；profile 在 plan 之後被改鬆也會在這裡被擋（fail-closed）。"""
+    if not has_recipe(data):
+        return []
+    rec = data["recipe"]
+    prof, perr = load_profile_for(Path("."), argv or [])
+    if perr:
+        return [perr]
+    base = rcp.resolve(prof, rec.get("name"), rec.get("modifiers") or [], rec.get("size") or None)
+    errs = [f"run.json 的 recipe 和重算結果不一致：{e}" for e in base["errors"]]
+    if base["name"] != rec.get("name"):
+        errs.append(f"run.json 的 recipe {rec.get('name')} 用目前的 profile 解析成 {base['name']}（profile 改過？），不採信")
+    loose = rcp.stricter_or_equal(rec["resolved"], base)
+    res = rec["resolved"]
+    extra = [k for k in res.get("build_kinds") or [] if k not in (base.get("build_kinds") or [])]
+    if extra:  # escalate 時 build_kinds 照新 recipe，所以合法的 resolved 不會多出重算結果沒有的種類
+        loose.append(f"build_kinds 多了 {'、'.join(extra)}")
+    if res.get("publishable", True) and not base.get("publishable", True):
+        loose.append("publishable 被改成 true")
+    if base.get("followup") and not res.get("followup"):
+        loose.append("followup 被拿掉")
+    errs += [f"run.json 的 recipe.resolved 比 {rec.get('name')} 的定義鬆（手改過？）：{e}" for e in loose]
+    return errs
+
+
+def followup_run_errors(frun: Path) -> str:
+    """hotfix 的後續 run 要是真的 SDLC run：有 run.json、有 plan 段、沒取消、recipe（有定的話）不是 hotfix。"""
+    try:
+        f = json.loads((frun / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return f"後續 run {frun} 讀不到 run.json"
+    if "plan" not in (f.get("stages") or {}):
+        return f"後續 run {frun} 不是 SDLC run（沒有 plan 段）"
+    if f.get("abandoned"):
+        return f"後續 run {frun} 已取消，不能當成後續 run"
+    if has_recipe(f) and rcp.recipe_of_run(f).get("followup"):
+        return f"後續 run {frun} 的 recipe 是 {f['recipe'].get('name')}，本身也只是最短路徑，不能當成補完整流程的後續 run"
+    return ""
 
 
 def chain_errors(run_or_stages: dict, stage: str) -> list[str]:
@@ -521,6 +617,17 @@ def main(argv: list[str]) -> int:
                     if (r["name"], sorted(r["modifiers"]), r["size"]) != (cur.get("name"), sorted(cur.get("modifiers") or []), cur.get("size") or ""):
                         why = "plan 已核准過" if cur.get("locked") else "escalate 過"
                         errs.append(f"recipe 已鎖定（{why}）：不能從 {cur.get('name')} 換成 {r['name']}，要改走 save_run.py escalate")
+                elif cur is None and ((data["stages"].get("plan") or {}).get("approved") or any(
+                        (data["stages"].get(x) or {}).get("status") not in (None, "pending", "skipped") for x in SDLC[1:])):
+                    # 舊 run（沒有 recipe，當成 feature）已核准過 plan 或已經往下跑：補記 recipe 不能比 feature 少段（X3 M4：不能繞過 escalate 降級）
+                    feat = rcp.resolve(profile, "feature")
+                    lost = rcp.escalate_errors(r, feat)
+                    if lost:
+                        errs.append(f"這個舊 run 已經當成 feature 往下跑：{lost[0]}")
+                    else:
+                        data["recipe"] = {"name": r["name"], "modifiers": r["modifiers"], "size": r["size"],
+                                          "reasons": inc.get("reasons") if isinstance(inc.get("reasons"), list) else [],
+                                          "resolved_from": r["resolved_from"], "resolved": rcp.merge_stricter(r, feat), "locked": False, "history": []}
                 else:
                     reasons = inc.get("reasons") if isinstance(inc.get("reasons"), list) else []
                     data["recipe"] = {"name": r["name"], "modifiers": r["modifiers"], "size": r["size"], "reasons": reasons,
@@ -537,7 +644,9 @@ def main(argv: list[str]) -> int:
             print(f"不能記錄：recipe {data['recipe'].get('name')} 沒有 {stage} 段（要加段走 save_run.py escalate）；"
                   f"回傳只存成 {stage}.json", file=sys.stderr)
             return 1
-        st =data["stages"].setdefault(stage, {"status": "pending", "gate": stage in GATED})
+        if stage in SDLC and stage != "plan" and has_recipe(data) and isinstance(result, dict):
+            errs += [f"recipe 不一致：{e}" for e in recipe_mismatch(data, result)]
+        st = data["stages"].setdefault(stage, {"status": "pending", "gate": stage in GATED})
         halted = result.get("halted") if isinstance(result, dict) else None
         st["status"] = "invalid" if errs else ("needs_decision" if "needs_decision" in statuses else "blocked" if ("blocked" in statuses or halted) else "done")
         st["envelopes"] = len(envs)
@@ -548,7 +657,11 @@ def main(argv: list[str]) -> int:
         else:
             st.pop("halted", None)
         has_trace, rows, miss = process_trace(run, stage, result, write=True)
-        if not has_trace:
+        if not has_trace and has_recipe(data) and stage in SDLC:
+            miss = ["這個 run 有 recipe，回傳卻沒有 trace（無法核對每個 agent 的紀錄）"]
+            st["missing_records"] = miss
+            print(f"執行紀錄缺件：{miss[0]}（不能政策核准）", file=sys.stderr)
+        elif not has_trace:
             warns.append("回傳沒有 trace（舊 workflow）：不產生執行紀錄索引、不核對紀錄檔")
             st.pop("missing_records", None)
         else:
@@ -588,6 +701,8 @@ def main(argv: list[str]) -> int:
             errs.append(f"{stage} {NO_ENVELOPE}")
         if not by or not at:
             errs.append("--by 與 --at 都必填")
+        if stage != "plan":
+            errs += recipe_tamper_errors(data, argv)
         if by == "policy" and not note:
             errs.append("--by policy 時 --note 要寫依據的政策名稱")
         if by == "policy" and st is not None:
@@ -672,6 +787,10 @@ def main(argv: list[str]) -> int:
         if not (Path(frun) / "run.json").is_file():
             print(f"不能記錄：後續 run {frun} 沒有 run.json（先 save_run.py init）", file=sys.stderr)
             return 1
+        ferr = followup_run_errors(Path(frun))
+        if ferr:
+            print(f"不能記錄：{ferr}", file=sys.stderr)
+            return 1
         if Path(frun).resolve() == run.resolve():
             print("不能記錄：後續 run 不能是自己", file=sys.stderr)
             return 1
@@ -687,6 +806,16 @@ def main(argv: list[str]) -> int:
         r = rcp.recipe_of_run(data)
         if r.get("followup") and not data.get("followup_run"):
             errs.append(f"recipe {r.get('name')} 要求事後開後續 run 補完整流程，run.json 沒有 followup_run（先 save_run.py followup）")
+        elif r.get("followup"):
+            ferr = followup_run_errors(Path(str(data["followup_run"].get("run") or "")))
+            if ferr:
+                errs.append(ferr)
+        # 結案要整條流程走完（X3 I1）：recipe 的段都 done、有閘門的都已核准、有 merge 段的要 merge done
+        if data.get("abandoned"):
+            errs.append(abandoned_error(data))
+        errs += [f"流程還沒走完：{e}" for e in chain_errors(data, "merge")]
+        if "merge" in (r.get("stages") or []) and (data.get("stages", {}).get("merge") or {}).get("status") != "done":
+            errs.append("流程還沒走完：merge 段還沒 done")
         if errs:
             for e in errs:
                 print(f"不能結案：{e}", file=sys.stderr)
@@ -781,8 +910,11 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         proj = Path(tmp) / "proj"
         (proj / ".claude/teams").mkdir(parents=True)
-        # 專案 profile 用內建 recipes（stage plan 預設往上找 .claude/teams/methodology.json）
-        (proj / ".claude/teams/methodology.json").write_text(
+        # 專案 profile 用內建 recipes；selftest 把「工具所在專案的 profile」指到這份（正式執行時是 <專案>/.claude/teams/methodology.json）
+        global PROJECT_PROFILE
+        saved_profile = PROJECT_PROFILE
+        PROJECT_PROFILE = proj / ".claude/teams/methodology.json"
+        PROJECT_PROFILE.write_text(
             json.dumps({"recipes": rcp.BUILTIN_RECIPES, "modifiers": rcp.BUILTIN_MODIFIERS}, ensure_ascii=False), encoding="utf-8")
         epic = proj / "repo/.worktrees/e"
         (epic / "specs/e").mkdir(parents=True)
@@ -821,9 +953,23 @@ def selftest() -> int:
                     return
                 if (skip_plan and s == "plan") or stages(d).get(s, {}).get("status") == "skipped":
                     continue
-                call("stage", d, s, stdin=r)
+                call("stage", d, s, stdin=r if s == "plan" else traced(d, s, r))
                 if s in GATED:
                     call("approve", d, s, "--by", "human", "--at", "t")
+
+        def traced(d: str, s: str, r: dict, label: str = "walk") -> dict:
+            """有 recipe 的 run：回傳補上 run.json 的 recipe 與一筆 trace（紀錄檔已寫），模擬新版 workflow 的回傳。"""
+            data = load(Path(d))
+            if not has_recipe(data):
+                return r
+            rec = data["recipe"]
+            out = {**r, "recipe": {"name": rec["name"], "modifiers": rec["modifiers"], "stages": rec["resolved"]["stages"]}}
+            if "trace" not in out:
+                f = Path(d) / s / f"{label}.md"
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text("# 紀錄\n", encoding="utf-8")
+                out["trace"] = [{"label": label, "agent_type": "x", "phase": "p", "record": str(f), "ok": True}]
+            return out
 
         print("save_run selftest（暫存目錄，不碰 repo）")
         # 重存清核准
@@ -999,9 +1145,9 @@ def selftest() -> int:
               "recipe" not in data and c == 0 and any("design" in e for e in legacy_errs) and legacy_errs == stages_only, out + str(legacy_errs))
         d = new_run({"name": "bugfix"}, approve_plan=True, intent=with_root)
         walk(d, "test", skip_plan=True)
-        call("stage", d, "test", stdin={"v": test})
+        call("stage", d, "test", stdin=traced(d, "test", {"v": test}))
         c, out = call("approve", d, "test", "--by", "human", "--at", "t")
-        c2, out2 = call("stage", d, "design", stdin={"design": design})
+        c2, out2 = call("stage", d, "design", stdin=traced(d, "design", {"design": design}))
         check("閘門鏈依 recipe：bugfix 不需要 design（design 是 skipped 也能核准 test；硬存 design 段判 invalid）",
               c == 0 and stages(d)["design"]["status"] == "skipped" and c2 != 0 and "沒有 design 段" in out2, out + out2)
 
@@ -1035,8 +1181,8 @@ def selftest() -> int:
         miss = stages(d)["design"].get("missing_records") or []
         _, st_out = call("status", d)
         idx = (Path(d) / "design" / INDEX_NAME).read_text(encoding="utf-8")
-        check("執行紀錄索引：缺紀錄檔（ok=true 但檔不存在 → missing_records、索引標缺件、status 警告；ok=false 不重複算）",
-              len(miss) == 1 and "plan:a" in miss[0] and "缺紀錄檔" in idx and "agent 沒有交件" in idx and "警告" in st_out, out + st_out + idx)
+        check("執行紀錄索引：缺紀錄檔（ok=true 但檔不存在 → missing_records、索引標缺件、status 警告；ok=false 也算缺件）",
+              len(miss) == 2 and "plan:a" in miss[0] and "plan:b" in miss[1] and "缺紀錄檔" in idx and "agent 沒有交件" in idx and "警告" in st_out, out + st_out + idx)
         c, out = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
         c2, out2 = call("approve", d, "design", "--by", "human", "--at", "t")
         check("執行紀錄索引：policy 被擋（缺紀錄檔不能政策核准；人工核准可以但警告）",
@@ -1068,12 +1214,96 @@ def selftest() -> int:
         d_follow = new_run()
         c, out = call("followup", d, "--run", d_follow, "--by", "human", "--at", "t")
         c2, out2 = call("close", d, "--by", "human", "--at", "t")
+        check("hotfix 後續：有 followup_run 但流程還沒走完（build 之後都 pending）不能 close",
+              c == 0 and c2 != 0 and "流程還沒走完" in out2 and "closed" not in load(Path(d)), out + out2)
+
+        def finish(dd: str) -> None:
+            walk(dd, "merge", skip_plan=True)
+            data = load(Path(dd))
+            data["stages"]["merge"] = {"status": "done", "gate": False, "envelopes": 1}
+            dump(Path(dd), data)
+        finish(d)
+        c2, out2 = call("close", d, "--by", "human", "--at", "t")
         data = load(Path(d))
-        d_feat = new_run({"name": "feature"}, approve_plan=True)
-        c3, _ = call("close", d_feat, "--by", "human", "--at", "t")
-        check("hotfix 後續：有 followup_run 可以 close（feature 不需要後續 run）",
-              c == 0 and c2 == 0 and data["followup_run"]["run"] == d_follow and data["closed"] == {"by": "human", "at": "t"} and c3 == 0,
-              out + out2)
+        d_feat = new_run({"name": "feature"}, approve_plan=True, intent=with_root)
+        c3, out3 = call("close", d_feat, "--by", "human", "--at", "t")
+        finish(d_feat)
+        c4, out4 = call("close", d_feat, "--by", "human", "--at", "t")
+        check("hotfix 後續：有 followup_run 且整條流程走完才能 close（feature 不需要後續 run，但同樣要走完）",
+              c2 == 0 and data["followup_run"]["run"] == d_follow and data["closed"] == {"by": "human", "at": "t"} and c3 != 0 and c4 == 0,
+              out2 + out3 + out4)
+        # escalate 不能清掉後續義務（X3 I1）
+        d = new_run({"name": "hotfix"}, approve_plan=True, intent=with_root)
+        call("escalate", d, "--recipe", "bugfix", "--by", "human", "--at", "t", "--reason", "r")
+        finish(d)
+        c, out = call("close", d, "--by", "human", "--at", "t")
+        tam = recipe_tamper_errors(load(Path(d)))
+        d_dm = new_run({"name": "docs"}, approve_plan=True, intent=with_root)
+        call("escalate", d_dm, "--recipe", "bugfix", "--modifiers", "migration", "--by", "human", "--at", "t", "--reason", "r")
+        tam2 = recipe_tamper_errors(load(Path(d_dm)))
+        check("hotfix 後續：escalate 成 bugfix 之後仍要 followup_run 才能 close；合法的 escalate 不會被當成手改（docs → bugfix＋migration 也是）",
+              load(Path(d))["recipe"]["resolved"]["followup"] is True and c != 0 and "followup_run" in out and not tam and not tam2, out + str(tam) + str(tam2))
+        # 後續 run 要是真的完整流程：已取消、或本身也是 hotfix 的不行
+        d_ab = new_run()
+        call("abandon", d_ab, "--reason", "x", "--by", "human", "--at", "t")
+        d_hot = new_run({"name": "hotfix"}, approve_plan=True, intent=with_root)
+        c, out = call("followup", d, "--run", d_ab, "--by", "human", "--at", "t")
+        c2, out2 = call("followup", d, "--run", d_hot, "--by", "human", "--at", "t")
+        check("hotfix 後續：已取消的 run、或本身也是 hotfix 的 run 不能當後續 run",
+              c != 0 and "已取消" in out and c2 != 0 and "最短路徑" in out2, out + out2)
+        # ── X3 B1：workflow 回傳的 recipe 要和 run.json 鎖定的一致；recipe 要求的角色要真的派
+        d = new_run({"name": "feature", "modifiers": ["security"]}, approve_plan=True)
+        walk(d, "test", skip_plan=True)
+        rec = load(Path(d))["recipe"]
+        f = Path(d) / "test" / "verify.md"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("# 紀錄\n", encoding="utf-8")
+        vt = {"label": "verify#1", "agent_type": "agent-workflow:dev-verifier", "phase": "Verify", "record": str(f), "ok": True}
+        st_ = {"label": "security", "agent_type": "agent-workflow:dev-security-reviewer", "phase": "Review", "record": str(f), "ok": True}
+        good = {"name": rec["name"], "modifiers": rec["modifiers"], "stages": rec["resolved"]["stages"]}
+        c, out = call("stage", d, "test", stdin={"v": test, "trace": [vt], "recipe": {"name": "docs", "modifiers": [], "stages": ["plan", "build", "deliver", "merge"]}})
+        c2, out2 = call("approve", d, "test", "--by", "policy", "--at", "t", "--note", "p")
+        check("X3 B1：回傳的 recipe（docs）和 run.json 鎖定的（feature＋security）不一致 → invalid、不能核准",
+              c != 0 and stages(d)["test"]["status"] == "invalid" and "recipe 不一致" in out and c2 != 0, out + out2)
+        c, out = call("stage", d, "test", stdin={"v": test, "trace": [vt], "recipe": good})
+        c2, out2 = call("approve", d, "test", "--by", "policy", "--at", "t", "--note", "p")
+        c3, out3 = call("stage", d, "test", stdin={"v": test, "trace": [vt, st_], "recipe": good})
+        c4, out4 = call("approve", d, "test", "--by", "policy", "--at", "t", "--note", "p")
+        check("X3 B1：security_review=always 卻沒派 dev-security-reviewer → 政策核准被擋；派了才放行",
+              c == 0 and c2 != 0 and "security_review" in out2 and c3 == 0 and c4 == 0, out + out2 + out3 + out4)
+        # ── X3 B3：有 recipe 的 run，回傳沒有 trace 算缺件
+        c, out = call("stage", d, "test", stdin={"v": test, "recipe": good})
+        c2, out2 = call("approve", d, "test", "--by", "policy", "--at", "t", "--note", "p")
+        check("X3 B3：有 recipe 的 run 回傳沒有 trace → missing_records、政策核准被擋",
+              stages(d)["test"].get("missing_records") and c2 != 0 and "trace" in out2, out + out2)
+        # ── X3 B2：runs_dir 底下放的 profile 不會被採用；不合規則的 profile 判錯
+        planted = proj / "_runs/.claude/teams"
+        planted.mkdir(parents=True, exist_ok=True)
+        hijack = {"recipes": {**rcp.BUILTIN_RECIPES, "docs": {**rcp.BUILTIN_RECIPES["docs"], "build_kinds": ["code", "test", "doc"]}},
+                  "modifiers": rcp.BUILTIN_MODIFIERS}
+        (planted / "methodology.json").write_text(json.dumps(hijack, ensure_ascii=False), encoding="utf-8")
+        prof, perr = load_profile_for(Path(d), [])
+        badp = proj / "bad-profile.json"
+        badp.write_text(json.dumps({"recipes": {"x": {**rcp.BUILTIN_RECIPES["docs"], "stages": ["build", "deliver", "merge"]}}}), encoding="utf-8")
+        _, perr2 = load_profile_for(Path(d), ["--profile", str(badp)])
+        check("X3 B2：不採用 run 目錄上層被放進去的 profile；--profile 不合規則（recipe 沒有 plan）→ 錯誤",
+              not perr and prof["recipes"]["docs"]["build_kinds"] == rcp.BUILTIN_RECIPES["docs"]["build_kinds"] and perr2, perr + perr2)
+        # ── X3 M1：手改 run.json 的 recipe.resolved（少掉 test 段）→ 之後的核准被擋
+        d = new_run({"name": "bugfix"}, approve_plan=True, intent=with_root)
+        walk(d, "test", skip_plan=True)
+        data = load(Path(d))
+        data["recipe"]["resolved"]["stages"] = [x for x in data["recipe"]["resolved"]["stages"] if x != "test"]
+        dump(Path(d), data)
+        call("stage", d, "deliver", stdin=traced(d, "deliver", {"x": build}))
+        c, out = call("approve", d, "deliver", "--by", "human", "--at", "t")
+        check("X3 M1：recipe.resolved 被手改鬆（少 test 段）→ 核准被擋", c != 0 and "比 bugfix 的定義鬆" in out, out)
+        # ── X3 M4：舊 run（沒有 recipe）plan 核准後，不能用 stage plan 補記較弱的 recipe
+        d = new_run()
+        call("stage", d, "plan", stdin=plan_res())
+        call("approve", d, "plan", "--by", "human", "--at", "t")
+        c, out = call("stage", d, "plan", stdin=plan_res({"name": "docs"}, with_root))
+        check("X3 M4：舊 run 核准過 plan 之後補記 docs（少段）→ 拒絕", c != 0 and "recipe" not in load(Path(d)) and "少了段" in out, out)
+        PROJECT_PROFILE = saved_profile
     print("save_run selftest：" + ("全部通過" if ok else "有失敗"))
     return 0 if ok else 1
 

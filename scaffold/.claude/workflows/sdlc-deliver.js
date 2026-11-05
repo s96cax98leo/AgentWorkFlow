@@ -75,9 +75,11 @@ function resolveRecipe(profile, name, modifiers, size) {
   const hasMods = Object.keys(modsDef).length > 0
   const errors = []
   const requested = name || 'feature'
+  // 只認自己的鍵（X3 M3）：toString、constructor、__proto__ 這類原型上的名字不能被當成 recipe 或 modifier
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
   let base, used, src
-  if (recipes[requested]) { base = recipes[requested]; used = requested; src = 'profile' }
-  else if (recipes.feature) { base = recipes.feature; used = 'feature'; src = name && name !== 'feature' ? `profile（${requested} 不存在，當成 feature）` : 'profile' }
+  if (own(recipes, requested)) { base = recipes[requested]; used = requested; src = 'profile' }
+  else if (own(recipes, 'feature')) { base = recipes.feature; used = 'feature'; src = name && name !== 'feature' ? `profile（${requested} 不存在，當成 feature）` : 'profile' }
   else { base = recipeFallbackFeature(); used = 'feature'; src = !hasRecipes ? 'fallback（profile 沒有 recipes）' : `fallback（${requested} 不存在）` }
   const r = JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'small'))))
   const t = r.test || {}
@@ -98,7 +100,7 @@ function resolveRecipe(profile, name, modifiers, size) {
   const applied = []
   const builtin = recipeBuiltinModifiers()
   for (const m of modifiers || []) {
-    const md = modsDef[m] || (!hasMods ? builtin[m] : undefined)
+    const md = (own(modsDef, m) && modsDef[m]) || (!hasMods && own(builtin, m) ? builtin[m] : undefined)
     if (!md) { errors.push(`不認得的 modifier：${m}`); continue }
     applied.push(m)
     r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages))

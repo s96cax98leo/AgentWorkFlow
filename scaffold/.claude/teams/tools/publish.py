@@ -205,6 +205,9 @@ def check_policy(run_dir: Path | None, stage: str = MIN_STAGE) -> str:
     if data.get("abandoned"):
         raise Refused(save_run.abandoned_error(data) + "，不推送")
     stages = data.get("stages") if isinstance(data.get("stages"), dict) else {}
+    tamper = save_run.recipe_tamper_errors(data)
+    if tamper:
+        raise Refused("；".join(tamper[:3]))
     r = rcp.recipe_of_run(data)
     want = r.get("stages") or []
     if not r.get("publishable", True):
@@ -397,7 +400,8 @@ def _selftest() -> int:
         cfg = {"runs_dir": "_tpm/runs", "fork_repo": "acme-fork/app", "upstream_repos": "acme-up/app",
                "allowed_branch_prefixes": "feature/,bugfix/", "protected_branches": ["main", "master"]}
         (proj / ".claude/teams/guard.config.json").write_text(json.dumps(cfg), encoding="utf-8")
-        # stage plan 往上找 .claude/teams/methodology.json：用內建 recipes
+        # 專案 profile 用內建 recipes（stage plan 用 --profile 指定這份；check_policy 重算 recipe 時也讀這份）
+        save_run.PROJECT_PROFILE = proj / ".claude/teams/methodology.json"
         (proj / ".claude/teams/methodology.json").write_text(
             json.dumps({"recipes": rcp.BUILTIN_RECIPES, "modifiers": rcp.BUILTIN_MODIFIERS}, ensure_ascii=False), encoding="utf-8")
         epic = proj / "epic"
@@ -480,7 +484,25 @@ def _selftest() -> int:
                         res["recipe"] = {"name": recipe, "modifiers": [], "size": "small"}
                 if stage == "deliver" and deliver_extra:
                     res.update(deliver_extra)
-                sub("stage", str(rd), stage, stdin=json.dumps(res))
+                if recipe and stage != "plan":
+                    # 新版 workflow 的回傳：帶 run.json 鎖定的 recipe 與 trace（每個該派的角色一筆，紀錄檔已寫）
+                    rec = json.loads((rd / "run.json").read_text(encoding="utf-8"))["recipe"]
+                    rv = rec["resolved"]
+                    res["recipe"] = {"name": rec["name"], "modifiers": rec["modifiers"], "stages": rv["stages"]}
+                    roles = [("agent", "agent-workflow:dev-implementer")]
+                    if stage == "test":
+                        roles = [("verify#1", "agent-workflow:dev-verifier")] + [
+                            (k, "agent-workflow:" + save_run.REVIEW_ROLES[k]) for k in save_run.REVIEW_ROLES if rv["test"].get(k) == "always"]
+                    if stage == "deliver":
+                        roles = [(f"review:{a}", "agent-workflow:tpm-reviewer") for a in rv.get("deliver_axes") or []]
+                    (rd / stage).mkdir(parents=True, exist_ok=True)
+                    res["trace"] = []
+                    for label, at in roles:
+                        f = rd / stage / (label.replace(":", "-").replace("#", "-") + ".md")
+                        f.write_text("# 紀錄\n", encoding="utf-8")
+                        res["trace"].append({"label": label, "agent_type": at, "phase": "p", "record": str(f), "ok": True})
+                prof = ["--profile", str(proj / ".claude/teams/methodology.json")]
+                sub("stage", str(rd), stage, *prof, stdin=json.dumps(res))
                 if stage == "deliver" and deliver_by is None:
                     break
                 if stage == "deliver" and deliver_by == "policy-forged":
@@ -488,7 +510,7 @@ def _selftest() -> int:
                     data["stages"]["deliver"]["approved"] = {"by": "policy", "at": "t", "note": "p", "kind": "policy"}
                     (rd / "run.json").write_text(json.dumps(data), encoding="utf-8")
                     break
-                sub("approve", str(rd), stage, "--by", deliver_by if stage == "deliver" else "使用者", "--at", "t", "--note", "p")
+                sub("approve", str(rd), stage, "--by", deliver_by if stage == "deliver" else "使用者", "--at", "t", "--note", "p", *prof)
             return rd
 
         good_run = make_run("r-good")
