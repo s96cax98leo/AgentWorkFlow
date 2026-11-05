@@ -753,6 +753,50 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
          "Set-Content -Path ops/merge.freeze.json -Value '{\"frozen\": true}'", agent=WRT, w=FWS)
     pair(0, "R3 tpm-writer 讀自訂 freeze_file", "cat ops/merge.freeze.json", "Get-Content ops/merge.freeze.json", agent=WRT, w=FWS)
 
+    # ------------------------------------------------------------ I6：只寫執行紀錄的角色（awf_config.RECORD_ONLY_ROLES）
+    # tpm-reviewer、tpm-skeptic、tpm-planner、dev-release-watcher 有 Write 只為了寫 <runs_dir>/<段>/<label>.md；
+    # 其他一律擋（repo 檔、run.json、merge-audit.jsonl、凍結檔、其他 .json），shell 寫檔照唯讀規則擋
+    IWS = mkws("ws-records", {"repos_dir": "repos", "auto_merge": {"enabled": True, "repos": {"acme-fork/app": "low"}}})
+    (IWS / "repos" / "app").mkdir(parents=True)
+    RV, SK, PL, RW = (f"agent-workflow:{r}" for r in ("tpm-reviewer", "tpm-skeptic", "tpm-planner", "dev-release-watcher"))
+
+    def rec(want: int, name: str, path: Path, agent: str, content: str = "# 紀錄\n") -> None:
+        tool(want, name, "Write", {"file_path": str(path), "content": content}, agent, w=IWS)
+
+    rec(0, "I6 紀錄 tpm-reviewer 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/deliver/review-spec.md", RV)
+    rec(0, "I6 紀錄 tpm-skeptic 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/merge/skeptic.md", SK)
+    rec(0, "I6 紀錄 tpm-planner 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/plan/planner.md", PL)
+    rec(0, "I6 紀錄 dev-release-watcher 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/post-merge/watcher.md", RW)
+    rec(2, "I6 紀錄 dev-release-watcher 寫 repo 檔擋", IWS / "repos/app/src/a.py", RW)
+    rec(2, "I6 紀錄 dev-release-watcher 寫 repo 的 .md 擋", IWS / "repos/app/docs/a.md", RW)
+    rec(2, "I6 紀錄 tpm-reviewer 寫 repo 檔擋", IWS / "repos/app/src/a.py", RV)
+    rec(2, "I6 紀錄 tpm-planner 寫 docs/ 擋", IWS / "docs/a.md", PL)
+    rec(2, "I6 紀錄 tpm-skeptic 寫 run.json 擋", IWS / "_tpm/runs/r1/run.json", SK, "{}")
+    rec(2, "I6 紀錄 tpm-reviewer 寫 runs_dir 的其他 .json 擋", IWS / "_tpm/runs/r1/deliver/verdict.json", RV, "{}")
+    rec(2, "I6 紀錄 tpm-reviewer 寫 merge-audit.jsonl 擋", IWS / "_tpm/runs/merge-audit.jsonl", RV, "{}\n")
+    rec(2, "I6 紀錄 dev-release-watcher 寫 merge-audit.jsonl 擋", IWS / "_tpm/runs/merge-audit.jsonl", RW, "{}\n")
+    rec(2, "I6 紀錄 dev-release-watcher 寫凍結檔擋（即使 frozen=true）", IWS / "_tpm/runs/auto-merge.freeze.json", RW, '{"frozen": true}')
+    rec(2, "I6 紀錄 tpm-skeptic 寫凍結檔擋", IWS / "_tpm/runs/auto-merge.freeze.json", SK, '{"frozen": true}')
+    rec(2, "I6 紀錄 tpm-planner 用 ../ 跳出 runs_dir 擋", IWS / "_tpm/runs/r1/../../../repos/app/x.md", PL)
+    rec(2, "I6 紀錄 tpm-reviewer 寫 .MD（大小寫不同，白名單照原樣比對）擋", IWS / "_tpm/runs/r1/x.MD", RV)
+    tool(2, "I6 紀錄 tpm-reviewer 用 Edit 改 repo 檔擋", "Edit", {"file_path": str(IWS / "repos/app/src/a.py")}, RV, w=IWS)
+    for who in (RV, SK, PL, RW):
+        short = who.rsplit(":", 1)[-1]
+        run(S, 2, f"I6 紀錄 {short} 用 Bash 重導寫檔擋", sh_in(IWS, "echo x > _tpm/runs/r1/x.md", who), IWS)
+        run(S, 2, f"I6 紀錄 PS：{short} 用 Set-Content 寫檔擋", ps_in(IWS, "Set-Content -Path _tpm/runs/r1/x.md -Value x", who), IWS)
+    run(S, 2, "I6 紀錄 tpm-reviewer 用 Bash tee 寫 log 擋", sh_in(IWS, "npm test 2>&1 | tee test.log", RV), IWS)
+    run(S, 2, "I6 紀錄 tpm-skeptic 用 Bash >> 附加寫檔擋", sh_in(IWS, "git log -1 >> notes.txt", SK), IWS)
+    run(S, 2, "I6 紀錄 PS：dev-release-watcher 用 Out-File 寫檔擋", ps_in(IWS, "gh run list | Out-File -FilePath runs.txt", RW), IWS)
+    run(S, 2, "I6 紀錄 PS：tpm-planner 用 > 重導寫檔擋", ps_in(IWS, "Get-Date > _tpm/runs/r1/x.md", PL), IWS)
+    run(S, 0, "I6 紀錄 tpm-reviewer 丟 /dev/null 與 2>&1 放行", sh_in(IWS, "npm test > /dev/null 2>&1", RV), IWS)
+    run(S, 0, "I6 紀錄 PS：tpm-reviewer 丟 $null 放行", ps_in(IWS, "npm test > $null", RV), IWS)
+    run(S, 0, "I6 紀錄 tpm-skeptic 引號內的 > 不是重導，放行", sh_in(IWS, "jq '.items | length > 1' a.json", SK), IWS)
+    run(S, 0, "I6 紀錄 dev-release-watcher 讀 CI 狀態放行", sh_in(IWS, "gh run list --repo acme-fork/app --limit 5", RW), IWS)
+    run(S, 0, "I6 紀錄 對照：tpm-writer 不在名單，shell 規則不變", sh_in(IWS, "echo x > _tpm/runs/r1/x.md", WRT), IWS)
+    run(S, 0, "I6 紀錄 對照：tpm-researcher 不在名單，shell 規則不變", sh_in(IWS, "echo x > _tpm/runs/r1/x.md", "agent-workflow:tpm-researcher"), IWS)
+    rec(0, "I6 紀錄 舊名 dev-pr-reviewer（套 tpm-reviewer）寫 .md 放行", IWS / "_tpm/runs/r1/deliver/pr.md", "agent-workflow:dev-pr-reviewer")
+    rec(2, "I6 紀錄 舊名 dev-pr-reviewer（套 tpm-reviewer）寫 .json 擋", IWS / "_tpm/runs/r1/deliver/x.json", "agent-workflow:dev-pr-reviewer", "{}")
+
     # ------------------------------------------------------------ 交件信封
     E = "envelope"
     ok_env = '{"status":"done","summary":"s","artifacts":[],"evidence":[],"confidence":0.9,"open_questions":[],"derived_work":[],"payload":{}}'

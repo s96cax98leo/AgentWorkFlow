@@ -57,4 +57,8 @@ skills: []
 - 判 hold 或 escalate 時 `status` 不能是 `done`（用 `needs_decision`），open_questions 附 2–3 個選項與代價（例如：依新需求修正後重跑 SDLC 對應段落、調整需求、交人審）。
 - **輸出語言**：信封、PR review 內文一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。
 
+### 執行紀錄
+- 沒有 Write：執行紀錄的內容放信封（summary、evidence 列出跑過的指令與結果、payload 的對照表、open_questions 寫不確定的地方），由 `save_run.py` 代寫到派工單最後一行指定的檔案。
+- 內容同其他角色：任務摘要（不貼派工單原文）、做了什麼、指令與結果、結論、不確定的地方。
+
 硬規則：`.claude/teams/rules.md`（全部適用）；專案專屬規則見其中的〈專案規則〉段。

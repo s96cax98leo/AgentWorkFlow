@@ -609,6 +609,18 @@ def agent_writes_state(seg: str) -> bool:
     return bool(STATE_FRAGMENT.search(probe) and (WRITE_API.search(probe) or SHELL_WRITE.search(probe)))
 
 
+# 只寫執行紀錄的角色（awf_config.RECORD_ONLY_ROLES）用 shell 寫檔：重導（> >> 2> &>）、tee、PowerShell 的寫檔 cmdlet
+# （ps_segments 已把 Set-Content／Add-Content／Out-File／Tee-Object／New-Item 換成 tee）。引號內的 > 不算重導。
+RECORD_SHELL_WRITE = re.compile(r"(?<![<>=-])>|(?:^|\s)(?:tee|set-content|add-content|out-file|tee-object|new-item)(?:\s|$)", re.I)
+
+
+def shell_writes_file(seg: str) -> bool:
+    """段落是否用 shell 寫檔（丟到 /dev/null、$null 與 2>&1 這類 fd 轉接不算）。盡量擋，不是完備。"""
+    probe = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", " ", seg)
+    probe = re.sub(r"[\d&]?>>?\s*/dev/null\b|[\d&]?>>?\s*\$null\b|\d?>&\d", " ", probe, flags=re.I)
+    return bool(RECORD_SHELL_WRITE.search(probe))
+
+
 def freezes_only(text: str) -> bool:
     """寫凍結檔的內容只會凍結（frozen: true），不刪、不搬、不寫 false。用在主 session 的 shell 寫入。"""
     if re.search(r"\b(?:rm|mv|unlink|truncate|remove-item|move-item|clear-content)\b|os\.remove|shutil\.", text, re.I):
@@ -1138,6 +1150,9 @@ def check_shell(data: dict) -> None:
             block(f"{agent} 不能跑 merge_gate.py check；只有 {AM['merger_role'] or 'merger_role'}（完整 agent_type）能跑")
         if team and re.search(r"(?:^|[\s/\\])save_run\.py\b", seg) and re.search(r"(?:^|\s)(?:approve|abandon)(?:\s|$)", seg):
             block(f"{agent} 不能核准或放棄 run（save_run.py approve／abandon）；閘門由人（或主 session 依政策）處理")
+        if team and awf_config.team_role(raw_agent, CFG) in awf_config.RECORD_ONLY_ROLES and shell_writes_file(seg):
+            block(f"{agent} 是唯讀角色（只有 Write 能寫 {RUNS or 'run 目錄'} 底下的執行紀錄 .md），不能用 shell 寫檔"
+                  "（> 重導、tee、Set-Content、Out-File）；指令輸出直接貼進執行紀錄，或丟 /dev/null")
         if team and agent_writes_state(seg):
             block(f"{agent} 不能寫 run.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")
         for tool in ("publish.py", "merge_gate.py"):
@@ -1277,7 +1292,12 @@ def check_paths(data: dict) -> None:
         block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
     if role and fold(path.name) == "run.json" and (not RUNS or fold(rel or "").startswith(fold(RUNS))):
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
-    if role == "tpm-writer":
+    if role in awf_config.RECORD_ONLY_ROLES:
+        # 只寫執行紀錄的角色：runs_dir 底下的 .md（白名單，照原樣比對）；run.json、稽核紀錄、凍結檔已在上面擋
+        if not (rel is not None and RUNS and rel.startswith(RUNS) and path.name.endswith(".md")):
+            block(f"{agent} 只能寫執行紀錄：{RUNS or 'run 目錄'} 底下的 .md（{rel or fp}）；"
+                  "run.json、merge-audit.jsonl、凍結檔與其他閘門資料不能寫")
+    elif role == "tpm-writer":
         # 凍結檔照 auto_merge.freeze_file 的實際設定（可能不在 writer_dirs 裡）；能不能寫已由上面的 writes_freeze 判定
         # 只認設定的那個路徑本身（同名的其他檔不算）
         is_freeze = prot == AM["freeze_file"] and path.resolve() == freeze_path().resolve() and writes_freeze(data)

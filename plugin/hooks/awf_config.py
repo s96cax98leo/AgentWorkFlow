@@ -66,7 +66,7 @@ AUTO_MERGE_DEFAULTS = {
     "merger_role": DEFAULT_NS + "dev-merge-steward",  # 唯一能合併的角色，比對完整 agent_type（含命名空間）
     "merge_method": "squash",  # steward 的 gh pr merge 必須帶對應旗標（--squash／--merge／--rebase）
     # 能寫凍結旗標的角色（完整 agent_type）：只能用 Write 寫入 {"frozen": true, …}；解凍（刪除、改成 false）由人做
-    # dev-release-watcher 只讀、沒有 Write：凍結建議交信封，由 tpm-writer 寫到 freeze_file
+    # dev-release-watcher 的 Write 只能寫自己的執行紀錄（RECORD_ONLY_ROLES）、不能寫凍結檔：凍結建議交信封，由 tpm-writer 寫到 freeze_file
     "freeze_writers": [DEFAULT_NS + "tpm-writer"],
     "daily_cap": 5,
     "upstream_authorized_by": {},  # {"owner/repo": "授權人" 或 {"by", "link", "scope", "expires"}}；上游沒有授權人一律擋
@@ -231,6 +231,14 @@ EXTENSION_ROLES = frozenset({
     "dev-verifier", "dev-pr-reviewer", "dev-security-reviewer", "dev-design-reviewer",
 })
 EXTENSION_FALLBACK = "tpm-reviewer"
+
+# 只寫執行紀錄的角色：本來唯讀，有 Write 只為了寫自己的執行紀錄（派工單最後一行指定的 <run_dir>/<段>/<label>.md）。
+# guard-paths：Write 只准寫 runs_dir 底下的 .md（run.json、merge-audit.jsonl、凍結檔與其他 *.json 閘門資料一律擋，repo 其他地方也擋）。
+# guard-shell：用 shell 寫檔（> 重導、tee、Set-Content、Add-Content、Out-File）一律擋，不因為有 Write 就放寬。
+# 刻意不開放成設定鍵：從清單拿掉角色只會放寬（例如 dev-release-watcher 會變回 dev-* 的寬範圍）。
+# 舊名與擴充 agent 照 team_role() 的結果比對（dev-pr-reviewer、對應 tpm-reviewer／tpm-skeptic 的擴充 agent 一樣受限）。
+# dev-merge-steward 不在這裡：它沒有 Write／Edit，執行紀錄放信封，由 save_run.py 代寫。
+RECORD_ONLY_ROLES = frozenset({"tpm-reviewer", "tpm-skeptic", "tpm-planner", "dev-release-watcher"})
 
 # 已合併的舊角色名（相容一版，下一版移除）：舊名照新角色的規則套用（寫入範圍、轉呼叫 repo guard 的對應）。
 # 舊名仍留在 RESERVED_ROLES 與 EXTENSION_ROLES，還沒升級的專案與擴充設定照樣被認得。

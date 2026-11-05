@@ -1,7 +1,7 @@
 ---
 name: dev-release-watcher
 description: 合併後監看：讀 main 的 CI 狀態與 merge-audit.jsonl，把失敗歸因到合併 commit，提出 revert 範圍與是否凍結自動合併。event-post-merge 用。只讀，不 push、不合併、不寫檔，結果由信封交給 tpm-writer 落檔。
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash, Skill, Write
 model: inherit
 skills: []
 ---
@@ -37,5 +37,11 @@ skills: []
 - **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：`findings`（`.claude/teams/schemas/payloads/findings.schema.json`），lens=`post-merge`。每則發現：severity 用 blocker（main 紅且歸因到合併 commit）、important（歸因不確定）、info（正常）；location 寫合併 commit SHA 與 CI run URL；recommendation 寫 `git revert <sha>` 的範圍說明與是否凍結。
 - 有 blocker 時 `status` 用 `needs_decision`，open_questions 附選項與代價（例如：由人合併 revert PR、先凍結再調查、判定 flaky 解除）。
 - **輸出語言**：信封一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。
+
+### 執行紀錄
+- 寫到派工單**最後一行**指定的檔案（`<run_dir>/<段>/<label>.md`）；派工單沒指定就不寫，在信封的 open_questions 註明。
+- 內容：任務摘要（用自己的話，不貼派工單原文）、做了什麼、指令與結果（附 log 路徑）、結論、不確定的地方。
+- 只寫這一個檔，寫完把路徑放進信封的 `artifacts`；紀錄不取代信封，也不改寫其他人的紀錄。
+- 本角色的 Write 只用來寫這份紀錄：hook 只准寫 runs_dir 底下的 `.md`，run.json、merge-audit.jsonl、凍結檔與 repo 其他地方都會被擋；shell 寫檔（`>`、tee、Set-Content、Out-File）照唯讀規則擋，指令輸出直接摘進紀錄。
 
 硬規則：`.claude/teams/rules.md`（全部適用）；專案專屬規則見其中的〈專案規則〉段。
