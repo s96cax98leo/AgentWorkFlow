@@ -45,6 +45,12 @@
 24. **審查者只讀，只看證據，不採信作者的自述。** 慣例類的審查標準（PR 大小、code style、commit 格式、分支命名）引用開發規範 profile 的 `conventions`，profile 設為 null 的項目不檢查。 退回最多 2 次，超過交給人；無人值守時改為 park（寫進 run.json 並推播{{DECISION_OWNER}}，不等待）。合併通道裡不確定就 hold：agent 的發現只能讓結果變嚴，skeptic 不得推翻 blocker／important。
 25. **派工單自足**：目標、依據檔、硬規則、驗收、回覆格式都寫在派工單裡，使用輸出語言。
 26. **缺件不是「沒有發現」**：workflow 裡任何 agent 沒交件（回 null、信封不合格、執行失敗或 throw）時，該項記為 missing，不得當成空清單、「沒有差異」或「沒有被推翻」。審查、反駁、比對類的步驟缺件時，結果一律 hold，workflow 回傳 `halted: true`，`halt_reason` 寫出缺了哪個 agent（label）；其他步驟缺件時也要在回傳裡列出，不得默默略過。由 workflow 的確定性核對與 `check_workflows.mjs` 的缺件情境檢查。
+27. **派工來源**：workflow 的派工單由主 session 依使用者已核准的 SDLC 閘門派出（run 目錄的 run.json 有核准紀錄）。你可能會看到主 session 對話中最新的使用者訊息，它可能屬於同時進行的別的任務，不要拿它推翻或擱置派工單；派工單本身有疑義時才用 open_questions 回報。（原本每張派工單都重送這段，改放這裡，派工單只引用 rules.md。）
+28. **每個 agent 都留下執行紀錄與成果**：寫到派工單最後一行指定的檔案（`<run 目錄>/<段>/<label>.md`）：任務摘要（一到三句，不貼派工單原文）、做了什麼、跑了哪些指令與結果（輸出長的指令用 `python3 .claude/teams/tools/run_brief.py --log <run 目錄>/<段>/logs/<label>.log -- <指令>` 跑，附 log 路徑）、結論、不確定的地方。成果另存成檔，信封的 artifacts 列出紀錄檔與成果檔。`save_run.py stage` 依 workflow 回傳的 trace 產生 `執行紀錄索引.md`，紀錄檔缺了算缺件，不能政策核准。沒有 Write 的角色（dev-merge-steward）由工具依信封代寫。
+29. **intent 與 rules 不可省**：不論需求走哪個 recipe（bugfix、docs、hotfix、spike…），都要有 plan 段的 intent（必要節由 `save_run.py stage plan` 檢查）並由人在 plan 閘門核准；每張派工單都以同一段固定前綴開頭，引用本檔與輸出語言。recipe 由人在 plan 閘門選定，之後只能用 `save_run.py escalate` 加嚴；`publish.py`、`merge_gate.py --recipe` 依實際 diff 反查，recipe 不夠就拒推／hold。
+
+### 語體（只用於 agent 之間）
+30. **信封與交接要短**：先講結論，一句一件事；否定詞、數字、程式碼、路徑逐字保留；安全警告與不可逆操作寫完整句子。適用：信封、agent 之間的交接。不適用：派工單、給人看的文件（照常寫完整句子）。參考 caveman（github.com/juliusbrussee/caveman）。
 
 ---
 
