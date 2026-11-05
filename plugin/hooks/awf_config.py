@@ -233,8 +233,11 @@ EXTENSION_ROLES = frozenset({
 EXTENSION_FALLBACK = "tpm-reviewer"
 
 # 只寫執行紀錄的角色：本來唯讀，有 Write 只為了寫自己的執行紀錄（派工單最後一行指定的 <run_dir>/<段>/<label>.md）。
-# guard-paths：Write 只准寫 runs_dir 底下的 .md（run.json、merge-audit.jsonl、凍結檔與其他 *.json 閘門資料一律擋，repo 其他地方也擋）。
-# guard-shell：用 shell 寫檔（> 重導、tee、Set-Content、Add-Content、Out-File）一律擋，不因為有 Write 就放寬。
+# guard-paths：Write 只准寫 <runs_dir>/<run>/<段>/<檔名>.md（上一層要是段名，context.md、執行紀錄索引.md 不行；run.json、<段>.json、
+# merge-audit.jsonl、凍結檔與其他 *.json 閘門資料一律擋，repo 其他地方也擋）。
+# guard-shell：用 shell 寫檔一律擋（> 重導、tee、cp／mv／install／rsync、dd of=、sed -i、perl -i、直譯器內嵌程式寫檔、truncate、touch、ln、
+# 寫工作樹的 git 子指令、Copy-Item／Move-Item／Set-Content／Out-File／New-Item…；bash -c、pwsh -c 遞迴檢查），不因為有 Write 就放寬；
+# 例外是 run_brief.py --log <runs_dir>/…/*.log -- <指令>（內層指令照樣檢查）。
 # 刻意不開放成設定鍵：從清單拿掉角色只會放寬（例如 dev-release-watcher 會變回 dev-* 的寬範圍）。
 # 舊名與擴充 agent 照 team_role() 的結果比對（dev-pr-reviewer、對應 tpm-reviewer／tpm-skeptic 的擴充 agent 一樣受限）。
 # dev-merge-steward 不在這裡：它沒有 Write／Edit，執行紀錄放信封，由 save_run.py 代寫。

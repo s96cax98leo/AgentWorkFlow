@@ -596,29 +596,152 @@ SHELL_WRITE = re.compile(
 
 AUDIT_FILES = ("merge-audit.jsonl", "publish-audit.jsonl")  # merge_gate.py、publish.py 寫的稽核紀錄
 # agent 用直譯器或在 run 目錄寫入時，檔名可能被拆開（'merge-'+'audit.jsonl'）：只要同時出現寫入動作與這些片段就擋（保守判斷）
-STATE_FRAGMENT = re.compile(r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config", re.I)
+STATE_FRAGMENT = re.compile(r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config|methodology\W{0,16}\.json", re.I)
 WRITE_API = re.compile(r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.write\b|write_text|write_bytes|>>?|\bFile\.(?:write|open)|out-file|set-content|add-content", re.I)
 
+# 各段 workflow 的段名（scaffold/.claude/workflows/*.js 的 awfInit stage 值；sdlc-design-revise 仍記 design，另列 design-revise 以防改名）。
+# 執行紀錄寫在 <run_dir>/<段>/<label>.md；save_run.py stage 把該段回傳存成 <run_dir>/<段>.json，publish.py 與政策核准會重讀它。
+RUN_STAGES = frozenset({
+    "plan", "design", "design-revise", "build", "sync", "test", "deliver", "merge",
+    "brief", "meeting", "demo-check", "decision", "post-merge", "upstream", "pr-review", "reqs-change", "run",
+})
+# runs_dir 底下只由 save_run.py（主 session）寫的閘門資料：run.json、<段>.json；所有 team agent 都不能寫（Write／Edit 與 shell）。
+# 稽核紀錄（AUDIT_FILES）與凍結檔另由 protected_target() 在任何位置都擋。
+RUN_STATE_FILES = frozenset({"run.json", *(f"{s}.json" for s in RUN_STAGES)})
+STAGE_JSON_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:" + "|".join(re.escape(s) for s in sorted(RUN_STAGES, key=len, reverse=True))
+                                 + r")\W{0,16}\.json\b", re.I)
 
-def agent_writes_state(seg: str) -> bool:
-    """agent 用內嵌程式（或在 run 目錄裡）寫 run 狀態、稽核紀錄、凍結檔、守門設定，檔名拆開寫也算。"""
-    near_runs = bool(RUNS) and fold(RUNS.rstrip("/")) in fold(norm(seg))
+
+def agent_writes_state(seg: str, cwd: Path | None = None) -> bool:
+    """agent 用內嵌程式（或在 run 目錄裡）寫 run 狀態（run.json、<段>.json）、稽核紀錄、凍結檔、守門設定，檔名拆開寫也算。
+    cwd 在 runs_dir 底下時也算「在 run 目錄裡」（cd 進去再寫 test.json）。<段>.json 只在 run 目錄的情境下比對（避免誤擋 repo 裡的 test.json）。"""
+    in_runs_cwd = bool(RUNS) and cwd is not None and fold((rel_to_workspace(cwd) or "") + "/").startswith(fold(RUNS))
+    near_runs = in_runs_cwd or (bool(RUNS) and fold(RUNS.rstrip("/")) in fold(norm(seg)))
     if not (INTERP.search(seg) or near_runs):
         return False
     probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", seg, flags=re.I)
-    return bool(STATE_FRAGMENT.search(probe) and (WRITE_API.search(probe) or SHELL_WRITE.search(probe)))
+    frag = STATE_FRAGMENT.search(probe) or (near_runs and STAGE_JSON_FRAGMENT.search(probe))
+    return bool(frag and (WRITE_API.search(probe) or SHELL_WRITE.search(probe)))
 
 
-# 只寫執行紀錄的角色（awf_config.RECORD_ONLY_ROLES）用 shell 寫檔：重導（> >> 2> &>）、tee、PowerShell 的寫檔 cmdlet
-# （ps_segments 已把 Set-Content／Add-Content／Out-File／Tee-Object／New-Item 換成 tee）。引號內的 > 不算重導。
-RECORD_SHELL_WRITE = re.compile(r"(?<![<>=-])>|(?:^|\s)(?:tee|set-content|add-content|out-file|tee-object|new-item)(?:\s|$)", re.I)
+# ---------------------------------------------------------------- 只寫執行紀錄的角色（awf_config.RECORD_ONLY_ROLES）的 shell 寫檔
+# 目標：tpm-reviewer、tpm-skeptic、tpm-planner、dev-release-watcher 在 shell 一律不能寫檔（紀錄只透過 Write 寫）。
+# 例外：跑測試等不帶寫檔語法的指令（工具自己寫的快取不算）、run_brief.py --log <runs_dir>/…/*.log -- <指令>（內層指令照樣檢查）。
+# 盡量擋，不是完備：python script.py 這類看不到內容的程式自己寫檔擋不到。
+RECORD_REDIRECT = re.compile(r"(?<![<>=-])>")  # 引號已先去掉；丟 /dev/null、$null 與 2>&1 已先換掉
+RECORD_WRITE_CMD = re.compile(
+    r"(?:^|[\s/\\(`])(?:cp|mv|install|rsync|scp|ln|link|touch|truncate|rm|rmdir|unlink|shred|chmod|chown|chgrp|mkfifo|mknod|patch|tee|"
+    r"unzip|tee-object|set-content|add-content|out-file|new-item|copy-item|move-item|rename-item|remove-item|clear-content|"
+    r"export-csv|export-clixml|set-itemproperty|expand-archive|compress-archive)(?:\.exe)?(?=\s|$)"
+    r"|\bdd\b.*\bof="
+    r"|\b(?:sed|perl|ruby)\b.*\s(?:-[a-zA-Z]*i\S*|--in-place\S*)(?=\s|$)"
+    r"|\btar\b\s+(?:\S+\s+)*?(?:-?[a-zA-Z]*x[a-zA-Z]*|--extract|--get)(?=\s|$)"
+    r"|\bcurl\b.*\s(?:-[a-zA-Z]*[oO]\S*|--output(?:-dir)?|--remote-name\S*)(?=[\s=]|$)"
+    r"|\bwget\b(?!.*(?:\s-[a-zA-Z]*O\s*-(?:\s|$)|--output-document[=\s]+-(?:\s|$)))"
+    r"|\bfind\b.*\s-(?:delete|fprint\w*|fls)(?=\s|$)"
+    r"|(?:^|\s)-outfile(?=[\s:]|$)|\[(?:system\.)?io\.file\]::"
+    r"|\bgit\s+(?:checkout|switch|restore|reset|stash|clean|rm|mv|commit|merge|pull|rebase|cherry-pick|revert|am|clone|init|"
+    r"checkout-index|read-tree|update-index|worktree\s+(?:add|remove|move)|apply(?!.*\s--(?:check|stat|numstat|summary)\b))\b", re.I)
+# 直譯器內嵌程式（python -c、node -e、heredoc）寫檔或再開子程序
+INTERP_WRITE = re.compile(
+    r"\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?[\"'](?:[rbt]*[wax+]|\s*\+?>)"
+    r"|write_text|write_bytes|writelines|\.write\s*\(|writeFile|appendFile|createWriteStream|copyFile|\brename(?:Sync)?\s*\("
+    r"|\bos\.(?:remove|unlink|rename|replace|rmdir|removedirs|makedirs|mkdir|truncate|symlink|link|chmod|system|popen|open)\b"
+    r"|\bshutil\.|\.unlink\s*\(|\.touch\s*\(|\.mkdir\s*\(|\.rename\s*\(|\.symlink_to\s*\("
+    r"|\w+Sync\s*\(|\bFile\.(?:write|open|new)|\bIO::File|\bFileUtils\.|\bsubprocess\b|child_process|\bsystem\s*\(|\bexec[lv]p?e?\s*\(|\bpty\.", re.I)
+SHELL_NAMES = {"bash", "sh", "zsh", "dash", "ksh", "fish", "busybox"}
+CMD_WRAPPERS = {"sudo", "command", "env", "nohup", "time", "nice", "timeout", "exec", "builtin", "stdbuf"}
 
 
-def shell_writes_file(seg: str) -> bool:
+def _strip_harmless(seg: str) -> str:
+    """去掉丟到 /dev/null、$null 與 2>&1 這類 fd 轉接（不算寫檔）。"""
+    return re.sub(r"[\d&]?>>?\s*/dev/null\b|[\d&]?>>?\s*\$null\b|\d?>&\d", " ", seg, flags=re.I)
+
+
+def run_brief_problem(toks: list[str], base: Path) -> str | None:
+    """run_brief.py 的 --log 要明確寫在 runs_dir 底下、副檔名 .log（只寫一次；--log=… 不算，run_brief 會改寫到暫存目錄）。"""
+    if toks[:1] == ["--selftest"]:
+        return None
+    if not RUNS:
+        return "沒有 runs_dir，不能用 run_brief.py 寫 log"
+    if _flag_dup(toks, "--log"):
+        return "--log 只能寫一次"
+    if "--log" not in toks or toks.index("--log") + 1 >= len(toks) or ("--" in toks and toks.index("--") < toks.index("--log")):
+        return f"要帶 --log {RUNS}<run>/<段>/logs/<label>.log"
+    raw = toks[toks.index("--log") + 1]
+    rel = rel_to_workspace(_resolve(base, raw))
+    if rel is None or not rel.startswith(RUNS) or not rel.endswith(".log"):
+        return f"--log 只能是 {RUNS} 底下的 .log（{raw}）"
+    return None
+
+
+def record_shell_write(seg: str, base: Path, depth: int = 0) -> str | None:
+    """只寫執行紀錄的角色：這段 shell 有沒有寫檔；有就回傳理由。巢狀的 bash -c、pwsh -c、eval、run_brief 的內層指令遞迴檢查。"""
+    if depth > 4:
+        return "巢狀太深，無法確認"
+    probe = _strip_harmless(re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", " ", seg))
+    if RECORD_REDIRECT.search(probe):
+        return "> 重導"
+    toks = shlex_tokens(seg)
+    i = 0
+    while i < len(toks) and (re.match(r"^[A-Za-z_]\w*=", toks[i]) or _cmd_name(toks[i]) in CMD_WRAPPERS
+                             or (i > 0 and _cmd_name(toks[i - 1]) in CMD_WRAPPERS and toks[i].startswith("-"))):
+        i += 1
+    toks = toks[i:]
+    if not toks:
+        return None
+    name, args = _cmd_name(toks[0]), toks[1:]
+    # run_brief.py：檢查 --log，內層指令（-- 之後，不經 shell）照同一套規則
+    rb = next((k for k, t in enumerate(toks) if re.split(r"[\\/]", t)[-1].lower() == "run_brief.py"), None)
+    if rb is not None and (rb == 0 or INTERP.search(" ".join(toks[:rb]))):
+        rest = toks[rb + 1:]
+        bad = run_brief_problem(rest, base)
+        if bad:
+            return f"run_brief.py {bad}"
+        if "--" in rest:
+            return record_shell_write(_join(rest[rest.index("--") + 1:]), base, depth + 1)
+        return None
+    if name in SHELL_NAMES:
+        for k, t in enumerate(args):
+            if re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", t) and k + 1 < len(args):
+                for inner in segments(args[k + 1]):
+                    why = record_shell_write(inner, base, depth + 1)
+                    if why:
+                        return why
+                return None
+    if name in PS_NESTED_SHELLS or name == "cmd":
+        for k, t in enumerate(args):
+            low = t.lower()
+            if low in ("-encodedcommand", "-e", "-ec", "-enc"):
+                return "看不到 -EncodedCommand 的內容"
+            if low in ("-c", "-command", "/c", "/k") and k + 1 < len(args):
+                for inner in ps_segments(" ".join(args[k + 1:])):
+                    why = record_shell_write(inner, base, depth + 1)
+                    if why:
+                        return why
+                return None
+    if name in ("eval", "invoke-expression", "iex"):
+        for inner in segments(" ".join(args)):
+            why = record_shell_write(inner, base, depth + 1)
+            if why:
+                return why
+        return None
+    m = RECORD_WRITE_CMD.search(probe)
+    if m:
+        return m.group(0).strip()
+    # find -exec／xargs 帶的指令可能在引號裡：連引號內容一起看
+    if name in ("find", "xargs", "parallel", "watch"):
+        m = RECORD_WRITE_CMD.search(_strip_harmless(re.sub(r"[\"']", " ", seg)))
+        if m:
+            return m.group(0).strip()
+    if INTERP.search(seg) and INTERP_WRITE.search(seg):
+        return "直譯器內嵌程式寫檔或開子程序"
+    return None
+
+
+def shell_writes_file(seg: str, base: Path | None = None) -> bool:
     """段落是否用 shell 寫檔（丟到 /dev/null、$null 與 2>&1 這類 fd 轉接不算）。盡量擋，不是完備。"""
-    probe = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", " ", seg)
-    probe = re.sub(r"[\d&]?>>?\s*/dev/null\b|[\d&]?>>?\s*\$null\b|\d?>&\d", " ", probe, flags=re.I)
-    return bool(RECORD_SHELL_WRITE.search(probe))
+    return record_shell_write(seg, base or WORKSPACE) is not None
 
 
 def freezes_only(text: str) -> bool:
@@ -697,6 +820,36 @@ def shell_writes_protected(seg: str) -> str | None:
         return None
     probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", seg, flags=re.I)
     return hit if SHELL_WRITE.search(probe) else None
+
+
+# B2：.claude/teams/（任何位置）、methodology.json、guard.config.json 是守門與 profile 設定：team agent 一律不能寫。
+# 工具會往上層目錄找 .claude/teams/methodology.json，放在 runs_dir 底下也可能劫持 recipe 解析（工具端另修，這裡是縱深）。
+TEAM_CONFIG_TARGET = re.compile(r"(?:^|[/\\\s\"'=])\.claude[/\\]teams(?:[/\\]|\s|$)|methodology\.json|guard\.config\.json", re.I)
+TEAM_TOOL_CALL = re.compile(r"(?:python[\d.]*|py|pypy[\d.]*)(?:\.exe)?(?:\s+-\S+)*\s+[\"']?[^\s\"']*\.claude[/\\]teams[/\\]tools[/\\][\w.-]+\.py[\"']?", re.I)
+
+
+def team_config_path(p: str) -> bool:
+    """Write／Edit 的路徑碰到 .claude/teams/、methodology.json 或 guard.config.json（不分大小寫，原路徑與解析後都看）。"""
+    cands = {norm(p)}
+    try:
+        cands.add(Path(norm(p)).resolve().as_posix())
+    except OSError:
+        pass
+    for c in cands:
+        f = fold(c)
+        if "/.claude/teams/" in "/" + f or f.rsplit("/", 1)[-1] in ("methodology.json", "guard.config.json"):
+            return True
+    return False
+
+
+def shell_writes_team_config(seg: str) -> bool:
+    """shell 寫入 .claude/teams/、methodology.json、guard.config.json（盡力而為）。
+    python3 .claude/teams/tools/<工具>.py 這種「執行工具」不算提到路徑（工具本身的寫入由各自的規則管）。"""
+    probe = TEAM_TOOL_CALL.sub(" ", norm(seg))
+    if not TEAM_CONFIG_TARGET.search(probe):
+        return False
+    probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", probe, flags=re.I)
+    return bool(SHELL_WRITE.search(probe) or (INTERP.search(probe) and INTERP_WRITE.search(probe)))
 
 
 PUSH_RE = re.compile(r"\bgit\b.*\b(?:push|send-pack)\b")
@@ -1084,6 +1237,30 @@ def new_branches(seg: str) -> list[str]:
     return out
 
 
+SAVE_RUN_READONLY = {"status", "--selftest"}
+SAVE_RUN_LAUNCHERS = re.compile(r"python[\d.]*|py|pypy[\d.]*|uv|run|pipx|poetry|pdm|rye|hatch")
+
+
+def save_run_write(seg: str) -> str | None:
+    """team agent 執行 save_run.py 的寫入子指令時回傳子指令名（stage、approve、abandon、escalate、followup、close、init…）；
+    唯讀的 status、--selftest、沒有參數（印說明）回 None。用內嵌程式 import／runpy 呼叫 save_run 一律當寫入。
+    只是讀 save_run.py 的內容（cat、grep）不算執行。"""
+    toks = shlex_tokens(seg)
+    for k, t in enumerate(toks):
+        if re.split(r"[\\/]", t)[-1].lower() != "save_run.py":
+            continue
+        before = [_cmd_name(x) for x in toks[:k] if not re.match(r"^[A-Za-z_]\w*=", x)]
+        before = [b for b in before if b not in CMD_WRAPPERS and not b.startswith("-")]
+        if before and not all(SAVE_RUN_LAUNCHERS.fullmatch(b) for b in before):
+            continue  # cat／grep／less save_run.py 之類，不是執行
+        sub = toks[k + 1] if k + 1 < len(toks) else ""
+        return None if sub in SAVE_RUN_READONLY or sub == "" else sub
+    if INTERP.search(seg) and re.search(r"\bimport\s+save_run\b|\bfrom\s+save_run\b|import_module\b.*save_run|\brunpy\b|-m\s+save_run\b"
+                                        r"|__import__\s*\(\s*[\"']save_run", seg):
+        return "（內嵌程式呼叫）"
+    return None
+
+
 def check_shell(data: dict) -> None:
     """Bash 與 PowerShell 工具共用的 shell 守門。"""
     cmd = (data.get("tool_input") or {}).get("command") or ""
@@ -1114,6 +1291,10 @@ def check_shell(data: dict) -> None:
                                                  else bool(GH_WRITE.search(s)) and steward_write_refusal(s, data) is None)}
     rest_cmd = " ; ".join(s for i, s in enumerate(segs) if i not in allowed)
 
+    if team and awf_config.team_role(raw_agent, CFG) in awf_config.RECORD_ONLY_ROLES and data.get("tool_name") != "PowerShell" \
+            and INTERP.search(cmd) and re.search(r"<<|(?:^|\s)-(?:\s|$)", cmd) and INTERP_WRITE.search(cmd):
+        # heredoc／stdin 餵給直譯器的程式碼被換行切成好幾段，整條一起看
+        block(f"{agent} 是唯讀角色，不能用 heredoc／stdin 餵給直譯器的程式寫檔或開子程序")
     for i, seg in enumerate(segs):
         d = dirs[i]
         if PUSH_RE.search(seg):
@@ -1148,13 +1329,19 @@ def check_shell(data: dict) -> None:
             block(f"{agent} 不能改 GitHub 帳號層級的設定（alias、extension、ssh／gpg 金鑰、gist、登入）")
         if team and re.search(r"(?:^|[\s/\\])merge_gate\.py\b", seg) and re.search(r"(?:^|\s)check(?:\s|$)", seg) and not is_steward(data):
             block(f"{agent} 不能跑 merge_gate.py check；只有 {AM['merger_role'] or 'merger_role'}（完整 agent_type）能跑")
-        if team and re.search(r"(?:^|[\s/\\])save_run\.py\b", seg) and re.search(r"(?:^|\s)(?:approve|abandon)(?:\s|$)", seg):
-            block(f"{agent} 不能核准或放棄 run（save_run.py approve／abandon）；閘門由人（或主 session 依政策）處理")
-        if team and awf_config.team_role(raw_agent, CFG) in awf_config.RECORD_ONLY_ROLES and shell_writes_file(seg):
-            block(f"{agent} 是唯讀角色（只有 Write 能寫 {RUNS or 'run 目錄'} 底下的執行紀錄 .md），不能用 shell 寫檔"
-                  "（> 重導、tee、Set-Content、Out-File）；指令輸出直接貼進執行紀錄，或丟 /dev/null")
-        if team and agent_writes_state(seg):
-            block(f"{agent} 不能寫 run.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")
+        sr = save_run_write(seg) if team else None
+        if sr:
+            block(f"{agent} 不能跑 save_run.py {sr}（team agent 只能跑唯讀的 status 與 --selftest）；"
+                  "run 狀態、核准、放棄、升級、後續、結案一律由主 session（或人）執行")
+        if team and awf_config.team_role(raw_agent, CFG) in awf_config.RECORD_ONLY_ROLES:
+            why = record_shell_write(seg, d)
+            if why:
+                block(f"{agent} 是唯讀角色（只有 Write 能寫 {RUNS or 'run 目錄'}<run>/<段>/<label>.md 的執行紀錄），不能用 shell 寫檔"
+                      f"（{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 run_brief.py --log {RUNS}<run>/<段>/logs/<label>.log -- <指令>")
+        if team and agent_writes_state(seg, d):
+            block(f"{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")
+        if team and shell_writes_team_config(seg):
+            block(f"{agent} 不能寫 .claude/teams/、methodology.json 或 guard.config.json（守門與 profile 設定只由人或主 session 改）")
         for tool in ("publish.py", "merge_gate.py"):
             if re.search(rf"(?:^|[\s/\\]){re.escape(tool)}\b", seg):
                 targs = shlex_tokens(seg)
@@ -1246,6 +1433,9 @@ REVIEW_REPORTS = {
 }
 
 
+RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "執行紀錄索引.md", "run.json"))
+
+
 def check_read(data: dict) -> None:
     """Read（file_path）、Grep（path、glob）讀機敏檔：主 session 與 agent 都擋（沒有設定檔時只擋模版角色）。"""
     ti = data.get("tool_input") or {}
@@ -1290,13 +1480,24 @@ def check_paths(data: dict) -> None:
         block(f"主 session 不解凍自動合併（刪除凍結檔、寫 frozen=false 或用 Edit 改）；解凍由人自己做（手動編輯 {prot}）")
     elif prot and CFG["_configured"] and (prot in AUDIT_FILES or (prot == "guard.config.json" and AM["enabled"])):
         block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
+    if role and team_config_path(str(path)):
+        block(f"{agent} 不能寫 .claude/teams/ 底下的檔、methodology.json 或 guard.config.json（不論在哪個目錄；"
+              f"守門與 profile 設定只由人或主 session 改）（{rel or fp}）")
     if role and fold(path.name) == "run.json" and (not RUNS or fold(rel or "").startswith(fold(RUNS))):
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
+    if role and RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in RUN_STATE_FILES:
+        block(f"{agent} 不能寫 {path.name}（{RUNS} 底下的 run.json、<段>.json 是 save_run.py 寫的閘門資料，publish.py 與政策核准會重讀）")
     if role in awf_config.RECORD_ONLY_ROLES:
-        # 只寫執行紀錄的角色：runs_dir 底下的 .md（白名單，照原樣比對）；run.json、稽核紀錄、凍結檔已在上面擋
-        if not (rel is not None and RUNS and rel.startswith(RUNS) and path.name.endswith(".md")):
-            block(f"{agent} 只能寫執行紀錄：{RUNS or 'run 目錄'} 底下的 .md（{rel or fp}）；"
-                  "run.json、merge-audit.jsonl、凍結檔與其他閘門資料不能寫")
+        # 只寫執行紀錄的角色：只能寫 <runs_dir>/<run>/<段>/<檔名>.md（白名單，照原樣比對；至少兩層子目錄，上一層是段名）；
+        # run.json、<段>.json、稽核紀錄、凍結檔已在上面擋；context.md、執行紀錄索引.md 是 save_run.py 產生的，也不能寫。
+        # 殘留風險：hook 看不到派工單，無法把路徑綁到「自己的 label」（awfRecordPath），同一段裡可以覆寫別的 agent 的紀錄；
+        # 這點由 save_run.py stage 依 trace 核對紀錄檔另行處理。
+        sub = rel[len(RUNS):].split("/") if (rel is not None and RUNS and rel.startswith(RUNS)) else []
+        ok = (len(sub) >= 3 and all(sub) and sub[-2] in RUN_STAGES and path.name.endswith(".md")
+              and fold(path.name) not in RECORD_RESERVED_NAMES)
+        if not ok:
+            block(f"{agent} 只能寫執行紀錄：{RUNS or 'run 目錄'}<run>/<段>/<label>.md（段：{'、'.join(sorted(RUN_STAGES))}；"
+                  f"不能是 context.md、執行紀錄索引.md）（{rel or fp}）；run.json、merge-audit.jsonl、凍結檔與其他閘門資料不能寫")
     elif role == "tpm-writer":
         # 凍結檔照 auto_merge.freeze_file 的實際設定（可能不在 writer_dirs 裡）；能不能寫已由上面的 writes_freeze 判定
         # 只認設定的那個路徑本身（同名的其他檔不算）
