@@ -66,19 +66,19 @@
    "shared_prefix_chars": 1274
   },
   "sdlc-plan.js": {
-   "agents": 1,
-   "prompt_chars": 2031,
-   "shared_prefix_chars": 0
+   "agents": 6,
+   "prompt_chars": 8122,
+   "shared_prefix_chars": 891
   },
   "sdlc-sync.js": {
-   "agents": 1,
-   "prompt_chars": 1484,
-   "shared_prefix_chars": 0
+   "agents": 2,
+   "prompt_chars": 3137,
+   "shared_prefix_chars": 877
   },
   "sdlc-test.js": {
-   "agents": 3,
-   "prompt_chars": 3546,
-   "shared_prefix_chars": 842
+   "agents": 1,
+   "prompt_chars": 1394,
+   "shared_prefix_chars": 0
   }
  },
  "recipes": {

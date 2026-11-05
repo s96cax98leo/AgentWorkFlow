@@ -22,7 +22,7 @@ workflow 放在 `scaffold/` 而不放在 plugin 裡，因為 Workflow 工具只�
 - **去客戶化**：不寫任何真實客戶、人名、帳號、內部代號，範例一律用虛構的「示範客戶 ACME」。禁用清單有兩份，都是一行一個 ERE 正規式：
   - `tests/scrub_terms.txt`：公開的通用規則（本機路徑、憑證形狀、個人信箱）。
   - `tests/scrub_terms.local.txt`：真實名稱，**不進版控**。真實名稱只能寫在這份，寫進公開清單就等於公開了。
-  - 掃描範圍是整個 repo 的檔案內容**與路徑名**，略過根目錄的本機目錄 `_tpm`、`graft`、`.claude`。
+  - 掃描範圍是整個 repo 的檔案內容**與路徑名**，略過根目錄的本機目錄 `_tpm`、`graft`、`.claude`、`.idea`。
 - **gate 只會更嚴**：確定性工具碰到輸入缺漏一律 hold 或 halted 交人，不做樂觀推定。
 
 ## 指令
@@ -96,6 +96,16 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - 內建兩份：`methodologies/default.json`（現行做法）與 `lightweight.json`。init 問答或 `--answers` 的結果會合併成專案的 `.claude/teams/methodology.json`。
 - `stages.design.system_design`（選填）：SA／SD 方法。內建 profile 依 System Design Primer（`docs/系統設計方法.md`，CC BY 4.0，用自己的話改寫並註明出處，不貼原文）：每個需求做功能層 SD，有系統面時四步完整；sdlc-design 照它派工，並多派 skeptic 的 `system-design` lens。
 - 需求來源 adapter（json、command，以及 spec-md 範例）和 `merge_gate.py` 共用。`guard.config.json` 的 `requirements` 有設時以它為準。
+
+### 依需求類型分流（recipe）
+
+- **定義**：profile 的 `recipes`（內建 11 個：feature、bugfix、change、hotfix、refactor、deps、docs、test-only、perf、spike、revert）與 `modifiers`（ui、security、migration、public_api、large）。每個 recipe 定義 stages、plan_mode、research_angles、design_lenses、test、deliver_axes、build_kinds、publishable、followup。
+- **解析**：Python 版 `tools/recipe.py`（save_run、publish、merge_gate 用）與 JS 片段 `tools/snippets/recipe.js`（workflow 用）必須一致，`tests/check_recipes.py` 拿 `golden-set/recipes/*.json` 兩邊對跑。規則：未知 recipe 或沒有 `recipes` 的舊 profile 一律當 feature；modifier 只能加嚴；未知 modifier 回錯誤、呼叫端 halted。
+- **鎖定與升級**：`sdlc-plan` 的 Triage 只給建議，人在 plan 閘門核准後鎖在 run.json；`save_run.py escalate` 只准加嚴（`merge_stricter`），新增的段之後已完成的段改成 stale。工具不自動降級。
+- **diff 反查**：`recipe.diff_shortfalls` 依實際改動檔分類（code、test、doc、migration、manifest），`publish.py` 拒推、`merge_gate.py --recipe <run.json>` 判 hold。CI 範本（`agent-merge-gate.yml.tmpl`）沒有 run.json，不帶 `--recipe`，所以 diff 反查只在本機 publish／steward 的 gate 生效。
+- **不可省**：每個 recipe 都有 plan 段與 intent（四個必要節加 plan_mode 專屬節，`recipe.required_sections`），plan 一律人核准，派工單一律以共同前綴引用 rules.md（challenge 片段的 `awfPrefix`）。
+- **執行紀錄**：`tryAgent` 為每張派工單指定 `<run_dir>/<段>/<label>.md` 並記 trace，workflow 一律回傳 `trace: awfTrace()`；`save_run.py stage` 依 trace 產生 `執行紀錄索引.md`，紀錄檔缺了算缺件。沒 Write 的角色由信封內容代寫；tpm-reviewer、tpm-skeptic、tpm-planner、dev-release-watcher 有 Write，但 hook（`RECORD_ONLY_ROLES`）只准它們寫 runs_dir 下的 `.md`。
+- **token 精簡**：派工單是「共同前綴＋任務」，共用背景放 `<run_dir>/context.md`；信封有長度上限；長輸出用 `tools/run_brief.py --log` 濃縮；`tests/check_budget.py` 對 `golden-set/token-budget.json` 檢查派工數與字數（超過 10% 失敗）。
 
 ### 平行處理
 
@@ -193,6 +203,9 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改擴充 agent 機制**：四支 sdlc workflow 的 `EXT` 片段要一致；`tools/scenarios/sdlc-*.mjs` 的擴充情境、`smoke_init.py` 的 `check_extensions`、`plugin/hooks/tests/run.py` 的擴充 agent 案例要一起改。
 - **新增 hook 規則**：在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的測試，Bash 與 PowerShell 各一。
 - **改 profile 格式**：`methodology.schema.json`、兩份內建 profile、`docs/自訂與擴充.md` 的欄位表要一起改。
+- **改 recipe 或 modifier**：`tools/recipe.py` 的 `BUILTIN_RECIPES`／`BUILTIN_MODIFIERS`、`tools/snippets/recipe.js`、兩份內建 profile、`tools/scenarios/_helpers.mjs` 的 `RECIPE_STAGES`（手抄的段表）要一起改；在 `golden-set/recipes/` 補案例，跑 `tests/check_recipes.py`。新增的 recipe 不能省 plan 段，會寫程式的要有 build、deliver、merge（`schemalib.methodology_errors`）。
+- **改派工單或派工數**：跑 `tests/check_budget.py`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。
+- **新增會寫紀錄的唯讀角色**：加進 `awf_config.py` 的 `RECORD_ONLY_ROLES` 與 `check_agents.py` 的對應檢查，hook 測試補該擋（寫 repo、run.json、merge-audit）與該放（寫 runs_dir 的 `.md`）。
 - **新增 guard.config 欄位**：`guard.config.json.tmpl` 的 `_說明`、`awf_config.py` 的預設值、`docs/自動合併信任模型.md` 或 `docs/自訂與擴充.md` 一起改；`init.py --upgrade` 會把新鍵補進既有專案。
 - **版本（VERSION）**：發佈前遞增 `plugin/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json`（`metadata.version` 與 `plugins[].version`）。init 寫的 `.claude/teams/VERSION` 取自 plugin.json，三處一致由 `tests/smoke_init.py` 檢查。
 - **CHANGELOG**：每次發佈在 `CHANGELOG.md` 補一節，破壞性變更（角色改名、command 刪除、hook 語意）與升級步驟要寫清楚。

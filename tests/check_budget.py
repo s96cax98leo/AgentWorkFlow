@@ -2,7 +2,7 @@
 """token 預算檢查：派工數與派工單字數不能默默變多。
 
 做法：在暫存目錄用預設 profile init 一個專案，乾跑全部 workflow（check_workflows.mjs 的 AWF_SCENARIO_REPORT），
-算每支 workflow 預設情境的 agent 數與派工單總字數，另算每個內建 recipe 從 plan 到 deliver 的總派工數，
+算每支 workflow 的 agent 數（有 recipe:feature 情境就量它，否則量預設情境）與派工單總字數，另算每個內建 recipe 從 plan 到 deliver 的總派工數，
 和 scaffold/.claude/teams/golden-set/token-budget.json 的基準比：超過基準 10% 就失敗。
 
 限制：乾跑量的是「派出去的字」與「派幾個 agent」，量不到 agent 實際讀檔與輸出的長度（那要看真實執行的用量）。
@@ -51,7 +51,8 @@ def measure() -> dict:
         data = json.loads(rep.read_text(encoding="utf-8"))
     out: dict = {"workflows": {}, "recipes": {}}
     for wf, v in sorted(data.items()):
-        sc = v["scenarios"][0]
+        # 有 recipe:feature 情境就量它（完整走一遍）；沒有才用預設情境（預設乾跑的假回傳可能在開頭就 halted）
+        sc = next((x for x in v["scenarios"] if x["name"] == "recipe:feature"), v["scenarios"][0])
         ps = list(sc["prompts"].values())
         prefix = len(os.path.commonprefix(ps)) if len(ps) > 1 else 0
         out["workflows"][wf] = {"agents": len(sc["labels"]), "prompt_chars": sum(len(x) for x in ps), "shared_prefix_chars": prefix}

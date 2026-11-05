@@ -16,6 +16,9 @@ tests/scrub_terms.local.txt
 /.claude/
 .worktrees/
 
+# IDE 的本機設定
+/.idea/
+
 # graft 的搜尋設定（本機工具）
 /.ignore
 
