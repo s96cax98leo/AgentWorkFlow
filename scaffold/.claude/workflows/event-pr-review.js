@@ -14,6 +14,7 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 
 const A = args || {}
 for (const k of ['target', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
+awfInit({ run_dir: A.run_dir, stage: 'pr-review', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
 const LENSES = A.lenses || ['standards', 'spec', 'bugs', 'security', 'design', 'history']
 const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 gh pr diff／git diff，不 approve、不 merge、不 comment。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 /*@snippet:challenge*/
@@ -144,7 +145,7 @@ function dedupeFindings(groups, field) {
 /*@end*/
 // 規則 26：lens 沒交件不是「這個 lens 很乾淨」，skeptic 沒交件也不是「全部沒被推翻」；缺件一律 halted，halt_reason 寫出 label
 const missing = []
-const halt = (stage, extra = {}) => haltMissing({ event: 'pr-review' }, stage, missing, extra)
+const halt = (stage, extra = {}) => haltMissing({ event: 'pr-review' }, stage, missing, { ...extra, trace: awfTrace() })
 
 phase('Review')
 const reviews = await parallel(LENSES.map((lens) => () => tryAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 REVIEW.md 分級，每則附 file:line 與 0–1 信心，只列 ≥0.8。payload 用 findings（lens=${lens}）。`,
@@ -180,4 +181,4 @@ const docs = await tryAgent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 if (!docs) { missing.push('write'); return halt('write', { findings: kept }) }
 
-return { event: 'pr-review', findings: kept, dropped: reviewed.flatMap((r) => r.dropped.map((f) => f.id)), docs }
+return { trace: awfTrace(), event: 'pr-review', findings: kept, dropped: reviewed.flatMap((r) => r.dropped.map((f) => f.id)), docs }

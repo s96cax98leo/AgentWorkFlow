@@ -18,6 +18,7 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 
 const A = args || {}
 for (const k of ['what', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
+awfInit({ run_dir: A.run_dir, stage: 'upstream', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
 const CTX = `事件：${A.what}\n我方 fork：${A.repo}\nrun 目錄：${A.run_dir}\n全程唯讀：不對上游做任何寫入，不切換 fork 主工作目錄的分支（用 git fetch 到唯讀 ref、git merge-tree 預測）。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 // 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
 /*@snippet:challenge*/
@@ -101,7 +102,7 @@ async function challengeList(list, o) {
 }
 /*@end*/
 const missing = []
-const halt = (stage, extra = {}) => haltMissing({ event: 'upstream' }, stage, missing, extra)
+const halt = (stage, extra = {}) => haltMissing({ event: 'upstream' }, stage, missing, { ...extra, trace: awfTrace() })
 // 規則 12：給決策者的文件要過 check_rules --audience owner；writer 沒回報或沒過就 halted 交人
 const ruleCheck = (d) => {
   const rc = String(d.payload.rule_check || '').trim()
@@ -156,6 +157,6 @@ const docs = await tryAgent(`${CTX}\n\n## 派工單\n分析 agent 沒有寫檔�
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 if (!docs) { missing.push('write'); return halt('write', { before, after, claims }) }
 const ruleIssue = ruleCheck(docs)
-if (ruleIssue) return { event: 'upstream', halted: true, stage: 'write', halt_reason: ruleIssue, before, after, claims, docs }
+if (ruleIssue) return { trace: awfTrace(), event: 'upstream', halted: true, stage: 'write', halt_reason: ruleIssue, before, after, claims, docs }
 
-return { event: 'upstream', before, after, claims, refuted: doubted.map((f) => f.id), challenge, docs }
+return { trace: awfTrace(), event: 'upstream', before, after, claims, refuted: doubted.map((f) => f.id), challenge, docs }

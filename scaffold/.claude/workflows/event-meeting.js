@@ -14,6 +14,7 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 
 const A = args || {}
 for (const k of ['source', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
+awfInit({ run_dir: A.run_dir, stage: 'meeting', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
 const CTX = `會議來源：${A.source}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。每個事項都附原文位置（路徑:行號或時間戳）；不自編任務編號；不評價人。`
 // 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
 /*@snippet:challenge*/
@@ -97,7 +98,7 @@ async function challengeList(list, o) {
 }
 /*@end*/
 const missing = []
-const halt = (stage, extra = {}) => haltMissing({ event: 'meeting' }, stage, missing, extra)
+const halt = (stage, extra = {}) => haltMissing({ event: 'meeting' }, stage, missing, { ...extra, trace: awfTrace() })
 const ANGLES = [
   { key: 'action', type: 'action', ask: '交辦：誰、做什麼、期限（原文沒說期限就留空）。' },
   { key: 'decision', type: 'decision', ask: '已拍板的決議與由誰拍板；只列明確拍板的，討論中的不算。' },
@@ -130,4 +131,4 @@ const docs = await tryAgent(`${CTX}\n\n## 派工單\n寫會議摘要到 ${A.run_
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 if (!docs) { missing.push('write'); return halt('write', { items: all, refuted: doubted.map((i) => i.id) }) }
 
-return { event: 'meeting', items: all, refuted: doubted.map((i) => i.id), docs }
+return { trace: awfTrace(), event: 'meeting', items: all, refuted: doubted.map((i) => i.id), docs }

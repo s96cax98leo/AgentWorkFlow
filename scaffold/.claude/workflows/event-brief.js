@@ -22,6 +22,7 @@ const CRITERIA = /*@schema:criteria*/ {"type":"object","required":["status","sum
 
 const A = args || {}
 for (const k of ['brief', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
+awfInit({ run_dir: A.run_dir, stage: 'brief', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
 const CTX = `簡報（唯一指示來源）：${A.brief}\nrun 目錄：${A.run_dir}\n硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}＋簡報 §1。不自編任務編號；衍生工作放 derived_work。`
 const brief = (e) => e ? JSON.stringify({ status: e.status, summary: e.summary, artifacts: e.artifacts, open_questions: e.open_questions }) : 'null'
 // 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
@@ -142,7 +143,7 @@ function layerByDeps(items, o = {}) {
 }
 /*@end*/
 const missing = []
-const halt = (stage, extra = {}) => haltMissing({ event: 'brief' }, stage, missing, extra)
+const halt = (stage, extra = {}) => haltMissing({ event: 'brief' }, stage, missing, { ...extra, trace: awfTrace() })
 // 寫程式的子任務（code、test）轉 SDLC，本 workflow 不實作；和 tpm-planner 的 kind 定義一致
 const SDLC_KINDS = ['code', 'test']
 
@@ -150,12 +151,12 @@ phase('Plan')
 const plan = await tryAgent(`${CTX}\n\n## 派工單\n讀簡報全文，拆成子任務（payload subtasks，epic 用簡報短名）。kind=code 與 kind=test 的子任務只列出，標明「轉 SDLC」，本 workflow 不實作；依賴它們的其他子任務會等 SDLC 完成後再跑。不可逆節點（推 fork、寫上游、開 PR、刪資料、對外寄送）標在 acceptance。`,
   { label: 'plan', phase: 'Plan', agentType: NS + 'tpm-planner', schema: SUBTASKS })
 if (!plan) { missing.push('plan'); return halt('plan') }
-if (plan.status !== 'done') return { event: 'brief', stage: 'plan', halted: true, halt_reason: '拆工沒完成或有待決問題', plan }
+if (plan.status !== 'done') return { trace: awfTrace(), event: 'brief', stage: 'plan', halted: true, halt_reason: '拆工沒完成或有待決問題', plan }
 
 const subtasks = plan.payload.subtasks || []
 const ids = new Set(subtasks.map((s) => s.id))
 const unknown = unknownDeps(subtasks, ids)
-if (unknown.length) return { event: 'brief', stage: 'plan', halted: true, halt_reason: `相依指向不存在的子任務：${unknown.join('、')}`, plan }
+if (unknown.length) return { trace: awfTrace(), event: 'brief', stage: 'plan', halted: true, halt_reason: `相依指向不存在的子任務：${unknown.join('、')}`, plan }
 const toSdlc = subtasks.filter((s) => SDLC_KINDS.includes(s.kind))
 const sdlcIds = new Set(toSdlc.map((s) => s.id))
 const work = subtasks.filter((s) => !sdlcIds.has(s.id))
@@ -213,6 +214,7 @@ const accept = await tryAgent(`${CTX}\n\n## 派工單\n對簡報 §4（驗收標
 if (!accept) { missing.push('accept'); return halt('accept', { plan, to_sdlc: toSdlc, waiting, results, challenge, docs }) }
 
 return {
+  trace: awfTrace(),
   event: 'brief', plan, to_sdlc: toSdlc, waiting, results, challenge, docs, accept,
   ...(waiting.length ? { next: `子任務 ${waiting.map((s) => s.id).join('、')} 依賴轉 SDLC 的子任務，等 SDLC 合併後重跑 event-brief（或主 session 另派）處理。` } : {}),
 }

@@ -3,7 +3,8 @@
 //   2. 每個 agent() 的 schema：根是 object、required ⊆ properties（Workflow 的要求）、agentType 是 tpm-*／dev-*（可帶 plugin 命名空間）且定義檔存在；
 //      profile extensions 登記的使用者 agent 例外：沒有命名空間時檢查專案 .claude/agents/<名>.md 存在，其他 plugin 的不檢查定義檔
 //   3. 用依 schema 產生的假回傳把腳本從頭跑到尾，確定沒有 runtime 錯誤
-//   4. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
+//   4. 每張派工單都有 rules.md（含〈專案規則〉）、輸出語言，最後一行是「執行紀錄檔：<路徑>.md」；回傳帶 trace，筆數＝實際派出數
+//   5. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
 // 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>]
 //   agents 目錄預設依序找：--agents-dir、環境變數 AWF_PLUGIN_DIR／CLAUDE_PLUGIN_ROOT 的 agents/、專案 .claude/agents
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
@@ -35,6 +36,13 @@ const SAMPLE_ARGS = {
   decisions: ['同意只新增的測試修改'], issues: [{ target_id: 'spec §2', reason: '缺驗收條件' }],
   brief: 'briefs/sample_x.md', what: 'PR #999', source: 'meetings/x.md', target: 'PR 1', change: 'x', decision: 'x', script: 'x', date: '2026-10-12', pr: 1,
 }
+
+// 派工單的固定要求（I3：rules.md 與輸出語言；I6：最後一行是執行紀錄檔）
+const PROMPT_RULES = [
+  ['rules.md（含〈專案規則〉）', /\.claude\/teams\/rules\.md（含〈專案規則〉）/],
+  ['輸出語言', /輸出語言：/],
+  ['最後一行「執行紀錄檔：<路徑>.md」', /執行紀錄檔：\S+\/\S+\.md\s*$/],
+]
 
 function fake(schema) {
   if (!schema) return 'text'
@@ -79,6 +87,11 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
       labels.push(opts.label)
       prompts[opts.label] = typeof prompt === 'string' ? prompt : ''
       if (typeof prompt !== 'string' || !prompt) errs.push('agent() 的 prompt 空白')
+      else {
+        // I3／I6：每張派工單都要有 rules.md（含〈專案規則〉）、輸出語言，最後一行指定執行紀錄檔（challenge 片段的 awfInit／tryAgent 會加）
+        const lack = PROMPT_RULES.filter(([, rx]) => !rx.test(prompt)).map(([k]) => k)
+        if (lack.length) errs.push(`agent ${opts.label} 的派工單缺 ${lack.join('、')}（workflow 開頭要呼叫 awfInit，agent 一律透過 tryAgent 派）`)
+      }
       if (opts.phase && !titles.has(opts.phase)) errs.push(`opts.phase「${opts.phase}」不在 meta.phases`)
       if (opts.agentType && extAgents.has(opts.agentType)) {
         if (!opts.agentType.includes(':') && !virtualAgents.includes(opts.agentType) && !existsSync(join(projectAgents, `${opts.agentType}.md`)))
@@ -106,6 +119,12 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
     const fn = new (Object.getPrototypeOf(async function () {}).constructor)('args', ...Object.keys(api), body)
     out = await fn(args, ...Object.values(api))
     if (out === undefined) errs.push('腳本沒有 return 結果')
+    // I6：每個 return（含 halted、提早結束）都帶 trace，筆數＝實際派出數（缺件也列，ok=false）
+    else if (out && typeof out === 'object') {
+      if (!Array.isArray(out.trace)) errs.push('回傳沒有 trace（每個 return 都要帶 trace: awfTrace()）')
+      else if (out.trace.length !== agents) errs.push(`trace ${out.trace.length} 筆，實際派出 ${agents} 個 agent`)
+      else if (out.trace.some((t) => !t.record)) errs.push('trace 有沒有執行紀錄檔路徑的項目')
+    }
   } catch (e) { errs.push(`乾跑失敗：${e.message}`) }
   return { errs, agents, visited, labels, prompts, out }
 }

@@ -30,3 +30,5 @@ export const CONSISTENT = {
 export const SYNC_PLAN = (sync) => ENV({ task_id: 'sync-plan', branch: 'feature/demo', commits: [], files_changed: [], tests: [], sync })
 export const SYNC_APPLY = (sync, conflicts = []) => ENV({ task_id: 'sync', branch: sync.head_branch, commits: ['abc merge'], files_changed: [], tests: [{ command: 'verify', result: 'pass' }], conflicts, sync })
 export const TRANSIT = { strategy: 'transit', behind: 3, published: true, conflicts: ['src/a.ts'], transit_branch: 'merge/demo-into-main-20261012' }
+// 派工單去掉 challenge 片段加的共同前綴（## 共同規則…）與最後一行「執行紀錄檔：…」，只留 workflow 自己寫的本文
+export const taskBody = (p) => String(p || '').replace(/^## 共同規則[\s\S]*?\n\n/, '').replace(/\n*執行紀錄檔：[^\n]*\s*$/, '')

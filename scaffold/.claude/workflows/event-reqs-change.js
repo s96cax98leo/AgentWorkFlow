@@ -14,6 +14,7 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 
 const A = args || {}
 for (const k of ['change', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
+awfInit({ run_dir: A.run_dir, stage: 'reqs-change', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
 const CTX = `需求變動：${A.change}\n目標 repo：${A.repo || '{{REPOS_DIR}}（見 rules.md 的專案規則）'}\nrun 目錄：${A.run_dir}\n只讀（需求來源永遠唯讀）。硬規則：.claude/teams/rules.md；輸出語言：{{OUTPUT_LANGUAGE}}。`
 // 規則 26：agent 沒交件記為 missing，不當成「沒有差異」或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
 /*@snippet:challenge*/
@@ -97,14 +98,14 @@ async function challengeList(list, o) {
 }
 /*@end*/
 const missing = []
-const halt = (stage, extra = {}) => haltMissing({ event: 'reqs-change' }, stage, missing, extra)
+const halt = (stage, extra = {}) => haltMissing({ event: 'reqs-change' }, stage, missing, { ...extra, trace: awfTrace() })
 
 phase('Diff')
 const diff = await tryAgent(`${CTX}\n\n## 派工單\n逐條列出新增、修改、刪除的需求（Story ID、欄位、舊值、新值），type=change。payload 用 items。`,
   { label: 'diff', phase: 'Diff', agentType: NS + 'tpm-researcher', schema: ITEMS })
 if (!diff) { missing.push('diff'); return halt('diff') }
 const changes = diff.payload.items || []
-if (!changes.length) return { event: 'reqs-change', diff, note: '沒有差異' }
+if (!changes.length) return { trace: awfTrace(), event: 'reqs-change', diff, note: '沒有差異' }
 
 const AREAS = [
   { key: 'specs', ask: '目標 repo 的 specs/、契約、測試（e2e/tests 的 Story ID）。' },
@@ -136,4 +137,4 @@ const docs = await tryAgent(`${CTX}\n\n## 派工單\n寫影響清單 ${A.run_dir
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 if (!docs) { missing.push('write'); return halt('write', { changes, impact: items }) }
 
-return { event: 'reqs-change', changes, impact: items, refuted: doubted.map((i) => i.id), docs }
+return { trace: awfTrace(), event: 'reqs-change', changes, impact: items, refuted: doubted.map((i) => i.id), docs }

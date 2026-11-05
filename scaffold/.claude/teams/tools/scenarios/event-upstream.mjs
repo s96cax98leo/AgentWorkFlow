@@ -1,5 +1,5 @@
 // event-upstream.js 的乾跑情境：缺件（規則 26）、撞號、給決策者文件的 check_rules 核對（規則 12）。
-import { ENV } from './_helpers.mjs'
+import { ENV, taskBody } from './_helpers.mjs'
 
 const F = (id) => ({ id, severity: 'important', claim: 'c', location: 'a.ts:1', recommendation: 'r', confidence: 0.9 })
 const halted = (label) => (r) => [
@@ -24,8 +24,9 @@ export default [
       const e = []
       if (r.out.halted) e.push(`不該 halted：${r.out.halt_reason}`)
       if (!(r.out.refuted || []).includes('conflict:f1') || (r.out.refuted || []).includes('impact:f1')) e.push(`refuted 應含 conflict:f1、不含 impact:f1：${JSON.stringify(r.out.refuted)}`)
-      // tpm-researcher 上游模式不寫檔：派工單不能叫它寫進 run 目錄（落檔由 tpm-writer 做）
-      for (const l of ['analyze:conflict', 'snapshot:before', 'snapshot:after']) if ((r.prompts[l] || '').includes('/tmp/run/')) e.push(`${l}（沒有 Write）仍被要求寫檔`)
+      // tpm-researcher 上游模式不寫成果檔：派工單本文不能叫它寫進 run 目錄（落檔由 tpm-writer 做）；
+      // 共同前綴（context.md）與最後一行的執行紀錄檔是每張派工單都有的，不算（taskBody 去掉）
+      for (const l of ['analyze:conflict', 'snapshot:before', 'snapshot:after']) if (taskBody(r.prompts[l]).includes('/tmp/run/')) e.push(`${l}（沒有 Write）仍被要求寫檔`)
       if (!/upstream-before\.md/.test(r.prompts.write || '')) e.push('writer 沒有落上游快照')
       return e
     },

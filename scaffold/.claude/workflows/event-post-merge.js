@@ -18,6 +18,7 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 
 const A = args || {}
 for (const k of ['repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
+awfInit({ run_dir: A.run_dir, stage: 'post-merge', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md' })
 const GH = A.gh_repo || '{{FORK_REPO}}'
 const RUNS = '{{RUNS_DIR}}'
 const AUDIT = `${RUNS}/merge-audit.jsonl`
@@ -107,7 +108,7 @@ async function challengeList(list, o) {
 }
 /*@end*/
 const missing = []
-const halt = (stage, extra = {}) => haltMissing({ event: 'post-merge' }, stage, missing, extra)
+const halt = (stage, extra = {}) => haltMissing({ event: 'post-merge' }, stage, missing, { ...extra, trace: awfTrace() })
 // 規則 12：給決策者的文件要過 check_rules --audience owner；writer 沒回報或沒過就 halted 交人
 const ruleCheck = (d) => {
   const rc = String(d.payload.rule_check || '').trim()
@@ -125,7 +126,7 @@ const watch = await tryAgent(
 if (!watch) { missing.push('watch'); return halt('watch', { reason: 'watcher 沒有交件；狀態不明，交主 session 判斷是否先凍結自動合併' }) }
 const fs = watch.payload.findings || []
 const problems = fs.filter((f) => ['blocker', 'important', 'should_fix'].includes(f.severity))
-if (!problems.length) return { event: 'post-merge', ok: true, watch, note: 'main 的 CI 正常，沒有要 revert 的合併' }
+if (!problems.length) return { trace: awfTrace(), event: 'post-merge', ok: true, watch, note: 'main 的 CI 正常，沒有要 revert 的合併' }
 const freeze = problems.some((f) => f.severity === 'blocker')
 
 phase('Challenge')
@@ -156,6 +157,7 @@ const freezeDoc = freeze ? (docs.payload.documents || []).find((d) => /凍結/.t
 const freezeIssue = freeze && !freezeDoc ? 'writer 沒有回報凍結旗標的實際路徑（documents 裡 notes 含「凍結」的那份）' : null
 
 return {
+  trace: awfTrace(),
   event: 'post-merge',
   ok: false,
   ...(ruleIssue || freezeIssue ? { halted: true, stage: 'write', halt_reason: [ruleIssue, freezeIssue].filter(Boolean).join('；') } : {}),
