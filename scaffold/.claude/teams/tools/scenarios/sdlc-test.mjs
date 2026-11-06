@@ -1,5 +1,5 @@
 // sdlc-test.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { CRIT, SUB_PLANS, crit, extScenario } from './_helpers.mjs'
+import { CRIT, SUB_PLANS, crit, extScenario, recipeScenarios } from './_helpers.mjs'
 
 // 三個分片都驗 abc（CRIT 一律填 abc）、彙整照抄：B-1／B-5 的情境以它為基礎只改一處
 const SHARD1 = {
@@ -160,4 +160,32 @@ export default [
       fakes: { 'verify#1': 'THROW' },
       expect: (r) => (r.out && r.out.halted && (r.out.missing || []).includes('verify#1') ? [] : [`verify#1 throw 要 halted 並列進 missing：${JSON.stringify(r.out && { halted: r.out.halted, missing: r.out.missing })}`]),
     },
-  ]
+      // recipe：設計／安全審查依 recipe.test、verifier 依 modes 加回歸／等價／基線；沒有 design 段時驗收條件來源是 intent.md
+    ...recipeScenarios('test', (n) => ({
+      args: { has_ui: false, has_security: false },
+      expect: (r) => {
+        const e = []
+        const v = Object.entries(r.prompts).filter(([l]) => l.startsWith('verify')).map(([, p]) => p).join('\n')
+        const sec = n === 'deps'
+        if (sec !== r.labels.includes('security-review')) e.push(`${n}（has_security=false）${sec ? '一定要' : '不該'}派 security-review：${r.labels.join(',')}`)
+        if (r.labels.includes('design-review')) e.push(`${n}（has_ui=false）不該派 design-review`)
+        const modes = { bugfix: '回歸', change: '回歸', hotfix: '回歸', deps: '回歸', revert: '回歸', refactor: '等價', perf: '基線' }
+        if (modes[n] && !v.includes(modes[n])) e.push(`${n} 的驗證要加「${modes[n]}」`)
+        if (!modes[n] && /加跑受影響舊驗收條件|characterization|量測基線/.test(v)) e.push(`${n} 不該加額外驗證模式`)
+        const design = ['feature', 'change', 'perf'].includes(n)
+        if (design ? !/spec\.md/.test(v) : (!/intent\.md/.test(v) || /spec\.md/.test(v))) e.push(`${n} 的驗收條件來源應為 ${design ? 'spec.md' : 'intent.md（不提 spec.md）'}`)
+        if (!/run_brief\.py/.test(v)) e.push('verifier 派工單要求用 run_brief.py')
+        return e
+      },
+    })),
+    {
+      name: 'recipe:bugfix+ui',
+      args: { recipe: 'bugfix', modifiers: ['ui'], has_ui: false, has_security: false },
+      expect: (r) => (r.labels.includes('design-review') && !r.out.halted ? [] : [`ui modifier 在 has_ui=false 時也要派 design-review：${r.labels.join(',')}`]),
+    },
+    {
+      name: 'recipe:test-only 有畫面也不做設計審查',
+      args: { recipe: 'test-only', has_ui: true, has_security: true },
+      expect: (r) => (!r.labels.includes('design-review') && r.labels.includes('security-review') ? [] : [`test-only：design_review=never、security_review=auto：${r.labels.join(',')}`]),
+    },
+]

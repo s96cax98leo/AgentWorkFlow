@@ -5,7 +5,7 @@
 用法：
   python3 tests/scrub_check.py                       # 掃整個 AgentWorkFlow
   python3 tests/scrub_check.py README.md docs tests  # 只掃指定的檔案或目錄（相對 repo 根目錄）
-任何命中就以 1 退出，並列出「檔案:行號:內容」。排除 .git、__pycache__、node_modules、根目錄的本機目錄（_tpm、graft、.claude）、兩份掃描清單本身與二進位檔。
+任何命中就以 1 退出，並列出「檔案:行號:內容」。排除 .git、__pycache__、node_modules、根目錄的本機目錄（_tpm、graft、.claude、.idea）、兩份掃描清單本身與二進位檔。
 清單裡的 ERE 只用到 Python re 也支援的語法（沒有 [[:space:]] 這類 POSIX 字元類）。
 """
 
@@ -21,7 +21,7 @@ TERMS = ROOT / "tests" / "scrub_terms.txt"
 LOCAL_TERMS = ROOT / "tests" / "scrub_terms.local.txt"
 SKIP_DIRS = {".git", "__pycache__", "node_modules"}
 # repo 根目錄下只存在本機、不進版控的目錄（run 紀錄、graft 快取、本機 settings 與 agent worktree）
-LOCAL_ROOT_DIRS = {"_tpm", "graft", ".claude"}
+LOCAL_ROOT_DIRS = {"_tpm", "graft", ".claude", ".idea"}
 
 
 def load_patterns() -> list[re.Pattern]:

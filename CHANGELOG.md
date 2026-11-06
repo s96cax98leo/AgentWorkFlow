@@ -4,6 +4,45 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
+這一版讓 SDLC 依需求類型分流、每個 agent 都留下執行紀錄，並精簡 token。起因：每次都跑完整 7 段很耗時間與 token，修一個 bug 也派 25–35 個 agent。
+
+### 破壞性變更
+
+- **publish.py 依 recipe 檢查**：推送前用實際 diff 反查 run 的 recipe（docs 改了程式、碰到 migration 沒有 design、改依賴沒有安全審查、spike 要推送），不夠就拒推，要先 `save_run.py escalate`。閘門鏈改依 recipe 判斷：recipe 裡有、run.json 卻沒有的段一律判錯（原本會略過）。
+- **4 個唯讀角色新增 Write**：tpm-reviewer、tpm-skeptic、dev-release-watcher、tpm-planner 要寫自己的執行紀錄；hook 只准它們用 Write 寫當前 run 某一段底下的 `.md`（`<runs_dir>/<run>/<段>/`），shell 一律不能寫檔（重導向、cp、sed -i、直譯器內嵌寫檔、PowerShell 寫檔 cmdlet 等；`run_brief.py --log` 指到 runs_dir 的 .log 例外）。dev-merge-steward 仍沒有 Write。
+- **hook 對所有 team agent 更嚴**：`save_run.py` 只能跑 `status`；不能寫任何位置的 `.claude/teams/`、`methodology.json`、`guard.config.json`（用這套流程開發會改到 `.claude/teams/` 的專案，這部分要由主 session 改）；不能寫 runs_dir 的 `run.json`、`<段>.json`、`context.md` 與任何 `執行紀錄索引.md`。
+- **信封有長度上限**：summary 400 字、evidence 12 則、evidence.result 300 字；超過的交件會被 schema 與 hook 擋下。
+- **intent 必要節**：`save_run.py stage plan` 檢查 intent.md 有沒有目標、範圍、不做的事、驗收條件（加上 plan_mode 專屬的節），缺節不能核准。內建 profile 的 intent 範本已改成這四節。
+- **閘門依 recipe 核對（獨立審查後補強）**：
+  - 有 recipe 的 run：workflow 回傳的 recipe（name、modifiers、段）要和 run.json 鎖定的一致，不一致記成 invalid；回傳一定要帶 trace，trace 的 `ok` 不是 true 算缺件；recipe 要求的角色（`security_review`／`design_review=always` 的審查者、dev-verifier、每條 deliver 軸）沒交件就不能政策核准。
+  - 開發規範 profile 只認工具所在專案的 `.claude/teams/methodology.json`，不再從 run 目錄往上找；profile 不合規則（例如 recipe 沒有 plan）一律判錯。
+  - 核准（plan 以外）、publish、`merge_gate.py --recipe` 會用 profile 重算 recipe，run.json 的 `recipe.resolved` 比重算結果鬆（少段、多 build_kinds、拿掉 followup 等）就拒絕。
+  - `merge_gate.py --recipe` 只接受 run.json，而且 plan 要已核准；稽核紀錄多記 recipe 名稱與雜湊。
+  - `save_run.py close` 要整條流程走完（各段 done、有閘門的已核准、merge done）；hotfix 的後續義務不會因 escalate 消失；後續 run 不能是已取消或本身也是 hotfix 的 run。
+  - 舊 run（沒有 recipe）plan 核准後，不能用 `stage plan` 補記比 feature 少段的 recipe。
+  - diff 分類更嚴：`.txt` 只有在 docs/ 底下才算文件；巢狀的 `spec/`、`test/` 目錄不算測試；agent 與 CI 設定（`.claude/`、`.github/`、`CLAUDE.md`）要安全審查；補上多種語言的 migration 與依賴宣告；migration 與依賴宣告也算產品程式。
+- **workflow 回傳多了 `trace`**，派工單開頭多了一段固定的共同規則、最後一行是執行紀錄檔路徑；「派工來源」那段改放 rules.md 規則 27。
+
+### 新增
+
+- **recipe 分流**：profile 新增 `recipes`、`modifiers`、`plan_modes`、`stages.plan.required_sections`。內建 11 個 recipe（feature、bugfix、change、hotfix、refactor、deps、docs、test-only、perf、spike、revert）與 5 個 modifier（ui、security、migration、public_api、large）。`sdlc-plan` 先派 tpm-planner 做 triage（payload `triage`），由人在 plan 閘門選定；之後只能用 `save_run.py escalate` 加嚴，降級一律拒絕。
+- **save_run.py**：`escalate`、`followup`、`close`（hotfix 沒記錄後續 run 不能結案）；`init` 寫 `context.md` 給所有 agent 共用；`stage` 依 trace 產生 `執行紀錄索引.md`。
+- **merge_gate.py `--recipe`**：依 diff 形狀判斷 recipe 不夠時 hold。
+- **tools/recipe.py、snippets/recipe.js**：同一套解析規則，`golden-set/recipes/` 兩邊都跑。
+- **tools/run_brief.py**：先濃縮指令輸出再給 agent 讀（Read less），完整 log 另存。
+- **rules.md**：規則 27 派工來源、28 執行紀錄、29 intent 與 rules 不可省、30 語體（只用於 agent 之間的信封，參考 caveman；派工單與給人看的文件不壓縮語體）。
+- **tests/check_budget.py**、**tests/check_recipes.py**。
+
+### 升級步驟
+
+1. `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins`。
+2. 在專案根目錄跑 `python3 <AgentWorkFlow>/init.py --target . --upgrade`，看它列出的缺少欄位（`recipes`、`modifiers`）；要用分流就加 `--adopt-new-fields` 補上，不補的話一律走 feature 完整流程。
+3. 跑 `python3 .claude/teams/tools/build.py`。
+4. 自訂過 intent 範本的專案：確認範本有目標、範圍、不做的事、驗收條件四節，或在 `stages.plan.required_sections` 寫你自己的節名。
+5. 進行中的 run（0.2.0 建的）沒有 recipe，一律當成 feature 繼續跑。
+
 ## [0.2.0]
 
 這一版是整體強化：可以升級既有專案、hook 更不容易鎖死使用者也更難繞過、角色與 command 精簡。

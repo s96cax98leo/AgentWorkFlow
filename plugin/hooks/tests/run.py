@@ -512,7 +512,7 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     both(2, "擴充 agent（套 tpm-reviewer）不能開 PR", XWS, "gh pr create --repo acme-fork/app --title t --body b", "acme-db-reviewer")
     both(0, "擴充 agent（套 tpm-reviewer）可以唯讀查 git", XWS, "git log --oneline -5", "acme-db-reviewer")
     run(P, 2, "擴充 agent（套 tpm-reviewer）不能寫 src/", edit(XWS / "src/a.py", "acme-db-reviewer", XWS), XWS)
-    run(P, 0, "擴充 agent（套 tpm-reviewer）可以寫 run 目錄", edit(XWS / "_tpm/runs/r/ext-db.md", "acme-db-reviewer", XWS), XWS)
+    run(P, 0, "擴充 agent（套 tpm-reviewer）可以寫 run 目錄", edit(XWS / "_tpm/runs/r/deliver/ext-db.md", "acme-db-reviewer", XWS), XWS)
     both(2, "其他 plugin 的擴充 agent（套 dev-security-reviewer）不能 push", XWS, "git push origin feature/x", "my-plugin:sec-check")
     both(2, "擴充 agent 對應到 merge-steward 不生效：改套 tpm-reviewer，不能合併", XWS, "gh pr merge 3 --repo acme-fork/app --squash --match-head-commit abc", "acme-sneaky")
     run(P, 2, "擴充 agent 對應到 dev-implementer 不生效：改套 tpm-reviewer，不能寫 src/", edit(XWS / "src/a.py", "acme-writer", XWS), XWS)
@@ -718,7 +718,7 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
             pair(0, f"{tag} 讀 PR 放行", "gh pr view 3 --repo acme-fork/app", agent=a)
             pair(2, f"{tag} 不能跑 merge_gate check", "python3 .claude/teams/tools/merge_gate.py check --pr 3", agent=a)
             pair(2, f"{tag} 不能寫 run.json", "python3 -c \"open('_tpm/runs/x/run'+'.json','w').write('{}')\"", agent=a)
-            tool(0, f"{tag} 寫 run 目錄放行", "Write", {"file_path": str(H1W / "_tpm/runs/r1/notes.md")}, a)
+            tool(0, f"{tag} 寫 run 目錄放行", "Write", {"file_path": str(H1W / "_tpm/runs/r1/deliver/notes.md")}, a)
             tool(2, f"{tag} 不能寫產品程式", "Write", {"file_path": str(H1R / "src/a.py")}, a)
             tool(2, f"{tag} 不能寫 docs/", "Write", {"file_path": str(H1W / "docs/a.md")}, a)
             tool(2, f"{tag} 不能寫 run.json", "Write", {"file_path": str(H1W / "_tpm/runs/x/run.json")}, a)
@@ -731,7 +731,7 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     # 擴充 agent 對應到舊名：照新角色（tpm-reviewer）套用，不能寫產品程式
     AXW = mkws("ws-ext-alias", {"extension_agents": {"acme-old-review": "dev-pr-reviewer"}})
     run(P, 2, "R3 擴充 agent 對應舊名 dev-pr-reviewer：照 tpm-reviewer 不能寫 src/", edit(AXW / "src/a.py", "acme-old-review", AXW), AXW)
-    run(P, 0, "R3 擴充 agent 對應舊名 dev-pr-reviewer：可以寫 run 目錄", edit(AXW / "_tpm/runs/r/x.md", "acme-old-review", AXW), AXW)
+    run(P, 0, "R3 擴充 agent 對應舊名 dev-pr-reviewer：可以寫 run 目錄", edit(AXW / "_tpm/runs/r/deliver/x.md", "acme-old-review", AXW), AXW)
     both(2, "R3 擴充 agent 對應舊名 dev-pr-reviewer：不能 push", AXW, "git push origin feature/x", "acme-old-review")
 
     # freeze_file 設在 writer_dirs 以外：tpm-writer 照實際設定的路徑凍結；dev-release-watcher 不再是 freeze_writer
@@ -752,6 +752,180 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     pair(2, "R3 tpm-writer 用 shell 寫自訂 freeze_file", "echo '{\"frozen\": true}' > ops/merge.freeze.json",
          "Set-Content -Path ops/merge.freeze.json -Value '{\"frozen\": true}'", agent=WRT, w=FWS)
     pair(0, "R3 tpm-writer 讀自訂 freeze_file", "cat ops/merge.freeze.json", "Get-Content ops/merge.freeze.json", agent=WRT, w=FWS)
+
+    # ------------------------------------------------------------ I6：只寫執行紀錄的角色（awf_config.RECORD_ONLY_ROLES）
+    # tpm-reviewer、tpm-skeptic、tpm-planner、dev-release-watcher 有 Write 只為了寫 <runs_dir>/<段>/<label>.md；
+    # 其他一律擋（repo 檔、run.json、merge-audit.jsonl、凍結檔、其他 .json），shell 寫檔照唯讀規則擋
+    IWS = mkws("ws-records", {"repos_dir": "repos", "auto_merge": {"enabled": True, "repos": {"acme-fork/app": "low"}}})
+    (IWS / "repos" / "app").mkdir(parents=True)
+    RV, SK, PL, RW = (f"agent-workflow:{r}" for r in ("tpm-reviewer", "tpm-skeptic", "tpm-planner", "dev-release-watcher"))
+
+    def rec(want: int, name: str, path: Path, agent: str, content: str = "# 紀錄\n") -> None:
+        tool(want, name, "Write", {"file_path": str(path), "content": content}, agent, w=IWS)
+
+    rec(0, "I6 紀錄 tpm-reviewer 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/deliver/review-spec.md", RV)
+    rec(0, "I6 紀錄 tpm-skeptic 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/merge/skeptic.md", SK)
+    rec(0, "I6 紀錄 tpm-planner 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/plan/planner.md", PL)
+    rec(0, "I6 紀錄 dev-release-watcher 寫 runs_dir 的 .md 放行", IWS / "_tpm/runs/r1/post-merge/watcher.md", RW)
+    rec(2, "I6 紀錄 dev-release-watcher 寫 repo 檔擋", IWS / "repos/app/src/a.py", RW)
+    rec(2, "I6 紀錄 dev-release-watcher 寫 repo 的 .md 擋", IWS / "repos/app/docs/a.md", RW)
+    rec(2, "I6 紀錄 tpm-reviewer 寫 repo 檔擋", IWS / "repos/app/src/a.py", RV)
+    rec(2, "I6 紀錄 tpm-planner 寫 docs/ 擋", IWS / "docs/a.md", PL)
+    rec(2, "I6 紀錄 tpm-skeptic 寫 run.json 擋", IWS / "_tpm/runs/r1/run.json", SK, "{}")
+    rec(2, "I6 紀錄 tpm-reviewer 寫 runs_dir 的其他 .json 擋", IWS / "_tpm/runs/r1/deliver/verdict.json", RV, "{}")
+    rec(2, "I6 紀錄 tpm-reviewer 寫 merge-audit.jsonl 擋", IWS / "_tpm/runs/merge-audit.jsonl", RV, "{}\n")
+    rec(2, "I6 紀錄 dev-release-watcher 寫 merge-audit.jsonl 擋", IWS / "_tpm/runs/merge-audit.jsonl", RW, "{}\n")
+    rec(2, "I6 紀錄 dev-release-watcher 寫凍結檔擋（即使 frozen=true）", IWS / "_tpm/runs/auto-merge.freeze.json", RW, '{"frozen": true}')
+    rec(2, "I6 紀錄 tpm-skeptic 寫凍結檔擋", IWS / "_tpm/runs/auto-merge.freeze.json", SK, '{"frozen": true}')
+    rec(2, "I6 紀錄 tpm-planner 用 ../ 跳出 runs_dir 擋", IWS / "_tpm/runs/r1/../../../repos/app/x.md", PL)
+    rec(2, "I6 紀錄 tpm-reviewer 寫 .MD（大小寫不同，白名單照原樣比對）擋", IWS / "_tpm/runs/r1/x.MD", RV)
+    tool(2, "I6 紀錄 tpm-reviewer 用 Edit 改 repo 檔擋", "Edit", {"file_path": str(IWS / "repos/app/src/a.py")}, RV, w=IWS)
+    for who in (RV, SK, PL, RW):
+        short = who.rsplit(":", 1)[-1]
+        run(S, 2, f"I6 紀錄 {short} 用 Bash 重導寫檔擋", sh_in(IWS, "echo x > _tpm/runs/r1/x.md", who), IWS)
+        run(S, 2, f"I6 紀錄 PS：{short} 用 Set-Content 寫檔擋", ps_in(IWS, "Set-Content -Path _tpm/runs/r1/x.md -Value x", who), IWS)
+    run(S, 2, "I6 紀錄 tpm-reviewer 用 Bash tee 寫 log 擋", sh_in(IWS, "npm test 2>&1 | tee test.log", RV), IWS)
+    run(S, 2, "I6 紀錄 tpm-skeptic 用 Bash >> 附加寫檔擋", sh_in(IWS, "git log -1 >> notes.txt", SK), IWS)
+    run(S, 2, "I6 紀錄 PS：dev-release-watcher 用 Out-File 寫檔擋", ps_in(IWS, "gh run list | Out-File -FilePath runs.txt", RW), IWS)
+    run(S, 2, "I6 紀錄 PS：tpm-planner 用 > 重導寫檔擋", ps_in(IWS, "Get-Date > _tpm/runs/r1/x.md", PL), IWS)
+    run(S, 0, "I6 紀錄 tpm-reviewer 丟 /dev/null 與 2>&1 放行", sh_in(IWS, "npm test > /dev/null 2>&1", RV), IWS)
+    run(S, 0, "I6 紀錄 PS：tpm-reviewer 丟 $null 放行", ps_in(IWS, "npm test > $null", RV), IWS)
+    run(S, 0, "I6 紀錄 tpm-skeptic 引號內的 > 不是重導，放行", sh_in(IWS, "jq '.items | length > 1' a.json", SK), IWS)
+    run(S, 0, "I6 紀錄 dev-release-watcher 讀 CI 狀態放行", sh_in(IWS, "gh run list --repo acme-fork/app --limit 5", RW), IWS)
+    run(S, 0, "I6 紀錄 對照：tpm-writer 不在名單，shell 規則不變", sh_in(IWS, "echo x > _tpm/runs/r1/x.md", WRT), IWS)
+    run(S, 0, "I6 紀錄 對照：tpm-researcher 不在名單，shell 規則不變", sh_in(IWS, "echo x > _tpm/runs/r1/x.md", "agent-workflow:tpm-researcher"), IWS)
+    rec(0, "I6 紀錄 舊名 dev-pr-reviewer（套 tpm-reviewer）寫 .md 放行", IWS / "_tpm/runs/r1/deliver/pr.md", "agent-workflow:dev-pr-reviewer")
+    rec(2, "I6 紀錄 舊名 dev-pr-reviewer（套 tpm-reviewer）寫 .json 擋", IWS / "_tpm/runs/r1/deliver/x.json", "agent-workflow:dev-pr-reviewer", "{}")
+
+    # ------------------------------------------------------------ 審查修正：I2 save_run 寫入子指令、I3 紀錄角色 shell 寫檔、
+    # I4 紀錄角色 Write 範圍、B2 .claude/teams 與 methodology.json、I5 runs_dir 的 <段>.json
+    SR = "python3 .claude/teams/tools/save_run.py"
+    RSR = "agent-workflow:tpm-researcher"
+    # I2：team agent 對 save_run.py 只能跑 status、--selftest
+    for sub in ("stage _tpm/runs/x test", "escalate _tpm/runs/x --recipe feature --by a --at t --reason r",
+                "followup _tpm/runs/x --run _tpm/runs/y --by a --at t", "close _tpm/runs/x --by a --at t", "init _tpm/runs/x --event sdlc"):
+        pair(2, f"I2 agent save_run {sub.split()[0]} 擋", f"{SR} {sub}", agent=WRT)
+    pair(2, "I2 tpm-researcher save_run stage（< 輸入）擋", f"{SR} stage _tpm/runs/x test < r.json", agent=RSR)
+    pair(2, "I2 agent 用 python -c import save_run 擋", "python3 -c \"import sys; sys.path.insert(0,'t'); import save_run; save_run.main(['stage'])\"", agent=IMP)
+    pair(0, "I2 agent save_run status 放行", f"{SR} status _tpm/runs/x", agent=WRT)
+    pair(0, "I2 agent save_run --selftest 放行", f"{SR} --selftest", agent=IMP)
+    pair(0, "I2 agent 讀 save_run.py 原始碼放行", "grep -n stage .claude/teams/tools/save_run.py", "Select-String stage .claude/teams/tools/save_run.py", agent=RSR)
+    pair(0, "I2 主 session save_run stage 放行", f"{SR} stage _tpm/runs/x test < r.json", f"Get-Content r.json | {SR} stage _tpm/runs/x test")
+    pair(0, "I2 主 session save_run escalate 放行", f"{SR} escalate _tpm/runs/x --recipe feature --by a --at t --reason r")
+
+    # I3：紀錄角色（tpm-reviewer、tpm-skeptic、tpm-planner、dev-release-watcher）在 shell 一律不能寫檔
+    for want, name, bash, ps in [
+        (2, "cp 到 src", "cp x src/app.py", "Copy-Item x src/app.py"),
+        (2, "mv", "mv a.py b.py", "Move-Item a.py b.py"),
+        (2, "python -c 寫檔", "python3 -c 'open(\"f\",\"w\").write(\"1\")'", "python3 -c 'open(\"f\",\"w\").write(\"1\")'"),
+        (2, "node -e 寫檔", "node -e \"require('fs').writeFileSync('f','x')\"", "node -e \"require('fs').writeFileSync('f','x')\""),
+        (2, "sed -i", "sed -i 's/a/b/' src/a.py", "sed -i 's/a/b/' src/a.py"),
+        (2, "perl -pi", "perl -pi -e 's/a/b/' src/a.py", "perl -pi -e 's/a/b/' src/a.py"),
+        (2, "install／rsync", "install -m 644 x src/a.py", "rsync x src/a.py"),
+        (2, "dd of=", "dd if=/dev/zero of=src/a.py count=1", "dd if=x of=src/a.py"),
+        (2, "truncate／touch", "truncate -s 0 src/a.py", "touch src/a.py"),
+        (2, "ln", "ln -sf /etc/passwd src/a.py", "ln -s x y"),
+        (2, "git checkout／restore 寫工作樹", "git checkout -- src/a.py", "git restore src/a.py"),
+        (2, "git apply", "git apply fix.patch", "git apply fix.patch"),
+        (2, "bash -c 包一層 cp", "bash -c 'cp x src/a.py'", "bash -c 'cp x src/a.py'"),
+        (2, "Set-Content／New-Item", "tee src/a.py < x", "New-Item -Path src/a.py -Value x"),
+        (2, "PS Out-File／Rename-Item", "echo x | tee -a src/a.py", "Rename-Item a.py b.py"),
+        (2, "run_brief --log 不在 runs_dir", "python3 .claude/teams/tools/run_brief.py --log src/x.log -- npm test",
+         "python3 .claude/teams/tools/run_brief.py --log src/x.log -- npm test"),
+        (2, "run_brief --log 不是 .log", "python3 .claude/teams/tools/run_brief.py --log _tpm/runs/r1/test/logs/x.md -- npm test",
+         "python3 .claude/teams/tools/run_brief.py --log _tpm/runs/r1/test/logs/x.md -- npm test"),
+        (2, "run_brief 沒帶 --log", "python3 .claude/teams/tools/run_brief.py -- npm test", "python3 .claude/teams/tools/run_brief.py -- npm test"),
+        (2, "run_brief 內層指令寫檔", "python3 .claude/teams/tools/run_brief.py --log _tpm/runs/r1/test/logs/a.log -- cp x src/a.py",
+         "python3 .claude/teams/tools/run_brief.py --log _tpm/runs/r1/test/logs/a.log -- cp x src/a.py"),
+        (0, "跑測試放行", "npm test", "npm test"),
+        (0, "run_brief --log 在 runs_dir 的 .log 放行", "python3 .claude/teams/tools/run_brief.py --log _tpm/runs/r1/test/logs/a.log -- npm test",
+         "python3 .claude/teams/tools/run_brief.py --log _tpm/runs/r1/test/logs/a.log -- npm test"),
+        (0, "唯讀 git 放行", "git diff --stat HEAD~1", "git log --oneline -3"),
+        (0, "git apply --check 放行", "git apply --check fix.patch", "git apply --stat fix.patch"),
+        (0, "python -c 讀檔放行", "python3 -c \"print(open('a.txt').read())\"", "python3 -c \"print(open('a.txt').read())\""),
+    ]:
+        for who in (RV, RW):
+            short = who.rsplit(":", 1)[-1]
+            run(S, want, f"I3 {short} {name}", sh_in(IWS, bash, who), IWS)
+            run(S, want, f"I3 PS：{short} {name}", ps_in(IWS, ps, who), IWS)
+    run(S, 2, "I3 tpm-skeptic heredoc 餵 python 寫檔", sh_in(IWS, "python3 - <<'EOF'\nopen('src/a.py','w').write('x')\nEOF", SK), IWS)
+    run(S, 0, "I3 對照：dev-implementer 用 cp 不受紀錄角色規則限制", sh_in(IWS, "cp x repos/app/src/a.py", IMP), IWS)
+    run(S, 0, "I3 PS：對照：dev-implementer 用 Copy-Item 不受紀錄角色規則限制", ps_in(IWS, "Copy-Item x repos/app/src/a.py", IMP), IWS)
+
+    # I4：紀錄角色的 Write 只能寫 <runs_dir>/<run>/<段>/<檔名>.md
+    rec(0, "I4 紀錄 tpm-skeptic 寫 <run>/test/<label>.md 放行", IWS / "_tpm/runs/r1/test/skeptic-1.md", SK)
+    rec(0, "I4 紀錄 tpm-reviewer 寫 <run>/pr-review/<label>.md 放行", IWS / "_tpm/runs/r1/pr-review/lens-bugs.md", RV)
+    rec(0, "I4 紀錄 tpm-planner 寫 <run>/design-revise/<label>.md 放行", IWS / "_tpm/runs/r1/design-revise/p.md", PL)
+    rec(2, "I4 紀錄 tpm-reviewer 寫 runs_dir 根的 .md 擋", IWS / "_tpm/runs/notes.md", RV)
+    rec(2, "I4 紀錄 tpm-reviewer 寫 <run>/x.md（少一層）擋", IWS / "_tpm/runs/r1/x.md", RV)
+    rec(2, "I4 紀錄 tpm-skeptic 寫不是段名的目錄擋", IWS / "_tpm/runs/r1/evil/x.md", SK)
+    rec(2, "I4 紀錄 tpm-planner 寫 context.md 擋", IWS / "_tpm/runs/r1/plan/context.md", PL)
+    rec(2, "I4 紀錄 dev-release-watcher 寫 執行紀錄索引.md 擋", IWS / "_tpm/runs/r1/post-merge/執行紀錄索引.md", RW)
+    rec(2, "I4 紀錄 tpm-reviewer 寫 <run>/context.md 擋", IWS / "_tpm/runs/r1/context.md", RV)
+
+    # B2：team agent 寫任何位置的 .claude/teams/、methodology.json、guard.config.json 一律擋；主 session 不受影響
+    for who in (RSR, WRT, IMP, RV):
+        short = who.rsplit(":", 1)[-1]
+        tool(2, f"B2 {short} 寫 runs_dir 下的 .claude/teams/methodology.json", "Write",
+             {"file_path": str(H1W / "_tpm/runs/.claude/teams/methodology.json"), "content": "{}"}, who)
+    tool(2, "B2 dev-implementer 寫 repo 裡的 .claude/teams/rules.md", "Write", {"file_path": str(H1R / ".claude/teams/rules.md")}, IMP)
+    tool(2, "B2 tpm-writer 寫 docs/methodology.json", "Write", {"file_path": str(H1W / "docs/methodology.json"), "content": "{}"}, WRT)
+    tool(2, "B2 tpm-researcher 用 Edit 改 runs_dir 下的 guard.config.json", "Edit", {"file_path": str(H1W / "_tpm/runs/x/guard.config.json")}, RSR)
+    tool(2, "B2 dev-implementer 用 NotebookEdit 寫 .Claude/Teams/ 底下（大小寫不同）", "NotebookEdit",
+         {"notebook_path": str(H1R / ".Claude/Teams/x.ipynb")}, IMP)
+    tool(0, "B2 tpm-researcher 寫 runs_dir 一般 .md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/research/a.md")}, RSR)
+    tool(0, "B2 dev-implementer 寫 repo 一般檔放行", "Write", {"file_path": str(H1R / "src/a.py")}, IMP)
+    tool(0, "B2 主 session 寫 .claude/teams/methodology.json 放行", "Write", {"file_path": str(H1W / ".claude/teams/methodology.json"), "content": "{}"})
+    pair(2, "B2 tpm-researcher 用 shell 寫 runs_dir 下的 methodology.json",
+         "mkdir -p _tpm/runs/.claude/teams && echo '{}' > _tpm/runs/.claude/teams/methodology.json",
+         "Set-Content -Path _tpm/runs/.claude/teams/methodology.json -Value '{}'", agent=RSR)
+    pair(2, "B2 dev-implementer 用 cp 蓋 .claude/teams/ 底下的檔", "cp x.md repos/app/.claude/teams/rules.md",
+         "Copy-Item x.md repos/app/.claude/teams/rules.md", agent=IMP)
+    pair(0, "B2 dev-implementer 跑 .claude/teams/tools 的工具放行",
+         "python3 .claude/teams/tools/run_brief.py --log _tpm/runs/x/build/logs/a.log -- npm install", agent=IMP)
+    pair(0, "B2 tpm-researcher 讀 methodology.json 放行", "cat .claude/teams/methodology.json", "Get-Content .claude/teams/methodology.json", agent=RSR)
+    pair(0, "B2 主 session 用 shell 寫 methodology.json 放行", "echo '{}' > .claude/teams/methodology.json",
+         "Set-Content -Path .claude/teams/methodology.json -Value '{}'")
+
+    # I5：runs_dir 底下的 run.json、<段>.json、merge-audit.jsonl、凍結檔，所有 team agent 都不能寫
+    for who in (RSR, WRT):
+        short = who.rsplit(":", 1)[-1]
+        for f in ("x/test.json", "x/deliver.json", "x/plan.json", "x/post-merge.json"):
+            tool(2, f"I5 {short} Write {f}", "Write", {"file_path": str(H1W / "_tpm/runs" / f), "content": "{}"}, who)
+        tool(2, f"I5 {short} Edit x/run.json", "Edit", {"file_path": str(H1W / "_tpm/runs/x/run.json")}, who)
+        tool(2, f"I5 {short} Write merge-audit.jsonl", "Write", {"file_path": str(H1W / "_tpm/runs/merge-audit.jsonl")}, who)
+    tool(2, "I5 tpm-researcher Write 凍結檔", "Write", {"file_path": str(H1W / "_tpm/runs/auto-merge.freeze.json"), "content": '{"frozen": true}'}, RSR)
+    tool(0, "I5 tpm-researcher Write runs_dir 的一般 .json 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/research/data.json"), "content": "{}"}, RSR)
+    tool(0, "I5 dev-implementer 寫 repo 的 test.json 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "fixtures/test.json"), "content": "{}"}, IMP)
+    tool(0, "I5 主 session Write runs_dir 的 test.json 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/test.json"), "content": "{}"})
+    pair(2, "I5 tpm-researcher 用 shell 寫 test.json", "echo '{}' > _tpm/runs/x/test.json", "Set-Content -Path _tpm/runs/x/test.json -Value '{}'", agent=RSR)
+    pair(2, "I5 tpm-writer 用 cp 蓋 deliver.json", "cp a.json _tpm/runs/x/deliver.json", "Copy-Item a.json _tpm/runs/x/deliver.json", agent=WRT)
+    pair(2, "I5 tpm-writer cd 進 run 目錄再寫 test.json", "cd _tpm/runs/x && echo '{}' > test.json",
+         "Set-Location _tpm/runs/x; Set-Content -Path test.json -Value '{}'", agent=WRT)
+    pair(0, "I5 tpm-researcher 讀 test.json 放行", "cat _tpm/runs/x/test.json", "Get-Content _tpm/runs/x/test.json", agent=RSR)
+    pair(0, "I5 主 session 用 shell 寫 test.json 放行", "echo '{}' > _tpm/runs/x/test.json", "Set-Content -Path _tpm/runs/x/test.json -Value '{}'")
+
+    # I7：runs_dir 底下的 context.md 與任何位置的 執行紀錄索引.md，所有 team agent 都不能寫；主 session 放行
+    for who in (WRT, IMP):
+        short = who.rsplit(":", 1)[-1]
+        tool(2, f"I7 {short} Write context.md", "Write", {"file_path": str(H1W / "_tpm/runs/x/context.md")}, who)
+        tool(2, f"I7 {short} Edit context.md", "Edit", {"file_path": str(H1W / "_tpm/runs/x/context.md")}, who)
+        tool(2, f"I7 {short} Write 執行紀錄索引.md", "Write", {"file_path": str(H1W / "_tpm/runs/x/執行紀錄索引.md")}, who)
+        tool(2, f"I7 {short} Write repo 裡的 執行紀錄索引.md", "Write", {"file_path": str(H1R / "docs/執行紀錄索引.md")}, who)
+        pair(2, f"I7 {short} 用 shell 寫 context.md", "echo x >> _tpm/runs/x/context.md",
+             "Add-Content -Path _tpm/runs/x/context.md -Value x", agent=who)
+        pair(2, f"I7 {short} cd 進 run 目錄再寫 context.md", "cd _tpm/runs/x && echo x > context.md",
+             "Set-Location _tpm/runs/x; Set-Content -Path context.md -Value x", agent=who)
+        pair(2, f"I7 {short} 用 shell 寫 執行紀錄索引.md", "cp a.md repos/app/執行紀錄索引.md",
+             "Copy-Item a.md repos/app/執行紀錄索引.md", agent=who)
+        pair(0, f"I7 {short} 讀 context.md 放行", "cat _tpm/runs/x/context.md", "Get-Content _tpm/runs/x/context.md", agent=who)
+    tool(0, "I7 tpm-writer 寫 runs_dir/<run>/deliver/x.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/deliver/x.md")}, WRT)
+    tool(0, "I7 dev-implementer 寫 repo 的 context.md 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "docs/context.md")}, IMP)
+    tool(0, "I7 主 session Write context.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/context.md")})
+    tool(0, "I7 主 session Write 執行紀錄索引.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/執行紀錄索引.md")})
+    pair(0, "I7 tpm-writer 用 shell 寫 runs_dir/<run>/deliver/x.md 放行", "echo x > _tpm/runs/x/deliver/x.md",
+         "Set-Content -Path _tpm/runs/x/deliver/x.md -Value x", agent=WRT)
+    pair(0, "I7 主 session 用 shell 寫 context.md 放行", "echo x > _tpm/runs/x/context.md", "Set-Content -Path _tpm/runs/x/context.md -Value x")
 
     # ------------------------------------------------------------ 交件信封
     E = "envelope"

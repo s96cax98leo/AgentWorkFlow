@@ -30,3 +30,56 @@ export const CONSISTENT = {
 export const SYNC_PLAN = (sync) => ENV({ task_id: 'sync-plan', branch: 'feature/demo', commits: [], files_changed: [], tests: [], sync })
 export const SYNC_APPLY = (sync, conflicts = []) => ENV({ task_id: 'sync', branch: sync.head_branch, commits: ['abc merge'], files_changed: [], tests: [{ command: 'verify', result: 'pass' }], conflicts, sync })
 export const TRANSIT = { strategy: 'transit', behind: 3, published: true, conflicts: ['src/a.ts'], transit_branch: 'merge/demo-into-main-20261012' }
+// 派工單去掉 challenge 片段加的共同前綴（## 共同規則…）與最後一行「執行紀錄檔：…」，只留 workflow 自己寫的本文
+export const taskBody = (p) => String(p || '').replace(/^## 共同規則[\s\S]*?\n\n/, '').replace(/\n*執行紀錄檔：[^\n]*\s*$/, '')
+// 內建 recipe 的段（和 tools/recipe.py 的 BUILTIN_RECIPES 一致）：各 sdlc-<段>.mjs 用 recipeScenarios 對包含該段的 recipe 各產生一個「recipe:<名>」情境
+export const RECIPE_STAGES = {
+  feature: ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge'],
+  bugfix: ['plan', 'build', 'sync', 'test', 'deliver', 'merge'],
+  change: ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge'],
+  hotfix: ['plan', 'build', 'test', 'deliver', 'merge'],
+  refactor: ['plan', 'build', 'sync', 'test', 'deliver', 'merge'],
+  deps: ['plan', 'build', 'sync', 'test', 'deliver', 'merge'],
+  docs: ['plan', 'build', 'deliver', 'merge'],
+  'test-only': ['plan', 'build', 'test', 'deliver', 'merge'],
+  perf: ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge'],
+  spike: ['plan'],
+  revert: ['plan', 'build', 'test', 'deliver', 'merge'],
+}
+// 和 check_workflows.mjs 的 SAMPLE_ARGS.subtasks 相同；kind 可整批換（docs 只能 doc、test-only 只能 test）
+export const SAMPLE_SUBTASKS = (kind) => [
+  { id: 't0', title: '紅燈測試', kind: 'test', owns: ['e2e/tests/a.spec.ts'], depends_on: [], acceptance: ['T1 紅燈'] },
+  { id: 't1', title: '後端', kind: 'code', owns: ['services/a.py'], depends_on: ['t0'], acceptance: ['pytest a'] },
+  { id: 't2', title: '前端', kind: 'code', owns: ['apps/b.tsx'], depends_on: [], acceptance: ['vitest b'] },
+  { id: 't3', title: '整合畫面', kind: 'code', owns: ['apps/c.tsx'], depends_on: ['t1', 't2'], acceptance: ['e2e c'] },
+].map((s) => (kind ? { ...s, kind } : s))
+// 小修正的典型子任務（重現測試＋修正一支程式）：bugfix、hotfix 的情境用它，量測才貼近實際派工數
+export const FIX_SUBTASKS = () => [
+  { id: 't0', title: '重現測試', kind: 'test', owns: ['tests/test_a.py'], depends_on: [], acceptance: ['重現測試先紅'] },
+  { id: 't1', title: '修正', kind: 'code', owns: ['services/a.py'], depends_on: ['t0'], acceptance: ['重現測試轉綠'] },
+]
+// recipe 的下一段（沒有就 null）
+export const recipeNextOf = (name, stage) => { const s = RECIPE_STAGES[name]; const i = s.indexOf(stage); return i >= 0 && i + 1 < s.length ? s[i + 1] : null }
+// 回傳的 next 要指向 recipe 的下一段（merge 不檢查字面），也不能提到 recipe 沒有的 design／sync
+export const checkNext = (name, stage, out) => {
+  const errs = []
+  const got = String((out && out.next) || '')
+  const want = recipeNextOf(name, stage)
+  if (want && want !== 'merge' && !got.includes(`sdlc-${want}`)) errs.push(`next 應指向 sdlc-${want}：${got.slice(0, 200)}`)
+  for (const o of ['design', 'sync']) if (o !== stage && !RECIPE_STAGES[name].includes(o) && got.includes(`sdlc-${o}`)) errs.push(`next 指向 recipe 沒有的 sdlc-${o}：${got.slice(0, 200)}`)
+  return errs
+}
+// 每個包含 stage 的內建 recipe 一個情境：不 halted、next 依 recipe；extra(name) 可補 args、fakes、expect
+export const recipeScenarios = (stage, extra = () => ({})) => Object.keys(RECIPE_STAGES).filter((n) => RECIPE_STAGES[n].includes(stage)).map((n) => {
+  const x = extra(n) || {}
+  return {
+    name: `recipe:${n}`, args: { recipe: n, ...(x.args || {}) }, fakes: x.fakes || {},
+    expect: (r) => {
+      const o = r.out || {}
+      const errs = o.halted ? [`recipe:${n} 不該 halted：${o.halt_reason}`] : []
+      errs.push(...checkNext(n, stage, o))
+      if (x.expect) errs.push(...x.expect(r))
+      return errs
+    },
+  }
+})

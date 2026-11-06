@@ -152,6 +152,28 @@ python3 ~/tools/AgentWorkFlow/init.py --target . --upgrade [--adopt-new-fields]
 
 **交件信封**：每個 `dev-*`／`tpm-*` agent 都用 JSON 信封交件，欄位是 status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload。成果寫成檔案，信封只放路徑。hook 會驗證信封，不合格就交不出去。
 
+**依需求類型分流（recipe）**：開發需求不必每次都走完整的 7 段。`sdlc-plan` 先派一個 triage 判斷需求屬於哪一類（理由要附證據），由人在 plan 閘門確認後鎖定，之後只能用 `save_run.py escalate` 加嚴，不能降級。內建 11 個 recipe，定義在 profile 的 `recipes`，可以覆寫：
+
+| recipe | 用在 | 走的段 | plan 的重點 | 實測派工數（plan→deliver） |
+|---|---|---|---|---|
+| `feature` | 新功能 | 7 段全走 | 一般 intent | 28 |
+| `bugfix` | 錯誤行為 | 不走 design | 現象、重現、根因 | 15 |
+| `change` | CR、改既有功能 | 7 段全走 | 既有 AC 要改、留、刪哪些 | 27 |
+| `hotfix` | 線上事故 | 不走 design、sync | 同 bugfix，一定要開後續 run | 12 |
+| `refactor` | 不改行為的重構 | 不走 design | 不可改變的行為 | 20 |
+| `deps` | 依賴升級 | 不走 design，強制安全審查 | 上游變更與破壞性變更 | 19 |
+| `docs` | 只改文件、設定、文案 | plan、build、deliver、merge | 調研 | 11 |
+| `test-only` | 補測試、修 flaky | 不走 design、sync | 調研 | 15 |
+| `perf` | 效能 | 7 段全走 | 量測基線 | 26 |
+| `spike` | 調研、可行性 | 只有 plan，不能推送 | 調研問題與判準 | 5 |
+| `revert` | 合併後回退 | 不走 design、sync | 回退原因、範圍、恢復條件 | 15 |
+
+- modifiers（`ui`、`security`、`migration`、`public_api`、`large`）疊上去只會加嚴，例如 `migration` 會強制加 design 段與回滾檢查。
+- 不論哪個 recipe 都不能省：intent（四個必要節加上該類型的專屬節）、plan 的人工核准、rules.md、每個 agent 的執行紀錄、merge_gate、只推 fork。
+- `publish.py` 與 `merge_gate.py` 會用實際的 diff 反查 recipe 夠不夠，例如 docs 卻改了程式、沒有 design 卻碰到 migration，一律擋下並提示用 escalate。
+- **量測方式與限制**：派工數來自 `tests/check_budget.py` 的乾跑（假回傳，bugfix、hotfix 用 2 個子任務，docs 用 1 個，其他用 4 個），實際數字會隨子任務數、審查發現數而變。乾跑量的是「派幾個 agent」和「派工單有多少字」，量不到 agent 實際讀檔與輸出的 token。派工單開頭的共同前綴每張都一樣，可以被 prompt cache 命中。
+- 每個 agent 都把執行紀錄寫在 `<run_dir>/<段>/<label>.md`，工具再產生 `執行紀錄索引.md`；測試等長輸出用 `run_brief.py` 先濃縮再讀，完整 log 另存。細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈依需求類型分流〉。
+
 **開發規範 profile**：各段的做法和專案慣例寫在目標專案的 `.claude/teams/methodology.json`。內建兩份：`default`（spec 驅動、測試先行、Conventional Commits）與 `lightweight`（需求來自 issue、實作後才補測試、格式自由）。要換做法，改這個檔後跑 `build.py`。
 
 **平行處理**：觸發條件寫在 profile 的 `parallelism`：

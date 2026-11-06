@@ -1,5 +1,5 @@
 // sdlc-deliver.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { ENV, extScenario } from './_helpers.mjs'
+import { ENV, extScenario, recipeScenarios } from './_helpers.mjs'
 
 export default [
   extScenario('ext:a11y'),
@@ -43,4 +43,17 @@ export default [
       ...(r.labels.includes('write') ? ['審查 throw 不該寫 PR 說明'] : []),
     ],
   },
+  // recipe：審查軸取自 recipe.deliver_axes；沒有 design 段時 spec 軸對照 intent.md
+  ...recipeScenarios('deliver', (n) => ({
+    expect: (r) => {
+      const e = []
+      const axes = { feature: ['bugs', 'history', 'spec', 'standards'], change: ['bugs', 'history', 'spec', 'standards'], perf: ['bugs', 'history', 'spec', 'standards'],
+        bugfix: ['bugs', 'spec'], hotfix: ['bugs'], refactor: ['bugs', 'history', 'standards'], deps: ['bugs', 'standards'], docs: ['spec', 'standards'], 'test-only': ['bugs', 'standards'], revert: ['bugs'] }[n]
+      const got = r.labels.filter((l) => l.startsWith('review:')).map((l) => l.slice(7)).sort()
+      if (JSON.stringify(got) !== JSON.stringify(axes)) e.push(`${n} 的審查軸應為 ${axes.join('、')}：${got.join('、')}`)
+      const spec = r.prompts['review:spec']
+      if (spec && (['feature', 'change', 'perf'].includes(n) ? !/spec\.md/.test(spec) : !/intent\.md/.test(spec))) e.push(`${n} 的 spec 軸對照來源不對`)
+      return e
+    },
+  })),
 ]

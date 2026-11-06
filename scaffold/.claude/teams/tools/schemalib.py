@@ -1,7 +1,7 @@
 """agent team 的 schema 工具：載入、組合（信封＋payload）、驗證。
 
 只支援 schemas/ 用到的 JSON Schema 關鍵字（SUPPORTED_KEYWORDS：type（可為陣列，含 null）、properties、required、
-enum、items、minItems、minLength、minimum、maximum、pattern、additionalProperties），所以 hook 不必依賴第三方套件；
+enum、items、minItems、maxItems、minLength、maxLength、minimum、maximum、pattern、additionalProperties），所以 hook 不必依賴第三方套件；
 golden-set/run.py 會拿官方 jsonschema 套件交叉比對，確保判斷一致，並用 unsupported_keywords 確認 schema 沒有用到
 這裡不認得的關鍵字（不認得就等於沒檢查，gate 會默默變鬆）。format 在 2020-12 預設只是註記、不做驗證，和官方一致。
 
@@ -80,7 +80,7 @@ def compose(payload: str | None) -> dict:
 
 
 SUPPORTED_KEYWORDS = {
-    "type", "properties", "required", "enum", "items", "minItems", "minLength", "minimum", "maximum",
+    "type", "properties", "required", "enum", "items", "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum",
     "pattern", "additionalProperties",
     # 註記類，不影響驗證
     "$schema", "$id", "title", "description", "examples", "default", "format", "$comment",
@@ -126,6 +126,8 @@ def validate(data, schema: dict, path: str = "$") -> list[str]:
         errs.append(f"{path}：值 {data!r} 不在 {schema['enum']}")
     if isinstance(data, str) and "minLength" in schema and len(data) < schema["minLength"]:
         errs.append(f"{path}：不能是空字串")
+    if isinstance(data, str) and "maxLength" in schema and len(data) > schema["maxLength"]:
+        errs.append(f"{path}：長度 {len(data)} 超過上限 {schema['maxLength']}（細節寫進檔案，信封只放摘要與路徑）")
     if isinstance(data, str) and "pattern" in schema and not re.search(schema["pattern"], data):
         errs.append(f"{path}：{data!r} 不符合格式 {schema['pattern']}")
     if isinstance(data, (int, float)) and not isinstance(data, bool):
@@ -152,6 +154,8 @@ def validate(data, schema: dict, path: str = "$") -> list[str]:
     if isinstance(data, list):
         if "minItems" in schema and len(data) < schema["minItems"]:
             errs.append(f"{path}：至少要 {schema['minItems']} 項")
+        if "maxItems" in schema and len(data) > schema["maxItems"]:
+            errs.append(f"{path}：{len(data)} 項，超過上限 {schema['maxItems']}（其餘寫進檔案）")
         if "items" in schema:
             for i, item in enumerate(data):
                 errs.extend(validate(item, schema["items"], f"{path}[{i}]"))
@@ -303,6 +307,21 @@ def methodology_errors(doc: dict) -> list[str]:
     names = [e.get("name") for e in doc.get("extensions") or [] if isinstance(e, dict)]
     for n in sorted({x for x in names if names.count(x) > 1}, key=str):
         errs.append(f"extensions：name {n} 重複")
+    recipes = doc.get("recipes") if isinstance(doc.get("recipes"), dict) else {}
+    for rn, r in recipes.items():
+        if not isinstance(r, dict):
+            continue
+        stages = r.get("stages") if isinstance(r.get("stages"), list) else []
+        # intent 不能省（I1）：每個 recipe 都要有 plan 段
+        if "plan" not in stages:
+            errs.append(f"recipes.{rn}：stages 沒有 plan（每個 recipe 都要產出 intent、由人在 plan 閘門核准）")
+        # 會寫程式的 recipe 一定要經過 build、deliver（審查）、merge（gate）
+        if r.get("build_kinds", ["code"]) and r.get("publishable", True) is not False:
+            lost = [x for x in ("build", "deliver", "merge") if x not in stages]
+            if lost:
+                errs.append(f"recipes.{rn}：會產生改動的 recipe 一定要有 {'、'.join(lost)} 段")
+        if "test" in stages and "build" not in stages:
+            errs.append(f"recipes.{rn}：有 test 段就要有 build 段")
     req = doc.get("requirements") if isinstance(doc.get("requirements"), dict) else {}
     if req.get("source") == "command" and not str(req.get("command") or "").strip():
         errs.append("requirements.source=command 時要設 command")

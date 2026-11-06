@@ -1,0 +1,58 @@
+{
+  "_說明": "原型上的名字（constructor、toString、__proto__）不能被當成 recipe 或 modifier：JS 與 Python 一致（X3 M3）",
+  "recipe": "constructor",
+  "modifiers": [
+    "toString",
+    "__proto__"
+  ],
+  "expect": {
+    "name": "feature",
+    "stages": [
+      "plan",
+      "design",
+      "build",
+      "sync",
+      "test",
+      "deliver",
+      "merge"
+    ],
+    "plan_mode": "feature",
+    "research_angles": [
+      "requirement",
+      "specs-adr",
+      "code-contracts",
+      "upstream"
+    ],
+    "design_lenses": [
+      "coverage",
+      "plan",
+      "system-design"
+    ],
+    "test": {
+      "design_review": "auto",
+      "security_review": "auto",
+      "modes": [
+        "verify"
+      ]
+    },
+    "deliver_axes": [
+      "standards",
+      "spec",
+      "bugs",
+      "history"
+    ],
+    "build_kinds": [
+      "code",
+      "test",
+      "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": true,
+    "modifiers": [],
+    "errors": [
+      "不認得的 modifier：toString",
+      "不認得的 modifier：__proto__"
+    ]
+  }
+}

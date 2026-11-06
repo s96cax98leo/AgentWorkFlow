@@ -1,0 +1,41 @@
+{
+ "payload": "triage",
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [
+   "補文件"
+  ],
+  "payload": {
+   "understanding": "示範客戶 ACME 回報匯出 CSV 時日期欄位錯位",
+   "kind": "bugfix",
+   "size": "small",
+   "modifiers": [],
+   "reasons": [
+    {
+     "claim": "x",
+     "evidence": ""
+    }
+   ],
+   "confidence": 0.85,
+   "alternatives": [
+    {
+     "kind": "change",
+     "why": "若其實是要改匯出格式"
+    }
+   ]
+  }
+ }
+}

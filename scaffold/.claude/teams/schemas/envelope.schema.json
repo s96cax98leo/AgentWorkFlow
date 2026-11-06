@@ -6,17 +6,19 @@
   "required": ["status", "summary", "artifacts", "evidence", "confidence", "open_questions", "derived_work", "payload"],
   "properties": {
     "status": {"type": "string", "enum": ["done", "blocked", "needs_decision"], "description": "done 只能在驗收條件全達成、沒有 blocking 問題時使用"},
-    "summary": {"type": "string", "minLength": 1, "description": "一到三句：做了什麼、結果如何"},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 400, "description": "一到三句：做了什麼、結果如何（最多 400 字；細節寫進檔案）"},
     "artifacts": {"type": "array", "items": {"type": "string"}, "description": "產出或改動的檔案路徑（絕對路徑或相對工作區）"},
     "evidence": {
       "type": "array",
+      "maxItems": 12,
+      "description": "最多 12 則；更多證據寫進執行紀錄檔",
       "items": {
         "type": "object",
         "required": ["claim", "source", "result"],
         "properties": {
           "claim": {"type": "string", "description": "要佐證的說法"},
           "source": {"type": "string", "description": "路徑:行號，或可重跑的指令"},
-          "result": {"type": "string", "description": "看到的結果（輸出摘要）"}
+          "result": {"type": "string", "maxLength": 300, "description": "看到的結果（輸出摘要，最多 300 字；完整輸出看 log）"}
         }
       }
     },

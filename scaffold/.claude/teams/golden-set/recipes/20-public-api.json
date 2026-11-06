@@ -1,0 +1,54 @@
+{
+ "recipe": "refactor",
+ "modifiers": [
+  "public_api"
+ ],
+ "expect": {
+  "name": "refactor",
+  "stages": [
+   "plan",
+   "design",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "invariants",
+  "research_angles": [
+   "code-contracts",
+   "specs-adr"
+  ],
+  "design_lenses": [
+   "coverage",
+   "plan",
+   "compat"
+  ],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify",
+    "equivalence"
+   ]
+  },
+  "deliver_axes": [
+   "standards",
+   "bugs",
+   "history",
+   "spec"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [
+   "public_api"
+  ],
+  "errors": []
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "recipe": "test-only",
+ "paths": [
+  "tests/test_a.py"
+ ],
+ "expect": {
+  "name": "test-only",
+  "stages": [
+   "plan",
+   "build",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "research",
+  "research_angles": [
+   "code-contracts"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "never",
+   "security_review": "auto",
+   "modes": [
+    "verify"
+   ]
+  },
+  "deliver_axes": [
+   "standards",
+   "bugs"
+  ],
+  "build_kinds": [
+   "test"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": [],
+  "shortfalls": []
+ }
+}

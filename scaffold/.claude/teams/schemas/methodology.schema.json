@@ -18,7 +18,8 @@
           "properties": {
             "artifacts": {"type": "array", "items": {"type": "string"}, "description": "這一段的產出文件（檔名，放在 specs/<epic>/）"},
             "template": {"type": "string", "description": "沒有專案範本時的格式說明"},
-            "guidance": {"type": "string"}
+            "guidance": {"type": "string"},
+            "required_sections": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "intent.md 一定要有的節（標題要含節名、節下要有內容）；省略＝目標、範圍、不做的事、驗收條件。save_run.py stage plan 會檢查"}
           }
         },
         "design": {
@@ -99,6 +100,103 @@
           "stage": {"type": "string", "enum": ["plan", "design", "test", "deliver"], "description": "加在哪一段：plan＝和調研平行、design＝和一致性檢查平行、test＝和驗證平行、deliver＝和 PR 審查平行（之後一樣經 skeptic 反駁）"},
           "instructions": {"type": "string", "minLength": 1, "description": "派工單內容：要檢查或調研什麼、怎麼判定嚴重度"}
         }
+      }
+    },
+    "recipes": {
+      "type": "object",
+      "description": "選填：依需求類型分流（feature、bugfix、change、hotfix…）。由 triage 建議、人在 plan 閘門核准後寫進 run.json 鎖定，之後只能用 save_run.py escalate 加嚴。省略＝一律走 feature 完整流程",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description", "stages", "plan_mode"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {"type": "string", "minLength": 1, "description": "什麼情境用這個 recipe（triage 依它分類）"},
+          "stages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]},
+            "description": "要走的段；一定要含 plan（intent 不能省），會寫程式的還要有 build、deliver、merge（schemalib 語意規則）"
+          },
+          "plan_mode": {
+            "type": "string",
+            "enum": ["feature", "diagnose", "impact", "invariants", "changelog", "baseline", "research", "revert"],
+            "description": "plan 段的做法：feature 一般需求、diagnose 除錯（重現、根因）、impact 需求變更（既有驗收條件改留刪）、invariants 重構（不能改變的行為）、changelog 依賴升級、baseline 效能基線、research 調研、revert 回退"
+          },
+          "research_angles": {"type": "array", "items": {"type": "string"}, "description": "plan 段平行調研的角度（sdlc-plan 的角度清單）"},
+          "design_lenses": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "design 段 skeptic 的檢查 lens（coverage、plan、system-design、delta、rollback、compat）"
+          },
+          "test": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "design_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "設計審查：never 不做、auto 依 has_ui、always 一定做"},
+              "security_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "安全審查：never、auto 依 has_security、always"},
+              "modes": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["verify", "regression", "equivalence", "benchmark"]},
+                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）"
+              }
+            }
+          },
+          "deliver_axes": {"type": "array", "items": {"type": "string", "enum": ["standards", "spec", "bugs", "history"]}, "description": "deliver 段的審查軸"},
+          "build_kinds": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["code", "test", "doc"]},
+            "description": "build 段允許的子任務種類；publish／merge_gate 依實際 diff 反查，超出就拒推／hold"
+          },
+          "publishable": {"type": "boolean", "description": "false＝不能推送（spike）"},
+          "followup": {"type": "boolean", "description": "true＝結案前一定要記錄後續 run（hotfix）"},
+          "split": {"type": "boolean", "description": "design 段可不可以拆子計劃"},
+          "small": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"research_angles": {"type": "array", "items": {"type": "string"}}, "split": {"type": "boolean"}},
+            "description": "size=small 時的覆寫（只能改調研角度與 split）"
+          }
+        }
+      }
+    },
+    "modifiers": {
+      "type": "object",
+      "description": "選填：疊在 recipe 上、只會加嚴的修飾（ui、security、migration、public_api、large）",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {"type": "string", "minLength": 1},
+          "add_stages": {"type": "array", "items": {"type": "string", "enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}},
+          "research_angles": {"type": "array", "items": {"type": "string"}},
+          "design_lenses": {"type": "array", "items": {"type": "string"}},
+          "deliver_axes": {"type": "array", "items": {"type": "string", "enum": ["standards", "spec", "bugs", "history"]}},
+          "test": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "design_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "設計審查：never 不做、auto 依 has_ui、always 一定做"},
+              "security_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "安全審查：never、auto 依 has_security、always"},
+              "modes": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["verify", "regression", "equivalence", "benchmark"]},
+                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）"
+              }
+            }
+          },
+          "split": {"type": "boolean"}
+        }
+      }
+    },
+    "plan_modes": {
+      "type": "object",
+      "description": "選填：各 plan_mode 的 intent 另外要有的節（覆寫內建值）",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["sections"],
+        "additionalProperties": false,
+        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}}
       }
     },
     "requirements": {

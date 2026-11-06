@@ -1,0 +1,119 @@
+{
+ "workflows": {
+  "event-brief.js": {
+   "agents": 3,
+   "prompt_chars": 2741,
+   "shared_prefix_chars": 657
+  },
+  "event-decision.js": {
+   "agents": 6,
+   "prompt_chars": 5923,
+   "shared_prefix_chars": 618
+  },
+  "event-demo-check.js": {
+   "agents": 6,
+   "prompt_chars": 6630,
+   "shared_prefix_chars": 849
+  },
+  "event-meeting.js": {
+   "agents": 7,
+   "prompt_chars": 6193,
+   "shared_prefix_chars": 612
+  },
+  "event-post-merge.js": {
+   "agents": 3,
+   "prompt_chars": 3523,
+   "shared_prefix_chars": 752
+  },
+  "event-pr-review.js": {
+   "agents": 13,
+   "prompt_chars": 11033,
+   "shared_prefix_chars": 648
+  },
+  "event-reqs-change.js": {
+   "agents": 7,
+   "prompt_chars": 6453,
+   "shared_prefix_chars": 600
+  },
+  "event-upstream.js": {
+   "agents": 8,
+   "prompt_chars": 8283,
+   "shared_prefix_chars": 660
+  },
+  "sdlc-build.js": {
+   "agents": 7,
+   "prompt_chars": 12182,
+   "shared_prefix_chars": 1098
+  },
+  "sdlc-deliver.js": {
+   "agents": 9,
+   "prompt_chars": 11211,
+   "shared_prefix_chars": 968
+  },
+  "sdlc-design-revise.js": {
+   "agents": 4,
+   "prompt_chars": 6206,
+   "shared_prefix_chars": 820
+  },
+  "sdlc-design.js": {
+   "agents": 5,
+   "prompt_chars": 8676,
+   "shared_prefix_chars": 824
+  },
+  "sdlc-merge.js": {
+   "agents": 5,
+   "prompt_chars": 10066,
+   "shared_prefix_chars": 1274
+  },
+  "sdlc-plan.js": {
+   "agents": 6,
+   "prompt_chars": 8122,
+   "shared_prefix_chars": 891
+  },
+  "sdlc-sync.js": {
+   "agents": 2,
+   "prompt_chars": 3137,
+   "shared_prefix_chars": 877
+  },
+  "sdlc-test.js": {
+   "agents": 1,
+   "prompt_chars": 1394,
+   "shared_prefix_chars": 0
+  }
+ },
+ "recipes": {
+  "feature": {
+   "agents_plan_to_deliver": 28
+  },
+  "bugfix": {
+   "agents_plan_to_deliver": 15
+  },
+  "change": {
+   "agents_plan_to_deliver": 27
+  },
+  "hotfix": {
+   "agents_plan_to_deliver": 12
+  },
+  "refactor": {
+   "agents_plan_to_deliver": 20
+  },
+  "deps": {
+   "agents_plan_to_deliver": 19
+  },
+  "docs": {
+   "agents_plan_to_deliver": 11
+  },
+  "test-only": {
+   "agents_plan_to_deliver": 15
+  },
+  "perf": {
+   "agents_plan_to_deliver": 26
+  },
+  "spike": {
+   "agents_plan_to_deliver": 5
+  },
+  "revert": {
+   "agents_plan_to_deliver": 15
+  }
+ }
+}

@@ -35,7 +35,7 @@ hook 與目標專案 CI 都呼叫它；只有判定 merge 時 exit 0。只用標
       [--findings <審查發現 JSON> ...] [--reviewed-sha SHA ...] [--base-sha SHA] [--git-dir <repo>] \\
       [--requirements <路徑>] [--requirements-source json|command|spec-md] \\
       [--timestamp <ISO 8601>] [--project-dir <專案根>] [--runs-dir <目錄>] [--no-audit] \\
-      [--merged-today N] [--frozen <理由>]
+      [--merged-today N] [--frozen <理由>] [--recipe <run.json>]
   python3 .claude/teams/tools/merge_gate.py --selftest
 
 輸出：stdout 一個 JSON（decision、reasons、escalations、followups、risk_tier…）。
@@ -52,11 +52,16 @@ required checks：skipped／neutral 預設不算通過，只有列在 auto_merge
 上游授權：upstream_authorized_by 的值可以是字串或 {"by", "link", "scope", "expires": "YYYY-MM-DD"}；過期或日期讀不懂都和沒有授權人一樣 escalate，和 hook 一致。
 判定日（每日上限與授權過期共用）＝max(--timestamp 的日期, 系統的 UTC 日期)：--timestamp 只能往後推，不能用舊日期規避。
 diff 解析：改名／複製記前後兩個路徑、刪除的檔也記；支援 git 的引號路徑；解析不了的標頭或行數對不上一律 hold。
+recipe（選填）：--recipe 給 run.json（讀 recipe.resolved；只接受 run.json，plan 要已核准，resolved 不能比重算結果鬆）時，
+  用 diff 的檔名（含改名與刪除的舊路徑）跑 recipe.diff_shortfalls，recipe 不夠（例如 docs 改了程式、沒有 design 卻碰 migration）就 hold，
+  理由寫「recipe 不足」。沒給 --recipe 照現行行為；給了但讀不到或格式不對一律 hold（fail-closed）。
+  CI 範本目前不帶 --recipe（base checkout 看不到本機的 run.json）。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -67,6 +72,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import recipe as rcp  # noqa: E402
 import schemalib  # noqa: E402
 
 GATE_VERSION = "1"
@@ -732,6 +738,9 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
             hold.append("diff 是空的")
         tier, why = risk_tier(diff, am)
         esc.extend(why)
+        if inp.get("recipe") is not None:
+            short = rcp.diff_shortfalls(inp["recipe"], list(diff["files"]))
+            hold.extend(f"recipe 不足（{inp['recipe'].get('name', '?')}）：{x}" for x in short)
 
     # 8. 白名單、風險上限、上游授權、每日上限
     repos = am.get("repos") if isinstance(am.get("repos"), dict) else {}
@@ -779,7 +788,10 @@ def evaluate(inp: dict, cfg: dict, audit_lines: list[dict]) -> dict:
     return {"decision": decision, "repo": repo, "pr": pr, "head_sha": head, "reasons": reasons,
             "hold_reasons": hold, "escalations": esc, "followups": followups, "carried": carried,
             "risk_tier": tier, "requirements_source": inp.get("requirements_source", ""),
-            "timestamp": inp.get("timestamp"), "gate_version": GATE_VERSION}
+            "timestamp": inp.get("timestamp"), "gate_version": GATE_VERSION,
+            # 稽核用：這次 gate 有沒有依 recipe 反查 diff、用的是哪個 recipe（resolved 的雜湊，事後可比對 run.json）
+            "recipe": ({"name": inp["recipe"].get("name"), "sha256": hashlib.sha256(json.dumps(inp["recipe"], sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()}
+                       if isinstance(inp.get("recipe"), dict) else None)}
 
 
 # ------------------------------------------------------------------ 稽核紀錄
@@ -868,7 +880,26 @@ def gather(a: argparse.Namespace, cfg: dict, proj: Path) -> dict:
             except OSError as e:
                 raise InputError(f"讀不到 diff {a.diff}：{e}") from e
 
-    for fn in (dec, reqs, ev, chk, fnd, dif):
+    def rec():
+        if a.recipe:
+            # 只接受 run.json（X3 I5）：不接受呼叫端自備的 resolved（可以拿 feature 的定義蓋過 docs）；
+            # resolved 要和用專案 profile 重算的結果一樣嚴（save_run.recipe_tamper_errors），plan 要已核准（recipe 已鎖定）
+            import save_run  # noqa: E402（只有給 --recipe 時才需要）
+            data = _read_json(a.recipe)
+            if not (isinstance(data, dict) and isinstance(data.get("stages"), dict) and isinstance(data.get("recipe"), dict)):
+                raise InputError(f"--recipe {a.recipe} 不是 run.json（要有 stages 與 recipe.resolved；不接受單獨的 recipe JSON）")
+            r = data["recipe"].get("resolved")
+            if not (isinstance(r, dict) and isinstance(r.get("stages"), list) and isinstance(r.get("build_kinds"), list)):
+                raise InputError(f"--recipe {a.recipe} 的 recipe.resolved 格式不對")
+            if not data["recipe"].get("locked"):
+                raise InputError(f"--recipe {a.recipe} 的 recipe 還沒鎖定（plan 沒核准）")
+            meth = proj / ".claude" / "teams" / "methodology.json"
+            tamper = save_run.recipe_tamper_errors(data, ["--profile", str(meth)] if meth.is_file() else [])
+            if tamper:
+                raise InputError("；".join(tamper[:3]))
+            inp["recipe"] = r
+
+    for fn in (dec, reqs, ev, chk, fnd, dif, rec):
         attempt(fn)
     am = cfg.get("auto_merge") if isinstance(cfg.get("auto_merge"), dict) else {}
     if am.get("carry_verdict_on_rebase") and a.base_sha:
@@ -1156,6 +1187,37 @@ def _selftest() -> int:
         run("風險超過上限（medium 改動、repo 上限 low）→ escalate", ("escalate",),
             cfg={**base_cfg, "auto_merge": {**base_cfg["auto_merge"], "repos": {"acme-fork/app": "low"}}}, files={"diff.txt": src_diff}, why="超過 acme-fork/app 的上限")
         run("風險 medium 在上限內 → merge", ("merge",), files={"diff.txt": src_diff})
+        # ── recipe（--recipe）：diff 形狀超出 recipe → hold
+        bi = {"recipes": rcp.BUILTIN_RECIPES, "modifiers": rcp.BUILTIN_MODIFIERS}
+        # 重算 recipe 用的是專案 profile：補上內建 recipes（保留前面案例寫的 requirements）
+        mp = proj / ".claude/teams/methodology.json"
+        prev = json.loads(mp.read_text(encoding="utf-8")) if mp.is_file() else {}
+        mp.write_text(json.dumps({**prev, **bi}, ensure_ascii=False), encoding="utf-8")
+
+        def run_json(name: str, locked: bool = True, resolved: dict | None = None) -> dict:
+            return {"stages": {}, "recipe": {"name": name, "modifiers": [], "size": "", "locked": locked,
+                                             "resolved": resolved or rcp.resolve(bi, name)}}
+        for fname, body_ in (("run-docs.json", run_json("docs")), ("recipe-bugfix.json", run_json("bugfix")),
+                             ("recipe-bad.json", {"name": "x"}), ("recipe-raw.json", rcp.resolve(bi, "feature")),
+                             ("recipe-unlocked.json", run_json("bugfix", locked=False)),
+                             ("recipe-forged.json", run_json("docs", resolved={**rcp.resolve(bi, "docs"), "build_kinds": ["code", "test", "doc"],
+                                                                               "stages": ["plan", "build", "deliver", "merge"]}))):
+            (proj / fname).write_text(json.dumps(body_, ensure_ascii=False), encoding="utf-8")
+        run("recipe 不足：hold（docs recipe 卻改了產品程式）", ("hold",), files={"diff.txt": src_diff},
+            args=["--recipe", str(proj / "run-docs.json")], why="recipe 不足")
+        run("recipe 不足：hold（bugfix 碰 migration）", ("hold",), files={"diff.txt": mk_diff("db/migrations/001.sql", ["alter table t add c int;"])},
+            args=["--recipe", str(proj / "recipe-bugfix.json")], why="recipe 不足")
+        run("recipe 相符：照常（bugfix recipe、改產品程式）→ merge", ("merge",), files={"diff.txt": src_diff},
+            args=["--recipe", str(proj / "recipe-bugfix.json")])
+        run("recipe 沒給：照現行（docs 形狀的檢查不跑）→ merge", ("merge",), files={"diff.txt": src_diff})
+        run("recipe 讀不到 → hold（fail-closed）", ("hold",), args=["--recipe", str(proj / "沒有.json")], why="輸入錯誤")
+        run("recipe 格式不對 → hold（fail-closed）", ("hold",), args=["--recipe", str(proj / "recipe-bad.json")], why="不是 run.json")
+        run("recipe 只接受 run.json：單獨的 resolved JSON → hold", ("hold",), files={"diff.txt": src_diff},
+            args=["--recipe", str(proj / "recipe-raw.json")], why="不是 run.json")
+        run("recipe 還沒鎖定（plan 沒核准）→ hold", ("hold",), files={"diff.txt": src_diff},
+            args=["--recipe", str(proj / "recipe-unlocked.json")], why="還沒鎖定")
+        run("recipe.resolved 被改鬆（docs 卻允許 code）→ hold", ("hold",), files={"diff.txt": src_diff},
+            args=["--recipe", str(proj / "recipe-forged.json")], why="定義鬆")
         big_diff = mk_diff("src/big.py", [f"x{i} = {i}" for i in range(500)])
         run("diff 過大（超過 large_lines）→ escalate", ("escalate",), files={"diff.txt": big_diff}, why="diff 過大")
         run("diff 為空 → hold", ("hold",), files={"diff.txt": ""}, why="diff 是空的")
@@ -1243,6 +1305,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--runs-dir", help="覆蓋 guard.config.json 的 runs_dir")
     c.add_argument("--no-audit", action="store_true", help="不寫 merge-audit.jsonl（只供除錯）")
     c.add_argument("--merged-today", help="當日（UTC，判定日＝max(--timestamp, 系統日期)）已合併數，CI 用 GitHub API 算出；和本機 audit 的計數取大者，不是非負整數就 hold")
+    c.add_argument("--recipe", help="run.json（plan 已核准）；diff 形狀超出 recipe 時 hold（讀不到、格式錯、沒鎖定或被改鬆也 hold）；稽核紀錄會記 recipe 名稱與雜湊")
     c.add_argument("--frozen", help="凍結理由；有給（非空）就 hold。CI 從 repo variable 讀凍結狀態時帶入")
     a = p.parse_args(argv)
     return cmd_check(a)

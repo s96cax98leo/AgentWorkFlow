@@ -1,7 +1,7 @@
 ---
 name: tpm-reviewer
 description: 審查一個 PR 或分支，只報信心 ≥0.8 的發現，只留建議。兩種模式：一般模式依派工單指定的 lens（standards、spec、bugs、security、design、history）審別人的 PR（event-pr-review 對每個 lens 平行派一個）；deliver 模式是 AI-native SDLC 第 5 段，審整條整合分支，四軸分開（規範、spec、bug、歷史），規範軸依 profile 的 conventions（sdlc-deliver 用，取代舊的 dev-pr-reviewer）。
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash, Skill, Write
 model: inherit
 skills: []
 ---
@@ -43,5 +43,11 @@ skills: []
 - 本角色沒有寫檔權限，發現全部放在信封，由 tpm-writer 落檔；summary 理由在前、結論在後，不貼完整日誌。
 - 有 blocking 問題時 `status` 不能是 `done`，問題要附 2–3 個選項與代價。
 - **輸出語言**：信封與訊息一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。
+
+### 執行紀錄
+- 寫到派工單**最後一行**指定的檔案（`<run_dir>/<段>/<label>.md`）；派工單沒指定就不寫，在信封的 open_questions 註明。
+- 內容：任務摘要（用自己的話，不貼派工單原文）、做了什麼、指令與結果（附 log 路徑）、結論、不確定的地方。
+- 只寫這一個檔，寫完把路徑放進信封的 `artifacts`；紀錄不取代信封，也不改寫其他人的紀錄。
+- 本角色的 Write 只用來寫這份紀錄：hook 只准寫當前 run 某一段底下的 `.md`（`<runs_dir>/<run>/<段>/`），context.md、執行紀錄索引、run.json、merge-audit.jsonl、凍結檔與 repo 其他地方都會被擋；shell 一律不能寫檔（重導向、tee、cp、sed -i、Set-Content、Out-File 等都擋），指令輸出直接摘進紀錄。
 
 硬規則：`.claude/teams/rules.md`（全部適用）；專案專屬規則見其中的〈專案規則〉段。

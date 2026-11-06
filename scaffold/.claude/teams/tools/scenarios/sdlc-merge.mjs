@@ -93,4 +93,18 @@ export default [
       fakes: { analyze: 'THROW' },
       expect: (r) => (r.out && r.out.halted && (r.out.missing || []).includes('analyze') && !r.labels.some((l) => l.startsWith('execute')) ? [] : [`analyze throw 要 halted 且不執行：${JSON.stringify(r.out && { halted: r.out.halted, missing: r.out.missing })}`]),
     },
+    {
+      // recipe 沒有 design 段：steward 對照 intent.md 的驗收條件；gate 帶 --recipe（run.json）
+      name: 'recipe:bugfix',
+      args: { recipe: 'bugfix' },
+      fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },
+      expect: (r) => {
+        const e = []
+        const a = r.prompts.analyze || ''
+        if (!/intent\.md/.test(a) || /spec\.md/.test(a)) e.push('bugfix 的 analyze 要對照 intent.md、不提 spec.md')
+        if (!/--recipe \/tmp\/run\/run\.json/.test(r.prompts['execute:merge'] || '')) e.push('merge_gate 指令要帶 --recipe <run_dir>/run.json')
+        if (!r.out.merged) e.push(`一致時應合併：${JSON.stringify(r.out.decision)}`)
+        return e
+      },
+    },
 ]

@@ -1,0 +1,41 @@
+{
+ "recipe": "docs",
+ "paths": [
+  "docs/a.md",
+  "src/a.py"
+ ],
+ "expect": {
+  "name": "docs",
+  "stages": [
+   "plan",
+   "build",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "research",
+  "research_angles": [
+   "requirement"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "never",
+   "security_review": "never",
+   "modes": []
+  },
+  "deliver_axes": [
+   "standards",
+   "spec"
+  ],
+  "build_kinds": [
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": [],
+  "shortfalls": [
+   "recipe docs 不允許改產品程式（build_kinds=['doc']），卻改了：src/a.py"
+  ]
+ }
+}

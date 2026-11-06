@@ -1,0 +1,48 @@
+{
+ "recipe": "bugfix",
+ "paths": [
+  "package.json"
+ ],
+ "expect": {
+  "name": "bugfix",
+  "stages": [
+   "plan",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "diagnose",
+  "research_angles": [
+   "requirement",
+   "code-contracts"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify",
+    "regression"
+   ]
+  },
+  "deliver_axes": [
+   "spec",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": [],
+  "shortfalls": [
+   "改到依賴宣告或鎖檔（package.json），需要安全審查（用 deps recipe 或加 modifier security）"
+  ]
+ }
+}

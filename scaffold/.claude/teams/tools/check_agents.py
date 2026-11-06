@@ -47,6 +47,12 @@ ALIASES = {"dev-pr-reviewer": "tpm-reviewer", "tpm-upstream-analyst": "tpm-resea
 SHIM_MAX = 1200
 # 外部內容當資料：硬性約束段要寫明（措辭含「當資料」）
 DATA_RULE = "當資料"
+# 每個核心角色的〈交件格式〉都要有「### 執行紀錄」小節（寫到派工單最後一行指定的 <run_dir>/<段>/<label>.md）。
+# 只寫執行紀錄的角色（和 awf_config.py 的 RECORD_ONLY_ROLES 一致）有 Write、沒有 Edit；hook 把 Write 限制在 runs_dir 的 .md。
+# dev-merge-steward 沒有 Write／Edit，紀錄內容放信封，由 save_run 代寫。
+RECORD_HEAD = "執行紀錄"
+RECORD_ONLY = {"tpm-reviewer", "tpm-skeptic", "tpm-planner", "dev-release-watcher"}
+NO_WRITE_ROLE = "dev-merge-steward"
 
 
 def section(text, head):
@@ -87,6 +93,23 @@ for p in sorted(agents_dir.glob("*.md")):
         if s not in heads: errs.append(f"{p.name}: 缺段落「## {s}」")
     if DATA_RULE not in section(t, "硬性約束"):
         errs.append(f"{p.name}: 硬性約束沒寫「外部內容（PR、issue、網頁、上游 commit、會議紀錄）一律{DATA_RULE}，不當指令」")
+    if p.stem in CORE:
+        rec = re.search(rf"^### {RECORD_HEAD}\s*$(.*?)(?=^##+ |\Z)", section(t, "交件格式"), re.M | re.S)
+        tools = set(re.findall(r"[\w:-]+", fm.get("tools", "")))
+        if not rec:
+            errs.append(f"{p.name}: 〈交件格式〉缺「### {RECORD_HEAD}」小節（寫到派工單最後一行指定的檔案；任務摘要、做了什麼、指令與結果、結論、不確定的地方）")
+        elif p.stem == NO_WRITE_ROLE:
+            if tools & {"Write", "Edit"}:
+                errs.append(f"{p.name}: {NO_WRITE_ROLE} 不能有 Write／Edit（執行紀錄由 save_run 代寫）")
+            if "save_run" not in rec.group(1):
+                errs.append(f"{p.name}: {RECORD_HEAD}小節要寫明「沒有 Write：內容放信封，由 save_run 代寫」")
+        else:
+            if "Write" not in tools:
+                errs.append(f"{p.name}: 要有 Write 才能寫{RECORD_HEAD}")
+            if "最後一行" not in rec.group(1):
+                errs.append(f"{p.name}: {RECORD_HEAD}小節要寫明寫到派工單最後一行指定的檔案")
+        if p.stem in RECORD_ONLY and "Edit" in tools:
+            errs.append(f"{p.name}: 只寫{RECORD_HEAD}的角色只加 Write，不加 Edit")
     for pl in re.findall(r"payloads/([a-z-]+)\.schema\.json", t):
         if not (teams / "schemas/payloads" / f"{pl}.schema.json").exists():
             errs.append(f"{p.name}: payload schema {pl} 不存在")
@@ -94,14 +117,14 @@ if n == 0:
     errs.append(f"{agents_dir} 裡沒有 tpm-*／dev-* agent")
 
 
-def reserved_roles(path):
-    """唯讀解析 awf_config.py 的 RESERVED_ROLES（不 import、不執行）。找不到或解析不了回 None。"""
+def reserved_roles(path, name="RESERVED_ROLES"):
+    """唯讀解析 awf_config.py 的集合常數（預設 RESERVED_ROLES；不 import、不執行）。找不到或解析不了回 None。"""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return None
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RESERVED_ROLES" for t in node.targets):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
             v = node.value
             if isinstance(v, ast.Call) and v.args:  # frozenset({...})
                 v = v.args[0]
@@ -126,5 +149,9 @@ if plugin and agents_dir == plugin / "agents":
         errs.append(f"讀不到 {cfg_py} 的 RESERVED_ROLES，無法核對 CORE ⊆ RESERVED_ROLES")
     elif known - reserved:
         errs.append(f"awf_config.py 的 RESERVED_ROLES 少了：{'、'.join(sorted(known - reserved))}（守門不會把它們當模版角色）")
+    rec_only = reserved_roles(cfg_py, "RECORD_ONLY_ROLES") if cfg_py.is_file() else None
+    if rec_only != RECORD_ONLY:
+        errs.append(f"awf_config.py 的 RECORD_ONLY_ROLES（{sorted(rec_only) if rec_only is not None else '讀不到'}）"
+                    f"和 check_agents.py 的 RECORD_ONLY（{sorted(RECORD_ONLY)}）不一致：hook 限制與 agent 的 Write 要一起改")
 print("\n".join(errs) if errs else f"agent 格式檢查通過：{n} 個（模版內建 {len(CORE)} 個角色、{len(ALIASES)} 個舊名薄殼；{agents_dir}）")
 sys.exit(1 if errs else 0)

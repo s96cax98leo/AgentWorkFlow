@@ -12,10 +12,13 @@ hook 會擋 tpm-*／dev-* 執行這支；主 session 呼叫時 hook 只看到「
      diff 用 merge_gate.parse_diff 解析（引號路徑、改名、「++ 」開頭的新增行）；機敏檔名比對每個 diff --git 區塊，
      再比對 git diff --name-only --diff-filter=ACMRT，所以二進位檔與空檔也會命中；diff 解析不了一律拒絕。
   4. 依政策判定能不能推（和 save_run.py 共用同一套判定）：run 已取消（save_run.py abandon）一律拒絕；
-     固定要求整條閘門鏈到 deliver：plan、design、test、deliver 都要在 run.json 裡，每一段都要 done、有閘門的都要已核准
-     （save_run.chain_errors），deliver 一定要已核准。--stage 只能是 deliver 或更後面的段（例如 merge，要求它也 done），
+     閘門鏈依 run.json 的 recipe（沒有 recipe 的舊 run 當成 feature）：recipe 有的段到 deliver 都要在 run.json 裡，
+     每一段都要 done、有閘門的都要已核准（save_run.chain_errors），deliver 一定要已核准；recipe 沒有的段不要求核准。
+     recipe 不能推送（publishable=false，例如 spike）一律拒絕。--stage 只能是 deliver 或更後面的段（例如 merge，要求它也 done），
      給更前面的段或不是 SDLC 的段一律拒絕，不能用來降低要求。到該段為止任何一段的核准是 --by policy 時，
-     重跑 save_run.policy_violations 讀該段實際結果（skeptic 推翻、agent 缺件、blocking 問題等），有任何違規就拒絕。
+     重跑 save_run.policy_violations 讀該段實際結果（skeptic 推翻、agent 缺件、blocking 問題、執行紀錄缺件等），有任何違規就拒絕。
+  4b. diff 形狀（base...分支 的檔名，改名與刪除的舊路徑也算）跑 recipe.diff_shortfalls：recipe 不允許的改動
+     （例如 docs 改了程式、沒有 design 卻碰 migration、改依賴宣告卻沒有安全審查）就拒絕，提示用 save_run.py escalate 升級。
   5. git push <remote> refs/heads/<分支>:refs/heads/<分支>，再 gh pr create --repo <fork>。
      有 --supersedes N 時，PR 說明末尾加一行「取代 #N」；舊 PR 由人關閉，本工具不執行 gh pr close。
   6. 每次執行（含拒絕、dry-run）append 一行到 <runs_dir>/publish-audit.jsonl。
@@ -45,6 +48,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import merge_gate  # noqa: E402
+import recipe as rcp  # noqa: E402
 import save_run  # noqa: E402
 import schemalib  # noqa: E402
 
@@ -200,9 +204,20 @@ def check_policy(run_dir: Path | None, stage: str = MIN_STAGE) -> str:
         raise Refused(f"讀不到 {f}：{e}") from e
     if data.get("abandoned"):
         raise Refused(save_run.abandoned_error(data) + "，不推送")
-    stages = data.get("stages") or {}
-    # 有閘門的段（plan、design、test、deliver）一段都不能少；chain_errors 只略過舊 run 沒有的 sync
-    missing = [s for s in sdlc[: sdlc.index(stage) + 1] if (s in save_run.GATED or s in (MIN_STAGE, stage)) and not isinstance(stages.get(s), dict)]
+    stages = data.get("stages") if isinstance(data.get("stages"), dict) else {}
+    tamper = save_run.recipe_tamper_errors(data)
+    if tamper:
+        raise Refused("；".join(tamper[:3]))
+    r = rcp.recipe_of_run(data)
+    want = r.get("stages") or []
+    if not r.get("publishable", True):
+        raise Refused(f"recipe {r.get('name')} 不能推送（publishable=false；spike 拒推，要落地請另開 run）")
+    for s in dict.fromkeys([MIN_STAGE, stage]):
+        if s not in want:
+            raise Refused(f"recipe {r.get('name')} 沒有 {s} 段，不能推送")
+    # recipe 裡有閘門的段（與 deliver、--stage）一段都不能少；chain_errors 只略過沒有 recipe 的舊 run 沒有的 sync
+    missing = [s for s in sdlc[: sdlc.index(stage) + 1] if s in want and (s in save_run.GATED or s in (MIN_STAGE, stage))
+               and not isinstance(stages.get(s), dict)]
     if missing:
         raise Refused(f"run.json 沒有 {'、'.join(missing)} 這{'幾' if len(missing) > 1 else '一'}段")
     for s in dict.fromkeys([MIN_STAGE, stage]):
@@ -212,11 +227,11 @@ def check_policy(run_dir: Path | None, stage: str = MIN_STAGE) -> str:
         if (s == MIN_STAGE or st.get("gate")) and not st.get("approved"):
             raise Refused(f"{s} 還沒核准（save_run.py approve）")
     appr = stages[MIN_STAGE]["approved"] if isinstance(stages[MIN_STAGE]["approved"], dict) else {}
-    chain = save_run.chain_errors(stages, stage)
+    chain = save_run.chain_errors(data, stage)
     if chain:
-        raise Refused("閘門鏈不完整：" + "；".join(chain[:5]))
+        raise Refused(f"recipe 閘門鏈（{r.get('name')}）不完整：" + "；".join(chain[:5]))
     # 到 stage 為止凡是政策核准的段，都重跑同一套政策判定（run.json 可能被手改，不信任紀錄本身）
-    for s in [x for x in sdlc[: sdlc.index(stage) + 1] if isinstance(stages.get(x), dict)]:
+    for s in [x for x in sdlc[: sdlc.index(stage) + 1] if x in want and isinstance(stages.get(x), dict)]:
         a2 = stages[s].get("approved") or {}
         if not isinstance(a2, dict):
             raise Refused(f"{s} 段的核准紀錄格式不對（{a2!r}），不採信")
@@ -227,11 +242,25 @@ def check_policy(run_dir: Path | None, stage: str = MIN_STAGE) -> str:
             result = json.loads(sf.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             raise Refused(f"政策核准要讀 {sf.name}，讀不到：{e}") from e
-        errs = save_run.policy_violations(s, result)
+        errs = save_run.policy_violations(s, result, run_dir)
         if errs:
             raise Refused(f"{s} 段政策判定不通過：" + "；".join(errs[:5]))
     tail = f"；要求到 {stage} 段，已 done" if stage != MIN_STAGE else ""
-    return f"{MIN_STAGE} 由 {appr.get('by')} 核准（{appr.get('kind', '')} @ {appr.get('at', '')}）{tail}"
+    return f"recipe {r.get('name')}；{MIN_STAGE} 由 {appr.get('by')} 核准（{appr.get('kind', '')} @ {appr.get('at', '')}）{tail}"
+
+
+def check_shape(run_dir: Path, paths: list[str]) -> str:
+    """diff 形狀和 run.json 的 recipe 要相符（recipe.diff_shortfalls）；不符就 raise Refused，提示用 escalate 升級。"""
+    try:
+        data = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise Refused(f"讀不到 {run_dir / 'run.json'}：{e}") from e
+    r = rcp.recipe_of_run(data)
+    short = rcp.diff_shortfalls(r, paths)
+    if short:
+        raise Refused(f"diff 形狀和 recipe {r.get('name')} 不符：" + "；".join(short[:5])
+                      + f"（要升級 recipe 用 save_run.py escalate {run_dir} --recipe <名> --by --at --reason，重跑缺的段後再推）")
+    return f"diff 形狀和 recipe {r.get('name')} 相符（{len(paths)} 個檔）"
 
 
 # ------------------------------------------------------------------ 主流程
@@ -299,6 +328,8 @@ def publish(a: argparse.Namespace) -> tuple[int, dict]:
         if hits:
             raise Refused(f"diff 疑似含機敏值（{len(hits)} 處）：" + "、".join(hits[:10]))
         rec["reasons"].append(check_policy(run_dir, a.stage))
+        shape_paths = sorted(set(merge_gate.parse_diff(d.stdout)["files"]) | set(names))
+        rec["reasons"].append(check_shape(run_dir, shape_paths))
         if not a.no_pr and not (a.title and a.body_file and Path(a.body_file).is_file()):
             raise Refused("開 PR 要有 --title 與存在的 --body-file（或加 --no-pr 只推分支）")
         if a.dry_run:
@@ -369,6 +400,14 @@ def _selftest() -> int:
         cfg = {"runs_dir": "_tpm/runs", "fork_repo": "acme-fork/app", "upstream_repos": "acme-up/app",
                "allowed_branch_prefixes": "feature/,bugfix/", "protected_branches": ["main", "master"]}
         (proj / ".claude/teams/guard.config.json").write_text(json.dumps(cfg), encoding="utf-8")
+        # 專案 profile 用內建 recipes（stage plan 用 --profile 指定這份；check_policy 重算 recipe 時也讀這份）
+        save_run.PROJECT_PROFILE = proj / ".claude/teams/methodology.json"
+        (proj / ".claude/teams/methodology.json").write_text(
+            json.dumps({"recipes": rcp.BUILTIN_RECIPES, "modifiers": rcp.BUILTIN_MODIFIERS}, ensure_ascii=False), encoding="utf-8")
+        epic = proj / "epic"
+        (epic / "specs/e").mkdir(parents=True)
+        (epic / "specs/e/intent.md").write_text(
+            "# intent\n## 目標\nx\n## 範圍\nx\n## 不做的事\nx\n## 驗收條件\n- AC-1\n## 調研問題\nx\n## 判準\nx\n## 現象\nx\n## 重現步驟\nx\n## 預期行為\nx\n## 根因\nx\n", encoding="utf-8")
         fg, fh = root / "fake_git.py", root / "fake_gh.py"
         fg.write_text(FAKE_GIT, encoding="utf-8")
         fh.write_text(FAKE_GH, encoding="utf-8")
@@ -412,6 +451,12 @@ def _selftest() -> int:
             g("add", "-A")
             g("commit", "-qm", f"feat: {fn}")
         g("checkout", "-q", "main")
+        g("checkout", "-qb", "feature/code")
+        (repo / "src").mkdir()
+        (repo / "src/export.py").write_text("def export():\n    return 'csv'\n", encoding="utf-8")
+        g("add", "-A")
+        g("commit", "-qm", "feat: 匯出")
+        g("checkout", "-q", "main")
         g("branch", "wip/x", "feature/export")
 
         body = root / "body.md"
@@ -419,20 +464,45 @@ def _selftest() -> int:
         base = {"summary": "s", "artifacts": [], "evidence": [], "confidence": 1, "open_questions": [], "derived_work": []}
 
         def make_run(name: str, deliver_by: str | None = "使用者", deliver_payload: dict | None = None,
-                     deliver_extra: dict | None = None) -> Path:
+                     deliver_extra: dict | None = None, recipe: str | None = None) -> Path:
             rd = proj / "_tpm/runs" / name
             sp = str(HERE / "save_run.py")
             sub = lambda *a, stdin="": subprocess.run([sys.executable, sp, *a], input=stdin, capture_output=True, text=True, encoding="utf-8")
             sub("init", str(rd), "--event", "sdlc")
             for stage in save_run.SDLC:
+                if stage != "plan" and json.loads((rd / "run.json").read_text(encoding="utf-8"))["stages"][stage]["status"] == "skipped":
+                    continue
                 payload = deliver_payload if (stage == "deliver" and deliver_payload is not None) else {}
                 if stage == "test":
                     payload = {"commit": "a" * 40, "scope_covered": "全部", "scope_skipped": "none", "anti_cheat": [],
                                "criteria": [{"id": "AC-1", "criterion": "c", "command": "true", "result": "pass", "evidence": "e"}]}
                 res = {"x": [{**base, "status": "done", "payload": payload}]}
+                if stage == "plan":
+                    res = {"epic_dir": str(epic), "intent": {**base, "status": "done", "payload": {
+                        "documents": [{"path": "specs/e/intent.md", "kind": "intent", "audience": "owner"}]}}}
+                    if recipe:
+                        res["recipe"] = {"name": recipe, "modifiers": [], "size": "small"}
                 if stage == "deliver" and deliver_extra:
                     res.update(deliver_extra)
-                sub("stage", str(rd), stage, stdin=json.dumps(res))
+                if recipe and stage != "plan":
+                    # 新版 workflow 的回傳：帶 run.json 鎖定的 recipe 與 trace（每個該派的角色一筆，紀錄檔已寫）
+                    rec = json.loads((rd / "run.json").read_text(encoding="utf-8"))["recipe"]
+                    rv = rec["resolved"]
+                    res["recipe"] = {"name": rec["name"], "modifiers": rec["modifiers"], "stages": rv["stages"]}
+                    roles = [("agent", "agent-workflow:dev-implementer")]
+                    if stage == "test":
+                        roles = [("verify#1", "agent-workflow:dev-verifier")] + [
+                            (k, "agent-workflow:" + save_run.REVIEW_ROLES[k]) for k in save_run.REVIEW_ROLES if rv["test"].get(k) == "always"]
+                    if stage == "deliver":
+                        roles = [(f"review:{a}", "agent-workflow:tpm-reviewer") for a in rv.get("deliver_axes") or []]
+                    (rd / stage).mkdir(parents=True, exist_ok=True)
+                    res["trace"] = []
+                    for label, at in roles:
+                        f = rd / stage / (label.replace(":", "-").replace("#", "-") + ".md")
+                        f.write_text("# 紀錄\n", encoding="utf-8")
+                        res["trace"].append({"label": label, "agent_type": at, "phase": "p", "record": str(f), "ok": True})
+                prof = ["--profile", str(proj / ".claude/teams/methodology.json")]
+                sub("stage", str(rd), stage, *prof, stdin=json.dumps(res))
                 if stage == "deliver" and deliver_by is None:
                     break
                 if stage == "deliver" and deliver_by == "policy-forged":
@@ -440,7 +510,7 @@ def _selftest() -> int:
                     data["stages"]["deliver"]["approved"] = {"by": "policy", "at": "t", "note": "p", "kind": "policy"}
                     (rd / "run.json").write_text(json.dumps(data), encoding="utf-8")
                     break
-                sub("approve", str(rd), stage, "--by", deliver_by if stage == "deliver" else "使用者", "--at", "t", "--note", "p")
+                sub("approve", str(rd), stage, "--by", deliver_by if stage == "deliver" else "使用者", "--at", "t", "--note", "p", *prof)
             return rd
 
         good_run = make_run("r-good")
@@ -451,12 +521,18 @@ def _selftest() -> int:
         refuted = {"verdicts": [{"target_id": "PR 說明", "refuted": True, "reason": "漏列驗收條件"}]}
         skeptic = make_run("r-skeptic", deliver_by="policy-forged", deliver_payload=refuted)
         lost = make_run("r-lost", deliver_by="policy-forged", deliver_extra={"docs": None})
+        docs_run = make_run("r-docs", recipe="docs")
+        bug_run = make_run("r-bugfix", recipe="bugfix")
+        spike_run = make_run("r-spike", deliver_by=None, recipe="spike")
         dropped = make_run("r-abandon")
         subprocess.run([sys.executable, str(HERE / "save_run.py"), "abandon", str(dropped), "--reason", "需求取消",
                         "--by", "使用者", "--at", "t"], capture_output=True, text=True, encoding="utf-8")
 
+        n_cases = [0]
+
         def case(name: str, want: str, why: str | None = None, **kw) -> dict:
             nonlocal ok
+            n_cases[0] += 1
             args = {"repo_dir": str(repo), "branch": "feature/export", "run": str(good_run), "title": "docs: 匯出說明",
                     "body_file": str(body), "base": "main", "remote": "origin", "stage": "deliver", "draft": False,
                     "no_pr": False, "dry_run": False, "secrets_file": None, "supersedes": None, "project_dir": str(proj),
@@ -534,6 +610,23 @@ def _selftest() -> int:
         case("政策核准但 skeptic 推翻了產出 → 拒絕", "refused", run=str(skeptic))
         case("政策核准但 agent 缺件（docs: null）→ 拒絕", "refused", run=str(lost))
         case("run 已 abandon（需求取消）→ 拒絕", "refused", run=str(dropped))
+        case("recipe 閘門鏈：bugfix 沒有 design 段（skipped）不要求核准 → dry-run 通過", "dry-run", why="recipe bugfix", run=str(bug_run),
+             branch="feature/code", dry_run=True)
+        bug_pending = proj / "_tpm/runs/r-bugfix-test-pending"
+        bug_pending.mkdir(parents=True)
+        data = json.loads((bug_run / "run.json").read_text(encoding="utf-8"))
+        data["stages"]["test"].pop("approved")
+        (bug_pending / "run.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        case("recipe 閘門鏈：bugfix 的 test 段沒核准 → 拒絕", "refused", why="前面的 test 段還沒核准", run=str(bug_pending), branch="feature/code")
+        bug_gone = proj / "_tpm/runs/r-bugfix-no-build"
+        bug_gone.mkdir(parents=True)
+        data["stages"]["test"]["approved"] = {"by": "使用者", "at": "t", "note": "", "kind": "human"}
+        data["stages"].pop("build")
+        (bug_gone / "run.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        case("recipe 閘門鏈：recipe 有的 build 段被拿掉 → 拒絕", "refused", why="缺段", run=str(bug_gone), branch="feature/code")
+        case("spike 拒推（recipe publishable=false）", "refused", why="spike 拒推", run=str(spike_run))
+        case("diff 形狀：docs 改程式拒推（提示 escalate）", "refused", why="save_run.py escalate", run=str(docs_run), branch="feature/code")
+        case("diff 形狀：相符放行（docs recipe 只改文件）→ 推送並開 PR", "published", why="diff 形狀和 recipe docs 相符", run=str(docs_run))
         case("沒有 --run → 拒絕", "refused", run=None)
         cfg_up = {**cfg, "fork_repo": "acme-up/app"}
         (proj / ".claude/teams/guard.config.json").write_text(json.dumps(cfg_up), encoding="utf-8")
@@ -542,7 +635,7 @@ def _selftest() -> int:
         audit = proj / "_tpm/runs/publish-audit.jsonl"
         recs = [json.loads(l) for l in audit.read_text(encoding="utf-8").splitlines() if l.strip()]
         need = {"timestamp", "repo", "branch", "base", "head_sha", "run", "stage", "decision", "reasons", "pr_url"}
-        good = len(recs) == 24 and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
+        good = len(recs) == n_cases[0] and all(need <= set(r) for r in recs) and recs[1]["decision"] == "published"
         print(f"  [{'通過' if good else '失敗'}] publish-audit.jsonl 每次執行都有一行、欄位齊全（{len(recs)} 行）")
         ok = ok and good
     GIT, GH = ["git"], ["gh"]
