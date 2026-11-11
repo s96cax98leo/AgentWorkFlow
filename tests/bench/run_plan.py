@@ -62,7 +62,10 @@ def setup(work: Path) -> Path:
     repo.mkdir(parents=True, exist_ok=True)
     make_fixture.write(repo)
     make_fixture.git_init(repo)
-    sh([PY, str(REPO / "init.py"), "--target", str(proj), "--defaults", "--hooks", "project"], REPO)
+    # 讀取上限預設不啟用；基準要量「開啟時」的數字（和 0.4.0 的實測同條件），所以用答案檔開 enforce
+    ans = work / "bench-answers.json"
+    ans.write_text(json.dumps({"read_limits": "enforce"}), encoding="utf-8")
+    sh([PY, str(REPO / "init.py"), "--target", str(proj), "--defaults", "--hooks", "project", "--answers", str(ans)], REPO)
     req = proj / "_tpm" / "requirement.md"
     req.parent.mkdir(parents=True, exist_ok=True)
     req.write_bytes((HERE / "requirement.md").read_bytes())

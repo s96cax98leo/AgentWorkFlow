@@ -68,7 +68,6 @@
     "floors": {}
   },
   "limits": {
-    "mode": "enforce",
     "whole_file_lines": 400,
     "read_budget": {"default": 800000, "roles": {"tpm-researcher": 240000, "tpm-skeptic": 240000, "tpm-planner": 160000}},
     "max_agents": 40

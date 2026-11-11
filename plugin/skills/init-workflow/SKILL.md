@@ -49,6 +49,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 | PR 大小 | 上限行數、檔案數（可以不限） | 依 profile | `pr_size` |
 | 文件格式 | specs 等文件用什麼格式 | `Markdown` | `doc_format` |
 | 需求來源 | 需求從哪裡來（spec 檔、需求 JSON、issue 轉出的指令），merge 段的 gate 也用它 | 依 profile | `requirements` |
+| 讀取上限 | 要不要限制模版 agent 的讀取量來省 token（擋整檔讀大檔、每個 agent 有讀取額度；不限制輸出）。選啟用才接著問門檻：超過幾行要分段讀、每個 agent 的讀取額度（位元組）。建議先用 `warn` 觀察 | 不啟用 | `read_limits`（`off`／`warn`／`enforce`，或 `{mode, whole_file_lines, read_budget}`） |
 | 主 session 習慣 | 你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR？答會時放寬主 session 的 git／GitHub 限制（`main_session_git_rules`、`main_session_github_rules` 設 false），並提醒：啟用 auto_merge 後主 session 仍不能合併 | 不會 | `main_session_push_merge` |
 
 整理成答案檔（例如目標專案的 `methodology.answers.json`），把內容貼給使用者確認：

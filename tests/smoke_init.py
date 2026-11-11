@@ -248,6 +248,7 @@ ANSWERS = {
     "sync_strategy": "transit",
     "pr_size": {"max_lines": 400, "max_files": None},
     "doc_format": "Markdown",
+    "read_limits": {"mode": "warn", "whole_file_lines": 300, "read_budget": 500000},
     "main_session_push_merge": True,
 }
 
@@ -260,6 +261,10 @@ def check_answers_methodology(target: Path) -> None:
         bad(f"methodology.json 讀不到：{e}")
         return
     conv = prof.get("conventions", {})
+    lim = prof.get("limits", {})
+    ok("答案檔的 read_limits 寫進 limits（mode、行數、預設額度；沒回答的角色額度沿用 profile）") if (
+        lim.get("mode") == "warn" and lim.get("whole_file_lines") == 300 and lim.get("read_budget", {}).get("default") == 500000
+        and lim.get("read_budget", {}).get("roles")) else bad(f"read_limits 沒寫對：{lim}")
     want = {
         "name": prof.get("name") == "lightweight",
         "test_first=false": prof.get("stages", {}).get("build", {}).get("test_first") is False,
@@ -593,7 +598,7 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     good = r.returncode == 0 and "sync" in m3["conventions"] and m3["conventions"]["pr_size"] == {"max_lines": 123, "max_files": 7}
     ok("升級：--adopt-new-fields 補上 conventions.sync，既有的 pr_size 不變") if good else bad("升級：--adopt-new-fields 不對：", r.stdout + r.stderr)
     lim = m3.get("limits") or {}
-    ok("升級：--adopt-new-fields 補上 models、knowledge，limits 先用 warn（不擋）") if m3.get("models") and m3.get("knowledge") and lim.get("mode") == "warn" and lim.get("whole_file_lines") else bad(f"升級：models／limits／knowledge 沒補對：{lim}")
+    ok("升級：--adopt-new-fields 補上 models、knowledge，limits 只補門檻、不啟用（沒有 mode）") if m3.get("models") and m3.get("knowledge") and "mode" not in lim and lim.get("whole_file_lines") else bad(f"升級：models／limits／knowledge 沒補對：{lim}")
     ok("升級：--adopt-new-fields 補上 recipes（11 個）與 modifiers") if len(m3.get("recipes") or {}) == 11 and m3.get("modifiers") else bad(f"升級：recipes 沒補上：{sorted(m3.get('recipes') or {})}")
     r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=t)
     ok("--adopt-new-fields 後 build.py --check") if r.returncode == 0 else bad("--adopt-new-fields 後 build.py --check 失敗：", r.stdout + r.stderr)

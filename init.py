@@ -176,6 +176,46 @@ def _int_or_none(v, what: str):
     return n if n > 0 else None
 
 
+# 讀取上限（methodology limits）：要不要啟用、門檻多少由使用者決定；內建 profile 只給建議門檻、不預設 mode
+LIMIT_MODES = ("off", "warn", "enforce")
+
+
+def apply_read_limits(prof: dict, rl) -> None:
+    """答案 read_limits：字串（mode）或物件 {mode, whole_file_lines, read_budget, max_agents}。
+    read_budget 可以是整數（每個 agent 的預設額度）或 {default, roles}。沒回答的門檻沿用 profile 的建議值。"""
+    rl = {"mode": rl} if isinstance(rl, str) else rl
+    if not isinstance(rl, dict):
+        die(f"read_limits 要是 {'、'.join(LIMIT_MODES)} 其中之一，或物件（收到 {rl!r}）")
+    mode = str(rl.get("mode") or "off")
+    if mode not in LIMIT_MODES:
+        die(f"read_limits.mode 要是 {'、'.join(LIMIT_MODES)} 其中之一（收到 {mode!r}）")
+    lim = prof.setdefault("limits", {})
+    lim["mode"] = mode
+
+    def num(v, what: str) -> int:
+        if isinstance(v, bool) or not str(v).strip().lstrip("-").isdigit() or int(v) < 0:
+            die(f"{what} 要是 0（不限）或正整數（收到 {v!r}）")
+        return int(v)
+    if "whole_file_lines" in rl:
+        lim["whole_file_lines"] = num(rl["whole_file_lines"], "read_limits.whole_file_lines")
+    if "read_budget" in rl:
+        rb = rl["read_budget"]
+        cur = lim.setdefault("read_budget", {})
+        if isinstance(rb, dict):
+            if "default" in rb:
+                cur["default"] = num(rb["default"], "read_limits.read_budget.default")
+            if isinstance(rb.get("roles"), dict):
+                cur["roles"] = {str(k): num(v, f"read_limits.read_budget.roles.{k}") for k, v in rb["roles"].items()}
+        else:
+            cur["default"] = num(rb, "read_limits.read_budget")
+    if "max_agents" in rl:
+        n = num(rl["max_agents"], "read_limits.max_agents")
+        if n:
+            lim["max_agents"] = n
+        else:
+            lim.pop("max_agents", None)
+
+
 # 分支怎麼跟上 base（methodology conventions.sync.strategy；schema 同一組值）
 SYNC_STRATEGIES = ("auto", "rebase", "merge", "transit")
 
@@ -215,6 +255,8 @@ def apply_answers(profile: dict, ans: dict) -> dict:
         prof.setdefault("stages", {}).setdefault("build", {})["test_first"] = bool(ans["test_first"])
     if isinstance(ans.get("requirements"), dict):
         prof["requirements"] = ans["requirements"]
+    if "read_limits" in ans:
+        apply_read_limits(prof, ans["read_limits"])
     if isinstance(ans.get("overrides"), dict):
         prof = deep_merge(prof, ans["overrides"])
     return prof
@@ -257,6 +299,16 @@ def ask_methodology(default_name: str, branch_prefix: str) -> tuple[str, dict]:
     df = ask("文件格式", conv.get("doc_format", {}).get("format", "Markdown"))
     if df != conv.get("doc_format", {}).get("format"):
         ans["doc_format"] = df
+    lim = prof.get("limits", {})
+    print("  讀取上限（省 token 用，可以不開）：限制模版 agent 整檔讀大檔與每個 agent 的讀取量；不限制 agent 的輸出。")
+    lm = ask("要不要啟用讀取上限（off＝不啟用；warn＝只提醒不擋；enforce＝擋）", str(lim.get("mode") or "off"))
+    if lm != "off":
+        rb = lim.get("read_budget", {})
+        ans["read_limits"] = {
+            "mode": lm,
+            "whole_file_lines": ask("超過幾行的檔要分段讀（0 ＝不限）", str(lim.get("whole_file_lines") or 0)),
+            "read_budget": {"default": ask("每個 agent 一次派工最多讀幾個位元組（0 ＝不限；各角色的額度之後可在 methodology.json 調）", str(rb.get("default") or 0))},
+        }
     return name, ans
 
 
@@ -349,10 +401,10 @@ def profile_upgrade(meth: Path, adopt: bool) -> int:
         new = json.loads(json.dumps(proj))
         for p, v in miss:
             set_missing(new, p, v)
-        # 讀取上限是這版才有的強制機制：升級補進來時先用 warn（只記錄本來會擋的），確認不會誤擋再自己改成 enforce
+        # 讀取上限要不要啟用由使用者決定：補進來的只有建議門檻，沒有 mode（＝不啟用）
         if any(p == "limits" for p, _ in miss) and isinstance(new.get("limits"), dict):
-            new["limits"]["mode"] = "warn"
-            print("  limits 先設成 mode=warn（只記錄、不擋）；觀察一陣子沒有誤擋，再把 methodology.json 的 limits.mode 改成 enforce。")
+            new["limits"].pop("mode", None)
+            print("  limits 只補建議門檻，沒有啟用。要用讀取上限：在 methodology.json 的 limits 加 \"mode\": \"warn\"（只提醒）或 \"enforce\"（擋），門檻自己調。")
         errs = schemalib.check_doc(new, "methodology")
         if errs:
             print("錯誤：補上欄位後不符合 schemas/methodology.schema.json，沒有寫回：" + "；".join(errs[:5]))

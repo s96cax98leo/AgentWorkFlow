@@ -3,10 +3,10 @@
 為什麼要有：agent 整檔讀大檔會把 context 撐大，之後每一輪都整份重讀，token 幾乎都花在這裡。勸導沒用，所以用 hook 擋。
 
 設定在專案的 .claude/teams/methodology.json 的 limits（awf_config.limits()）：
-  mode              enforce（擋）、warn（不擋，只把「本來會擋」寫進狀態目錄的 warn.log）、off
+  mode              enforce（擋）、warn（不擋，只把「本來會擋」寫進狀態目錄的 warn.log）、off；沒寫＝不啟用（由使用者決定要不要開）
   whole_file_lines  一次 Read 最多讀幾行；0＝關閉「大檔要分段讀」與 shell 的 cat 類規則
   read_budget       {"default": 位元組, "roles": {"<模版角色名>": 位元組}}；0＝不限
-沒有 methodology.json、讀不懂、沒有 limits 鍵：整個功能關閉。
+沒有 methodology.json、讀不懂、沒有 limits 鍵、沒寫 mode：整個功能關閉。
 
 只套用模版角色（tpm-*／dev-*）。主 session、使用者自己的 agent、登記在 extension_agents 的擴充 agent 都不受影響。
 
