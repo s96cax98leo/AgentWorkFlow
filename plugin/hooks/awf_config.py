@@ -101,8 +101,8 @@ def _limit_int(v) -> int:
 def limits() -> dict | None:
     """讀取預算設定：專案 methodology.json 的 limits（read_budget.py 用）。
     回傳 {"mode": "enforce"|"warn", "whole_file_lines": int, "read_budget": {"default": int, "roles": {角色名: int}}}；
-    None＝整個功能關閉：沒有 methodology.json、讀不懂、沒有 limits 鍵、mode 是 off 或不認得的值。
-    有 limits 但沒寫 mode 時當 enforce。數值型別不對就當 0（該項關閉）。roles 的鍵去掉命名空間並套 ROLE_ALIASES。"""
+    None＝整個功能關閉：沒有 methodology.json、讀不懂、沒有 limits 鍵、沒寫 mode、mode 是 off 或不認得的值。
+    要不要啟用由使用者決定：只有明寫 mode 是 enforce 或 warn 才啟用（內建 profile 不預設 mode）。數值型別不對就當 0（該項關閉）。roles 的鍵去掉命名空間並套 ROLE_ALIASES。"""
     try:
         data = json.loads(methodology_path().read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -110,7 +110,7 @@ def limits() -> dict | None:
     lim = data.get("limits") if isinstance(data, dict) else None
     if not isinstance(lim, dict):
         return None
-    mode = lim.get("mode", "enforce")
+    mode = lim.get("mode")
     if not isinstance(mode, str) or mode not in LIMIT_MODES or mode == "off":
         return None
     rb = lim.get("read_budget") if isinstance(lim.get("read_budget"), dict) else {}

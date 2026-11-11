@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [0.4.1]
+
+### 變更
+
+- **讀取預算改成預設不啟用，由使用者決定要不要用、門檻多少。**
+  - 內建 profile 的 `limits` 不再預設 `mode`，只留建議門檻（`whole_file_lines`、`read_budget`、`max_agents`）。
+  - `limits` 沒寫 `mode` 時不啟用（0.4.0 是當成 `enforce`）。要啟用就明寫 `mode: warn` 或 `enforce`。
+  - init 問答多一題「要不要啟用讀取上限」，選啟用才接著問門檻；答案檔多一個鍵 `read_limits`。
+  - `init.py --upgrade --adopt-new-fields` 補進 `limits` 時只補門檻，不再自動設 `warn`。
+- 派工數上限（`limits.max_agents`）不受 `mode` 影響，照舊生效。
+
+### 修正
+
+- `pack.py` 在 Python 3.9 無法執行（用到 3.10 才有的寫檔參數）。
+- Windows 上路徑含 `~`（8.3 短路徑）時，讀取預算沒擋到 `cat`／`Get-Content` 整檔讀大檔。
+
+### 升級步驟
+
+- 0.4.0 已經在用讀取預算的專案：`methodology.json` 的 `limits` 裡本來就有 `mode` 的不受影響；自己刪掉 `mode` 靠預設值的，要補回 `"mode": "enforce"`。
+- 其餘照 0.4.0 的升級步驟。
+
 ## [0.4.0]
 
 這一版先量、再省。起因：實測同一個需求的三次 plan 段各花 21～29M token、21～28 分鐘，95% 是 context 重讀（agent 整檔讀大檔，之後每一輪都重讀），而且每個 agent 都用最貴的模型。

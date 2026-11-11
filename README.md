@@ -8,7 +8,7 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 - **其他事件**（簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看）各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
 
-所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python 標準庫，在 macOS、Linux、Windows（PowerShell）上都能執行。目前版本 **0.4.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
+所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python 標準庫，在 macOS、Linux、Windows（PowerShell）上都能執行。目前版本 **0.4.1**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 做法
 
@@ -89,12 +89,12 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 
 **不限制的**：agent 的輸出 token（沒有設輸出上限，也不調低推理強度）；intent、spec、調研結論、審查報告、執行紀錄這些成果檔都沒有長度上限。
 
-**限制的（都可以在 profile 調整或關閉）**：
+**可以限制的（都在 profile 調整）**。其中讀取預算**預設不啟用**：要不要開、門檻多少由你決定，init 時會問，之後也可以直接改 `methodology.json`。
 
 | 機制 | 做什麼 | 設定 |
 |---|---|---|
 | 模型分級 | triage 建議各角色用 `light`／`standard`／`strong` 哪一級，工具守下限：合併、安全審查、plan 的 spec-author 一定用最強的，AI 降不下去。沒交件會用高一級重派一次 | `models` |
-| 讀取預算 | hook 擋模版角色整檔讀大檔（預設超過 400 行要分段讀），並給每個 agent 讀取額度，用完要求收斂交件 | `limits`（`mode: warn` 只提醒不擋）|
+| 讀取預算（預設不啟用） | 啟用後，hook 擋模版角色整檔讀大檔（建議門檻：超過 400 行要分段讀），並給每個 agent 讀取額度，用完要求收斂交件 | `limits.mode`：不寫或 `off`＝不啟用、`warn`＝只提醒、`enforce`＝擋；門檻是 `whole_file_lines`、`read_budget` |
 | 知識層 | `kb.py` 把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行；產出可以用 Obsidian 打開 | `knowledge` |
 | 資料包 | 每段開跑前由工具（不是 agent）整理好需求、知識庫命中的行段、前面各段的紀錄 | `pack.py` |
 | 兩段式調研 | 先用便宜的模型「定位」行段，再由分析 agent 只讀那些行段 | 內建於 `sdlc-plan` |
@@ -103,9 +103,9 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 
 唯一碰到輸出的是**交件信封**：summary 不超過 400 字、evidence 最多 12 則。它只管 agent 交回給 workflow 的那份 JSON；細節照樣完整寫在檔案裡，信封只放路徑。
 
-讀取額度用完會讓 agent 提早收斂，大型專案上可能影響調研的完整度。擔心的話把 `limits.mode` 設成 `warn` 先觀察；升級既有專案時補進來的 `limits` 預設就是 `warn`。
+啟用讀取預算的方式：init 問答選 `warn` 或 `enforce`，或在答案檔寫 `"read_limits": {"mode": "enforce", "whole_file_lines": 400, "read_budget": 800000}`，或直接在 `methodology.json` 的 `limits` 加 `mode`。額度用完會讓 agent 提早收斂，大型專案上可能影響調研的完整度，建議先用 `warn` 觀察再決定門檻。
 
-在 `tests/bench/` 的虛構專案（67 個檔、約 6,100 行）實測 0.4.0 的 plan 段：首次 2.69M token、6.9 分鐘；同一個 run 重跑 0.76M（首次的 28%）。改版前的數字量自大很多的真實專案，兩者不是同一個情境，不能直接相除。完整數字與限制見 [`CHANGELOG.md`](CHANGELOG.md)。想看自己的 run 花了多少：
+在 `tests/bench/` 的虛構專案（67 個檔、約 6,100 行）實測 0.4.0 的 plan 段（讀取預算開 `enforce`）：首次 2.69M token、6.9 分鐘；同一個 run 重跑 0.76M（首次的 28%）。改版前的數字量自大很多的真實專案，兩者不是同一個情境，不能直接相除。完整數字與限制見 [`CHANGELOG.md`](CHANGELOG.md)。想看自己的 run 花了多少：
 
 ```bash
 python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run 目錄>
@@ -332,7 +332,7 @@ python3 ~/tools/AgentWorkFlow/init.py --target . --upgrade [--adopt-new-fields]
 
    ```bash
    git clone https://github.com/s96cax98leo/AgentWorkFlow.git ~/tools/AgentWorkFlow
-   git -C ~/tools/AgentWorkFlow checkout v0.4.0
+   git -C ~/tools/AgentWorkFlow checkout v0.3.0   # 換成你要的 tag；`git tag` 列出已發佈的版本
    claude plugin marketplace add ~/tools/AgentWorkFlow
    claude plugin install agent-workflow@agentworkflow
    ```

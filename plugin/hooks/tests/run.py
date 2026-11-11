@@ -1164,7 +1164,8 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     check("warn：warn.log 一行一筆 JSON，記了本來會擋的規則", {"whole_file", "budget_80", "budget_exhausted", "shell_whole_file"},
           {x.get("rule") for x in wl if isinstance(x, dict) and x.get("session_id") == "rb3"}, str(wl)[:300])
     check("warn：enforce 的工作區不寫 warn.log", [], [x for x in wl if isinstance(x, dict) and x.get("session_id") in ("rb1", "rb2")])
-    for label, prof in (("mode: off", rb_limits("off", default=1)), ("沒有 limits 鍵", {"stages": {}}), ("沒有 methodology.json", NO_FILE),
+    for label, prof in (("mode: off", rb_limits("off", default=1)), ("沒有 limits 鍵", {"stages": {}}),
+                        ("沒寫 mode（內建 profile 的樣子：有門檻、沒啟用）", {"limits": {"whole_file_lines": 400, "read_budget": {"default": 1, "roles": {}}}}), ("沒有 methodology.json", NO_FILE),
                         ("methodology.json 讀不懂", "{不是 JSON"), ("methodology.json 不是物件", "[1, 2]"),
                         ("limits 不是物件", {"limits": "enforce"}), ("mode 不認得", rb_limits("strict", default=1)),
                         ("whole_file_lines 型別不對", rb_limits(lines="400")), ("whole_file_lines 是 0", rb_limits(lines=0)),

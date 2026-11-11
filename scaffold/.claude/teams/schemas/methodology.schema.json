@@ -106,10 +106,10 @@
     },
     "limits": {
       "type": "object",
-      "description": "選填：讀取與擴散的上限。hook（guard-paths）對模版角色強制；省略時不限制",
+      "description": "選填：讀取與擴散的上限。要不要啟用、門檻多少由使用者決定：mode 寫 enforce 或 warn 才啟用讀取上限，沒寫 mode 或省略整段都不限制讀取",
       "additionalProperties": false,
       "properties": {
-        "mode": {"type": "string", "enum": ["enforce", "warn", "off"], "description": "enforce＝擋；warn＝只記錄本來會擋的（剛升級的專案過渡用）；off＝關閉"},
+        "mode": {"type": "string", "enum": ["enforce", "warn", "off"], "description": "enforce＝擋；warn＝只記錄本來會擋的（先觀察用）；off 或不寫＝不啟用"},
         "whole_file_lines": {"type": "integer", "minimum": 0, "description": "一次 Read 最多讀幾行；超過要帶 offset／limit 分段讀。0＝不限"},
         "read_budget": {
           "type": "object",

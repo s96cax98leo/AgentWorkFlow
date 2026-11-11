@@ -120,7 +120,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **兩段式調研**：`locate:<角度>`（light，payload `locations`）→ `research:<角度>`（只讀定位到的行段）。定位缺件時該角度列 missing、不派分析。triage 的 `angles` 只能從 recipe 自己的角度挑，modifier 帶進來的不能省。
 - **資料包與重用**：`tools/pack.py` 寫 `<run>/<段>/pack.md` 與 `pack-args.json`（無時間戳、可重現）；plan 段的 `reuse.json` 記各角度來源檔的 sha1，`save_run.py stage plan` 用 `verify_reuse` 重新核對、存檔後 `record_reuse`。這三個檔與 `pack.py` 只有主 session 能寫、能跑（`guard.py` 的 `PACK_STATE`、`SHARED_CONTEXT_NAMES`）。
 - **知識層**：`tools/kb.py`（FTS5，退回純 Python BM25；中文 bigram）。輸出包在資料標籤裡；卡片只放標題樹與行號，不放內文。
-- **讀取預算**：`plugin/hooks/read_budget.py`，由 `guard.read_budget_check` 呼叫。只套模版角色；沒有 `limits` 就關閉；任何例外都放行（I9）。狀態檔在系統暫存目錄的 `awf-read-budget/<session_id>/<agent_id>.json`（`AWF_READ_BUDGET_DIR` 可覆寫，測試用）。
+- **讀取預算**：`plugin/hooks/read_budget.py`，由 `guard.read_budget_check` 呼叫。只套模版角色；**預設不啟用**（`limits` 沒寫 `mode` 就關閉，內建 profile 不預設 `mode`，由使用者在 init 問答、答案檔的 `read_limits` 或 `methodology.json` 決定要不要開與門檻）；任何例外都放行（I9）。狀態檔在系統暫存目錄的 `awf-read-budget/<session_id>/<agent_id>.json`（`AWF_READ_BUDGET_DIR` 可覆寫，測試用）。
 - **量成本**：`tools/awf_cost.py` 讀 Claude Code 的 workflow transcript（格式沒承諾穩定，解析集中在 `read_agent`、`read_wf_meta`）。基準實跑在 `tests/bench/`（`make_fixture.py` 產生虛構專案、`run_plan.py` 真的呼叫 claude，會花 token，不在 run_all 裡）。
 - 這些都是輔助：失敗只警告、不擋流程；gate 判定不看它們的輸出（調研重用例外：`verify_reuse` 不符會判 invalid，只會更嚴）。
 
