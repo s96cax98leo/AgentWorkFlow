@@ -31,6 +31,8 @@ function awfSetModelPlan(list) {
 function awfModelFor(o) {
   const k = awfKernel()
   const role = awfRole(o.agentType)
+  // 使用者自己的 agent（擴充 agent，不是 tpm-／dev- 模版角色）不指定模型：尊重它 frontmatter 自己的設定
+  if (!/^(tpm|dev)-/.test(role)) return { mode: 'inherit', tier: '', model: '', floor: '', reason: '使用者自己的 agent：不指定模型' }
   const own = (key) => (Object.prototype.hasOwnProperty.call(k.plan, key) ? k.plan[key] : undefined)
   const ai = own(o.planKey || role)
   const m = resolveModel(k.profile, role, o.stage || k.stage, (ai && ai.tier) || o.tier || undefined, k.modifiers)

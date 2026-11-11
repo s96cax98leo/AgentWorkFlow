@@ -39,7 +39,7 @@ function awfPrefix() {
     `- 這次 run 的共用背景在 ${c.run_dir}/context.md（需求、目標 repo、recipe）；需要時再讀，派工單不重複貼。\n` +
     `- 省 context（hook 會擋超量讀取）：大檔帶 offset／limit 分段讀。找資料先看 ${c.run_dir}/${c.stage}/pack.md（有才讀），再用 python3 .claude/teams/tools/kb.py query "<問題>" 或 Grep 找行段，只讀那幾行；程式碼有 graft／codegraph 就先用。\n` +
     `- 執行紀錄一定要寫（缺了算缺件）：寫到派工單最後一行指定的檔案，內容是任務摘要（一到三句，不貼派工單原文）、做了什麼、跑了哪些指令與結果（測試、建置、lint 等輸出長的指令一律用 python3 .claude/teams/tools/run_brief.py --log ${c.run_dir}/${c.stage}/logs/<label>.log -- <指令> 跑，只讀它印的重點，紀錄附 log 路徑）、結論、不確定的地方。成果另存成檔；信封的 artifacts 列出紀錄檔與成果檔。沒有 Write 工具的角色把同樣內容寫進信封（summary、evidence），由工具代寫紀錄檔。\n` +
-    `- 信封精簡：summary 不超過 400 字、evidence 最多 12 則；細節寫在檔案，信封只放路徑。`
+    `- 信封精簡：summary 不超過 400 字、evidence 最多 12 則；細節寫在檔案，信封只放路徑。有 blocking 的 open_questions 時 status 用 needs_decision，不能是 done。`
 }
 
 // 派 agent，失敗（throw：逾時、被中止、交件驗證錯誤等）一律當成缺件回 null，讓呼叫端走缺件流程（規則 26）；
@@ -50,7 +50,7 @@ function tryAgent(prompt, opts, meta) {
   const s = awfState()
   const entry = { label: o.label || '', agent_type: o.agentType || '', phase: o.phase || '', record: s.cfg ? awfRecordPath(o.label) : '', ok: null, ...(meta || {}) }
   s.trace.push(entry)
-  const full = s.cfg ? `${awfPrefix()}\n\n${prompt}\n\n執行紀錄檔：${entry.record}` : prompt
+  const full = s.cfg ? `${awfPrefix()}\n\n${prompt}\n\n交件前先把執行紀錄寫到下面這個檔（沒寫算缺件）。\n執行紀錄檔：${entry.record}` : prompt
   const fail = (e) => { log(`agent ${o.label || ''} 失敗，當成缺件：${(e && e.message) || e}`); entry.ok = false; return null }
   try {
     return Promise.resolve(agent(full, opts)).then((r) => { entry.ok = !!r; return r }, fail)
@@ -234,7 +234,7 @@ function modelTiers() { return ['light', 'standard', 'strong'] }
 function modelBuiltinTiers() { return { light: 'haiku', standard: 'sonnet', strong: 'inherit' } }
 // 閘門角色的最低等級：profile 的 floors 只能再往上加，不能蓋掉（鍵是「角色」或「角色@段」）
 function modelBuiltinFloors() {
-  return { 'dev-merge-steward': 'strong', 'dev-security-reviewer': 'strong', 'tpm-skeptic@merge': 'strong', 'dev-spec-author@plan': 'strong' }
+  return { 'dev-merge-steward': 'strong', 'dev-security-reviewer': 'strong', 'tpm-skeptic@merge': 'strong', 'dev-spec-author@plan': 'strong', 'tpm-skeptic@plan': 'standard' }
 }
 function modelRank(t) { return typeof t === 'string' ? modelTiers().indexOf(t) : -1 }
 function modelMax(...tiers) { let best = ''; for (const t of tiers) if (modelRank(t) > modelRank(best)) best = t; return best }
@@ -245,7 +245,8 @@ function modelLookup(table, role, stage) {
 }
 function modelUp(tier) { const i = modelRank(tier); return i >= 0 && i < modelTiers().length - 1 ? modelTiers()[i + 1] : '' }
 function tierModel(profile, tier) {
-  const tiers = (((profile || {}).models || {}).tiers) || {}
+  const ms = (profile || {}).models
+  const tiers = ms && typeof ms === 'object' && ms.tiers && typeof ms.tiers === 'object' && !Array.isArray(ms.tiers) ? ms.tiers : {}
   const own = Object.prototype.hasOwnProperty.call(tiers, tier) ? tiers[tier] : undefined
   const m = typeof own === 'string' && own ? own : (modelBuiltinTiers()[tier] || '')
   return m === 'inherit' ? '' : m
@@ -262,10 +263,13 @@ function resolveModel(profile, role, stage, suggested, modifiers) {
   const def = modelMax(own(defaults, `${role}@${stage}`)) || modelMax(own(defaults, role)) || modelMax(own(defaults, '*')) || 'standard'
   let floor = modelMax(modelLookup(modelBuiltinFloors(), role, stage), modelLookup(models.floors, role, stage))
   const modsDef = (profile || {}).modifiers || {}
-  const hasMods = Object.keys(modsDef).length > 0
   const builtin = recipeBuiltinModifiers()
   for (const m of modifiers || []) {
-    const md = own(modsDef, m) !== undefined ? modsDef[m] : (!hasMods ? own(builtin, m) : undefined)
+    // 內建 modifier 的下限一律生效（profile 把 model_floors 拿掉也一樣）；profile 自己的只能再往上加
+    if (typeof m !== 'string') continue
+    const bd = own(builtin, m)
+    if (bd && typeof bd === 'object') floor = modelMax(floor, modelLookup(bd.model_floors, role, stage))
+    const md = modsDef && typeof modsDef === 'object' ? own(modsDef, m) : undefined
     if (md && typeof md === 'object') floor = modelMax(floor, modelLookup(md.model_floors, role, stage))
   }
   let base, why

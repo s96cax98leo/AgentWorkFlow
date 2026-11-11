@@ -143,6 +143,9 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `check_workflows.mjs` | 乾跑所有 workflow，包括子計劃、分片驗證、平行修正、缺件等情境（情境在 `tools/scenarios/<workflow>.mjs`） |
 | `check_agents.py` | 檢查 `tpm-*`／`dev-*` agent 的格式 |
 | `schemalib.py` | hook、golden-set、merge gate 共用的驗證器 |
+| `pack.py <段> --run <run_dir>` | 每段開跑前備資料包（`pack.md`）與要併進 args 的 `pack-args.json`；plan 段另算可沿用的調研角度。只由主 session 執行 |
+| `kb.py build｜query｜lint` | 知識層：把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行 |
+| `awf_cost.py` | 讀 workflow transcript，依角色與模型加總 token、時間、平均 context（只做估算，不參與閘門） |
 
 ```bash
 python3 .claude/teams/tools/build.py --check
@@ -153,6 +156,9 @@ python3 <plugin>/hooks/tests/run.py --project .
 python3 .claude/teams/tools/merge_gate.py --selftest
 python3 .claude/teams/tools/publish.py --selftest
 python3 .claude/teams/tools/sync_branch.py --selftest
+python3 .claude/teams/tools/pack.py --selftest
+python3 .claude/teams/tools/kb.py --selftest
+python3 .claude/teams/tools/awf_cost.py --selftest
 ```
 
 ## 新增一種事件

@@ -125,6 +125,9 @@ def _safe(name, fallback: str) -> str:
     return out
 
 
+MAX_SINGLE_READ = 100 * 1024  # 單次讀取最多記這麼多位元組（Read 工具一次回傳的內容大約就這個量級）
+
+
 def state_root() -> Path:
     override = os.environ.get(ENV_DIR)
     return Path(override) if override else Path(tempfile.gettempdir()) / "awf-read-budget"
@@ -255,6 +258,9 @@ def _check_read(data: dict, cfg: dict) -> str | None:
     budget = rb["roles"].get(role, rb["default"])
     if budget <= 0:
         return None
+    if not isinstance(data.get("agent_id"), str) or not data.get("agent_id"):
+        return None  # 沒有 agent_id 就分不出是哪一個 agent：不記帳（不然同型別的 agent 會共用額度，後派的一開工就被擋）
+    est = min(est, MAX_SINGLE_READ)  # Read 一次回傳的內容有上限：單行的大檔不能一次把額度扣光
     sp = _state_path(data)
     st, is_new = _load_state(sp)
     if is_new:

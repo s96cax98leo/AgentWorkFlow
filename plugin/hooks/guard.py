@@ -1362,6 +1362,9 @@ def _check_shell_rules(data: dict) -> None:
         pk = save_run_write(seg, "pack", {"--selftest"}) if team else None
         if pk:
             block(f"{agent} 不能跑 pack.py（資料包與調研重用的紀錄只由主 session 產生，agent 只讀 pack.md）")
+        kbw = save_run_write(seg, "kb", {"query", "lint", "--selftest", "-h", "--help"}) if team else None
+        if kbw:
+            block(f"{agent} 只能跑 kb.py query／lint（build 會改寫共用的索引與卡片，只由主 session 或 pack.py 執行）")
         sr = save_run_write(seg) if team else None
         if sr:
             block(f"{agent} 不能跑 save_run.py {sr}（team agent 只能跑唯讀的 status 與 --selftest）；"

@@ -133,6 +133,7 @@ BUILTIN_MODEL_FLOORS = {
     "dev-security-reviewer": "strong",
     "tpm-skeptic@merge": "strong",
     "dev-spec-author@plan": "strong",
+    "tpm-skeptic@plan": "standard",   # plan 閘門前唯一的反駁，不能排到 light
 }
 
 
@@ -161,7 +162,8 @@ def model_up(tier: str) -> str:
 
 def tier_model(profile: dict | None, tier: str) -> str:
     """等級對應的模型別名；profile 寫 inherit 表示沿用主對話模型（回空字串）。"""
-    tiers = ((profile or {}).get("models") or {}).get("tiers") or {}
+    models = (profile or {}).get("models")
+    tiers = models.get("tiers") if isinstance(models, dict) and isinstance(models.get("tiers"), dict) else {}
     m = tiers.get(tier) if isinstance(tiers.get(tier), str) and tiers.get(tier) else BUILTIN_TIER_MODELS.get(tier, "")
     return "" if m == "inherit" else m
 
@@ -172,15 +174,19 @@ def resolve_model(profile: dict | None, role: str, stage: str, suggested: str | 
     mode=fixed：用 defaults，不採 AI 建議。mode=auto：AI 建議（suggested）優先，沒有或不認得就用 defaults。
     最後一律取 max(上面的結果, 內建 floor, profile floor, modifiers 的 model_floors)：只會往上。"""
     models = (profile or {}).get("models")
-    if not isinstance(models, dict) or models.get("mode", "auto") == "inherit":
+    if not isinstance(models, dict) or (models.get("mode") or "auto") == "inherit":
         return {"mode": "inherit", "tier": "", "model": "", "floor": "", "reason": "沒有設定 models 或 mode=inherit：沿用主對話模型"}
-    mode = models.get("mode", "auto")
+    mode = models.get("mode") or "auto"
     defaults = models.get("defaults") if isinstance(models.get("defaults"), dict) else {}
     default = _tier_max(defaults.get(f"{role}@{stage}")) or _tier_max(defaults.get(role)) or _tier_max(defaults.get("*")) or "standard"
     floor = _tier_max(_tier_lookup(BUILTIN_MODEL_FLOORS, role, stage), _tier_lookup(models.get("floors"), role, stage))
     mods_def = (profile or {}).get("modifiers") or {}
     for m in list(modifiers or []):
-        md = mods_def.get(m) if isinstance(mods_def, dict) and m in mods_def else (BUILTIN_MODIFIERS.get(m) if not mods_def else None)
+        # 內建 modifier 的下限一律生效（profile 把 model_floors 拿掉也一樣）；profile 自己的只能再往上加
+        bd = BUILTIN_MODIFIERS.get(m) if isinstance(m, str) else None
+        if isinstance(bd, dict):
+            floor = _tier_max(floor, _tier_lookup(bd.get("model_floors"), role, stage))
+        md = mods_def.get(m) if isinstance(mods_def, dict) and isinstance(m, str) and m in mods_def else None
         if isinstance(md, dict):
             floor = _tier_max(floor, _tier_lookup(md.get("model_floors"), role, stage))
     if mode == "auto" and _tier_rank(suggested) >= 0:
@@ -545,7 +551,12 @@ def selftest() -> int:
     check("模型：mode=fixed 不採 AI 建議", rm({**mp, "models": {**mp["models"], "mode": "fixed"}}, "tpm-writer", "deliver", "light")["tier"] == "standard")
     check("模型：不認得的等級當成沒建議", rm(mp, "tpm-writer", "deliver", "ultra")["tier"] == "standard")
     check("模型：modifier 的 model_floors 只加嚴", rm(mp, "tpm-skeptic", "plan", "light", ["security"])["tier"] == "strong"
-          and rm(mp, "tpm-skeptic", "plan", "light", [])["tier"] == "light")
+          and rm(mp, "tpm-skeptic", "design", "light", [])["tier"] == "light")
+    check("模型：plan 的 skeptic 內建下限 standard", rm(mp, "tpm-skeptic", "plan", "light", [])["tier"] == "standard")
+    nomf = {**mp, "modifiers": {"security": {"description": "舊 profile：沒有 model_floors"}}}
+    check("模型：profile 的 modifier 拿掉 model_floors，內建的下限照樣生效", rm(nomf, "tpm-skeptic", "design", "light", ["security"])["tier"] == "strong")
+    check("模型：models 形狀不對不丟例外", rm({"models": {"tiers": "x", "defaults": 3, "floors": []}}, "tpm-writer", "plan")["model"] == "sonnet"
+          and rm({"models": {"mode": ""}}, "tpm-writer", "plan")["mode"] == "auto")
     lower = [(r_, st, sg) for r_ in ("tpm-researcher", "dev-merge-steward", "tpm-skeptic", "dev-spec-author", "zzz") for st in SDLC for sg in (None, *TIERS)
              if _tier_rank(rm(mp, r_, st, sg)["tier"]) < _tier_rank(rm(mp, r_, st, sg)["floor"])]
     check("模型：任何組合都不低於下限", not lower, str(lower[:3]))

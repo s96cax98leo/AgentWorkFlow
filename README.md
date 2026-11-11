@@ -130,6 +130,17 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 
 細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈依需求類型分流〉。
 
+## 省 token（0.4）
+
+實測一個 plan 段要 21～29M token，95% 是 context 重讀。0.4 用四個機制處理，都可以在 profile 調整或關閉：
+
+- **模型分級**：AI 在 triage 建議各角色用哪個等級（`light`／`standard`／`strong`），工具守下限——閘門角色（合併、安全審查、plan 的 spec-author）一定用最強的，AI 降不下去。沒交件會用高一級重派一次。
+- **讀取預算**：hook 擋模版角色整檔讀大檔，並給每個 agent 讀取額度。只管模版角色，出錯放行；`mode: warn` 可以只提醒不擋。
+- **知識層與資料包**：`kb.py` 把文件索引成「哪個檔的哪幾行」（可用 Obsidian 打開），`pack.py` 在每段開跑前備好資料包；調研拆成便宜的「定位」與只讀行段的「分析」。
+- **調研重用**：plan 重跑時，來源檔沒變的調研角度直接沿用。
+
+用 `python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run_dir>` 看一段實際花了多少。細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈省 token〉。
+
 ## 核心概念
 
 **閘門**：plan、design、test、deliver 結束時，主 session 把重點列在對話裡，等決策者核准，核准用 `save_run.py approve` 記錄。plan 一律由人核准；其他段可以改用政策核准（`--by policy`），這時工具會讀該段的實際結果：驗證有沒通過的條目、反作弊有發現、有阻擋性的待決問題、agent 缺件、執行紀錄缺件、workflow 中斷，都不能自動核准。需求取消時用 `save_run.py abandon` 記錄，之後任何一段都不能核准，也不能推送。
@@ -304,7 +315,7 @@ AgentWorkFlow/
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）
 ├── scaffold/                         # init.py 複製進目標專案的內容
-│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py）、golden-set/
+│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、awf_cost.py）、golden-set/
 │   ├── .claude/workflows/            # sdlc-*.js、event-*.js
 │   ├── .github/workflows/            # agent-merge-gate.yml.tmpl（選用）
 │   ├── CLAUDE.md.tmpl、.mcp.json.tmpl

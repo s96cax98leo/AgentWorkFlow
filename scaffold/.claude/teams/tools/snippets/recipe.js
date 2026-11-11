@@ -112,7 +112,7 @@ function modelTiers() { return ['light', 'standard', 'strong'] }
 function modelBuiltinTiers() { return { light: 'haiku', standard: 'sonnet', strong: 'inherit' } }
 // 閘門角色的最低等級：profile 的 floors 只能再往上加，不能蓋掉（鍵是「角色」或「角色@段」）
 function modelBuiltinFloors() {
-  return { 'dev-merge-steward': 'strong', 'dev-security-reviewer': 'strong', 'tpm-skeptic@merge': 'strong', 'dev-spec-author@plan': 'strong' }
+  return { 'dev-merge-steward': 'strong', 'dev-security-reviewer': 'strong', 'tpm-skeptic@merge': 'strong', 'dev-spec-author@plan': 'strong', 'tpm-skeptic@plan': 'standard' }
 }
 function modelRank(t) { return typeof t === 'string' ? modelTiers().indexOf(t) : -1 }
 function modelMax(...tiers) { let best = ''; for (const t of tiers) if (modelRank(t) > modelRank(best)) best = t; return best }
@@ -123,7 +123,8 @@ function modelLookup(table, role, stage) {
 }
 function modelUp(tier) { const i = modelRank(tier); return i >= 0 && i < modelTiers().length - 1 ? modelTiers()[i + 1] : '' }
 function tierModel(profile, tier) {
-  const tiers = (((profile || {}).models || {}).tiers) || {}
+  const ms = (profile || {}).models
+  const tiers = ms && typeof ms === 'object' && ms.tiers && typeof ms.tiers === 'object' && !Array.isArray(ms.tiers) ? ms.tiers : {}
   const own = Object.prototype.hasOwnProperty.call(tiers, tier) ? tiers[tier] : undefined
   const m = typeof own === 'string' && own ? own : (modelBuiltinTiers()[tier] || '')
   return m === 'inherit' ? '' : m
@@ -140,10 +141,13 @@ function resolveModel(profile, role, stage, suggested, modifiers) {
   const def = modelMax(own(defaults, `${role}@${stage}`)) || modelMax(own(defaults, role)) || modelMax(own(defaults, '*')) || 'standard'
   let floor = modelMax(modelLookup(modelBuiltinFloors(), role, stage), modelLookup(models.floors, role, stage))
   const modsDef = (profile || {}).modifiers || {}
-  const hasMods = Object.keys(modsDef).length > 0
   const builtin = recipeBuiltinModifiers()
   for (const m of modifiers || []) {
-    const md = own(modsDef, m) !== undefined ? modsDef[m] : (!hasMods ? own(builtin, m) : undefined)
+    // 內建 modifier 的下限一律生效（profile 把 model_floors 拿掉也一樣）；profile 自己的只能再往上加
+    if (typeof m !== 'string') continue
+    const bd = own(builtin, m)
+    if (bd && typeof bd === 'object') floor = modelMax(floor, modelLookup(bd.model_floors, role, stage))
+    const md = modsDef && typeof modsDef === 'object' ? own(modsDef, m) : undefined
     if (md && typeof md === 'object') floor = modelMax(floor, modelLookup(md.model_floors, role, stage))
   }
   let base, why

@@ -76,7 +76,7 @@ const V04 = [
     name: '兩段式調研：派工單有上限與停止條件',
     profile: RP, args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
     expect: (r) => [
-      ...(/最多 12 次查詢/.test(r.prompts['locate:code-contracts'] || '') && /連續 3 次查詢沒有新的相關行段就停/.test(r.prompts['locate:code-contracts'] || '') ? [] : ['定位沒有寫上限與停止條件']),
+      ...(/最多 6 輪、12 次查詢/.test(r.prompts['locate:code-contracts'] || '') && /連續 3 次查詢沒有新的相關行段就停/.test(r.prompts['locate:code-contracts'] || '') ? [] : ['定位沒有寫上限與停止條件']),
       ...(/最多 15 輪工具呼叫/.test(r.prompts['research:code-contracts'] || '') && /連續 3 次查詢沒有新發現就收斂/.test(r.prompts['research:code-contracts'] || '') ? [] : ['分析沒有寫上限與停止條件']),
       ...(/邊做邊寫進執行紀錄檔/.test(r.prompts['research:code-contracts'] || '') ? [] : ['分析沒有要求邊做邊寫紀錄']),
     ],
@@ -171,7 +171,7 @@ const V04 = [
       return [
         ...(m('intent') === 'opus' ? [] : [`dev-spec-author@plan 建議 light 要被調成 strong：${m('intent')}`]),
         ...(m('locate:code-contracts') === 'sonnet' ? [] : [`locate 建議 standard 要採用：${m('locate:code-contracts')}`]),
-        ...(m('challenge:intent') === 'haiku' ? [] : [`skeptic 建議 light（沒有下限）要採用：${m('challenge:intent')}`]),
+        ...(m('challenge:intent') === 'sonnet' ? [] : [`plan 的 skeptic 建議 light 要被調成下限 standard：${m('challenge:intent')}`]),
         ...(/往上調成 strong/.test((byLabel(r, 'intent')[0] || {}).reason || '') ? [] : ['trace 的 reason 要寫出被往上調']),
       ]
     },
@@ -187,6 +187,20 @@ const V04 = [
     profile: MP,
     fakes: { triage: (b) => ({ ...TRI('bugfix', { model_plan: [{ role: 'tpm-researcher', tier: 'light', reason: 'x' }] })(b), payload: { ...TRI('bugfix', { model_plan: [{ role: 'tpm-researcher', tier: 'light', reason: 'x' }] })(b).payload, confidence: 0.4 } }) },
     expect: (r) => ((r.calls.find((c) => c.label === 'research:code-contracts') || {}).model === 'sonnet' ? [] : ['低信心時分析要用預設 standard']),
+  },
+  {
+    name: '模型分級：低信心而且建議的剛好是 feature，也不採 AI 的 model_plan 與 angles',
+    profile: MP,
+    fakes: { triage: (b) => { const t = TRI('feature', { angles: ['requirement'], model_plan: [{ role: 'tpm-researcher', tier: 'light', reason: 'x' }] })(b); return { ...t, payload: { ...t.payload, confidence: 0.4 } } } },
+    expect: (r) => [
+      ...((r.calls.find((c) => c.label === 'research:code-contracts') || {}).model === 'sonnet' ? [] : ['低信心時分析要用預設 standard，而且角度不能被省掉']),
+      ...(r.out && r.out.angles && r.out.angles.by === 'recipe' ? [] : ['低信心時角度要用 recipe 的全部']),
+    ],
+  },
+  {
+    name: '調研重用的對應：回傳 research_by_angle，鍵是 workflow 派工的角度',
+    profile: MP, args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (r.out && r.out.research_by_angle && Object.keys(r.out.research_by_angle).length === ((r.out.angles || {}).chosen || []).length ? [] : [`沒有 research_by_angle 或角度數不對：${JSON.stringify(Object.keys((r.out || {}).research_by_angle || {}))} vs ${JSON.stringify((r.out || {}).angles)}`]),
   },
   {
     name: '模型分級：mode=inherit 不指定 model',

@@ -607,9 +607,9 @@
    },
    {
     "mode": "auto",
-    "tier": "light",
-    "model": "haiku",
-    "floor": ""
+    "tier": "standard",
+    "model": "sonnet",
+    "floor": "standard"
    },
    {
     "mode": "auto",

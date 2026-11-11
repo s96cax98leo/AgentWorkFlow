@@ -944,11 +944,15 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
         pair(0, f"I8 {short} 讀 pack.md 放行", "cat _tpm/runs/x/plan/pack.md", "Get-Content _tpm/runs/x/plan/pack.md", agent=who)
         pair(0, f"I8 {short} 跑 kb.py query 放行", 'python3 .claude/teams/tools/kb.py query "匯出 日期"',
              'python .claude/teams/tools/kb.py query "匯出 日期"', agent=who)
+        pair(2, f"I8 {short} 跑 kb.py build", "python3 .claude/teams/tools/kb.py build --dir docs",
+             "python .claude/teams/tools/kb.py build --dir docs", agent=who)
+        pair(0, f"I8 {short} 跑 kb.py lint 放行", "python3 .claude/teams/tools/kb.py lint", "python .claude/teams/tools/kb.py lint", agent=who)
         pair(0, f"I8 {short} 跑 pack.py --selftest 放行", "python3 .claude/teams/tools/pack.py --selftest",
              "python .claude/teams/tools/pack.py --selftest", agent=who)
     tool(0, "I8 tpm-researcher 寫自己的紀錄 <run>/plan/research-a.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/plan/research-a.md")}, RSR)
     tool(0, "I8 dev-implementer 寫 repo 的 pack.md 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "docs/pack.md")}, IMP)
     tool(0, "I8 主 session Write pack.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/plan/pack.md")})
+    pair(0, "I8 主 session 跑 kb.py build 放行", "python3 .claude/teams/tools/kb.py build", "python .claude/teams/tools/kb.py build")
     pair(0, "I8 主 session 跑 pack.py 放行", "python3 .claude/teams/tools/pack.py plan --run _tpm/runs/x",
          "python .claude/teams/tools/pack.py plan --run _tpm/runs/x")
 
@@ -1122,6 +1126,22 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     rb(0, "session_id／agent_id 帶路徑字元不會跳出狀態目錄", R2, rd(R2, "chunk.txt", aid="../../evil", sid="../../../evil-session"))
     check("讀取預算：狀態檔只寫在狀態目錄裡", [], [str(x) for x in tmp.rglob("*evil*") if RB_STATE not in x.parents])
     check("讀取預算：帶路徑字元的 id 仍有記帳", True, any(RB_STATE.rglob("*evil*.json")))
+
+    # 沒有 agent_id：分不出是哪一個 agent，不記帳（不然同型別的 agent 共用額度，後派的一開工就被擋）
+    no_id = {k: v for k, v in rd(R2, "chunk.txt", PLN).items() if k != "agent_id"}
+    for i in range(3):
+        rb(0, f"沒有 agent_id 不記帳、不擋（第 {i + 1} 次）", R2, no_id)
+    check("讀取預算：沒有 agent_id 時沒有寫出 type- 的狀態檔", [], [x.name for x in (RB_STATE / "rb2").glob("type-*")])
+    # 單行的大檔：行數過得了門檻，但一次最多記 100KB，不會一次把額度扣光
+    (R2 / "oneline.txt").write_text("x" * 900000, encoding="utf-8")
+    R2B = rbws("rb2b", rb_limits(default=1000000))
+    (R2B / "oneline.txt").write_text("x" * 900000, encoding="utf-8")
+    rb(0, "單行大檔第 1 次放", R2B, rd(R2B, "oneline.txt", aid="o1"))
+    try:
+        used_o1 = json.loads((RB_STATE / "rb2b" / "o1.json").read_text(encoding="utf-8")).get("used", 0)
+    except (OSError, ValueError):
+        used_o1 = -1
+    check("讀取預算：單次讀取最多記 100KB", True, 0 < used_o1 <= 100 * 1024, str(used_o1))
 
     # mode：warn 不擋但留紀錄；off、沒有 limits、沒有 methodology.json、讀不懂都放
     R3 = rbws("rb3", rb_limits("warn", default=40000))

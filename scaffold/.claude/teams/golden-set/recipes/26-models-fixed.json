@@ -630,7 +630,7 @@
     "mode": "fixed",
     "tier": "standard",
     "model": "sonnet",
-    "floor": ""
+    "floor": "standard"
    },
    {
     "mode": "fixed",

@@ -50,7 +50,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import unquote
 
-SCHEMA_VERSION = "1"      # 改了資料表或分詞就遞增：舊索引整份重建
+SCHEMA_VERSION = "2"      # 改了資料表或分詞就遞增：舊索引整份重建
 DB_NAME = "kb.sqlite"
 DEFAULT_SOURCES = ["README.md", "CLAUDE.md", "docs/**/*.md", "specs/**/*.md"]
 DEFAULT_DIR = "_tpm/kb"
@@ -58,6 +58,9 @@ TEXT_EXTS = (".md", ".markdown", ".txt")
 MARKDOWN_EXTS = (".md", ".markdown")
 MAX_BYTES = 2 * 1024 * 1024          # 超過就略過
 MAX_CHUNK_LINES = 120                # 超過就依空行再切
+MAX_PARSE_LINE = 2000                # 比這長的行不當標題、不找連結（標題與連結的 regex 在超長行上耗時平方成長）
+MAX_HEADING = 200                    # 標題存進索引前截短
+CARD_MARK = "# 摘要卡："              # 自己產生的卡片開頭；清掉舊卡片時只刪有這個標記的檔
 SNIPPET_CHARS = 160
 PRUNE_DIRS = {".git", "node_modules", ".hg", ".svn", "__pycache__"}
 # 機敏檔（比對檔名，不分大小寫）：不進索引
@@ -171,6 +174,19 @@ def default_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def repos_dir(root_p: Path) -> str:
+    """guard.config.json 的 repos_dir（相對路徑、不含 ..）；沒有設定檔、讀不懂或值不合理都回空字串。"""
+    try:
+        data = json.loads((root_p / ".claude" / "teams" / "guard.config.json").read_text(encoding="utf-8", errors="replace"))
+        raw = to_posix(str(data.get("repos_dir") or "")) if isinstance(data, dict) else ""
+    except (OSError, ValueError):
+        return ""
+    rd = raw.rstrip("/")
+    if not rd or rd.startswith(("{" * 2, "/")) or os.path.isabs(rd) or re.match(r"^[A-Za-z]:", rd) or any(seg in ("..", ".", "") or any(c in seg for c in "*?") for seg in rd.split("/")):
+        return ""
+    return rd
+
+
 def load_config(root=None, profile=None, sources=None, exclude=None, kb_dir=None) -> dict:
     """合併 profile 的 knowledge 與呼叫端指定的值。回傳 {root, sources, exclude, dir}（root、dir 是 Path）。"""
     root_p = Path(root).resolve() if root else default_root()
@@ -194,6 +210,12 @@ def load_config(root=None, profile=None, sources=None, exclude=None, kb_dir=None
         return list(default)
 
     src = str_list(sources if sources else know.get("sources"), DEFAULT_SOURCES)
+    if not sources:
+        # 工作區底下放目標 repo（guard.config.json 的 repos_dir）時，同一組來源也套到每個 repo：
+        # 不然 docs/**/*.md 只會索引工作區自己的文件，目標 repo 的文件查不到。
+        rd = repos_dir(root_p)
+        if rd:
+            src += [x for x in ("%s/*/%s" % (rd, s0) for s0 in list(src)) if x not in src]
     exc = str_list(exclude if exclude else know.get("exclude"), [])
     d = kb_dir or know.get("dir") or DEFAULT_DIR
     d_p = Path(d) if not isinstance(d, str) else Path(d.replace("\\", "/") if not os.path.isabs(d) else d)
@@ -226,9 +248,13 @@ def scan(cfg: dict, max_bytes: int = MAX_BYTES) -> tuple[dict, list]:
             skipped.append((rel, "機敏檔"))
             return
         try:
-            real = os.path.normcase(str(abs_p.resolve()))
+            real_p = abs_p.resolve()
+            real = os.path.normcase(str(real_p))
             if os.path.commonpath([real, os.path.normcase(str(root))]) != os.path.normcase(str(root)):
                 skipped.append((rel, "連到專案外"))
+                return
+            if is_sensitive(real_p.name):          # 連結的名字正常、指到的卻是機敏檔（docs/notes.md -> ../.env）
+                skipped.append((rel, "機敏檔"))
                 return
             if real == kb_abs or real.startswith(kb_abs + os.sep):
                 return
@@ -348,10 +374,10 @@ def split_document(text: str, markdown: bool = True) -> dict:
                 fence = (m.group(1)[0], len(m.group(1)))
                 infence[i] = True
                 continue
-            h = _HEAD_RE.match(line)
+            h = _HEAD_RE.match(line) if len(line) <= MAX_PARSE_LINE else None
             if h and h.group(2).strip():
                 level = len(h.group(1))
-                text_h = re.sub(r"\s+", " ", h.group(2)).strip()
+                text_h = re.sub(r"\s+", " ", h.group(2)).strip()[:MAX_HEADING]
                 if not title or (level == 1 and not any(s["level"] == 1 for s in sections) and cur["level"] != 1):
                     title = text_h
                 if level <= 3:
@@ -359,6 +385,8 @@ def split_document(text: str, markdown: bool = True) -> dict:
                     sections.append(cur)
                     stack = [x for x in stack if x[0] < level] + [(level, text_h)]
                     cur = {"start": i, "level": level, "chain": [t for _, t in stack]}
+        if len(line) > MAX_PARSE_LINE:
+            continue
         plain = _INLINE_CODE_RE.sub("", line)
         if "](" in plain:
             for m in _MDLINK_RE.finditer(plain):
@@ -548,6 +576,9 @@ def build(root=None, sources=None, exclude=None, kb_dir=None, profile=None, use_
     """
     cfg = load_config(root, profile, sources, exclude, kb_dir)
     kb: Path = cfg["dir"]
+    if kb.is_dir() and not (kb / DB_NAME).is_file() and any(kb.iterdir()):
+        # 目錄已經有東西、卻不是知識庫（沒有 kb.sqlite）：多半是設錯成自己的筆記目錄。不在裡面寫 INDEX.md、不動任何檔。
+        raise KbError("%s 已經有別的檔案、而且不是知識庫（沒有 %s）；knowledge.dir 請指到空目錄或專用目錄" % (kb, DB_NAME))
     kb.mkdir(parents=True, exist_ok=True)
     found, skipped = scan(cfg, max_bytes)
     want_fts = fts5_available() if use_fts5 is None else bool(use_fts5 and fts5_available())
@@ -639,7 +670,7 @@ def write_views(kb: Path) -> None:
         return _view_text(headings.split(" > ")[-1]) or "（無標題）"
 
     for path, _mt, sha1, _title, nlines in files:
-        out = ["# 摘要卡：%s" % path, "", note, "- 來源路徑：`%s`" % path, "- sha1：`%s`" % sha1, "- 行數：%d" % nlines, "",
+        out = [CARD_MARK + path, "", note, "- 來源路徑：`%s`" % path, "- sha1：`%s`" % sha1, "- 行數：%d" % nlines, "",
                "## 標題樹", ""]
         rows = secs.get(path, [])
         only_body = len(rows) == 1 and rows[0][0] == 0
@@ -653,7 +684,10 @@ def write_views(kb: Path) -> None:
     for old in cards.glob("*.md"):
         if old.name not in keep:
             try:
-                old.unlink()
+                with open(str(old), "r", encoding="utf-8", errors="replace") as f:
+                    mine = f.read(len(CARD_MARK)) == CARD_MARK
+                if mine:                               # 只刪自己產生的卡片；別人放進來的檔不動
+                    old.unlink()
             except OSError:
                 pass
 
@@ -715,7 +749,7 @@ def _score_fts5(con: sqlite3.Connection, terms: list[str], limit: int) -> list[t
 
 def _snippet(text: str, has_heading: bool) -> str:
     lines = text.split("\n")
-    if has_heading and len(lines) > 1 and _HEAD_RE.match(lines[0]):
+    if has_heading and len(lines) > 1 and len(lines[0]) <= MAX_PARSE_LINE and _HEAD_RE.match(lines[0]):
         lines = lines[1:]
     s = re.sub(r"\s+", " ", " ".join(lines)).strip()
     return s if len(s) <= SNIPPET_CHARS else s[:SNIPPET_CHARS - 1] + "…"
@@ -723,7 +757,8 @@ def _snippet(text: str, has_heading: bool) -> str:
 
 def _entry_head(i: int, r: dict) -> str:
     flag = " ｜ missing" if r.get("missing") else (" ｜ stale" if r["stale"] else "")
-    return "%d. %s:%d-%d ｜ %s%s" % (i, r["path"], r["start"], r["end"], r["headings"] or "（無標題）", flag)
+    path = "".join(" " if (ord(ch) < 32 or ord(ch) == 127) else ch for ch in r["path"])   # 檔名裡的換行不能讓輸出另起一行
+    return "%d. %s:%d-%d ｜ %s%s" % (i, path, r["start"], r["end"], r["headings"] or "（無標題）", flag)
 
 
 def _fit_budget(rows: list[dict], budget: int) -> tuple[list[dict], bool]:
@@ -1253,6 +1288,65 @@ def _selftest() -> int:
         (root / ".claude/teams/methodology.json").unlink()
         cfg = load_config(str(root))
         check("沒有 knowledge 時用預設", cfg["sources"] == DEFAULT_SOURCES and cfg["dir"] == root.resolve() / "_tpm" / "kb", str(cfg))
+        # 審查補的反例：連結指到機敏檔、超長行、設錯的 knowledge.dir
+        write(root / ".env", "KBSECRETZ=sk-live-abc\n")
+        linked = False
+        try:
+            os.symlink(str(root / ".env"), str(root / "docs" / "notes-link.md"))
+            linked = True
+        except (OSError, NotImplementedError, AttributeError):
+            skip("連結指到機敏檔（這個平台建不了 symlink）")
+        if linked:
+            st = build(str(root))
+            check("連結指到機敏檔：不進索引", q("KBSECRETZ") == [] and any(r == "docs/notes-link.md" for r, _ in st["skipped"]), str(st["skipped"]))
+            (root / "docs" / "notes-link.md").unlink()
+        (root / ".env").unlink()
+        write(root / "docs" / "slow.md", "# a" + " " * 60000 + "x\n\n## 正常標題 slowmarkerq\n\n內文\n")
+        t0 = time.time()
+        build(str(root))
+        check("超長行：不當標題、建索引不會卡住（2 秒內）", time.time() - t0 < 2 and [r["path"] for r in q("slowmarkerq")] == ["docs/slow.md"], "%.1fs" % (time.time() - t0))
+        (root / "docs" / "slow.md").unlink()
+        write(root / "docs" / "long-head.md", "# " + "長標題" * 3000 + "\n\n內文 longheadq\n")
+        build(str(root))
+        got = q("longheadq")
+        check("超長標題：截短後存，查詢結果不會被它清空", len(got) == 1 and len(got[0]["headings"]) <= MAX_HEADING + 3, str([len(r["headings"]) for r in got]))
+        (root / "docs" / "long-head.md").unlink()
+        write(root / "vault" / "cards" / "mine.md", "# 我的筆記\n")
+        write(root / "vault" / "INDEX.md", "# 我的索引\n")
+        try:
+            build(str(root), kb_dir=str(root / "vault"))
+            refused = False
+        except KbError:
+            refused = True
+        check("knowledge.dir 指到已有別的檔的目錄：拒絕，檔案原封不動", refused and (root / "vault" / "cards" / "mine.md").read_text(encoding="utf-8") == "# 我的筆記\n"
+              and (root / "vault" / "INDEX.md").read_text(encoding="utf-8") == "# 我的索引\n")
+        st = build(str(root))
+        write(Path(st["dir"]) / "cards" / "user-note.md", "# 使用者自己放的\n")
+        write(Path(st["dir"]) / "cards" / "old-card.md", CARD_MARK + "docs/gone.md\n")
+        build(str(root))
+        check("清舊卡片：只刪自己產生的，別人放的檔留著", (Path(st["dir"]) / "cards" / "user-note.md").is_file() and not (Path(st["dir"]) / "cards" / "old-card.md").exists())
+        (Path(st["dir"]) / "cards" / "user-note.md").unlink()
+        build(str(root))
+
+        # 工作區底下放目標 repo：來源也套到 <repos_dir>/<repo>/
+        write(root / ".claude/teams/guard.config.json", json.dumps({"repos_dir": "repos"}))
+        write(root / "repos/acme/docs/匯出.md", "# 匯出規則\n\n訂單匯出的獨特詞 zebraquokka。\n")
+        write(root / "repos/acme/.worktrees/e1/docs/匯出.md", "# 匯出規則\n\nzebraquokka 的 worktree 副本。\n")
+        write(root / "repos/acme/.env", "zebraquokka=1\n")
+        cfg = load_config(str(root))
+        check("repos_dir：來源也套到每個 repo", "repos/*/docs/**/*.md" in cfg["sources"] and cfg["sources"][:len(DEFAULT_SOURCES)] == DEFAULT_SOURCES, str(cfg["sources"]))
+        build(str(root))
+        hit = [r["path"] for r in query(str(root), "zebraquokka")]
+        check("repos_dir：查得到目標 repo 的文件，worktree 副本與機敏檔不進索引", hit == ["repos/acme/docs/匯出.md"], str(hit))
+        check("repos_dir：呼叫端自己給 sources 時不加", load_config(str(root), sources=["a.md"])["sources"] == ["a.md"])
+        for bad in ("../x", "/abs", "a/*/b", "{" * 2 + "X}}", ""):
+            write(root / ".claude/teams/guard.config.json", json.dumps({"repos_dir": bad}))
+            check("repos_dir：不合理的值（%r）不採用" % bad, load_config(str(root))["sources"] == DEFAULT_SOURCES)
+        write(root / ".claude/teams/guard.config.json", "{壞掉")
+        check("repos_dir：設定檔讀不懂時照預設", load_config(str(root))["sources"] == DEFAULT_SOURCES)
+        (root / ".claude/teams/guard.config.json").unlink()
+        shutil.rmtree(str(root / "repos"))
+        build(str(root))
         code, out = cli(["build", "--root", str(root), "--sources", "README.md,docs/**/*.md", "docs/*.txt", "--dir", str(Path(td) / "kb3")])
         check("build CLI（--sources、--dir）", code == 0 and "kb build：" in out and (Path(td) / "kb3" / DB_NAME).is_file(), out)
 

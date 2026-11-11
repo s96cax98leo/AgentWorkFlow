@@ -210,6 +210,8 @@ def model_errors(stage: str, result, profile: dict | None, modifiers) -> list[st
             continue
         label, role = str(t.get("label") or ""), str(t.get("agent_type") or "").split(":")[-1]
         tier = t.get("tier")
+        if not re.match(r"^(tpm|dev)-", role):
+            continue  # 使用者自己的 agent（擴充 agent）：執行核心不替它指定模型，也沒有下限
         if tier in (None, ""):
             if stage in KERNEL_STAGES:
                 errs.append(f"{label} 的 trace 沒有 model／tier（profile 有設 models，這一段的派工都要經過執行核心）")
@@ -746,7 +748,7 @@ def main(argv: list[str]) -> int:
         target = Path(str(data.get("target_repo"))) if data.get("target_repo") else None
         if stage == "plan" and isinstance(result, dict):
             # 調研重用：不採信 workflow 的說法，重新核對沿用的角度（來源 hash、信封、紀錄檔）
-            errs += [f"調研重用：{e}" for e in packlib.verify_reuse(run, target, result)]
+            errs += [f"調研重用：{e}" for e in packlib.verify_reuse(run, target, result, str(data.get("requirement") or ""))]
         st = data["stages"].setdefault(stage, {"status": "pending", "gate": stage in GATED})
         halted = result.get("halted") if isinstance(result, dict) else None
         st["status"] = "invalid" if errs else ("needs_decision" if "needs_decision" in statuses else "blocked" if ("blocked" in statuses or halted) else "done")
@@ -1422,17 +1424,17 @@ def selftest() -> int:
         d = k_run()
         r_env = {**_env({"lens": "code-contracts", "findings": []}), "summary": "上次的結論"}
         res_t = [k_entry(d, "intent", SPEC, "strong", "inherit"), k_entry(d, "research:code-contracts", RES, "standard", "inherit")]
-        c, out = k_stage(d, res_t, research=[r_env], locations={"code-contracts": [{"path": "a.py", "start": 1, "end": 1, "why": "x"}]}, reused=[])
+        c, out = k_stage(d, res_t, research=[r_env], research_by_angle={"code-contracts": r_env}, locations={"code-contracts": [{"path": "a.py", "start": 1, "end": 1, "why": "x"}]}, reused=[])
         store = Path(d) / "plan" / "reuse.json"
         check("調研重用：plan 存檔後記下來源檔的 sha1", c == 0 and store.is_file() and "code-contracts" in json.loads(store.read_text(encoding="utf-8"))["angles"], out)
-        c, out = k_stage(d, good_t := [k_entry(d, "intent", SPEC, "strong", "inherit")], research=[r_env], locations={}, reused=["code-contracts"])
+        c, out = k_stage(d, good_t := [k_entry(d, "intent", SPEC, "strong", "inherit")], research=[r_env], research_by_angle={"code-contracts": r_env}, locations={}, reused=["code-contracts"])
         check("調研重用：沿用的角度來源沒變、結論一致 → 通過（不需要 trace）", c == 0 and stages(d)["plan"]["status"] == "done", out)
-        c, out = k_stage(d, good_t, research=[{**r_env, "summary": "偷改"}], locations={}, reused=["code-contracts"])
+        c, out = k_stage(d, good_t, research=[{**r_env, "summary": "偷改"}], research_by_angle={"code-contracts": {**r_env, "summary": "偷改"}}, locations={}, reused=["code-contracts"])
         check("調研重用：沿用的結論和紀錄不一樣 → invalid", c == 1 and "調研重用" in out, out)
         (proj / "repo" / "a.py").write_text("x = 2\n", encoding="utf-8")
-        c, out = k_stage(d, good_t, research=[r_env], locations={}, reused=["code-contracts"])
+        c, out = k_stage(d, good_t, research=[r_env], research_by_angle={"code-contracts": r_env}, locations={}, reused=["code-contracts"])
         check("調研重用：來源變了還沿用 → invalid", c == 1 and "來源已經變了" in out, out)
-        c, out = k_stage(d, good_t, research=[r_env], locations={}, reused=["specs-adr"])
+        c, out = k_stage(d, good_t, research=[r_env], research_by_angle={"code-contracts": r_env}, locations={}, reused=["specs-adr"])
         check("調研重用：沿用沒有紀錄的角度 → invalid", c == 1 and "沒有紀錄" in out, out)
         # escalate 不能清掉後續義務（X3 I1）
         d = new_run({"name": "hotfix"}, approve_plan=True, intent=with_root)

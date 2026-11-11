@@ -4,6 +4,51 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
+這一版先量、再省。起因：實測同一個需求的三次 plan 段各花 21～29M token、21～28 分鐘，95% 是 context 重讀（agent 整檔讀大檔，之後每一輪都重讀），而且每個 agent 都用最貴的模型。
+
+<!-- BENCH -->
+
+### 破壞性變更
+
+- **`sdlc-plan` 整支重寫**（用新的執行核心 `snippets/kernel.js`）。回傳多了 `models`、`angles`、`reused`、`locations`；調研從「每個角度一個 agent」改成「定位（輕量模型，只回行段）→ 分析（只讀行段）」，所以 plan 段的派工數變多（feature 從 6 個變 9 個）、每個 agent 讀的東西變少。args 多了選填的 `pack`、`reuse`（由 `pack.py` 產生）。
+- **profile 有 `models` 時，`save_run.py stage plan` 會檢查模型等級**：trace 每筆要有 `model`、`tier`，低於下限判 invalid。自己改過 `sdlc-plan.js` 的專案要改用 `awfAgent` 派工，或把 `models.mode` 設成 `inherit`。
+- **hook 多擋三件事（只對模版角色）**：
+  - profile 有 `limits` 而且 `mode` 是 `enforce` 時，整檔讀超過 `whole_file_lines`（預設 400 行）的檔會被擋，讀取量超過額度後 Read 會被擋。新 init 的專案預設啟用；升級的專案用 `--adopt-new-fields` 補進來時先設成 `warn`。
+  - team agent 不能寫 runs_dir 底下的 `pack.md`、`reuse.json`、`pack-args.json`。
+  - team agent 不能執行 `pack.py`（`--selftest` 除外），`kb.py` 只能跑 `query`／`lint`。
+- **共同前綴多兩句**（省 context 的讀法、有 blocking 問題時 status 不能是 done），所有派工單各多約 200 字。
+
+### 新增
+
+- **模型分級**：profile 的 `models`（`mode`、`tiers`、`defaults`、`floors`）。triage 回傳 `model_plan`，工具取 max(AI 建議或預設, 下限, modifier 的 `model_floors`)；內建下限 profile 蓋不掉（`dev-merge-steward`、`dev-security-reviewer`、`tpm-skeptic@merge`、`dev-spec-author@plan` 一律 `strong`，`tpm-skeptic@plan` 至少 `standard`；內建 modifier 的 `model_floors` 也拿不掉）。`tiers` 的對應不能倒掛。內建對應 light＝haiku、standard＝sonnet、strong＝沿用主對話模型。`auto` 模式下沒交件會用高一級重派一次。解析在 `recipe.py` 與 `recipe.js`，golden 兩邊對跑。
+- **執行核心 `snippets/kernel.js`**：`awfAgent` 統一做模型解析、失敗升級、派工數上限（`limits.max_agents`，到上限回 halted）。這一版只有 `sdlc-plan` 用它，其餘 workflow 下一版改。
+- **讀取預算**：`plugin/hooks/read_budget.py` 與 profile 的 `limits`。只套模版角色；hook 出錯一律放行。
+- **知識層 `tools/kb.py`**：`build`／`query`／`lint`，sqlite FTS5（沒有就用純 Python BM25），中文 bigram。產出可以用 Obsidian 打開（`INDEX.md`、`cards/`、`hot.md`）。工作區底下放目標 repo 時（`guard.config.json` 的 `repos_dir`），同一組來源也套到每個 repo。
+- **資料包 `tools/pack.py`**：每段開跑前產生 `<run_dir>/<段>/pack.md` 與 `pack-args.json`，不花 LLM token。
+- **調研重用**：`<run_dir>/plan/reuse.json` 記各角度來源檔的 sha1；重跑時來源沒變的角度不派工，`save_run.py stage plan` 重新核對。`pack.py --reuse-from <舊 run>` 可以跨 run 沿用，`--keep-research` 在需求文字改了時仍沿用。
+- **角度數由 triage 決定**：`angles` 從 recipe 的調研角度裡挑；modifier 帶進來的不能省。
+- **量成本 `tools/awf_cost.py`**：讀 workflow transcript，依角色與模型加總 token、時間、平均 context。`save_run.py status --json` 給外部程式讀目前狀態。
+- **基準 `tests/bench/`**：`make_fixture.py` 產生虛構專案（可重現），`run_plan.py` 實跑並對照門檻。
+- schema：`payloads/locations`、triage 的 `angles` 與 `model_plan`、subtasks 的 `complexity`、methodology 的 `models`／`limits`／`knowledge` 與 modifier 的 `model_floors`。
+
+### 已知限制
+
+- 讀取預算是省 token 的機制，不是安全邊界：`head`、`sed -n`、Grep 的 content 模式不計入額度，UTF-16 的檔不擋。
+- 調研重用看的是「上次定位到的檔沒變」，repo 裡新增的檔不會觸發重做。
+- 等級較低的模型偶爾會漏寫執行紀錄檔，`save_run.py` 會列為缺件（plan 段由人核准，不影響閘門）。
+- `awf_cost.py` 讀的是 Claude Code 的內部 transcript 格式，官方沒有承諾穩定；讀不懂時會明說，不影響流程。
+- 每個 agent 一開工就有一段固定的 context（系統提示、工具與 skill 清單、CLAUDE.md），大小取決於使用者裝了多少 plugin 與 MCP，模版管不到。
+
+### 升級步驟
+
+1. `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins`。
+2. 在每個已 init 的專案跑 `python3 <AgentWorkFlow>/init.py --target . --upgrade`。
+3. 要用模型分級、讀取預算、知識層：加 `--adopt-new-fields` 再跑一次，會把 `models`、`limits`（先用 `warn`）、`knowledge` 補進 `methodology.json`。觀察一陣子沒有誤擋，再把 `limits.mode` 改成 `enforce`。
+4. 不補這些欄位也能用：沒有 `models` 就全部沿用主對話模型，沒有 `limits` 就不啟用讀取預算。
+5. `python3 .claude/teams/tools/build.py --check` 確認內嵌一致。
+
 ## [0.3.0]
 
 這一版讓 SDLC 依需求類型分流、每個 agent 都留下執行紀錄，並精簡 token。起因：每次都跑完整 7 段很耗時間與 token，修一個 bug 也派 25–35 個 agent。
