@@ -307,6 +307,23 @@ def methodology_errors(doc: dict) -> list[str]:
     names = [e.get("name") for e in doc.get("extensions") or [] if isinstance(e, dict)]
     for n in sorted({x for x in names if names.count(x) > 1}, key=str):
         errs.append(f"extensions：name {n} 重複")
+    # 模型分級：形狀不對直接報錯（不然解析會丟例外）；等級對應的模型不能倒掛（strong 對到比 standard 弱的模型，下限就形同虛設）
+    models = doc.get("models")
+    if models is not None:
+        if not isinstance(models, dict):
+            errs.append("models 要是物件")
+        else:
+            for k in ("tiers", "defaults", "floors"):
+                if k in models and not isinstance(models[k], dict):
+                    errs.append(f"models.{k} 要是物件")
+            tiers = models.get("tiers") if isinstance(models.get("tiers"), dict) else {}
+            order = {"haiku": 0, "sonnet": 1, "opus": 2, "inherit": 3}
+            builtin = {"light": "haiku", "standard": "sonnet", "strong": "inherit"}
+            names = ["light", "standard", "strong"]
+            got = {t: (tiers.get(t) if isinstance(tiers.get(t), str) and tiers.get(t) else builtin[t]) for t in names}
+            for lo, hi in (("light", "standard"), ("standard", "strong"), ("light", "strong")):
+                if got[lo] in order and got[hi] in order and order[got[hi]] < order[got[lo]]:
+                    errs.append(f"models.tiers：{hi}（{got[hi]}）不能比 {lo}（{got[lo]}）弱")
     recipes = doc.get("recipes") if isinstance(doc.get("recipes"), dict) else {}
     for rn, r in recipes.items():
         if not isinstance(r, dict):

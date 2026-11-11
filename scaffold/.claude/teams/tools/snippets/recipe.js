@@ -18,10 +18,10 @@ function recipeFallbackFeature() {
 function recipeBuiltinModifiers() {
   return {
     ui: { description: '有畫面改動：一定做設計審查', test: { design_review: 'always' } },
-    security: { description: '有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查', test: { security_review: 'always' }, deliver_axes: ['bugs'] },
+    security: { description: '有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查', test: { security_review: 'always' }, deliver_axes: ['bugs'], model_floors: { 'tpm-skeptic': 'strong' } },
     migration: { description: '資料庫 migration：強制 design 段與回滾計畫、一定做安全審查', add_stages: ['design'], design_lenses: ['coverage', 'plan', 'rollback'], test: { security_review: 'always', modes: ['regression'] } },
     public_api: { description: '公開 API 或對外契約：強制 design 段檢查相容性，deliver 加歷史軸', add_stages: ['design'], design_lenses: ['coverage', 'plan', 'compat'], deliver_axes: ['spec', 'history'] },
-    large: { description: '範圍大：允許拆子計劃、調研四個角度全開', research_angles: ['requirement', 'specs-adr', 'code-contracts', 'upstream'], split: true },
+    large: { description: '範圍大：允許拆子計劃、調研四個角度全開', research_angles: ['requirement', 'specs-adr', 'code-contracts', 'upstream'], split: true, model_floors: { 'dev-spec-author': 'strong' } },
   }
 }
 function recipeOrder(stages) { const s = new Set(stages || []); return recipeSdlc().filter((x) => s.has(x)) }
@@ -104,4 +104,57 @@ function recipeNext(r, stage) {
 // 解析結果的一行說明（閘門重點用）
 function recipeSummary(r) {
   return `recipe ${r.name}${r.modifiers.length ? `＋${r.modifiers.join('、')}` : ''}${r.size ? `（size=${r.size}）` : ''}：${r.stages.join(' → ')}；plan_mode=${r.plan_mode}`
+}
+
+// ── 模型分級（I7：AI 建議，工具守下限，只會往上）。和 tools/recipe.py 的 resolve_model 完全一致（golden 的 model_cases 兩邊對跑）──
+function modelTiers() { return ['light', 'standard', 'strong'] }
+// strong 預設 inherit：沿用使用者主對話選的模型
+function modelBuiltinTiers() { return { light: 'haiku', standard: 'sonnet', strong: 'inherit' } }
+// 閘門角色的最低等級：profile 的 floors 只能再往上加，不能蓋掉（鍵是「角色」或「角色@段」）
+function modelBuiltinFloors() {
+  return { 'dev-merge-steward': 'strong', 'dev-security-reviewer': 'strong', 'tpm-skeptic@merge': 'strong', 'dev-spec-author@plan': 'strong', 'tpm-skeptic@plan': 'standard' }
+}
+function modelRank(t) { return typeof t === 'string' ? modelTiers().indexOf(t) : -1 }
+function modelMax(...tiers) { let best = ''; for (const t of tiers) if (modelRank(t) > modelRank(best)) best = t; return best }
+function modelLookup(table, role, stage) {
+  const t = table && typeof table === 'object' && !Array.isArray(table) ? table : {}
+  const own = (k) => (Object.prototype.hasOwnProperty.call(t, k) ? t[k] : undefined)
+  return modelMax(own(role), own(`${role}@${stage}`))
+}
+function modelUp(tier) { const i = modelRank(tier); return i >= 0 && i < modelTiers().length - 1 ? modelTiers()[i + 1] : '' }
+function tierModel(profile, tier) {
+  const ms = (profile || {}).models
+  const tiers = ms && typeof ms === 'object' && ms.tiers && typeof ms.tiers === 'object' && !Array.isArray(ms.tiers) ? ms.tiers : {}
+  const own = Object.prototype.hasOwnProperty.call(tiers, tier) ? tiers[tier] : undefined
+  const m = typeof own === 'string' && own ? own : (modelBuiltinTiers()[tier] || '')
+  return m === 'inherit' ? '' : m
+}
+// 回 { mode, tier, model, floor, reason }；沒有 models 或 mode=inherit 時 tier、model 都是空字串（沿用主對話模型）
+function resolveModel(profile, role, stage, suggested, modifiers) {
+  const models = (profile || {}).models
+  if (!models || typeof models !== 'object' || Array.isArray(models) || (models.mode || 'auto') === 'inherit') {
+    return { mode: 'inherit', tier: '', model: '', floor: '', reason: '沒有設定 models 或 mode=inherit：沿用主對話模型' }
+  }
+  const mode = models.mode || 'auto'
+  const defaults = models.defaults && typeof models.defaults === 'object' ? models.defaults : {}
+  const own = (o, k) => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined)
+  const def = modelMax(own(defaults, `${role}@${stage}`)) || modelMax(own(defaults, role)) || modelMax(own(defaults, '*')) || 'standard'
+  let floor = modelMax(modelLookup(modelBuiltinFloors(), role, stage), modelLookup(models.floors, role, stage))
+  const modsDef = (profile || {}).modifiers || {}
+  const builtin = recipeBuiltinModifiers()
+  for (const m of modifiers || []) {
+    // 內建 modifier 的下限一律生效（profile 把 model_floors 拿掉也一樣）；profile 自己的只能再往上加
+    if (typeof m !== 'string') continue
+    const bd = own(builtin, m)
+    if (bd && typeof bd === 'object') floor = modelMax(floor, modelLookup(bd.model_floors, role, stage))
+    const md = modsDef && typeof modsDef === 'object' ? own(modsDef, m) : undefined
+    if (md && typeof md === 'object') floor = modelMax(floor, modelLookup(md.model_floors, role, stage))
+  }
+  let base, why
+  if (mode === 'auto' && modelRank(suggested) >= 0) { base = suggested; why = `AI 建議 ${suggested}` }
+  else if (mode === 'auto' && suggested) { base = def; why = `AI 建議的等級「${suggested}」不認得，用預設 ${def}` }
+  else { base = def; why = `預設 ${def}${mode === 'fixed' ? '（mode=fixed，不採 AI 建議）' : ''}` }
+  const tier = modelMax(base, floor)
+  if (tier !== base) why += `，低於下限 ${floor}，往上調成 ${tier}`
+  return { mode, tier, model: tierModel(profile, tier), floor, reason: why }
 }

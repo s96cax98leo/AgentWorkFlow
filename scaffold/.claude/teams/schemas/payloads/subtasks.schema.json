@@ -19,7 +19,9 @@
           "depends_on": {"type": "array", "items": {"type": "string"}},
           "acceptance": {"type": "array", "items": {"type": "string"}, "description": "可機械判定的完成條件；對應 spec 驗收條件時寫測試 ID"},
           "story_ids": {"type": "array", "items": {"type": "string"}},
-          "sub_plan": {"type": "string", "description": "屬於哪個子計劃（plan-outline 的 sub_plans[].id）；沒拆子計劃時省略"}
+          "sub_plan": {"type": "string", "description": "屬於哪個子計劃（plan-outline 的 sub_plans[].id）；沒拆子計劃時省略"},
+          "complexity": {"type": "string", "enum": ["light", "standard", "strong"], "description": "選填：這個子任務要用的模型等級（改一兩個檔的機械式修改＝light；一般實作＝standard；跨模組或有並行、安全風險＝strong）"},
+          "complexity_reason": {"type": "string", "description": "選填：為什麼是這個等級"}
         }
       }
     }

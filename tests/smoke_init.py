@@ -447,7 +447,7 @@ def check_existing_project(work: Path, config: Path, env: dict) -> None:
 def check_project_hooks(target: Path) -> None:
     print("== --hooks project ==")
     hooks = target / ".claude" / "hooks"
-    for f in ("awf_hook.py", "guard.py", "envelope_hook.py", "awf_config.py"):
+    for f in ("awf_hook.py", "guard.py", "envelope_hook.py", "awf_config.py", "read_budget.py"):
         ok(f".claude/hooks/{f}") if (hooks / f).is_file() else bad(f"缺 .claude/hooks/{f}")
     if (hooks / "hooks.json").exists():
         bad(".claude/hooks/hooks.json 不該複製（那是 plugin 的註冊檔）")
@@ -533,6 +533,8 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     meth["conventions"].pop("sync", None)  # 模擬舊版 profile 沒有這個欄位
     meth.pop("recipes", None)  # 0.3.0 之前的 profile 沒有 recipes／modifiers（一律走 feature 完整流程）
     meth.pop("modifiers", None)
+    for k in ("models", "limits", "knowledge"):  # 0.4.0 之前的 profile 沒有這三個欄位
+        meth.pop(k, None)
     meth["conventions"]["pr_size"] = {"max_lines": 123, "max_files": 7}
     meth_p.write_text(json.dumps(meth, ensure_ascii=False, indent=2), encoding="utf-8")
     guard = json.loads(guard_p.read_text(encoding="utf-8"))
@@ -590,6 +592,8 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     m3 = json.loads(meth_p.read_text(encoding="utf-8"))
     good = r.returncode == 0 and "sync" in m3["conventions"] and m3["conventions"]["pr_size"] == {"max_lines": 123, "max_files": 7}
     ok("升級：--adopt-new-fields 補上 conventions.sync，既有的 pr_size 不變") if good else bad("升級：--adopt-new-fields 不對：", r.stdout + r.stderr)
+    lim = m3.get("limits") or {}
+    ok("升級：--adopt-new-fields 補上 models、knowledge，limits 先用 warn（不擋）") if m3.get("models") and m3.get("knowledge") and lim.get("mode") == "warn" and lim.get("whole_file_lines") else bad(f"升級：models／limits／knowledge 沒補對：{lim}")
     ok("升級：--adopt-new-fields 補上 recipes（11 個）與 modifiers") if len(m3.get("recipes") or {}) == 11 and m3.get("modifiers") else bad(f"升級：recipes 沒補上：{sorted(m3.get('recipes') or {})}")
     r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=t)
     ok("--adopt-new-fields 後 build.py --check") if r.returncode == 0 else bad("--adopt-new-fields 後 build.py --check 失敗：", r.stdout + r.stderr)

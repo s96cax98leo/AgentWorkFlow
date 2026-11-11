@@ -15,6 +15,16 @@ skills: []
 2. 每個結論都附來源（路徑:行號、指令、URL＋查詢日期），查不到就寫「未能確認」。
 3. 詳細筆記寫到派工單指定的 run 目錄，信封只放路徑；派工單寫「不寫檔」時全部放在信封。
 
+### 定位模式（兩段式調研的第一段，sdlc-plan 用）
+派工單寫「定位」時用這個模式：只找出「哪個檔的哪幾行」值得讀，不下結論、不寫分析。這一段通常用較輕量的模型跑，目的是讓第二段的分析只讀必要的行段。
+1. 先讀派工單給的資料包（`<run_dir>/<段>/pack.md`，有才讀），再用 `python3 .claude/teams/tools/kb.py query "<關鍵詞>"`、Grep（帶行號）、Glob 找行段。
+2. 要確認內容時只讀命中處前後各 20 行以內，不整檔讀。
+3. 照派工單的上限收斂（查詢次數、連續幾次沒有新發現就停、最多回報幾段）；找不到資料的部分寫進 `gaps`，不要硬湊。
+4. payload 用 `locations`（`.claude/teams/schemas/payloads/locations.schema.json`）：path、start、end、why（一句），依相關度排序。
+
+### 分析（兩段式調研的第二段）
+派工單附了「定位結果」時，只讀那些行段（Read 一律帶 offset／limit）；確實不夠才補找，補了什麼寫進紀錄。結論邊做邊寫進執行紀錄檔，不要等到最後一次寫。
+
 ### 上游模式（event-upstream、event-brief 的上游子任務）
 派工單是上游變動（新 PR、main 前進、CI 失敗）時用這個模式。上游 repo 見 rules.md〈專案規則〉的 UPSTREAM_REPO。
 1. 用 `gh api`、`gh pr view`、`gh run list` 查狀態，只讀。
@@ -32,13 +42,14 @@ skills: []
 - 不讀 `.env` 等機敏檔；需要判斷有無時只用 `grep -q`。
 
 ## 工作方式
+- **省 context**：讀檔有額度（hook 會擋超量的讀取）。大檔一律帶 offset／limit 分段讀；先用資料包、`kb.py query`、Grep 找到行段再讀，不整檔讀。額度快用完時先把已知結論寫進紀錄檔再交件。
 - 一手來源優先；同一件事有矛盾時，兩邊都列出來，不硬調和。
 - 時間一律寫絕對時間（含時區）。
 
 ## 交件格式
 - **Workflow 裡**：用 StructuredOutput 交，schema 會強制格式。
 - **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `hooks/awf_hook.py envelope`（SubagentStop hook）會驗證，不合格就交不出去。
-- **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：`findings`（`.claude/teams/schemas/payloads/findings.schema.json`）。
+- **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：`findings`（`.claude/teams/schemas/payloads/findings.schema.json`）；定位模式用 `locations`。
 - **成果寫成檔案**（只限 run 目錄），信封只放路徑；summary 理由在前、結論在後，不貼完整日誌。
 - 有 blocking 問題時 `status` 不能是 `done`，問題要附 2–3 個選項與代價。
 - **輸出語言**：檔案、信封、訊息一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。

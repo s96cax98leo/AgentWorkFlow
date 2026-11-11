@@ -1,0 +1,65 @@
+{
+  "$id": "locations",
+  "title": "定位結果（兩段式調研的第一段）：只回報「哪個檔的哪幾行」值得讀，不下結論",
+  "type": "object",
+  "required": [
+    "angle",
+    "locations",
+    "queries"
+  ],
+  "properties": {
+    "angle": {
+      "type": "string",
+      "minLength": 1
+    },
+    "locations": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "start",
+          "end",
+          "why"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "相對目標 repo（或專案根目錄）的路徑"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "這幾行和問題的關係（一句）"
+          }
+        }
+      }
+    },
+    "queries": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string"
+      },
+      "description": "查過的關鍵詞或指令（kb.py query、Grep、Glob）"
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "找不到資料的部分"
+    }
+  }
+}

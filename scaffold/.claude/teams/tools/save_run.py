@@ -48,7 +48,7 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
         結案：recipe 要求後續 run（followup=true，例如 hotfix）時，沒有 followup_run 就拒絕。run.json 記 closed {by, at}。
     python3 save_run.py abandon <run_dir> --reason <為什麼取消> --by <誰> --at <ISO 時間>
         需求取消：run.json 記 abandoned {by, at, reason}；之後任何一段都不能核准，publish.py 也拒絕推送。
-    python3 save_run.py status <run_dir>
+    python3 save_run.py status <run_dir> [--json]      # --json：給外部程式讀的快照（schemas/run-status.schema.json）
     python3 save_run.py --selftest       # 在暫存目錄跑，不碰 repo
 """
 
@@ -61,6 +61,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pack as packlib  # noqa: E402
 import recipe as rcp  # noqa: E402
 import schemalib  # noqa: E402
 
@@ -183,6 +184,50 @@ def _ghostwrite(path: Path, entry: dict, env: dict) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _retried_ok(trace: list, i: int) -> bool:
+    """trace[i] 標了 superseded，而且後面有同一個 label、同一個角色、ok=true 的重派（不只看旗標，要真的有後面那筆）。"""
+    t = trace[i]
+    if t.get("superseded") is not True:
+        return False
+    return any(isinstance(x, dict) and x.get("ok") is True and x.get("label") == t.get("label") and x.get("agent_type") == t.get("agent_type")
+               for x in trace[i + 1:])
+
+
+# 已經改用執行核心（kernel 片段）的段：profile 有設 models 時，trace 每筆都要有 model 與 tier
+KERNEL_STAGES = {"plan"}
+
+
+def model_errors(stage: str, result, profile: dict | None, modifiers) -> list[str]:
+    """模型分級（I7）：trace 記的等級不能低於下限，model 要等於該等級對應的模型。
+    profile 沒有 models 或 mode=inherit 時不檢查；trace 沒有 tier 的舊 workflow 只在 KERNEL_STAGES 判錯。"""
+    models = (profile or {}).get("models")
+    if not isinstance(models, dict) or models.get("mode", "auto") == "inherit":
+        return []
+    trace = result.get("trace") if isinstance(result, dict) and isinstance(result.get("trace"), list) else []
+    errs = []
+    for t in trace:
+        if not isinstance(t, dict):
+            continue
+        label, role = str(t.get("label") or ""), str(t.get("agent_type") or "").split(":")[-1]
+        tier = t.get("tier")
+        if not re.match(r"^(tpm|dev)-", role):
+            continue  # 使用者自己的 agent（擴充 agent）：執行核心不替它指定模型，也沒有下限
+        if tier in (None, ""):
+            if stage in KERNEL_STAGES:
+                errs.append(f"{label} 的 trace 沒有 model／tier（profile 有設 models，這一段的派工都要經過執行核心）")
+            continue
+        if tier not in rcp.TIERS:
+            errs.append(f"{label} 的等級「{tier}」不認得")
+            continue
+        floor = rcp.resolve_model(profile, role, stage, None, modifiers)["floor"]
+        if floor and rcp.TIERS.index(tier) < rcp.TIERS.index(floor):
+            errs.append(f"{label}（{role}）用了 {tier}，低於下限 {floor}")
+        want = rcp.tier_model(profile, tier) or "inherit"
+        if t.get("model") != want:
+            errs.append(f"{label} 的等級是 {tier}，model 應該是 {want}，trace 記的是 {t.get('model')}")
+    return errs
+
+
 def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, list[dict], list[str]]:
     """依回傳的 trace 核對紀錄檔。回傳（有沒有 trace、索引列、缺件理由）。
     write=True 時代寫 steward 的紀錄檔並寫 <run>/<stage>/執行紀錄索引.md；write=False 只核對（政策判定用）。"""
@@ -225,6 +270,9 @@ def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, lis
             elif not any(c.is_file() for c in record_candidates(run, stage, record)):
                 status = "缺紀錄檔"
                 missing.append(f"{label} 的紀錄檔 {record} 不存在")
+        elif okv is False and _retried_ok(trace, i):
+            # 執行核心的失敗升級：這一筆沒交件，後面同一個 label、同一個角色的重派有交件，不算缺件
+            status = f"沒有交件，已升一級重派（{t.get('tier') or '?'} → 見下一筆）"
         elif okv is False:
             status = "agent 沒有交件（失敗或交件無效）"
             missing.append(f"{label} 沒有交件（失敗或交件無效）")
@@ -564,6 +612,53 @@ def _escalate_affected(new: dict, old: dict, profile: dict | None) -> tuple[list
     return added, [c for c in changed if c in (new.get("stages") or [])]
 
 
+def next_stage(data: dict) -> str | None:
+    """下一個要處理的段：還沒 done，或 done 了但閘門還沒核准；recipe 沒有的段（skipped）不算。"""
+    return next((s for s, st in data["stages"].items() if st["status"] != "skipped"
+                 and (st["status"] != "done" or (st.get("gate") and not st.get("approved")))), None)
+
+
+def status_snapshot(run: Path, data: dict) -> dict:
+    """給外部程式讀的狀態快照（schemas/run-status.schema.json）。只整理 run.json 與各段結果的 trace，不做任何判定。"""
+    stages = []
+    for name, st in data["stages"].items():
+        agents = missing = 0
+        try:
+            trace = json.loads((run / f"{name}.json").read_text(encoding="utf-8")).get("trace")
+            if isinstance(trace, list):
+                agents = len(trace)
+                missing = sum(1 for t in trace if not (isinstance(t, dict) and t.get("ok") is True))
+        except (OSError, ValueError, AttributeError):
+            pass
+        ap = st.get("approved")
+        stages.append({"name": name, "status": st["status"], "gate": bool(st.get("gate")),
+                       "approved": {"by": str(ap.get("by")), "at": str(ap.get("at"))} if isinstance(ap, dict) else None,
+                       "agents": agents, "agents_missing": missing, "missing_records": len(st.get("missing_records") or [])})
+    nxt = None if data.get("abandoned") else next_stage(data)
+    nst = data["stages"].get(nxt) if nxt else None
+    waiting = nxt if nst and nst["status"] == "done" and nst.get("gate") and not nst.get("approved") else None
+    if data.get("abandoned"):
+        state = "abandoned"
+    elif data.get("closed"):
+        state = "closed"
+    elif nxt is None:
+        state = "done"
+    elif waiting:
+        state = "waiting_gate"
+    elif nst and nst["status"] in ("blocked", "invalid"):
+        state = "blocked"
+    else:
+        state = "running"
+    r = data.get("recipe") if has_recipe(data) else None
+    fr = data.get("followup_run")
+    return {"v": 1, "run": run.name, "event": str(data.get("event") or ""), "target": str(data.get("target") or ""), "state": state,
+            "recipe": {"name": r.get("name"), "modifiers": list(r.get("modifiers") or []), "size": r.get("size"),
+                       "locked": bool(r.get("locked"))} if r else None,
+            "stages": stages, "next": nxt, "waiting_gate": waiting,
+            "followup_run": str(fr.get("run")) if isinstance(fr, dict) and fr.get("run") else None,
+            "abandoned": data.get("abandoned") or None, "closed": data.get("closed") or None}
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "--selftest":
         return selftest()
@@ -646,6 +741,14 @@ def main(argv: list[str]) -> int:
             return 1
         if stage in SDLC and stage != "plan" and has_recipe(data) and isinstance(result, dict):
             errs += [f"recipe 不一致：{e}" for e in recipe_mismatch(data, result)]
+        if stage in SDLC and sdlc_run and isinstance(result, dict):
+            mprof, _ = load_profile_for(run, argv)
+            mods = (data["recipe"].get("modifiers") or []) if has_recipe(data) else _mods((result.get("recipe") or {}).get("modifiers") if isinstance(result.get("recipe"), dict) else [])
+            errs += [f"模型分級：{e}" for e in model_errors(stage, result, mprof, mods)]
+        target = Path(str(data.get("target_repo"))) if data.get("target_repo") else None
+        if stage == "plan" and isinstance(result, dict):
+            # 調研重用：不採信 workflow 的說法，重新核對沿用的角度（來源 hash、信封、紀錄檔）
+            errs += [f"調研重用：{e}" for e in packlib.verify_reuse(run, target, result, str(data.get("requirement") or ""))]
         st = data["stages"].setdefault(stage, {"status": "pending", "gate": stage in GATED})
         halted = result.get("halted") if isinstance(result, dict) else None
         st["status"] = "invalid" if errs else ("needs_decision" if "needs_decision" in statuses else "blocked" if ("blocked" in statuses or halted) else "done")
@@ -673,6 +776,12 @@ def main(argv: list[str]) -> int:
             for m in miss:
                 print(f"執行紀錄缺件：{m}（不能政策核准）", file=sys.stderr)
         dump(run, data)
+        if stage == "plan" and not errs and isinstance(result, dict):
+            # 記下這次調研讀過的來源檔（sha1），下次重跑時來源沒變的角度可以沿用；記不了只警告（I9）
+            try:
+                warns += [f"調研重用：{w}" for w in packlib.record_reuse(run, target, result, str(data.get("requirement") or ""))]
+            except Exception as e:  # noqa: BLE001
+                warns.append(f"調研重用的紀錄寫不了（{type(e).__name__}：{e}），下次會全部重做")
         for e in errs:
             print(e, file=sys.stderr)
         for w in warns:
@@ -837,6 +946,9 @@ def main(argv: list[str]) -> int:
         print(f"已取消：{by} @ {at}：{reason}；之後不能核准、不能推送")
         return 0
     if cmd == "status":
+        if "--json" in argv:
+            print(json.dumps(status_snapshot(run, data), ensure_ascii=False, indent=1))
+            return 0
         if data.get("abandoned"):
             print(f"已取消：{abandoned_error(data)}")
         if has_recipe(data):
@@ -856,8 +968,7 @@ def main(argv: list[str]) -> int:
         if data.get("abandoned"):
             print("下一步：無（已取消）")
             return 0
-        nxt = next((s for s, st in data["stages"].items() if st["status"] != "skipped"
-                    and (st["status"] != "done" or (st.get("gate") and not st.get("approved")))), None)
+        nxt = next_stage(data)
         print(f"下一步：{nxt or '全部完成'}")
         return 0
     print(__doc__)
@@ -1232,6 +1343,99 @@ def selftest() -> int:
         check("hotfix 後續：有 followup_run 可以 close（整條流程也要走完；feature 不需要後續 run，但同樣要走完）",
               c2 == 0 and data["followup_run"]["run"] == d_follow and data["closed"] == {"by": "human", "at": "t"} and c3 != 0 and c4 == 0,
               out2 + out3 + out4)
+        # status --json（給外部程式讀的快照）
+        def snap(dd: str) -> tuple[dict, list]:
+            c_, o_ = call("status", dd, "--json")
+            j_ = json.loads(o_) if c_ == 0 else {}
+            return j_, schemalib.check_doc(j_, "run-status")
+        d_wait = new_run({"name": "bugfix"}, intent=with_root)
+        j1, e1 = snap(d_wait)
+        check("status --json：plan 存好還沒核准＝waiting_gate，下一步與等待的閘門都是 plan；recipe 沒有的段是 skipped",
+              not e1 and j1["state"] == "waiting_gate" and j1["next"] == "plan" and j1["waiting_gate"] == "plan"
+              and j1["recipe"]["name"] == "bugfix" and not j1["recipe"]["locked"]
+              and {x["name"]: x["status"] for x in j1["stages"]}["design"] == "skipped", str(e1) + str(j1))
+        call("approve", d_wait, "plan", "--by", "human", "--at", "t")
+        call("stage", d_wait, "build", stdin=traced(d_wait, "build", {"x": build}))
+        j2, e2 = snap(d_wait)
+        b2 = {x["name"]: x for x in j2["stages"]}["build"]
+        check("status --json：核准後 running，跳過 design 直接到下一段；段的派工數取自 trace",
+              not e2 and j2["recipe"]["locked"] and j2["waiting_gate"] is None and j2["next"] not in ("plan", "design", "build")
+              and b2["agents"] >= 1 and b2["agents_missing"] == 0 and {x["name"]: x for x in j2["stages"]}["plan"]["approved"] == {"by": "human", "at": "t"},
+              str(e2) + str(j2))
+        j3, e3 = snap(d_feat)
+        check("status --json：結案的 run 是 closed、沒有下一步", not e3 and j3["state"] == "closed" and j3["next"] is None, str(e3) + str(j3))
+        d_ab = new_run({"name": "docs"}, intent=with_root)
+        call("abandon", d_ab, "--by", "human", "--at", "t", "--reason", "不做了")
+        j4, e4 = snap(d_ab)
+        check("status --json：取消的 run 是 abandoned、沒有下一步", not e4 and j4["state"] == "abandoned" and j4["next"] is None, str(e4) + str(j4))
+        call("stage", d_wait, j2["next"], stdin={"halted": True, "halt_reason": "x"})
+        j5, e5 = snap(d_wait)
+        check("status --json：halted 的段是 blocked", not e5 and j5["state"] == "blocked", str(e5) + str(j5))
+        # ── 0.4：執行核心的 trace（升級重派、模型分級）與調研重用
+        base_profile = PROJECT_PROFILE.read_text(encoding="utf-8")
+        with_models = {**json.loads(base_profile), "models": {"mode": "auto", "tiers": {"light": "haiku", "standard": "sonnet", "strong": "opus"},
+                                                               "defaults": {"*": "standard"}, "floors": {}}}
+        SPEC, RES = "agent-workflow:dev-spec-author", "agent-workflow:tpm-researcher"
+
+        def k_run() -> str:
+            n[0] += 1
+            dd = str(proj / "_runs" / f"k{n[0]}")
+            call("init", dd, "--event", "sdlc", "--target", str(proj / "repo"), "--requirement", "r")
+            return dd
+
+        def k_entry(dd: str, label: str, agent: str, tier: str, model: str, **extra) -> dict:
+            f = Path(dd) / "plan" / (label.replace(":", "-") + ".md")
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("# 紀錄\n", encoding="utf-8")
+            return {"label": label, "agent_type": agent, "phase": "p", "record": str(f), "ok": True, "model": model, "tier": tier, "reason": "x", **extra}
+
+        def k_stage(dd: str, trace: list, **extra) -> tuple[int, str]:
+            return call("stage", dd, "plan", stdin={**plan_res({"name": "feature", "modifiers": [], "plan_mode": "feature"}), "trace": trace, **extra})
+
+        d = k_run()
+        good = [k_entry(d, "intent", SPEC, "strong", "inherit")]
+        c, out = k_stage(d, [{**k_entry(d, "locate:a", RES, "light", "inherit"), "ok": False, "superseded": True},
+                             k_entry(d, "locate:a", RES, "standard", "inherit", attempt=2, escalated_from="light"), *good])
+        check("升級重派：第一筆沒交件、後面同 label 的重派有交件 → 不算缺件", c == 0 and "missing_records" not in stages(d)["plan"], out)
+        c, out = k_stage(d, [{**k_entry(d, "locate:a", RES, "light", "inherit"), "ok": False, "superseded": True}, *good])
+        check("升級重派：只有 superseded 旗標、後面沒有交件的重派 → 仍是缺件", bool(stages(d)["plan"].get("missing_records")), out)
+        c, out = k_stage(d, [{**k_entry(d, "locate:a", RES, "light", "inherit"), "ok": False, "superseded": True},
+                             k_entry(d, "locate:b", RES, "standard", "inherit"), *good])
+        check("升級重派：後面交件的是別的 label → 仍是缺件", bool(stages(d)["plan"].get("missing_records")), out)
+        check("模型分級：profile 沒有 models 時不檢查 trace 的等級", k_stage(d, [k_entry(d, "intent", SPEC, "light", "haiku")])[0] == 0)
+        PROJECT_PROFILE.write_text(json.dumps(with_models, ensure_ascii=False), encoding="utf-8")
+        d = k_run()
+        c, out = k_stage(d, [k_entry(d, "intent", SPEC, "strong", "opus"), k_entry(d, "research:a", RES, "standard", "sonnet"), k_entry(d, "locate:a", RES, "light", "haiku")])
+        check("模型分級：等級不低於下限、model 對得上 → 通過", c == 0 and stages(d)["plan"]["status"] == "done", out)
+        c, out = k_stage(d, [k_entry(d, "intent", SPEC, "light", "haiku")])
+        check("模型分級：plan 段的 dev-spec-author 用 light（低於下限 strong）→ invalid", c == 1 and stages(d)["plan"]["status"] == "invalid" and "低於下限 strong" in out, out)
+        c, out = k_stage(d, [k_entry(d, "intent", SPEC, "strong", "haiku")])
+        check("模型分級：說是 strong、model 卻是 haiku → invalid", c == 1 and "model 應該是 opus" in out, out)
+        t0 = k_entry(d, "intent", SPEC, "strong", "opus")
+        c, out = k_stage(d, [{k: v for k, v in t0.items() if k not in ("tier", "model")}])
+        check("模型分級：profile 有 models，plan 的 trace 沒有 tier → invalid", c == 1 and "沒有 model／tier" in out, out)
+        c, out = k_stage(d, [k_entry(d, "intent", SPEC, "ultra", "opus")])
+        check("模型分級：不認得的等級 → invalid", c == 1 and "不認得" in out, out)
+        PROJECT_PROFILE.write_text(json.dumps({**with_models, "models": {**with_models["models"], "mode": "inherit"}}, ensure_ascii=False), encoding="utf-8")
+        check("模型分級：mode=inherit 不檢查", k_stage(d, [k_entry(d, "intent", SPEC, "", "inherit")])[0] == 0)
+        PROJECT_PROFILE.write_text(base_profile, encoding="utf-8")
+        # 調研重用
+        (proj / "repo" / "a.py").write_text("x = 1\n", encoding="utf-8")
+        d = k_run()
+        r_env = {**_env({"lens": "code-contracts", "findings": []}), "summary": "上次的結論"}
+        res_t = [k_entry(d, "intent", SPEC, "strong", "inherit"), k_entry(d, "research:code-contracts", RES, "standard", "inherit")]
+        c, out = k_stage(d, res_t, research=[r_env], research_by_angle={"code-contracts": r_env}, locations={"code-contracts": [{"path": "a.py", "start": 1, "end": 1, "why": "x"}]}, reused=[])
+        store = Path(d) / "plan" / "reuse.json"
+        check("調研重用：plan 存檔後記下來源檔的 sha1", c == 0 and store.is_file() and "code-contracts" in json.loads(store.read_text(encoding="utf-8"))["angles"], out)
+        c, out = k_stage(d, good_t := [k_entry(d, "intent", SPEC, "strong", "inherit")], research=[r_env], research_by_angle={"code-contracts": r_env}, locations={}, reused=["code-contracts"])
+        check("調研重用：沿用的角度來源沒變、結論一致 → 通過（不需要 trace）", c == 0 and stages(d)["plan"]["status"] == "done", out)
+        c, out = k_stage(d, good_t, research=[{**r_env, "summary": "偷改"}], research_by_angle={"code-contracts": {**r_env, "summary": "偷改"}}, locations={}, reused=["code-contracts"])
+        check("調研重用：沿用的結論和紀錄不一樣 → invalid", c == 1 and "調研重用" in out, out)
+        (proj / "repo" / "a.py").write_text("x = 2\n", encoding="utf-8")
+        c, out = k_stage(d, good_t, research=[r_env], research_by_angle={"code-contracts": r_env}, locations={}, reused=["code-contracts"])
+        check("調研重用：來源變了還沿用 → invalid", c == 1 and "來源已經變了" in out, out)
+        c, out = k_stage(d, good_t, research=[r_env], research_by_angle={"code-contracts": r_env}, locations={}, reused=["specs-adr"])
+        check("調研重用：沿用沒有紀錄的角度 → invalid", c == 1 and "沒有紀錄" in out, out)
         # escalate 不能清掉後續義務（X3 I1）
         d = new_run({"name": "hotfix"}, approve_plan=True, intent=with_root)
         call("escalate", d, "--recipe", "bugfix", "--by", "human", "--at", "t", "--reason", "r")

@@ -35,6 +35,7 @@ python3 tests/scrub_check.py [路徑…]  # 只跑去客戶化掃描，可只掃
 python3 tests/smoke_init.py [設定檔]  # 在暫存目錄跑 init.py 並檢查產出；KEEP=1 保留暫存目錄
 python3 plugin/hooks/tests/run.py [--project <已 init 的專案>]  # hook 測試（應擋＝exit 2）
 python3 tests/check_docs.py          # 文件裡的角色、workflow、command 數量與名單要和實際檔案一致
+python3 tests/bench/run_plan.py --selftest   # 基準實跑腳本不花 token 的部分；不帶 --selftest 會真的呼叫 claude（數百萬 token），只在發佈前手動跑
 python3 init.py --target <專案> [--hooks plugin|project] [--answers <答案.json>] [--defaults] [--upgrade [--adopt-new-fields]]
 ```
 
@@ -48,6 +49,9 @@ uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py   
 python3 .claude/teams/tools/merge_gate.py --selftest                                       # 確定性 merge gate
 python3 .claude/teams/tools/publish.py --selftest                                          # 確定性推送工具
 python3 .claude/teams/tools/sync_branch.py --selftest                                      # 跟上 base 的確定性工具
+python3 .claude/teams/tools/pack.py --selftest                                             # 資料包與調研重用
+python3 .claude/teams/tools/kb.py --selftest                                               # 知識層
+python3 .claude/teams/tools/awf_cost.py --selftest                                         # workflow 的 token 與時間
 ```
 
 在 repo 內也可以直接驗 scaffold，例如 `python3 scaffold/.claude/teams/tools/build.py --check`，路徑會依檔案位置推算。
@@ -84,7 +88,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 **改了 schema 或 profile 就要重跑 `build.py`**，並在 `golden-set/valid|invalid/` 補正例與反例。不要手改內嵌進去的 JSON。
 
-多支 workflow 共用的程式放在 `scaffold/.claude/teams/tools/snippets/<名>.js`（目前有 `challenge`、`review-skeptic`、`layers`），workflow 裡寫片段標記 `/*@snippet:<名>*/ … /*@end*/`，由 `build.py` 把片段內容內嵌在標記之間（標記保留，可重跑）。`build.py --check` 會偵測片段和 workflow 內嵌內容的漂移。片段的規則見下一節〈Workflow 腳本的限制〉。
+多支 workflow 共用的程式放在 `scaffold/.claude/teams/tools/snippets/<名>.js`（目前有 `challenge`、`review-skeptic`、`layers`、`recipe`、`kernel`），workflow 裡寫片段標記 `/*@snippet:<名>*/ … /*@end*/`，由 `build.py` 把片段內容內嵌在標記之間（標記保留，可重跑）。`build.py --check` 會偵測片段和 workflow 內嵌內容的漂移。片段的規則見下一節〈Workflow 腳本的限制〉。
 
 ### methodology profile
 
@@ -108,6 +112,17 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **不可省**：每個 recipe 都有 plan 段與 intent（四個必要節加 plan_mode 專屬節，`recipe.required_sections`），plan 一律人核准，派工單一律以共同前綴引用 rules.md（challenge 片段的 `awfPrefix`）。
 - **執行紀錄**：`tryAgent` 為每張派工單指定 `<run_dir>/<段>/<label>.md` 並記 trace，workflow 一律回傳 `trace: awfTrace()`；`save_run.py stage` 依 trace 產生 `執行紀錄索引.md`，紀錄檔缺了算缺件。沒 Write 的角色由信封內容代寫；tpm-reviewer、tpm-skeptic、tpm-planner、dev-release-watcher 有 Write，但 hook（`RECORD_ONLY_ROLES`）只准它們寫 runs_dir 下的 `.md`。
 - **token 精簡**：派工單是「共同前綴＋任務」，共用背景放 `<run_dir>/context.md`；信封有長度上限；長輸出用 `tools/run_brief.py --log` 濃縮；`tests/check_budget.py` 對 `golden-set/token-budget.json` 檢查派工數與字數（超過 10% 失敗）。
+
+### 執行核心、模型分級與省 context（0.4）
+
+- **執行核心**：`tools/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限（`limits.max_agents`，到上限 workflow 回 halted）。**目前只有 `sdlc-plan` 用它**（`save_run.KERNEL_STAGES`），其餘 workflow 下一版改；新寫的派工一律用 `awfAgent`。
+- **模型分級**：profile 的 `models`。解析在 `recipe.py` 的 `resolve_model` 與 `recipe.js` 的 `resolveModel`，兩邊必須一致（golden 的 `model_cases`）。結果＝max(AI 建議或預設, floor, modifier 的 `model_floors`)；內建 floor（`BUILTIN_MODEL_FLOORS`）profile 蓋不掉。`save_run.model_errors` 用 profile 重算，trace 的模型低於 floor 判 invalid。agent 檔的 frontmatter 仍然是 `model: inherit`，模型由派工時指定。
+- **兩段式調研**：`locate:<角度>`（light，payload `locations`）→ `research:<角度>`（只讀定位到的行段）。定位缺件時該角度列 missing、不派分析。triage 的 `angles` 只能從 recipe 自己的角度挑，modifier 帶進來的不能省。
+- **資料包與重用**：`tools/pack.py` 寫 `<run>/<段>/pack.md` 與 `pack-args.json`（無時間戳、可重現）；plan 段的 `reuse.json` 記各角度來源檔的 sha1，`save_run.py stage plan` 用 `verify_reuse` 重新核對、存檔後 `record_reuse`。這三個檔與 `pack.py` 只有主 session 能寫、能跑（`guard.py` 的 `PACK_STATE`、`SHARED_CONTEXT_NAMES`）。
+- **知識層**：`tools/kb.py`（FTS5，退回純 Python BM25；中文 bigram）。輸出包在資料標籤裡；卡片只放標題樹與行號，不放內文。
+- **讀取預算**：`plugin/hooks/read_budget.py`，由 `guard.read_budget_check` 呼叫。只套模版角色；沒有 `limits` 就關閉；任何例外都放行（I9）。狀態檔在系統暫存目錄的 `awf-read-budget/<session_id>/<agent_id>.json`（`AWF_READ_BUDGET_DIR` 可覆寫，測試用）。
+- **量成本**：`tools/awf_cost.py` 讀 Claude Code 的 workflow transcript（格式沒承諾穩定，解析集中在 `read_agent`、`read_wf_meta`）。基準實跑在 `tests/bench/`（`make_fixture.py` 產生虛構專案、`run_plan.py` 真的呼叫 claude，會花 token，不在 run_all 裡）。
+- 這些都是輔助：失敗只警告、不擋流程；gate 判定不看它們的輸出（調研重用例外：`verify_reuse` 不符會判 invalid，只會更嚴）。
 
 ### 平行處理
 
@@ -206,6 +221,10 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **新增 hook 規則**：在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的測試，Bash 與 PowerShell 各一。
 - **改 profile 格式**：`methodology.schema.json`、兩份內建 profile、`docs/自訂與擴充.md` 的欄位表要一起改。
 - **改 recipe 或 modifier**：`tools/recipe.py` 的 `BUILTIN_RECIPES`／`BUILTIN_MODIFIERS`、`tools/snippets/recipe.js`、兩份內建 profile、`tools/scenarios/_helpers.mjs` 的 `RECIPE_STAGES`（手抄的段表）要一起改；在 `golden-set/recipes/` 補案例，跑 `tests/check_recipes.py`。新增的 recipe 不能省 plan 段，會寫程式的要有 build、deliver、merge（`schemalib.methodology_errors`）。
+- **改模型分級**：`recipe.py`（`BUILTIN_TIER_MODELS`、`BUILTIN_MODEL_FLOORS`、`resolve_model`）與 `snippets/recipe.js` 一起改，在 `golden-set/recipes/` 補 `model_cases`，跑 `tests/check_recipes.py`；floor 只能加、不能拿掉。
+- **改執行核心（kernel 片段）**：重跑 `build.py`；`tools/scenarios/sdlc-plan.mjs` 的 `V04` 情境（升級、上限、重用、角度數）要一起改；`save_run.py` 的 `_retried_ok`、`model_errors` 依賴 trace 的 `model`、`tier`、`superseded`、`attempt` 欄位。
+- **改讀取預算**：`plugin/hooks/tests/run.py` 的 A2 一段補該擋與該放（Bash 與 PowerShell 各一），並確認效能檢查（計數路徑 50ms 內）仍通過；任何新的失敗路徑都要放行。
+- **改 pack.py／kb.py**：各自的 `--selftest`；`pack.md` 的內容不能有時間戳或絕對路徑以外會變動的東西（可重現是 `tests/bench/run_plan.py --selftest` 的檢查項）。
 - **改派工單或派工數**：跑 `tests/check_budget.py`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。
 - **新增會寫紀錄的唯讀角色**：加進 `awf_config.py` 的 `RECORD_ONLY_ROLES` 與 `check_agents.py` 的對應檢查，hook 測試補該擋（寫 repo、run.json、merge-audit）與該放（寫 runs_dir 的 `.md`）。
 - **新增 guard.config 欄位**：`guard.config.json.tmpl` 的 `_說明`、`awf_config.py` 的預設值、`docs/自動合併信任模型.md` 或 `docs/自訂與擴充.md` 一起改；`init.py --upgrade` 會把新鍵補進既有專案。

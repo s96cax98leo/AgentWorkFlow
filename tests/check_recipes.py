@@ -28,8 +28,13 @@ JS = r"""
 const fs = require('fs')
 const src = fs.readFileSync(process.argv[1], 'utf8')
 const cases = JSON.parse(fs.readFileSync(0, 'utf8'))
-const resolveRecipe = new Function(src + '\nreturn resolveRecipe')()
-const out = cases.map((c) => { const r = resolveRecipe(c.profile, c.recipe, c.modifiers, c.size); return Object.fromEntries(KEYS.map((k) => [k, r[k]])) })
+const [resolveRecipe, resolveModel] = new Function(src + '\nreturn [resolveRecipe, resolveModel]')()
+const out = cases.map((c) => {
+  const r = resolveRecipe(c.profile, c.recipe, c.modifiers, c.size)
+  const o = Object.fromEntries(KEYS.map((k) => [k, r[k]]))
+  if (c.model_cases) o.models = c.model_cases.map((m) => { const x = resolveModel(c.profile, m.role, m.stage, m.suggested, r.modifiers); delete x.reason; return x })
+  return o
+})
 process.stdout.write(JSON.stringify(out))
 """.replace("KEYS", json.dumps(KEYS))
 
@@ -49,7 +54,8 @@ def main() -> int:
     if not node:
         errs.append("找不到 node，無法比對 recipe.js（fail-closed）")
     else:
-        payload = [{"profile": recipe.case_profile(c), "recipe": c.get("recipe"), "modifiers": c.get("modifiers"), "size": c.get("size")} for _, c in cases]
+        payload = [{"profile": recipe.case_profile(c), "recipe": c.get("recipe"), "modifiers": c.get("modifiers"), "size": c.get("size"),
+                    **({"model_cases": c["model_cases"]} if "model_cases" in c else {})} for _, c in cases]
         q = subprocess.run([node, "-e", JS, str(TOOLS / "snippets" / "recipe.js")], input=json.dumps(payload, ensure_ascii=False),
                            capture_output=True, text=True, encoding="utf-8")
         if q.returncode != 0:
@@ -58,7 +64,7 @@ def main() -> int:
             js = json.loads(q.stdout)
             for (path, c), got in zip(cases, js):
                 py = recipe.run_case(c)
-                diff = {k: {"py": py[k], "js": got.get(k)} for k in KEYS if py[k] != got.get(k)}
+                diff = {k: {"py": py[k], "js": got.get(k)} for k in [*KEYS, *(["models"] if "models" in py else [])] if py[k] != got.get(k)}
                 if diff:
                     errs.append(f"{path.name}：recipe.js 和 recipe.py 不一致 {json.dumps(diff, ensure_ascii=False)[:500]}")
     for prof in sorted((TEAMS / "methodologies").glob("*.json")):

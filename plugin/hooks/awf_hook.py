@@ -5,6 +5,8 @@
   guard-shell  PreToolUse（matcher: Bash|PowerShell）：擋 agent push、agent 的 GitHub 寫入、寫入上游、動禁止路徑、
                不合規的分支名；PowerShell 指令先解析成段落再套同一套規則（guard.py），之後轉呼叫目標 repo 自己的 guard-git。
   guard-paths  PreToolUse（matcher: Edit|Write|NotebookEdit|Read|Grep）：擋寫禁止路徑、各角色寫入範圍以外的檔案（guard.py）。
+               Read 另套讀取預算（read_budget.py，設定在 methodology.json 的 limits）：模版角色讀大檔要分段、每個 agent 有讀取額度；
+               guard-shell 也擋模版角色用 cat／Get-Content 整檔印出大檔。
   envelope     PreToolUse（SubagentHandback、StructuredOutput）、SubagentStop、TaskCompleted：檢查交件信封（envelope_hook.py）。
 
 結束碼：0 放行；2 擋下（stderr 回給 Claude）。
@@ -19,6 +21,8 @@
      只擋 push／send-pack、gh pr merge、--approve、gh api 寫入、curl 等打 merge／reviews；其他放行，guard-paths 一律放行。
      stderr 印一行提示。內建規則刻意不依賴其他模組。
   4. 守門模組執行中出現意外錯誤：守門類擋（exit 2），交件類放行（exit 0）。任何情況都不印 Python traceback。
+  5. 讀取預算（read_budget.py）是輔助功能，不是守門：模組載入失敗、設定讀不懂、狀態檔壞掉、任何例外都放行，
+     不影響前面幾條既有檢查的結果（機敏檔照樣先擋）。
 """
 
 from __future__ import annotations

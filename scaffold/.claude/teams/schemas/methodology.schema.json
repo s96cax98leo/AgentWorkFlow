@@ -88,6 +88,51 @@
         "shard_verification": {"type": "boolean", "description": "有子計劃時，驗證是否每個子計劃派一個 dev-verifier 平行跑；預設 true"}
       }
     },
+    "models": {
+      "type": "object",
+      "description": "選填：模型分級。AI（triage）建議各角色用哪個等級，工具守下限、只會往上調。省略或 mode=inherit 時全部沿用主對話模型",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["auto", "fixed", "inherit"], "description": "auto＝採 AI 建議（不低於下限）；fixed＝只用 defaults；inherit＝不指定模型"},
+        "tiers": {
+          "type": "object",
+          "description": "各等級對應的模型別名（haiku、sonnet、opus 或完整模型 ID）；寫 inherit 表示沿用主對話模型",
+          "additionalProperties": false,
+          "properties": {"light": {"type": "string", "minLength": 1}, "standard": {"type": "string", "minLength": 1}, "strong": {"type": "string", "minLength": 1}}
+        },
+        "defaults": {"type": "object", "description": "各角色的預設等級；鍵是角色名、「角色@段」或 *（其他全部）", "additionalProperties": {"type": "string", "enum": ["light", "standard", "strong"]}},
+        "floors": {"type": "object", "description": "各角色的最低等級（鍵同 defaults）；只能比內建下限更高，內建的閘門角色下限蓋不掉", "additionalProperties": {"type": "string", "enum": ["light", "standard", "strong"]}}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "description": "選填：讀取與擴散的上限。hook（guard-paths）對模版角色強制；省略時不限制",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["enforce", "warn", "off"], "description": "enforce＝擋；warn＝只記錄本來會擋的（剛升級的專案過渡用）；off＝關閉"},
+        "whole_file_lines": {"type": "integer", "minimum": 0, "description": "一次 Read 最多讀幾行；超過要帶 offset／limit 分段讀。0＝不限"},
+        "read_budget": {
+          "type": "object",
+          "description": "每個 agent 一次派工累計可讀的位元組數",
+          "additionalProperties": false,
+          "properties": {
+            "default": {"type": "integer", "minimum": 0, "description": "沒有另外設定的角色；0＝不限"},
+            "roles": {"type": "object", "description": "各角色的額度（鍵是不帶命名空間的角色名）；0＝該角色不限", "additionalProperties": {"type": "integer", "minimum": 0}}
+          }
+        },
+        "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent；到上限就停下交人"}
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "description": "選填：知識庫（tools/kb.py）要索引哪些文件。省略時用預設來源",
+      "additionalProperties": false,
+      "properties": {
+        "sources": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "相對專案根目錄的 glob"},
+        "exclude": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "dir": {"type": "string", "minLength": 1, "description": "索引與檢視（INDEX.md、cards/、hot.md）放哪；預設 _tpm/kb"}
+      }
+    },
     "extensions": {
       "type": "array",
       "description": "使用者自己的 agent 加進 SDLC 某一段（工作流程擴充，不是開發規範）：和該段內建的 agent 平行執行，交 findings；blocker／important 的發現會擋住政策核准。每個 agent 也要登記在 guard.config.json 的 extension_agents（build.py --check 會核對）。用 add-agent skill（/agent-workflow:add-agent）設定",
@@ -172,6 +217,7 @@
           "research_angles": {"type": "array", "items": {"type": "string"}},
           "design_lenses": {"type": "array", "items": {"type": "string"}},
           "deliver_axes": {"type": "array", "items": {"type": "string", "enum": ["standards", "spec", "bugs", "history"]}},
+          "model_floors": {"type": "object", "description": "疊上這個 modifier 時各角色的最低模型等級（只會往上）", "additionalProperties": {"type": "string", "enum": ["light", "standard", "strong"]}},
           "test": {
             "type": "object",
             "additionalProperties": false,
