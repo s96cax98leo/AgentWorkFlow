@@ -1,0 +1,50 @@
+{
+ "payload": "triage",
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [
+   "補文件"
+  ],
+  "payload": {
+   "understanding": "示範客戶 ACME 回報匯出 CSV 時日期欄位錯位",
+   "kind": "bugfix",
+   "size": "small",
+   "modifiers": [],
+   "reasons": [
+    {
+     "claim": "需求描述的是既有功能的錯誤行為",
+     "evidence": "需求原文：「匯出後日期跑到金額欄」"
+    }
+   ],
+   "confidence": 0.85,
+   "alternatives": [
+    {
+     "kind": "change",
+     "why": "若其實是要改匯出格式"
+    }
+   ],
+   "angles": [
+    "code-contracts"
+   ],
+   "model_plan": [
+    {
+     "role": "tpm-researcher",
+     "tier": "light"
+    }
+   ]
+  }
+ }
+}

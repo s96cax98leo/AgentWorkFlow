@@ -111,15 +111,88 @@ BUILTIN_RECIPES = {
 BUILTIN_MODIFIERS = {
     "ui": {"description": "有畫面改動：一定做設計審查", "test": {"design_review": "always"}},
     "security": {"description": "有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查",
-                 "test": {"security_review": "always"}, "deliver_axes": ["bugs"]},
+                 "test": {"security_review": "always"}, "deliver_axes": ["bugs"], "model_floors": {"tpm-skeptic": "strong"}},
     "migration": {"description": "資料庫 migration：強制 design 段與回滾計畫、一定做安全審查",
                   "add_stages": ["design"], "design_lenses": ["coverage", "plan", "rollback"],
                   "test": {"security_review": "always", "modes": ["regression"]}},
     "public_api": {"description": "公開 API 或對外契約：強制 design 段檢查相容性，deliver 加歷史軸",
                    "add_stages": ["design"], "design_lenses": ["coverage", "plan", "compat"], "deliver_axes": ["spec", "history"]},
     "large": {"description": "範圍大：允許拆子計劃、調研四個角度全開",
-              "research_angles": list(ALL_ANGLES), "split": True},
+              "research_angles": list(ALL_ANGLES), "split": True, "model_floors": {"dev-spec-author": "strong"}},
 }
+
+
+# ------------------------------------------------------------------ 模型分級（I7：AI 建議，工具守下限，只會往上）
+# 和 snippets/recipe.js 的 resolveModel 完全一致（golden-set/recipes/*.json 的 model_cases 兩邊對跑）。
+TIERS = ["light", "standard", "strong"]
+# strong 預設 inherit：沿用使用者主對話選的模型，模版不替使用者指定最貴的模型
+BUILTIN_TIER_MODELS = {"light": "haiku", "standard": "sonnet", "strong": "inherit"}
+# 閘門角色的最低等級：profile 的 floors 只能再往上加，不能蓋掉這份（鍵是「角色」或「角色@段」）
+BUILTIN_MODEL_FLOORS = {
+    "dev-merge-steward": "strong",
+    "dev-security-reviewer": "strong",
+    "tpm-skeptic@merge": "strong",
+    "dev-spec-author@plan": "strong",
+}
+
+
+def _tier_rank(t) -> int:
+    return TIERS.index(t) if isinstance(t, str) and t in TIERS else -1
+
+
+def _tier_max(*tiers) -> str:
+    best = ""
+    for t in tiers:
+        if _tier_rank(t) > _tier_rank(best):
+            best = t
+    return best
+
+
+def _tier_lookup(table, role: str, stage: str) -> str:
+    table = table if isinstance(table, dict) else {}
+    return _tier_max(table.get(role), table.get(f"{role}@{stage}"))
+
+
+def model_up(tier: str) -> str:
+    """高一級的等級；已經最高（或不認得）回空字串。"""
+    i = _tier_rank(tier)
+    return TIERS[i + 1] if 0 <= i < len(TIERS) - 1 else ""
+
+
+def tier_model(profile: dict | None, tier: str) -> str:
+    """等級對應的模型別名；profile 寫 inherit 表示沿用主對話模型（回空字串）。"""
+    tiers = ((profile or {}).get("models") or {}).get("tiers") or {}
+    m = tiers.get(tier) if isinstance(tiers.get(tier), str) and tiers.get(tier) else BUILTIN_TIER_MODELS.get(tier, "")
+    return "" if m == "inherit" else m
+
+
+def resolve_model(profile: dict | None, role: str, stage: str, suggested: str | None = None, modifiers=None) -> dict:
+    """回 {mode, tier, model, floor, reason}。
+    profile 沒有 models 或 mode=inherit：不指定模型（tier、model 都是空字串），全部沿用主對話模型。
+    mode=fixed：用 defaults，不採 AI 建議。mode=auto：AI 建議（suggested）優先，沒有或不認得就用 defaults。
+    最後一律取 max(上面的結果, 內建 floor, profile floor, modifiers 的 model_floors)：只會往上。"""
+    models = (profile or {}).get("models")
+    if not isinstance(models, dict) or models.get("mode", "auto") == "inherit":
+        return {"mode": "inherit", "tier": "", "model": "", "floor": "", "reason": "沒有設定 models 或 mode=inherit：沿用主對話模型"}
+    mode = models.get("mode", "auto")
+    defaults = models.get("defaults") if isinstance(models.get("defaults"), dict) else {}
+    default = _tier_max(defaults.get(f"{role}@{stage}")) or _tier_max(defaults.get(role)) or _tier_max(defaults.get("*")) or "standard"
+    floor = _tier_max(_tier_lookup(BUILTIN_MODEL_FLOORS, role, stage), _tier_lookup(models.get("floors"), role, stage))
+    mods_def = (profile or {}).get("modifiers") or {}
+    for m in list(modifiers or []):
+        md = mods_def.get(m) if isinstance(mods_def, dict) and m in mods_def else (BUILTIN_MODIFIERS.get(m) if not mods_def else None)
+        if isinstance(md, dict):
+            floor = _tier_max(floor, _tier_lookup(md.get("model_floors"), role, stage))
+    if mode == "auto" and _tier_rank(suggested) >= 0:
+        base, why = suggested, f"AI 建議 {suggested}"
+    elif mode == "auto" and suggested:
+        base, why = default, f"AI 建議的等級「{suggested}」不認得，用預設 {default}"
+    else:
+        base, why = default, f"預設 {default}" + ("（mode=fixed，不採 AI 建議）" if mode == "fixed" else "")
+    tier = _tier_max(base, floor)
+    if tier != base:
+        why += f"，低於下限 {floor}，往上調成 {tier}"
+    return {"mode": mode, "tier": tier, "model": tier_model(profile, tier), "floor": floor, "reason": why}
 
 
 def _order(stages) -> list[str]:
@@ -407,6 +480,9 @@ def run_case(case: dict) -> dict:
         out["merged_ok"] = not stricter_or_equal(merged, old) and not stricter_or_equal(merged, r)
     if "paths" in case:
         out["shortfalls"] = diff_shortfalls(r, case["paths"])
+    if "model_cases" in case:
+        out["models"] = [{k: v for k, v in resolve_model(case_profile(case), m.get("role"), m.get("stage"), m.get("suggested"), r["modifiers"]).items()
+                          if k != "reason"} for m in case["model_cases"]]
     return out
 
 
@@ -455,6 +531,25 @@ def selftest() -> int:
           and "根因" in required_sections(None, "diagnose"))
     md = "# intent\n## 目標\nx\n## 範圍\nx\n## 不做的事\n\n## 驗收條件\n- AC1\n"
     check("intent 節：空節判缺", missing_sections(md, BASE_SECTIONS) == ["不做的事（只有標題沒有內容）"], str(missing_sections(md, BASE_SECTIONS)))
+    # 模型分級（I7）
+    mp = {**bi, "models": {"mode": "auto", "tiers": {"light": "haiku", "standard": "sonnet", "strong": "opus"},
+                           "defaults": {"*": "standard", "tpm-researcher": "light"}, "floors": {"tpm-researcher@plan": "standard"}}}
+    rm = resolve_model
+    check("模型：沒有 models 或 mode=inherit 全部沿用主對話模型", rm(bi, "tpm-researcher", "plan")["model"] == "" and rm(bi, "x", "plan")["mode"] == "inherit"
+          and rm({**mp, "models": {**mp["models"], "mode": "inherit"}}, "dev-merge-steward", "merge")["tier"] == "")
+    check("模型：AI 建議低於下限會被往上調", rm(mp, "tpm-researcher", "plan", "light")["tier"] == "standard"
+          and rm(mp, "tpm-researcher", "design", "light")["tier"] == "light")
+    check("模型：AI 可以建議更高", rm(mp, "tpm-researcher", "plan", "strong")["model"] == "opus")
+    check("模型：閘門角色的內建下限 profile 蓋不掉", rm({**mp, "models": {**mp["models"], "floors": {"dev-merge-steward": "light"}}}, "dev-merge-steward", "merge", "light")["tier"] == "strong"
+          and rm(mp, "tpm-skeptic", "merge", "light")["tier"] == "strong" and rm(mp, "dev-spec-author", "plan", "light")["tier"] == "strong")
+    check("模型：mode=fixed 不採 AI 建議", rm({**mp, "models": {**mp["models"], "mode": "fixed"}}, "tpm-writer", "deliver", "light")["tier"] == "standard")
+    check("模型：不認得的等級當成沒建議", rm(mp, "tpm-writer", "deliver", "ultra")["tier"] == "standard")
+    check("模型：modifier 的 model_floors 只加嚴", rm(mp, "tpm-skeptic", "plan", "light", ["security"])["tier"] == "strong"
+          and rm(mp, "tpm-skeptic", "plan", "light", [])["tier"] == "light")
+    lower = [(r_, st, sg) for r_ in ("tpm-researcher", "dev-merge-steward", "tpm-skeptic", "dev-spec-author", "zzz") for st in SDLC for sg in (None, *TIERS)
+             if _tier_rank(rm(mp, r_, st, sg)["tier"]) < _tier_rank(rm(mp, r_, st, sg)["floor"])]
+    check("模型：任何組合都不低於下限", not lower, str(lower[:3]))
+    check("模型：等級寫 inherit 表示沿用主對話模型", tier_model({"models": {"tiers": {"strong": "inherit"}}}, "strong") == "" and model_up("light") == "standard" and model_up("strong") == "")
     cases = golden_cases()
     check("golden-set/recipes 有案例", len(cases) >= 8, str(len(cases)))
     bad = 0

@@ -97,6 +97,12 @@ modifiers 疊在 recipe 上、只會加嚴：`ui`（一定設計審查）、`sec
 python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstream|meeting|pr-review|reqs-change|decision|demo-check|debate|merge|post-merge> --target <repo> --requirement "<描述>"
 ```
 
+0. **SDLC 各段開跑前先備資料包**（工具整理，不花 LLM token；失敗只是少一份資料包，不擋流程）：
+   ```bash
+   python3 .claude/teams/tools/pack.py <stage> --run <run_dir>
+   ```
+   它寫 `<run_dir>/<stage>/pack.md`（需求、知識庫命中的行段、前面各段的紀錄），並把要帶給 workflow 的參數寫在 `<run_dir>/<stage>/pack-args.json`：**把這個檔的內容併進 args**（`pack`；plan 段可能還有 `reuse`）。
+   - plan 段重跑、或同一個 epic 另開 run（加 `--reuse-from <舊 run_dir>`）時，來源檔沒變的調研角度會放進 `reuse`，`sdlc-plan` 直接沿用、不再派工。需求文字改了預設全部重做；使用者確認「改的地方不影響調研」才加 `--keep-research`。
 1. 用 `Workflow({name: "<workflow>", args: {...}})` 執行。args 傳 JSON 物件，不要傳字串。
    - **例外**：涉及授權判斷的敏感流程（例如要 agent 執行它可能拒做的操作），改用 Agent 工具逐段派，不要用 Workflow 一次轉發；Workflow 會把使用者訊息當授權轉給 subagent，容易造成誤解或拒做。
 2. 回傳的 JSON 寫成檔案存起來：
@@ -108,6 +114,8 @@ python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstr
    - 每個 agent 的 status 與 summary。
    - **所有 `open_questions`**：blocking 的用 AskUserQuestion 問，選項照信封裡的 options；需要決策者拍板時用 PushNotification 推播到手機。
    - skeptic 推翻了哪些發現。
+   - `sdlc-plan` 另列：這次用了哪些模型（回傳的 `models`：各角色的等級與理由）、沿用了哪些調研角度（`reused`）、triage 判斷不需要而沒做的角度（`angles.skipped`）。使用者覺得某個角度該做，就不帶 `angles` 重跑。
+   - 想看這一段實際花了多少 token：`python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run_dir>`（讀不到 transcript 時會明說，不影響流程）。
    - `derived_work`：只列出來，不編號，交 `{{TASK_AUTHORITY}}`。
 4. 派工單、SendMessage、agent 間訊息一律用 `{{OUTPUT_LANGUAGE}}`。
 

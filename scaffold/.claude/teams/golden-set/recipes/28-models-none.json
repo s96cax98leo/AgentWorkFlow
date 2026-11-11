@@ -1,0 +1,181 @@
+{
+ "recipe": "bugfix",
+ "modifiers": [
+  "security"
+ ],
+ "model_cases": [
+  {
+   "role": "tpm-researcher",
+   "stage": "plan",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-researcher",
+   "stage": "design",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-researcher",
+   "stage": "plan",
+   "suggested": "strong"
+  },
+  {
+   "role": "tpm-researcher",
+   "stage": "plan"
+  },
+  {
+   "role": "dev-merge-steward",
+   "stage": "merge",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-skeptic",
+   "stage": "merge",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-skeptic",
+   "stage": "plan",
+   "suggested": "light"
+  },
+  {
+   "role": "dev-spec-author",
+   "stage": "plan",
+   "suggested": "standard"
+  },
+  {
+   "role": "dev-spec-author",
+   "stage": "design",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-writer",
+   "stage": "deliver",
+   "suggested": "ultra"
+  },
+  {
+   "role": "toString",
+   "stage": "plan",
+   "suggested": "constructor"
+  },
+  {
+   "role": "dev-security-reviewer",
+   "stage": "test"
+  }
+ ],
+ "expect": {
+  "name": "bugfix",
+  "stages": [
+   "plan",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "diagnose",
+  "research_angles": [
+   "requirement",
+   "code-contracts"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "auto",
+   "security_review": "always",
+   "modes": [
+    "verify",
+    "regression"
+   ]
+  },
+  "deliver_axes": [
+   "spec",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [
+   "security"
+  ],
+  "errors": [],
+  "models": [
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   }
+  ]
+ }
+}

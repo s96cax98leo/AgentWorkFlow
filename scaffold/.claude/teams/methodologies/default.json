@@ -61,6 +61,23 @@
     "max_sub_plans": 4,
     "shard_verification": true
   },
+  "models": {
+    "mode": "auto",
+    "tiers": {"light": "haiku", "standard": "sonnet", "strong": "inherit"},
+    "defaults": {"*": "standard"},
+    "floors": {}
+  },
+  "limits": {
+    "mode": "enforce",
+    "whole_file_lines": 400,
+    "read_budget": {"default": 800000, "roles": {"tpm-researcher": 240000, "tpm-skeptic": 240000, "tpm-planner": 160000}},
+    "max_agents": 40
+  },
+  "knowledge": {
+    "sources": ["README.md", "CLAUDE.md", "docs/**/*.md", "specs/**/*.md"],
+    "exclude": ["**/node_modules/**", "**/.worktrees/**"],
+    "dir": "_tpm/kb"
+  },
   "requirements": {
     "source": "json",
     "path": "",
@@ -250,7 +267,7 @@
   },
   "modifiers": {
     "ui": {"description": "有畫面改動：一定做設計審查", "test": {"design_review": "always"}},
-    "security": {"description": "有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查", "test": {"security_review": "always"}, "deliver_axes": ["bugs"]},
+    "security": {"description": "有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查", "test": {"security_review": "always"}, "deliver_axes": ["bugs"], "model_floors": {"tpm-skeptic": "strong"}},
     "migration": {
       "description": "資料庫 migration：強制 design 段與回滾計畫、一定做安全審查",
       "add_stages": ["design"],
@@ -263,6 +280,6 @@
       "design_lenses": ["coverage", "plan", "compat"],
       "deliver_axes": ["spec", "history"]
     },
-    "large": {"description": "範圍大：允許拆子計劃、調研四個角度全開", "research_angles": ["requirement", "specs-adr", "code-contracts", "upstream"], "split": true}
+    "large": {"description": "範圍大：允許拆子計劃、調研四個角度全開", "research_angles": ["requirement", "specs-adr", "code-contracts", "upstream"], "split": true, "model_floors": {"dev-spec-author": "strong"}}
   }
 }

@@ -80,12 +80,15 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   const visited = []
   const labels = []
   const prompts = {}
+  // 每次派工的 label 與 model（同一個 label 重派時 prompts 只留最後一次，calls 全留）
+  const calls = []
   let out
   const api = {
     agent: async (prompt, opts = {}) => {
       agents++
       labels.push(opts.label)
       prompts[opts.label] = typeof prompt === 'string' ? prompt : ''
+      calls.push({ label: opts.label, model: opts.model || '', agentType: opts.agentType || '' })
       if (typeof prompt !== 'string' || !prompt) errs.push('agent() 的 prompt 空白')
       else {
         // I3／I6：每張派工單都要有 rules.md（含〈專案規則〉）、輸出語言，最後一行指定執行紀錄檔（challenge 片段的 awfInit／tryAgent 會加）
@@ -126,7 +129,7 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
       else if (out.trace.some((t) => !t.record)) errs.push('trace 有沒有執行紀錄檔路徑的項目')
     }
   } catch (e) { errs.push(`乾跑失敗：${e.message}`) }
-  return { errs, agents, visited, labels, prompts, out }
+  return { errs, agents, visited, labels, prompts, calls, out }
 }
 
 // 情境放在 scenarios/<workflow>.mjs（export default 陣列），每支 workflow 一檔，平行修改不互相衝突
@@ -167,7 +170,7 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
     const scErrs = [...r.errs, ...(sc.expect ? sc.expect(r) : [])]
     if (sc.expect) errs.push(...sc.expect(r).map((e) => `[情境：${sc.name}] ${e}`))
     report[f] = report[f] || { phases: [...titles], scenarios: [] }
-    report[f].scenarios.push({ name: sc.name, ok: scErrs.length === 0, halted: !!(r.out && r.out.halted), labels: r.labels, visited: r.visited, prompts: r.prompts, out: r.out && typeof r.out === 'object' ? JSON.parse(JSON.stringify(r.out)) : null })
+    report[f].scenarios.push({ name: sc.name, ok: scErrs.length === 0, halted: !!(r.out && r.out.halted), labels: r.labels, visited: r.visited, prompts: r.prompts, calls: r.calls, out: r.out && typeof r.out === 'object' ? JSON.parse(JSON.stringify(r.out)) : null })
   }
   if (errs.length) { failed++; console.log(`FAIL ${f}\n  - ${[...new Set(errs)].join('\n  - ')}`) }
   else console.log(`ok   ${f}（乾跑 ${agents} 個 agent；phases: ${visited.join('→') || '-'}）`)

@@ -607,11 +607,15 @@ RUN_STAGES = frozenset({
 })
 # runs_dir 底下只由 save_run.py（主 session）寫的閘門資料：run.json、<段>.json；所有 team agent 都不能寫（Write／Edit 與 shell）。
 # 稽核紀錄（AUDIT_FILES）與凍結檔另由 protected_target() 在任何位置都擋。
-RUN_STATE_FILES = frozenset({"run.json", *(f"{s}.json" for s in RUN_STAGES)})
-STAGE_JSON_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:" + "|".join(re.escape(s) for s in sorted(RUN_STAGES, key=len, reverse=True))
+# 資料包工具（pack.py）寫的 reuse.json（調研重用的來源 hash 與結論，save_run 的閘門核對會讀）與 pack-args.json 也算。
+PACK_STATE = ("reuse", "pack-args")
+RUN_STATE_FILES = frozenset({"run.json", *(f"{s}.json" for s in (*RUN_STAGES, *PACK_STATE))})
+STAGE_JSON_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:" + "|".join(re.escape(s) for s in sorted((*RUN_STAGES, *PACK_STATE), key=len, reverse=True))
                                  + r")\W{0,16}\.json\b", re.I)
 # context.md（runs_dir 底下，所有 agent 共用的背景，能寫等於持久注入指令）與執行紀錄索引.md（任何位置）只由主 session 跑 save_run.py 產生
-CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])context\W{0,16}\.md\b", re.I)
+# pack.md（各段的資料包，agent 開工先讀）同樣只由主 session 跑 pack.py 產生
+SHARED_CONTEXT_NAMES = ("context.md", "pack.md")
+CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b", re.I)
 RUN_INDEX_FRAGMENT = re.compile(r"執行紀錄索引")
 
 
@@ -1247,28 +1251,48 @@ SAVE_RUN_READONLY = {"status", "--selftest"}
 SAVE_RUN_LAUNCHERS = re.compile(r"python[\d.]*|py|pypy[\d.]*|uv|run|pipx|poetry|pdm|rye|hatch")
 
 
-def save_run_write(seg: str) -> str | None:
+def save_run_write(seg: str, tool: str = "save_run", readonly=None) -> str | None:
     """team agent 執行 save_run.py 的寫入子指令時回傳子指令名（stage、approve、abandon、escalate、followup、close、init…）；
     唯讀的 status、--selftest、沒有參數（印說明）回 None。用內嵌程式 import／runpy 呼叫 save_run 一律當寫入。
     只是讀 save_run.py 的內容（cat、grep）不算執行。"""
+    readonly = SAVE_RUN_READONLY if readonly is None else readonly
     toks = shlex_tokens(seg)
     for k, t in enumerate(toks):
-        if re.split(r"[\\/]", t)[-1].lower() != "save_run.py":
+        if re.split(r"[\\/]", t)[-1].lower() != f"{tool}.py":
             continue
         before = [_cmd_name(x) for x in toks[:k] if not re.match(r"^[A-Za-z_]\w*=", x)]
         before = [b for b in before if b not in CMD_WRAPPERS and not b.startswith("-")]
         if before and not all(SAVE_RUN_LAUNCHERS.fullmatch(b) for b in before):
             continue  # cat／grep／less save_run.py 之類，不是執行
         sub = toks[k + 1] if k + 1 < len(toks) else ""
-        return None if sub in SAVE_RUN_READONLY or sub == "" else sub
-    if INTERP.search(seg) and re.search(r"\bimport\s+save_run\b|\bfrom\s+save_run\b|import_module\b.*save_run|\brunpy\b|-m\s+save_run\b"
-                                        r"|__import__\s*\(\s*[\"']save_run", seg):
+        return None if sub in readonly or sub == "" else sub
+    m = re.escape(tool)
+    if INTERP.search(seg) and re.search(rf"\bimport\s+{m}\b|\bfrom\s+{m}\b|import_module\b.*{m}|\brunpy\b|-m\s+{m}\b"
+                                        rf"|__import__\s*\(\s*[\"']{m}", seg):
         return "（內嵌程式呼叫）"
     return None
 
 
+def read_budget_check(kind: str, data: dict) -> None:
+    """讀取預算（read_budget.py）：模版角色讀大檔要分段、每個 agent 有讀取額度。輔助功能，不是信任邊界：
+    模組載入失敗或執行中出任何例外都放行；只在既有檢查都通過之後才跑，不改變既有檢查的結果。"""
+    try:
+        import read_budget
+        msg = read_budget.check_read(data, CFG) if kind == "read" else read_budget.check_shell(data, CFG)
+    except Exception:  # noqa: BLE001
+        return
+    if msg:
+        print(f"已被 agent-workflow hook 擋下：{msg}", file=sys.stderr)
+        sys.exit(2)
+
+
 def check_shell(data: dict) -> None:
-    """Bash 與 PowerShell 工具共用的 shell 守門。"""
+    """Bash 與 PowerShell 工具共用的 shell 守門；既有規則都通過後再看讀取預算（cat 類整檔印出大檔）。"""
+    _check_shell_rules(data)
+    read_budget_check("shell", data)
+
+
+def _check_shell_rules(data: dict) -> None:
     cmd = (data.get("tool_input") or {}).get("command") or ""
     if not cmd:
         return
@@ -1335,6 +1359,9 @@ def check_shell(data: dict) -> None:
             block(f"{agent} 不能改 GitHub 帳號層級的設定（alias、extension、ssh／gpg 金鑰、gist、登入）")
         if team and re.search(r"(?:^|[\s/\\])merge_gate\.py\b", seg) and re.search(r"(?:^|\s)check(?:\s|$)", seg) and not is_steward(data):
             block(f"{agent} 不能跑 merge_gate.py check；只有 {AM['merger_role'] or 'merger_role'}（完整 agent_type）能跑")
+        pk = save_run_write(seg, "pack", {"--selftest"}) if team else None
+        if pk:
+            block(f"{agent} 不能跑 pack.py（資料包與調研重用的紀錄只由主 session 產生，agent 只讀 pack.md）")
         sr = save_run_write(seg) if team else None
         if sr:
             block(f"{agent} 不能跑 save_run.py {sr}（team agent 只能跑唯讀的 status 與 --selftest）；"
@@ -1439,7 +1466,7 @@ REVIEW_REPORTS = {
 }
 
 
-RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "執行紀錄索引.md", "run.json"))
+RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "pack.md", "執行紀錄索引.md", "run.json"))
 
 
 def check_read(data: dict) -> None:
@@ -1460,7 +1487,9 @@ def check_read(data: dict) -> None:
 
 def check_paths(data: dict) -> None:
     if data.get("tool_name") in ("Read", "Grep"):
-        check_read(data)
+        check_read(data)  # 機敏檔先擋
+        if data.get("tool_name") == "Read":
+            read_budget_check("read", data)
         return
     ti = data.get("tool_input") or {}
     fp = ti.get("file_path") or ti.get("notebook_path") or ""
@@ -1493,10 +1522,10 @@ def check_paths(data: dict) -> None:
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
     if role and RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in RUN_STATE_FILES:
         block(f"{agent} 不能寫 {path.name}（{RUNS} 底下的 run.json、<段>.json 是 save_run.py 寫的閘門資料，publish.py 與政策核准會重讀）")
-    if role and ((RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) == "context.md")
+    if role and ((RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in SHARED_CONTEXT_NAMES)
                  or fold(path.name) == fold("執行紀錄索引.md")):
-        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md 是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
-              "都只由主 session 跑 save_run.py 產生）")
+        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md 是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
+              "都只由主 session 跑 save_run.py／pack.py 產生）")
     if role in awf_config.RECORD_ONLY_ROLES:
         # 只寫執行紀錄的角色：只能寫 <runs_dir>/<run>/<段>/<檔名>.md（白名單，照原樣比對；至少兩層子目錄，上一層是段名）；
         # run.json、<段>.json、稽核紀錄、凍結檔已在上面擋；context.md、執行紀錄索引.md 是 save_run.py 產生的，也不能寫。

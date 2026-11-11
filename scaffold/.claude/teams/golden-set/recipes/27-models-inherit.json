@@ -1,0 +1,667 @@
+{
+ "profile": {
+  "recipes": {
+   "feature": {
+    "description": "新功能：完整 7 段（改版前的預設流程）",
+    "stages": [
+     "plan",
+     "design",
+     "build",
+     "sync",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "feature",
+    "research_angles": [
+     "requirement",
+     "specs-adr",
+     "code-contracts",
+     "upstream"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan",
+     "system-design"
+    ],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify"
+     ]
+    },
+    "deliver_axes": [
+     "standards",
+     "spec",
+     "bugs",
+     "history"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": true,
+    "small": {
+     "research_angles": [
+      "requirement",
+      "code-contracts"
+     ],
+     "split": false
+    }
+   },
+   "bugfix": {
+    "description": "回報的 bug、錯誤行為：先診斷根因（重現→根因），修正並補回歸測試；沒有 design 段",
+    "stages": [
+     "plan",
+     "build",
+     "sync",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "diagnose",
+    "research_angles": [
+     "requirement",
+     "code-contracts"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify",
+      "regression"
+     ]
+    },
+    "deliver_axes": [
+     "spec",
+     "bugs"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": false
+   },
+   "change": {
+    "description": "需求變更（CR）：先盤點既有功能與驗收條件要改、留、刪哪些，design 只寫差異，test 加跑受影響舊驗收條件的回歸",
+    "stages": [
+     "plan",
+     "design",
+     "build",
+     "sync",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "impact",
+    "research_angles": [
+     "requirement",
+     "specs-adr",
+     "code-contracts"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan",
+     "delta"
+    ],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify",
+      "regression"
+     ]
+    },
+    "deliver_axes": [
+     "standards",
+     "spec",
+     "bugs",
+     "history"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": true
+   },
+   "hotfix": {
+    "description": "線上事故：最短路徑修正，事後一定要開後續 run 補完整流程",
+    "stages": [
+     "plan",
+     "build",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "diagnose",
+    "research_angles": [
+     "code-contracts"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify",
+      "regression"
+     ]
+    },
+    "deliver_axes": [
+     "bugs"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": true,
+    "split": false
+   },
+   "refactor": {
+    "description": "不改行為的重構：先列出不能改變的行為、先寫 characterization test，驗行為等價",
+    "stages": [
+     "plan",
+     "build",
+     "sync",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "invariants",
+    "research_angles": [
+     "code-contracts",
+     "specs-adr"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify",
+      "equivalence"
+     ]
+    },
+    "deliver_axes": [
+     "standards",
+     "bugs",
+     "history"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": false
+   },
+   "deps": {
+    "description": "依賴升級：讀 changelog 找破壞性變更，強制安全審查",
+    "stages": [
+     "plan",
+     "build",
+     "sync",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "changelog",
+    "research_angles": [
+     "requirement",
+     "code-contracts"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "auto",
+     "security_review": "always",
+     "modes": [
+      "verify",
+      "regression"
+     ]
+    },
+    "deliver_axes": [
+     "standards",
+     "bugs"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": false
+   },
+   "docs": {
+    "description": "只改文件、設定說明、文案：build 只能有 doc 子任務",
+    "stages": [
+     "plan",
+     "build",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "research",
+    "research_angles": [
+     "requirement"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "never",
+     "security_review": "never",
+     "modes": []
+    },
+    "deliver_axes": [
+     "standards",
+     "spec"
+    ],
+    "build_kinds": [
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": false
+   },
+   "test-only": {
+    "description": "補測試、修 flaky：不能改產品程式",
+    "stages": [
+     "plan",
+     "build",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "research",
+    "research_angles": [
+     "code-contracts"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "never",
+     "security_review": "auto",
+     "modes": [
+      "verify"
+     ]
+    },
+    "deliver_axes": [
+     "standards",
+     "bugs"
+    ],
+    "build_kinds": [
+     "test"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": false
+   },
+   "perf": {
+    "description": "效能改善：先量基線，改完前後對照",
+    "stages": [
+     "plan",
+     "design",
+     "build",
+     "sync",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "baseline",
+    "research_angles": [
+     "requirement",
+     "code-contracts"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan",
+     "system-design"
+    ],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify",
+      "benchmark"
+     ]
+    },
+    "deliver_axes": [
+     "standards",
+     "spec",
+     "bugs",
+     "history"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": true
+   },
+   "spike": {
+    "description": "調研、可行性評估：只有 plan 段，產出 intent 與調研結論，不能推送",
+    "stages": [
+     "plan"
+    ],
+    "plan_mode": "research",
+    "research_angles": [
+     "requirement",
+     "specs-adr",
+     "code-contracts"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "never",
+     "security_review": "never",
+     "modes": []
+    },
+    "deliver_axes": [],
+    "build_kinds": [],
+    "publishable": false,
+    "followup": false,
+    "split": false
+   },
+   "revert": {
+    "description": "合併後回退：build 只跑 git revert，事後補原因與恢復條件",
+    "stages": [
+     "plan",
+     "build",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "revert",
+    "research_angles": [
+     "code-contracts"
+    ],
+    "design_lenses": [],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify",
+      "regression"
+     ]
+    },
+    "deliver_axes": [
+     "bugs"
+    ],
+    "build_kinds": [
+     "code",
+     "test",
+     "doc"
+    ],
+    "publishable": true,
+    "followup": false,
+    "split": false
+   }
+  },
+  "modifiers": {
+   "ui": {
+    "description": "有畫面改動：一定做設計審查",
+    "test": {
+     "design_review": "always"
+    }
+   },
+   "security": {
+    "description": "有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查",
+    "test": {
+     "security_review": "always"
+    },
+    "deliver_axes": [
+     "bugs"
+    ],
+    "model_floors": {
+     "tpm-skeptic": "strong"
+    }
+   },
+   "migration": {
+    "description": "資料庫 migration：強制 design 段與回滾計畫、一定做安全審查",
+    "add_stages": [
+     "design"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan",
+     "rollback"
+    ],
+    "test": {
+     "security_review": "always",
+     "modes": [
+      "regression"
+     ]
+    }
+   },
+   "public_api": {
+    "description": "公開 API 或對外契約：強制 design 段檢查相容性，deliver 加歷史軸",
+    "add_stages": [
+     "design"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan",
+     "compat"
+    ],
+    "deliver_axes": [
+     "spec",
+     "history"
+    ]
+   },
+   "large": {
+    "description": "範圍大：允許拆子計劃、調研四個角度全開",
+    "research_angles": [
+     "requirement",
+     "specs-adr",
+     "code-contracts",
+     "upstream"
+    ],
+    "split": true,
+    "model_floors": {
+     "dev-spec-author": "strong"
+    }
+   }
+  },
+  "models": {
+   "mode": "inherit",
+   "tiers": {
+    "light": "haiku",
+    "standard": "sonnet",
+    "strong": "opus"
+   },
+   "defaults": {
+    "*": "standard",
+    "tpm-researcher": "light"
+   },
+   "floors": {
+    "tpm-researcher@plan": "standard",
+    "dev-merge-steward": "light"
+   }
+  }
+ },
+ "recipe": "bugfix",
+ "modifiers": [],
+ "model_cases": [
+  {
+   "role": "tpm-researcher",
+   "stage": "plan",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-researcher",
+   "stage": "design",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-researcher",
+   "stage": "plan",
+   "suggested": "strong"
+  },
+  {
+   "role": "tpm-researcher",
+   "stage": "plan"
+  },
+  {
+   "role": "dev-merge-steward",
+   "stage": "merge",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-skeptic",
+   "stage": "merge",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-skeptic",
+   "stage": "plan",
+   "suggested": "light"
+  },
+  {
+   "role": "dev-spec-author",
+   "stage": "plan",
+   "suggested": "standard"
+  },
+  {
+   "role": "dev-spec-author",
+   "stage": "design",
+   "suggested": "light"
+  },
+  {
+   "role": "tpm-writer",
+   "stage": "deliver",
+   "suggested": "ultra"
+  },
+  {
+   "role": "toString",
+   "stage": "plan",
+   "suggested": "constructor"
+  },
+  {
+   "role": "dev-security-reviewer",
+   "stage": "test"
+  }
+ ],
+ "expect": {
+  "name": "bugfix",
+  "stages": [
+   "plan",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "diagnose",
+  "research_angles": [
+   "requirement",
+   "code-contracts"
+  ],
+  "design_lenses": [],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify",
+    "regression"
+   ]
+  },
+  "deliver_axes": [
+   "spec",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [],
+  "errors": [],
+  "models": [
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   },
+   {
+    "mode": "inherit",
+    "tier": "",
+    "model": "",
+    "floor": ""
+   }
+  ]
+ }
+}

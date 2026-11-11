@@ -88,6 +88,8 @@ def edit(path: Path | str, agent: str = "", cwd: Path | None = None) -> dict:
 
 
 tmp = Path(tempfile.mkdtemp(prefix="awf-hooktest."))
+RB_STATE = tmp / "rb-state"  # 讀取預算的狀態目錄：放在暫存目錄裡，測完一起刪
+os.environ["AWF_READ_BUDGET_DIR"] = str(RB_STATE)
 try:
     WS = tmp / "ws"
     BARE = tmp / "bare"
@@ -927,6 +929,29 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
          "Set-Content -Path _tpm/runs/x/deliver/x.md -Value x", agent=WRT)
     pair(0, "I7 主 session 用 shell 寫 context.md 放行", "echo x > _tpm/runs/x/context.md", "Set-Content -Path _tpm/runs/x/context.md -Value x")
 
+    # 0.4：資料包（pack.md）、調研重用紀錄（reuse.json、pack-args.json）只由主 session 跑 pack.py 產生
+    for who in (WRT, RSR):
+        short = who.rsplit(":", 1)[-1]
+        tool(2, f"I8 {short} Write pack.md", "Write", {"file_path": str(H1W / "_tpm/runs/x/plan/pack.md")}, who)
+        tool(2, f"I8 {short} Write reuse.json", "Write", {"file_path": str(H1W / "_tpm/runs/x/plan/reuse.json")}, who)
+        tool(2, f"I8 {short} Edit pack-args.json", "Edit", {"file_path": str(H1W / "_tpm/runs/x/plan/pack-args.json")}, who)
+        pair(2, f"I8 {short} 用 shell 寫 reuse.json", "echo '{}' > _tpm/runs/x/plan/reuse.json",
+             "Set-Content -Path _tpm/runs/x/plan/reuse.json -Value '{}'", agent=who)
+        pair(2, f"I8 {short} 用 shell 寫 pack.md", "echo x >> _tpm/runs/x/plan/pack.md",
+             "Add-Content -Path _tpm/runs/x/plan/pack.md -Value x", agent=who)
+        pair(2, f"I8 {short} 跑 pack.py", "python3 .claude/teams/tools/pack.py plan --run _tpm/runs/x",
+             "python .claude/teams/tools/pack.py plan --run _tpm/runs/x", agent=who)
+        pair(0, f"I8 {short} 讀 pack.md 放行", "cat _tpm/runs/x/plan/pack.md", "Get-Content _tpm/runs/x/plan/pack.md", agent=who)
+        pair(0, f"I8 {short} 跑 kb.py query 放行", 'python3 .claude/teams/tools/kb.py query "匯出 日期"',
+             'python .claude/teams/tools/kb.py query "匯出 日期"', agent=who)
+        pair(0, f"I8 {short} 跑 pack.py --selftest 放行", "python3 .claude/teams/tools/pack.py --selftest",
+             "python .claude/teams/tools/pack.py --selftest", agent=who)
+    tool(0, "I8 tpm-researcher 寫自己的紀錄 <run>/plan/research-a.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/plan/research-a.md")}, RSR)
+    tool(0, "I8 dev-implementer 寫 repo 的 pack.md 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "docs/pack.md")}, IMP)
+    tool(0, "I8 主 session Write pack.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/plan/pack.md")})
+    pair(0, "I8 主 session 跑 pack.py 放行", "python3 .claude/teams/tools/pack.py plan --run _tpm/runs/x",
+         "python .claude/teams/tools/pack.py plan --run _tpm/runs/x")
+
     # ------------------------------------------------------------ 交件信封
     E = "envelope"
     ok_env = '{"status":"done","summary":"s","artifacts":[],"evidence":[],"confidence":0.9,"open_questions":[],"derived_work":[],"payload":{}}'
@@ -969,6 +994,232 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     run(E, 2, "TaskCompleted 產出不合格", tc("output: _tpm/runs/x/bad.json"))
     run(E, 2, "TaskCompleted 找不到產出", tc("output: _tpm/runs/x/none.json"))
     run(E, 2, "TaskCompleted 沒寫 output", tc("_tpm/runs/x 方案一"))
+
+    # ------------------------------------------------------------ A2 讀取預算（read_budget.py；設定在 methodology.json 的 limits）
+    RES = "agent-workflow:tpm-researcher"
+    NO_FILE = object()
+    rb_off_count = 0
+
+    def rbws(name: str, profile, ext: dict | None = None) -> Path:
+        """profile：dict＝methodology.json 的內容；str＝原樣寫入（測讀不懂）；NO_FILE＝不放 methodology.json。"""
+        w = tmp / name
+        (w / ".claude" / "teams").mkdir(parents=True)
+        (w / ".claude" / "teams" / "guard.config.json").write_text(
+            json.dumps({"runs_dir": "_tpm/runs", **({"extension_agents": ext} if ext else {})}), encoding="utf-8")
+        if profile is not NO_FILE:
+            (w / ".claude" / "teams" / "methodology.json").write_text(
+                profile if isinstance(profile, str) else json.dumps(profile, ensure_ascii=False), encoding="utf-8")
+        (w / "big.md").write_text("".join(f"第 {i} 行\n" for i in range(1000)), encoding="utf-8")
+        (w / "small.md").write_text("".join(f"第 {i} 行\n" for i in range(50)), encoding="utf-8")
+        (w / "chunk.txt").write_bytes((b"x" * 99 + b"\n") * 300)  # 300 行、30000 位元組：不超過門檻，整檔讀一次算 30000
+        (w / ".env").write_text("A=1\n" * 1000, encoding="utf-8")
+        return w
+
+    def rd(w: Path, name: str, agent: str = RES, aid: str = "a1", sid: str = "", **kw) -> dict:
+        d = {"hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(w), "session_id": sid or w.name,
+             "tool_input": {"file_path": str(w / name), **kw}}
+        if agent:
+            d["agent_type"] = agent
+            d["agent_id"] = aid
+        return d
+
+    def rb(want: int, name: str, w: Path, data: dict, mode: str = "guard-paths", expect: str = "") -> None:
+        r = hook(mode, data, w)
+        err = r.stderr.decode("utf-8", "replace")
+        check(f"讀取預算：{name}", want, r.returncode, err)
+        if expect:
+            check(f"讀取預算：{name}（訊息含「{expect}」）", True, expect in err, err)
+
+    def rb_sh(w: Path, command: str, agent: str = RES, tool: str = "Bash") -> dict:
+        d = sh_in(w, command, agent, tool)
+        d["session_id"] = w.name
+        if agent:
+            d["agent_id"] = "a1"
+        return d
+
+    def rb_limits(mode: str = "enforce", lines=400, default=0, roles: dict | None = None) -> dict:
+        return {"limits": {"mode": mode, "whole_file_lines": lines, "read_budget": {"default": default, "roles": roles or {}}}}
+
+    # 第 1 條：大檔要分段讀（額度不限，只看行數）
+    R1 = rbws("rb1", rb_limits(), ext={"acme-db-reviewer": "tpm-reviewer"})
+    rb(2, "大檔整檔讀擋", R1, rd(R1, "big.md"), expect="共 1000 行")
+    rb(2, "大檔整檔讀的訊息提示 kb.py", R1, rd(R1, "big.md"), expect="kb.py query")
+    rb(0, "大檔帶 offset＋合理 limit 放", R1, rd(R1, "big.md", offset=1, limit=200))
+    rb(2, "limit 超過門檻擋", R1, rd(R1, "big.md", offset=1, limit=1000), expect="一次最多 400 行")
+    rb(2, "只帶 offset、剩下的行數仍超過門檻擋", R1, rd(R1, "big.md", offset=100))
+    rb(0, "只帶 offset、剩下的行數不超過門檻放", R1, rd(R1, "big.md", offset=700))
+    rb(0, "小檔整檔讀放", R1, rd(R1, "small.md"))
+    rb(0, "小檔帶超大 limit 放（實際只有 50 行）", R1, rd(R1, "small.md", limit=2000))
+    rb(2, "舊名 dev-pr-reviewer 照模版角色擋", R1, rd(R1, "big.md", "agent-workflow:dev-pr-reviewer"))
+    rb(2, "沒有命名空間的同名角色照模版角色擋", R1, rd(R1, "big.md", "dev-implementer"))
+    rb(0, "其他 plugin 的 agent 大檔整檔讀放", R1, rd(R1, "big.md", "my-plugin:foo"))
+    rb(0, "登記過的擴充 agent 大檔整檔讀放", R1, rd(R1, "big.md", "acme-db-reviewer"))
+    rb(0, "使用者自己的 agent dev-helper 大檔整檔讀放", R1, rd(R1, "big.md", "dev-helper"))
+    rb(0, "主 session 大檔整檔讀放", R1, rd(R1, "big.md", ""))
+    rb(2, "機敏檔 .env 照舊擋（模版角色）", R1, rd(R1, ".env"), expect="機敏檔")
+    rb(2, "機敏檔 .env 照舊擋（主 session）", R1, rd(R1, ".env", ""), expect="機敏檔")
+    (R1 / "blob.dat").write_bytes(b"\0\1\2\n" * 1000)
+    (R1 / "shot.png").write_text("x\n" * 1000, encoding="utf-8")
+    (R1 / "nb.ipynb").write_text("{}\n" * 1000, encoding="utf-8")
+    rb(0, "二進位檔不套用", R1, rd(R1, "blob.dat"))
+    rb(0, "圖片不套用", R1, rd(R1, "shot.png"))
+    rb(0, "notebook 不套用", R1, rd(R1, "nb.ipynb"))
+    rb(0, "檔案不存在放行", R1, rd(R1, "nope.md"))
+    rb(0, "目錄放行", R1, rd(R1, ".claude"))
+    rb(0, "offset／limit 型別怪異不崩潰（小檔）", R1, rd(R1, "small.md", offset="abc", limit=[1]))
+    # 第 3 條：shell 的 cat 類讀取（Bash 與 PowerShell）
+    BIG, SMALL = (R1 / "big.md").as_posix(), (R1 / "small.md").as_posix()
+    rb(2, "cat 大檔擋", R1, rb_sh(R1, f"cat {BIG}"), S, expect="共 1000 行")
+    rb(2, "cat -n 大檔擋（相對路徑）", R1, rb_sh(R1, "cat -n big.md"), S)
+    rb(0, "cat 大檔 | head -50 放", R1, rb_sh(R1, f"cat {BIG} | head -50"), S)
+    rb(0, "cat 小檔放", R1, rb_sh(R1, f"cat {SMALL}"), S)
+    rb(0, "head -50 大檔放", R1, rb_sh(R1, f"head -50 {BIG}"), S)
+    rb(0, "cat 大檔帶導向不算（不是單一簡單指令，放）", R1, rb_sh(R1, f"cat {BIG} 2>&1"), S)
+    rb(0, "主 session cat 大檔放", R1, rb_sh(R1, f"cat {BIG}", ""), S)
+    rb(0, "擴充 agent cat 大檔放", R1, rb_sh(R1, f"cat {BIG}", "acme-db-reviewer"), S)
+    rb(2, "PS：Get-Content 大檔擋", R1, rb_sh(R1, f'Get-Content "{R1 / "big.md"}"', tool="PowerShell"), S, expect="共 1000 行")
+    rb(2, "PS：gc -Path 大檔 -Raw 擋", R1, rb_sh(R1, "gc -Path big.md -Raw", tool="PowerShell"), S)
+    rb(0, "PS：Get-Content 大檔 -TotalCount 50 放", R1, rb_sh(R1, f'Get-Content "{R1 / "big.md"}" -TotalCount 50', tool="PowerShell"), S)
+    rb(0, "PS：Get-Content 大檔 -Tail 20 放", R1, rb_sh(R1, "Get-Content big.md -Tail 20", tool="PowerShell"), S)
+    rb(0, "PS：Get-Content 大檔 | Select-Object -First 5 放", R1, rb_sh(R1, "Get-Content big.md | Select-Object -First 5", tool="PowerShell"), S)
+    rb(0, "PS：Get-Content 小檔放", R1, rb_sh(R1, "Get-Content small.md", tool="PowerShell"), S)
+    rb(0, "PS：主 session Get-Content 大檔放", R1, rb_sh(R1, "Get-Content big.md", "", tool="PowerShell"), S)
+
+    # 第 2 條：讀取額度（default 100000；tpm-planner 專屬 20000；chunk.txt 一次 30000）
+    R2 = rbws("rb2", rb_limits(default=100000, roles={"tpm-planner": 20000}))
+    rb(0, "額度：第 1 次讀（30%）放", R2, rd(R2, "chunk.txt"))
+    rb(0, "額度：第 2 次讀（60%）放", R2, rd(R2, "chunk.txt"))
+    rb(2, "額度：跨過 80% 擋一次", R2, rd(R2, "chunk.txt"), expect="已用 80%")
+    rb(0, "額度：80% 提醒後重試放行", R2, rd(R2, "chunk.txt"))
+    rb(0, "額度：還沒用完（90%）放，不再提醒", R2, rd(R2, "chunk.txt"))
+    rb(2, "額度：累計超過擋", R2, rd(R2, "chunk.txt"), expect="open_questions")
+    rb(2, "額度：用完後小檔也擋", R2, rd(R2, "small.md"), expect="執行紀錄檔")
+    rb(0, "額度：另一個 agent_id 各自計算", R2, rd(R2, "chunk.txt", aid="a2"))
+    rb(0, "額度：另一個 session 各自計算", R2, rd(R2, "chunk.txt", sid="rb2-other"))
+    rb(0, "額度：主 session 不計", R2, rd(R2, "chunk.txt", ""))
+    state_a1 = RB_STATE / "rb2" / "a1.json"
+    try:
+        st_a1 = json.loads(state_a1.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        st_a1 = {}
+    check("讀取預算：狀態檔在 <狀態目錄>/<session_id>/<agent_id>.json，記了用量與提醒", True,
+          st_a1.get("used") == 120000 and st_a1.get("warned") is True, str(st_a1))
+    check("讀取預算：沒留下暫存檔", [], [x.name for x in (RB_STATE / "rb2").glob("*.tmp")])
+    PLN = "agent-workflow:tpm-planner"
+    rb(2, "角色專屬額度：tpm-planner 第 1 次就跨過 80%", R2, rd(R2, "chunk.txt", PLN, "p1"), expect="已用 80%")
+    rb(0, "角色專屬額度：重試放行", R2, rd(R2, "chunk.txt", PLN, "p1"))
+    rb(2, "角色專屬額度：tpm-planner 用完擋", R2, rd(R2, "chunk.txt", PLN, "p1"), expect="額度已用完")
+    state_a1.write_text("垃圾｛不是 JSON", encoding="utf-8")
+    rb(0, "狀態檔寫入垃圾內容後放行（重置）", R2, rd(R2, "chunk.txt"))
+    state_a1.write_text('{"used": "很多", "warned": 1}', encoding="utf-8")
+    rb(0, "狀態檔欄位型別不對後放行（重置）", R2, rd(R2, "chunk.txt"))
+    rb(0, "分段讀只算讀到的行數", R2, rd(R2, "chunk.txt", aid="a3", offset=1, limit=100))
+    try:
+        used_a3 = json.loads((RB_STATE / "rb2" / "a3.json").read_text(encoding="utf-8")).get("used", 0)
+    except (OSError, ValueError):
+        used_a3 = -1
+    check("讀取預算：分段讀 100 行約算 10000 位元組", True, 9900 <= used_a3 <= 10100, str(used_a3))
+    rb(0, "session_id／agent_id 帶路徑字元不會跳出狀態目錄", R2, rd(R2, "chunk.txt", aid="../../evil", sid="../../../evil-session"))
+    check("讀取預算：狀態檔只寫在狀態目錄裡", [], [str(x) for x in tmp.rglob("*evil*") if RB_STATE not in x.parents])
+    check("讀取預算：帶路徑字元的 id 仍有記帳", True, any(RB_STATE.rglob("*evil*.json")))
+
+    # mode：warn 不擋但留紀錄；off、沒有 limits、沒有 methodology.json、讀不懂都放
+    R3 = rbws("rb3", rb_limits("warn", default=40000))
+    rb(0, "warn：大檔整檔讀不擋", R3, rd(R3, "big.md", aid="w0"))
+    rb(0, "warn：跨過 80% 不擋", R3, rd(R3, "chunk.txt"))
+    rb(0, "warn：再讀（還沒用完）不擋", R3, rd(R3, "chunk.txt"))
+    rb(0, "warn：額度用完不擋", R3, rd(R3, "chunk.txt"))
+    rb(0, "warn：cat 大檔不擋", R3, rb_sh(R3, "cat big.md"), S)
+    rb(0, "warn：PS Get-Content 大檔不擋", R3, rb_sh(R3, "Get-Content big.md", tool="PowerShell"), S)
+    try:
+        wl = [json.loads(x) for x in (RB_STATE / "warn.log").read_text(encoding="utf-8").splitlines()]
+    except (OSError, ValueError):
+        wl = []
+    check("warn：warn.log 一行一筆 JSON，記了本來會擋的規則", {"whole_file", "budget_80", "budget_exhausted", "shell_whole_file"},
+          {x.get("rule") for x in wl if isinstance(x, dict) and x.get("session_id") == "rb3"}, str(wl)[:300])
+    check("warn：enforce 的工作區不寫 warn.log", [], [x for x in wl if isinstance(x, dict) and x.get("session_id") in ("rb1", "rb2")])
+    for label, prof in (("mode: off", rb_limits("off", default=1)), ("沒有 limits 鍵", {"stages": {}}), ("沒有 methodology.json", NO_FILE),
+                        ("methodology.json 讀不懂", "{不是 JSON"), ("methodology.json 不是物件", "[1, 2]"),
+                        ("limits 不是物件", {"limits": "enforce"}), ("mode 不認得", rb_limits("strict", default=1)),
+                        ("whole_file_lines 型別不對", rb_limits(lines="400")), ("whole_file_lines 是 0", rb_limits(lines=0)),
+                        ("數值是布林", rb_limits(lines=True, default=True))):
+        rb_off_count += 1
+        w = rbws(f"rb-off-{rb_off_count}", prof)
+        rb(0, f"{label}：大檔整檔讀放", w, rd(w, "big.md"))
+        rb(0, f"{label}：再讀一次也放（不計額度）", w, rd(w, "big.md"))
+        rb(0, f"{label}：cat 大檔放", w, rb_sh(w, "cat big.md"), S)
+        rb(0, f"{label}：PS Get-Content 大檔放", w, rb_sh(w, "Get-Content big.md", tool="PowerShell"), S)
+        rb(2, f"{label}：機敏檔照舊擋", w, rd(w, ".env"))
+    R4 = rbws("rb4", rb_limits(default=0, roles={"tpm-researcher": 20000, "tpm-skeptic": 0}))
+    rb(2, "roles 有設、default 是 0：有設的角色照額度", R4, rd(R4, "chunk.txt"), expect="已用 80%")
+    for i in range(3):
+        rb(0, f"roles 的值 0＝該角色不限（第 {i + 1} 次）", R4, rd(R4, "chunk.txt", "agent-workflow:tpm-skeptic", "k1"))
+        rb(0, f"default 0＝其他角色不限（第 {i + 1} 次）", R4, rd(R4, "chunk.txt", "agent-workflow:dev-implementer", "i1"))
+
+    # read_budget.py 壞掉（載入失敗）：放行，既有檢查照舊
+    broken = tmp / "hooks-broken"
+    shutil.copytree(HOOKS, broken, ignore=shutil.ignore_patterns("__pycache__", "tests"))
+    (broken / "read_budget.py").write_text("這不是 Python (\n", encoding="utf-8")
+
+    def broken_hook(mode: str, data: dict) -> int:
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(R1), "PYTHONUTF8": "1"}
+        return subprocess.run([PY, str(broken / "awf_hook.py"), mode], input=json.dumps(data).encode("utf-8"), capture_output=True, env=env).returncode
+
+    check("讀取預算：模組載入失敗時 Read 大檔放行", 0, broken_hook("guard-paths", rd(R1, "big.md")))
+    check("讀取預算：模組載入失敗時 cat 大檔放行", 0, broken_hook(S, rb_sh(R1, "cat big.md")))
+    check("讀取預算：模組載入失敗時機敏檔照舊擋", 2, broken_hook("guard-paths", rd(R1, ".env")))
+    check("讀取預算：模組載入失敗時 push 照舊擋", 2, broken_hook(S, rb_sh(R1, "git push origin feature/x")))
+
+    # 行程內：舊 session 目錄清理、效能（讀設定＋數行＋讀寫狀態檔，每次不超過 50ms）
+    import time as _time
+    sys.path.insert(0, str(HOOKS))
+    saved_env = os.environ.get("CLAUDE_PROJECT_DIR")
+    try:
+        import awf_config as _cfg
+        import read_budget as _rb
+        old_root = tmp / "rb-old"
+        for d in ("stale", "fresh", "keep"):
+            (old_root / d).mkdir(parents=True)
+            (old_root / d / "a.json").write_text("{}", encoding="utf-8")
+        (old_root / "keep" / "別人的檔案.txt").write_text("x", encoding="utf-8")
+        long_ago = _time.time() - 8 * 86400
+        for d in ("stale", "keep"):
+            os.utime(old_root / d, (long_ago, long_ago))
+        _rb._cleanup(old_root)
+        check("讀取預算：超過 7 天的 session 目錄清掉", False, (old_root / "stale").exists())
+        check("讀取預算：新的 session 目錄留著", True, (old_root / "fresh" / "a.json").is_file())
+        check("讀取預算：清理不刪不是自己寫的檔案", True, (old_root / "keep" / "別人的檔案.txt").is_file())
+
+        PERF = rbws("rb-perf", rb_limits(default=10 ** 9))
+        (PERF / "f400.py").write_text("".join(f"x = {i}  # 一行大約四十個位元組的程式碼\n" for i in range(400)), encoding="utf-8")
+        os.environ["CLAUDE_PROJECT_DIR"] = str(PERF)
+        d_read = rd(PERF, "f400.py")
+        took, res = [], []
+        for _ in range(30):
+            t0 = _time.perf_counter()
+            res.append(_rb.check_read(d_read, _cfg.load()))
+            took.append(_time.perf_counter() - t0)
+        took.sort()
+        median_ms = took[len(took) // 2] * 1000
+        try:
+            n_reads = json.loads((RB_STATE / "rb-perf" / "a1.json").read_text(encoding="utf-8")).get("reads")
+        except (OSError, ValueError):
+            n_reads = None
+        check("讀取預算：效能量測走的是計數路徑（30 次都放行並記帳）", True, res == [None] * 30 and n_reads == 30, f"{res[:3]} reads={n_reads}")
+        check(f"讀取預算：計數路徑每次 ≤50ms（中位數 {median_ms:.2f}ms）", True, median_ms <= 50)
+        d_cat = rb_sh(PERF, "cat f400.py")
+        t0 = _time.perf_counter()
+        for _ in range(30):
+            _rb.check_shell(d_cat, _cfg.load())
+        shell_ms = (_time.perf_counter() - t0) / 30 * 1000
+        check(f"讀取預算：shell 檢查每次 ≤50ms（平均 {shell_ms:.2f}ms）", True, shell_ms <= 50)
+        print(f"讀取預算效能：Read 計數路徑中位數 {median_ms:.2f}ms、shell 檢查平均 {shell_ms:.2f}ms")
+    finally:
+        sys.path.remove(str(HOOKS))
+        if saved_env is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = saved_env
 
     # ------------------------------------------------------------ 入口本身：出錯時不能回 0，也不能冒充 2
     # 守門類輸入壞掉一律不放行（exit 2，或 hook 失敗；H2 之後統一為 2），也不能印 traceback

@@ -349,6 +349,10 @@ def profile_upgrade(meth: Path, adopt: bool) -> int:
         new = json.loads(json.dumps(proj))
         for p, v in miss:
             set_missing(new, p, v)
+        # 讀取上限是這版才有的強制機制：升級補進來時先用 warn（只記錄本來會擋的），確認不會誤擋再自己改成 enforce
+        if any(p == "limits" for p, _ in miss) and isinstance(new.get("limits"), dict):
+            new["limits"]["mode"] = "warn"
+            print("  limits 先設成 mode=warn（只記錄、不擋）；觀察一陣子沒有誤擋，再把 methodology.json 的 limits.mode 改成 enforce。")
         errs = schemalib.check_doc(new, "methodology")
         if errs:
             print("錯誤：補上欄位後不符合 schemas/methodology.schema.json，沒有寫回：" + "；".join(errs[:5]))

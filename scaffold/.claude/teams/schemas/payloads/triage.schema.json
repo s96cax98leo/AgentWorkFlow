@@ -32,6 +32,25 @@
         }
       },
       "description": "其他說得通的分類與理由，讓人在閘門比較"
+    },
+    "angles": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {"type": "string", "minLength": 1},
+      "description": "選填：這次需要的調研角度（從 recipe 的角度裡挑，至少一個）；省略＝recipe 的角度全做。modifier 帶進來的角度不能省"
+    },
+    "model_plan": {
+      "type": "array",
+      "description": "選填：建議各角色用哪個模型等級；工具只會往上修正到下限",
+      "items": {
+        "type": "object",
+        "required": ["role", "tier", "reason"],
+        "properties": {
+          "role": {"type": "string", "minLength": 1, "description": "角色名（不帶命名空間），例如 tpm-researcher"},
+          "tier": {"type": "string", "enum": ["light", "standard", "strong"]},
+          "reason": {"type": "string", "minLength": 1, "description": "為什麼這個等級夠用（或需要更高）"}
+        }
+      }
     }
   }
 }
