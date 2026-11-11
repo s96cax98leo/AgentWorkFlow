@@ -125,6 +125,12 @@ def requirement_key(raw: str, root: Path) -> str:
     return ("file:" + h) if h else sha1_text(raw or "")
 
 
+def _write_lf(path, text: str) -> None:
+    """一律用 LF 寫檔（各平台產出相同）。Path.write_text 的 newline 參數要 Python 3.10 才有。"""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
 def _flat(v, limit: int = 80) -> str:
     """放進資料包的單行文字：去掉換行與控制字元、截短（檔名與標題是外部內容，不能讓它在資料包裡另起一節）。"""
     t = "".join(" " if (ch in "\r\n\t" or ord(ch) < 32 or ord(ch) == 127) else ch for ch in str(v if v is not None else ""))
@@ -410,9 +416,9 @@ def run_pack(argv: list[str], root: Path = PROJECT) -> int:
     d = run / stage
     try:
         d.mkdir(parents=True, exist_ok=True)
-        (d / "pack.md").write_text(build_pack(stage, run, root, requirement, recipe_line_of(data), hits, kb_note, notes), encoding="utf-8", newline="\n")
+        _write_lf(d / "pack.md", build_pack(stage, run, root, requirement, recipe_line_of(data), hits, kb_note, notes))
         out_args["pack"] = _posix(str(d / "pack.md"))
-        (d / ARGS).write_text(json.dumps(out_args, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+        _write_lf(d / ARGS, json.dumps(out_args, ensure_ascii=False, indent=1, sort_keys=True) + "\n")
     except OSError as e:
         print(f"資料包寫不出來（{e}）；這一段照常跑，只是沒有資料包")
         return 0

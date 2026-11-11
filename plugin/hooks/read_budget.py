@@ -287,7 +287,8 @@ def _check_read(data: dict, cfg: dict) -> str | None:
 
 # ---------------------------------------------------------------- shell 的 cat 類讀取
 # 有這些字元就不是「單一簡單指令」（管線、串接、導向、子運算式、變數、萬用字元、跳脫）：一律放行
-NOT_SIMPLE = re.compile(r"[|;&<>\n\r(){}$`*?\[\]~!#]")
+# `~` 只有在字首才是家目錄展開（由 _cat_targets 判斷）；路徑中間的 `~` 是字面值（Windows 的 8.3 短路徑，例如 RUNNER~1）
+NOT_SIMPLE = re.compile(r"[|;&<>\n\r(){}$`*?\[\]!#]")
 CAT_FLAGS = re.compile(r"^-[nbsAETvetu]+$")  # cat 不會截斷輸出的旗標
 BASH_CATS = frozenset({"cat"})
 PS_CATS = frozenset({"get-content", "gc", "cat", "type"})
@@ -352,7 +353,7 @@ def _cat_targets(tool: str, cmd: str) -> list[str]:
             if low in PS_IGNORED_SWITCHES:
                 i += 1
                 continue
-            if t.startswith("-") or "," in t:  # 其他參數（-TotalCount、-Tail、-First、-Wait…）或陣列：放行
+            if t.startswith("-") or "," in t or t.startswith("~"):  # 其他參數（-TotalCount、-Tail、-First、-Wait…）、陣列、家目錄：放行
                 return []
             files.append(t)
             i += 1
@@ -371,6 +372,8 @@ def _cat_targets(tool: str, cmd: str) -> list[str]:
         elif opts and t.startswith("-"):
             if not CAT_FLAGS.match(t):
                 return []
+        elif t.startswith("~"):  # 家目錄展開：看不懂就放行
+            return []
         else:
             files.append(t)
     return files
