@@ -48,7 +48,7 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
         結案：recipe 要求後續 run（followup=true，例如 hotfix）時，沒有 followup_run 就拒絕。run.json 記 closed {by, at}。
     python3 save_run.py abandon <run_dir> --reason <為什麼取消> --by <誰> --at <ISO 時間>
         需求取消：run.json 記 abandoned {by, at, reason}；之後任何一段都不能核准，publish.py 也拒絕推送。
-    python3 save_run.py status <run_dir>
+    python3 save_run.py status <run_dir> [--json]      # --json：給外部程式讀的快照（schemas/run-status.schema.json）
     python3 save_run.py --selftest       # 在暫存目錄跑，不碰 repo
 """
 
@@ -564,6 +564,53 @@ def _escalate_affected(new: dict, old: dict, profile: dict | None) -> tuple[list
     return added, [c for c in changed if c in (new.get("stages") or [])]
 
 
+def next_stage(data: dict) -> str | None:
+    """下一個要處理的段：還沒 done，或 done 了但閘門還沒核准；recipe 沒有的段（skipped）不算。"""
+    return next((s for s, st in data["stages"].items() if st["status"] != "skipped"
+                 and (st["status"] != "done" or (st.get("gate") and not st.get("approved")))), None)
+
+
+def status_snapshot(run: Path, data: dict) -> dict:
+    """給外部程式讀的狀態快照（schemas/run-status.schema.json）。只整理 run.json 與各段結果的 trace，不做任何判定。"""
+    stages = []
+    for name, st in data["stages"].items():
+        agents = missing = 0
+        try:
+            trace = json.loads((run / f"{name}.json").read_text(encoding="utf-8")).get("trace")
+            if isinstance(trace, list):
+                agents = len(trace)
+                missing = sum(1 for t in trace if not (isinstance(t, dict) and t.get("ok") is True))
+        except (OSError, ValueError, AttributeError):
+            pass
+        ap = st.get("approved")
+        stages.append({"name": name, "status": st["status"], "gate": bool(st.get("gate")),
+                       "approved": {"by": str(ap.get("by")), "at": str(ap.get("at"))} if isinstance(ap, dict) else None,
+                       "agents": agents, "agents_missing": missing, "missing_records": len(st.get("missing_records") or [])})
+    nxt = None if data.get("abandoned") else next_stage(data)
+    nst = data["stages"].get(nxt) if nxt else None
+    waiting = nxt if nst and nst["status"] == "done" and nst.get("gate") and not nst.get("approved") else None
+    if data.get("abandoned"):
+        state = "abandoned"
+    elif data.get("closed"):
+        state = "closed"
+    elif nxt is None:
+        state = "done"
+    elif waiting:
+        state = "waiting_gate"
+    elif nst and nst["status"] in ("blocked", "invalid"):
+        state = "blocked"
+    else:
+        state = "running"
+    r = data.get("recipe") if has_recipe(data) else None
+    fr = data.get("followup_run")
+    return {"v": 1, "run": run.name, "event": str(data.get("event") or ""), "target": str(data.get("target") or ""), "state": state,
+            "recipe": {"name": r.get("name"), "modifiers": list(r.get("modifiers") or []), "size": r.get("size"),
+                       "locked": bool(r.get("locked"))} if r else None,
+            "stages": stages, "next": nxt, "waiting_gate": waiting,
+            "followup_run": str(fr.get("run")) if isinstance(fr, dict) and fr.get("run") else None,
+            "abandoned": data.get("abandoned") or None, "closed": data.get("closed") or None}
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "--selftest":
         return selftest()
@@ -837,6 +884,9 @@ def main(argv: list[str]) -> int:
         print(f"已取消：{by} @ {at}：{reason}；之後不能核准、不能推送")
         return 0
     if cmd == "status":
+        if "--json" in argv:
+            print(json.dumps(status_snapshot(run, data), ensure_ascii=False, indent=1))
+            return 0
         if data.get("abandoned"):
             print(f"已取消：{abandoned_error(data)}")
         if has_recipe(data):
@@ -856,8 +906,7 @@ def main(argv: list[str]) -> int:
         if data.get("abandoned"):
             print("下一步：無（已取消）")
             return 0
-        nxt = next((s for s, st in data["stages"].items() if st["status"] != "skipped"
-                    and (st["status"] != "done" or (st.get("gate") and not st.get("approved")))), None)
+        nxt = next_stage(data)
         print(f"下一步：{nxt or '全部完成'}")
         return 0
     print(__doc__)
@@ -1232,6 +1281,34 @@ def selftest() -> int:
         check("hotfix 後續：有 followup_run 可以 close（整條流程也要走完；feature 不需要後續 run，但同樣要走完）",
               c2 == 0 and data["followup_run"]["run"] == d_follow and data["closed"] == {"by": "human", "at": "t"} and c3 != 0 and c4 == 0,
               out2 + out3 + out4)
+        # status --json（給外部程式讀的快照）
+        def snap(dd: str) -> tuple[dict, list]:
+            c_, o_ = call("status", dd, "--json")
+            j_ = json.loads(o_) if c_ == 0 else {}
+            return j_, schemalib.check_doc(j_, "run-status")
+        d_wait = new_run({"name": "bugfix"}, intent=with_root)
+        j1, e1 = snap(d_wait)
+        check("status --json：plan 存好還沒核准＝waiting_gate，下一步與等待的閘門都是 plan；recipe 沒有的段是 skipped",
+              not e1 and j1["state"] == "waiting_gate" and j1["next"] == "plan" and j1["waiting_gate"] == "plan"
+              and j1["recipe"]["name"] == "bugfix" and not j1["recipe"]["locked"]
+              and {x["name"]: x["status"] for x in j1["stages"]}["design"] == "skipped", str(e1) + str(j1))
+        call("approve", d_wait, "plan", "--by", "human", "--at", "t")
+        call("stage", d_wait, "build", stdin=traced(d_wait, "build", {"x": build}))
+        j2, e2 = snap(d_wait)
+        b2 = {x["name"]: x for x in j2["stages"]}["build"]
+        check("status --json：核准後 running，跳過 design 直接到下一段；段的派工數取自 trace",
+              not e2 and j2["recipe"]["locked"] and j2["waiting_gate"] is None and j2["next"] not in ("plan", "design", "build")
+              and b2["agents"] >= 1 and b2["agents_missing"] == 0 and {x["name"]: x for x in j2["stages"]}["plan"]["approved"] == {"by": "human", "at": "t"},
+              str(e2) + str(j2))
+        j3, e3 = snap(d_feat)
+        check("status --json：結案的 run 是 closed、沒有下一步", not e3 and j3["state"] == "closed" and j3["next"] is None, str(e3) + str(j3))
+        d_ab = new_run({"name": "docs"}, intent=with_root)
+        call("abandon", d_ab, "--by", "human", "--at", "t", "--reason", "不做了")
+        j4, e4 = snap(d_ab)
+        check("status --json：取消的 run 是 abandoned、沒有下一步", not e4 and j4["state"] == "abandoned" and j4["next"] is None, str(e4) + str(j4))
+        call("stage", d_wait, j2["next"], stdin={"halted": True, "halt_reason": "x"})
+        j5, e5 = snap(d_wait)
+        check("status --json：halted 的段是 blocked", not e5 and j5["state"] == "blocked", str(e5) + str(j5))
         # escalate 不能清掉後續義務（X3 I1）
         d = new_run({"name": "hotfix"}, approve_plan=True, intent=with_root)
         call("escalate", d, "--recipe", "bugfix", "--by", "human", "--at", "t", "--reason", "r")

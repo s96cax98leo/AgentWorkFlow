@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run-status.schema.json",
+  "title": "save_run.py status --json 的輸出",
+  "description": "給外部程式讀的 run 狀態快照。只是把 run.json 與各段結果整理成穩定格式，不參與任何閘門判定。",
+  "type": "object",
+  "required": ["v", "run", "event", "state", "recipe", "stages", "next", "waiting_gate"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "run": {"type": "string", "minLength": 1},
+    "event": {"type": "string"},
+    "target": {"type": "string"},
+    "state": {"enum": ["running", "waiting_gate", "blocked", "done", "closed", "abandoned"]},
+    "recipe": {
+      "type": ["object", "null"],
+      "required": ["name", "modifiers", "locked"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "modifiers": {"type": "array", "items": {"type": "string"}},
+        "size": {"type": ["string", "null"]},
+        "locked": {"type": "boolean"}
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "gate", "approved", "agents", "agents_missing", "missing_records"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "status": {"type": "string"},
+          "gate": {"type": "boolean"},
+          "approved": {
+            "type": ["object", "null"],
+            "required": ["by", "at"],
+            "properties": {"by": {"type": "string"}, "at": {"type": "string"}}
+          },
+          "agents": {"type": "integer", "minimum": 0},
+          "agents_missing": {"type": "integer", "minimum": 0},
+          "missing_records": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "next": {"type": ["string", "null"]},
+    "waiting_gate": {"type": ["string", "null"]},
+    "followup_run": {"type": ["string", "null"]},
+    "abandoned": {"type": ["object", "null"]},
+    "closed": {"type": ["object", "null"]}
+  }
+}
