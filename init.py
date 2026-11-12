@@ -52,6 +52,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -66,6 +67,11 @@ EXAMPLE = HERE / "workflow.config.example"
 PLUGIN_HOOKS = HERE / "plugin" / "hooks"
 METHODOLOGIES = SCAFFOLD / ".claude" / "teams" / "methodologies"
 PLUGIN_JSON = HERE / "plugin" / ".claude-plugin" / "plugin.json"
+# workflow 範本（0.5 起不複製進專案：由 awf.py next 逐段產生；--with-workflows 才放一份可以改的覆寫檔）
+WF_TEMPLATES = HERE / "plugin" / "workflow-templates"
+WF_LEGACY = WF_TEMPLATES / "legacy.json"
+WF_OVERRIDE = re.compile(r"^// awf-override: *(\S+)\s*$", re.M)
+WF_METH = re.compile(r"/\*@methodology\*/.*?/\*@end\*/", re.S)
 PH = re.compile(r"\{\{([A-Z_]+)\}\}")
 # init 寫進專案的版本戳（內容＝plugin.json 的 version）與這次用的佔位符值（--upgrade 沒給 --config 時沿用）
 VERSION_FILE = ".claude/teams/VERSION"
@@ -764,6 +770,68 @@ class Writer:
         self.written.append(dst)
 
 
+def pristine_legacy_workflow(text: str, name: str, vals: dict[str, str], legacy: dict) -> str:
+    """專案裡的 workflow 是不是某一版 init 原樣複製的副本（只差佔位符的值與內嵌的 profile）。是的話回傳版本，不是回空字串。
+
+    legacy.json 記了各版範本切開後每一段的長度與雜湊；這裡逐段比對，佔位符的位置要剛好是 vals 的值。"""
+    text = text.replace("\r\n", "\n")
+    for entry in (legacy.get("files") or {}).get(name) or []:
+        pos, ok = 0, True
+        keys, segs = entry.get("keys") or [], entry.get("segs") or []
+        for i, (ln, h) in enumerate(segs):
+            seg = text[pos:pos + ln]
+            if len(seg) != ln or hashlib.sha1(seg.encode("utf-8")).hexdigest()[:16] != h:
+                ok = False
+                break
+            pos += ln
+            if i < len(keys):
+                if keys[i] == "@METH":
+                    m = WF_METH.match(text, pos)
+                    if not m:
+                        ok = False
+                        break
+                    pos = m.end()
+                else:
+                    v = vals.get(keys[i])
+                    if v is None or not text.startswith(v, pos):
+                        ok = False
+                        break
+                    pos += len(v)
+        if ok and pos == len(text):
+            return "、".join(entry.get("versions") or ["?"])
+    return ""
+
+
+def tidy_old_workflows(target: Path, vals: dict[str, str]) -> tuple[list[str], list[str], list[str]]:
+    """升級時整理專案的 .claude/workflows/：（移除的原樣舊副本, 保留的覆寫檔, 保留但不會被採用的檔）。使用者自己的 workflow 不碰。"""
+    removed, overrides, kept = [], [], []
+    d = target / ".claude" / "workflows"
+    try:
+        legacy = json.loads(WF_LEGACY.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        legacy = {}
+    ours = {p.name for p in WF_TEMPLATES.glob("*.js")} | set((legacy.get("files") or {}))
+    for f in sorted(d.glob("*.js")) if d.is_dir() else []:
+        if f.name not in ours:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if WF_OVERRIDE.search(text):
+            overrides.append(f.name)
+        elif OURS.search(text) is None:
+            continue                      # 同名但不是模版的檔：使用者自己的
+        elif pristine_legacy_workflow(text, f.name, vals, legacy):
+            f.unlink()
+            removed.append(f.name)
+        else:
+            kept.append(f.name)
+    if d.is_dir() and not any(d.iterdir()):
+        d.rmdir()
+    return removed, overrides, kept
+
+
 def dest_for(rel: Path, target: Path, runs: str, hooks: str, with_mcp: bool, with_merge_gate: bool = False) -> Path | None:
     parts = rel.parts
     name = rel.name
@@ -801,6 +869,8 @@ def main() -> None:
     ap.add_argument("--overwrite-user-files", action="store_true", help="連 CLAUDE.md、settings.json 等使用者檔案也整份覆蓋")
     ap.add_argument("--hooks", default="plugin")
     ap.add_argument("--with-mcp", action="store_true")
+    ap.add_argument("--with-workflows", action="store_true",
+                    help="把 workflow 腳本放一份到 .claude/workflows/ 當覆寫檔（要自己改 workflow 才需要；預設由 awf.py 依 plugin 的範本產生，不放副本）")
     ap.add_argument("--with-merge-gate", action="store_true", help="放 .github/workflows/agent-merge-gate.yml（預設不放）")
     ap.add_argument("--defaults", action="store_true")
     ap.add_argument("--python")
@@ -870,6 +940,18 @@ def main() -> None:
         dst = dest_for(src.relative_to(SCAFFOLD), target, runs, a.hooks, a.with_mcp, a.with_merge_gate)
         if dst is not None:
             w.put(src, dst)
+
+    wf_written: list[Path] = []
+    if a.with_workflows:
+        for src in sorted(WF_TEMPLATES.glob("*.js")):
+            dst = target / ".claude" / "workflows" / src.name
+            if dst.is_file() and not a.overwrite_user_files and WF_OVERRIDE.search(dst.read_text(encoding="utf-8", errors="replace")):
+                w.user_kept.append(dst)    # 已經是覆寫檔（使用者可能改過）：不覆蓋
+                continue
+            before = len(w.written)
+            w.put(src, dst)
+            if len(w.written) > before:
+                wf_written.append(dst)
 
     if a.hooks == "project":
         for src in sorted(p for p in PLUGIN_HOOKS.rglob("*") if p.is_file()):
@@ -965,6 +1047,17 @@ def main() -> None:
         for x in sorted(set(w.leftovers)):
             print(f"  - {x}")
 
+    # 舊版複製進專案的 workflow 副本：要在 build.py 之前整理（build.py 會把新版的片段內嵌進去，之後就認不出是不是原樣）
+    if force and not a.with_workflows:
+        removed, overrides, kept = tidy_old_workflows(target, vals)
+        if removed:
+            print(f"移除 {len(removed)} 支舊版複製進來、沒改過的 workflow 副本（0.5 起由 awf.py 依 plugin 的範本產生，不用放在專案）：" + "、".join(removed))
+        if overrides:
+            print(f"保留 {len(overrides)} 支 workflow 覆寫檔（有 awf-override 標記，awf.py 會用它們）：" + "、".join(overrides))
+        if kept:
+            print(f"保留 {len(kept)} 支和任何一版範本都對不上的 workflow（可能改過）：" + "、".join(kept)
+                  + "。awf.py 不會採用它們；要繼續用就在檔案結尾加一行「// awf-override: <版本>」，不用就刪掉。")
+
     # ------------------------------------------------------------ 內嵌 schema 與自我檢查
     build = target / ".claude" / "teams" / "tools" / "build.py"
     if build.is_file():
@@ -973,6 +1066,15 @@ def main() -> None:
             print("警告：build.py 失敗，請手動跑 python3 .claude/teams/tools/build.py")
             if a.upgrade:
                 exit_code = exit_code or 1
+
+    # 覆寫檔的標記要在 build.py 之後加（build.py 會重寫內嵌的部分）；awf.py 只採用有這個標記的專案 workflow
+    for dst in wf_written:
+        body = dst.read_text(encoding="utf-8")
+        if not WF_OVERRIDE.search(body):
+            Writer.write_text(dst, body + ("" if body.endswith("\n") else "\n") + f"// awf-override: {new_ver}\n")
+    if wf_written:
+        print(f"workflow 覆寫檔 {len(wf_written)} 支放在 .claude/workflows/（結尾有 awf-override 標記；awf.py 會用它們取代 plugin 的範本，"
+              "plugin 更新後要自己對照更新。不需要改 workflow 的話可以整個刪掉）。")
 
     if a.upgrade:
         print(f"\n升級完成：{old_ver or '未記錄'} → {new_ver}。用 git diff 檢查變更；驗證指令見下面第 5 步。")
@@ -996,10 +1098,11 @@ def main() -> None:
     claude_doc = CLAUDE_IMPORT if (target / CLAUDE_IMPORT).exists() else "CLAUDE.md"
     print(f"""  3. 填寫 {target / '.claude' / 'teams' / 'rules.md'} 的「## 專案規則」段與 {claude_doc} 的「專案特定」段。
   4. 檢查 {target / '.claude' / 'teams' / 'guard.config.json'}（上游、fork、禁止路徑、分支前綴）與
-     {target / '.claude' / 'teams' / 'methodology.json'}（開發規範與慣例；改了要重跑 python3 .claude/teams/tools/build.py）。
+     {target / '.claude' / 'teams' / 'methodology.json'}（開發規範與慣例；改了下一段 workflow 就生效，不用重跑 build.py）。
   5. 驗證（在 {target} 執行；Windows 把 python3 換成 py -3 或 python）：
        uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py
-       node .claude/teams/tools/check_workflows.mjs --agents-dir {HERE / 'plugin' / 'agents'}
+       python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check --plugin-dir {HERE / 'plugin'}
+       node .claude/teams/tools/check_workflows.mjs --agents-dir {HERE / 'plugin' / 'agents'} --wf-dir _tpm/wf-check
        python3 .claude/teams/tools/check_agents.py --plugin-dir {HERE / 'plugin'}
        python3 {HERE / 'plugin' / 'hooks' / 'tests' / 'run.py'} --project {target}""")
     gate = target / ".github" / "workflows" / "agent-merge-gate.yml"

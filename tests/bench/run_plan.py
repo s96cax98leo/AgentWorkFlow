@@ -4,7 +4,7 @@
 
 步驟（--step，可分開跑；預設依序全部）：
   setup   產生虛構專案（make_fixture.py）→ init.py（--defaults --hooks project，讓這版的 hook 生效）→ 建知識庫 → 建 run 目錄
-  plan    備資料包（pack.py）→ `claude -p` 用 Workflow 跑 .claude/workflows/sdlc-plan.js → 讀 workflow 的回傳存成 plan 段 → 量成本
+  plan    備資料包（pack.py）→ `claude -p` 用 Workflow 跑 awf.py 依 plugin 範本產生的 sdlc-plan.js（_tpm/wf/） → 讀 workflow 的回傳存成 plan 段 → 量成本
   rerun   同一個 run 再跑一次 plan（來源沒變的調研角度會沿用）→ 量成本
   report  彙整成 <work>/bench-result.json 並印出對照表
 
@@ -69,8 +69,13 @@ def setup(work: Path) -> Path:
     req = proj / "_tpm" / "requirement.md"
     req.parent.mkdir(parents=True, exist_ok=True)
     req.write_bytes((HERE / "requirement.md").read_bytes())
+    # 0.5 起 workflow 不放在專案：依 plugin 的範本產生一份（乾跑檢查與基準實跑都用它）
+    sh([PY, tool(proj, "awf.py"), "render", "--all", "--out", WF_REL, "--plugin-dir", str(REPO / "plugin")], proj)
     sh([PY, tool(proj, "save_run.py"), "init", RUN_REL, "--event", "sdlc", "--target", REPO_REL, "--requirement", "_tpm/requirement.md"], proj)
     return proj
+
+
+WF_REL = "_tpm/wf"
 
 
 def plan_args(proj: Path) -> dict:
@@ -81,7 +86,7 @@ def plan_args(proj: Path) -> dict:
 
 
 def prompt_for(proj: Path, args: dict) -> str:
-    script = proj / ".claude" / "workflows" / "sdlc-plan.js"
+    script = proj / WF_REL / "sdlc-plan.js"
     return ("用 Workflow 工具執行一支 workflow：scriptPath 是 " + str(script) + "，args 是下面這個 JSON 物件（原樣傳物件，不要轉成字串、不要增刪欄位）：\n"
             + json.dumps(args, ensure_ascii=False) + "\n等 workflow 完成的通知到了之後，只回覆一行「done」。不要自己做 workflow 裡的工作，也不要讀或整理它的回傳。")
 
@@ -199,7 +204,7 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         proj = setup(work)
-        check("setup：專案已 init、有 run.json 與知識庫", (proj / RUN_REL / "run.json").is_file() and (proj / ".claude/workflows/sdlc-plan.js").is_file()
+        check("setup：專案已 init、有 run.json 與知識庫", (proj / RUN_REL / "run.json").is_file() and (proj / WF_REL / "sdlc-plan.js").is_file() and not (proj / ".claude/workflows").exists()
               and (proj / ".claude/hooks/read_budget.py").is_file() and (proj / REPO_REL / ".git").is_dir())
         a1 = plan_args(proj)
         pack1 = (proj / RUN_REL / "plan" / "pack.md").read_bytes()

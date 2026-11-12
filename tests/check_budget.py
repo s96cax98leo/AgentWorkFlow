@@ -44,7 +44,12 @@ def measure() -> dict:
         if p.returncode != 0:
             raise SystemExit(f"init.py 失敗：{(p.stdout + p.stderr)[-1500:]}")
         rep = Path(tmp) / "report.json"
-        p = subprocess.run(["node", str(proj / ".claude/teams/tools/check_workflows.mjs"), "--agents-dir", str(ROOT / "plugin/agents")],
+        wfd = Path(tmp) / "wf"
+        p = subprocess.run([sys.executable, str(proj / ".claude/teams/tools/awf.py"), "render", "--all", "--out", str(wfd), "--plugin-dir", str(ROOT / "plugin")],
+                           cwd=proj, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if p.returncode != 0:
+            raise SystemExit(f"awf.py render 失敗：{(p.stdout + p.stderr)[-1500:]}")
+        p = subprocess.run(["node", str(proj / ".claude/teams/tools/check_workflows.mjs"), "--agents-dir", str(ROOT / "plugin/agents"), "--wf-dir", str(wfd)],
                            cwd=proj, env={**env, "AWF_SCENARIO_REPORT": str(rep)}, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if not rep.is_file():
             raise SystemExit(f"check_workflows 沒有產出報告：{(p.stdout + p.stderr)[-1500:]}")

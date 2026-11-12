@@ -6,7 +6,7 @@ plugin/.claude-plugin/plugin.json 的 description。實際狀態從檔案算：
   - agent：plugin/agents/*.md；核心角色與舊名取自 scaffold/.claude/teams/tools/check_agents.py 的 CORE、ALIASES，
     其餘是網站分析 agent。
   - command：plugin/commands/*.md；skill：plugin/skills/*/。
-  - workflow：scaffold/.claude/workflows/*.js；SDLC 段落順序取自 save_run.py 的 SDLC。
+  - workflow：plugin/workflow-templates/*.js；SDLC 段落順序取自 save_run.py 的 SDLC。
 
 規則：
   1. 數量：文件寫的「`dev-*`（N 個）」「`tpm-*`（N 個）」「網站分析組（N 個）」「共 N 個」（agent）、「N 個核心角色」
@@ -53,7 +53,7 @@ def facts() -> dict:
     agents = {p.stem for p in (PLUGIN / "agents").glob("*.md")}
     core = set(literal(SCAFFOLD / ".claude/teams/tools/check_agents.py", "CORE"))
     aliases = dict(literal(SCAFFOLD / ".claude/teams/tools/check_agents.py", "ALIASES"))
-    workflows = {p.stem for p in (SCAFFOLD / ".claude/workflows").glob("*.js")}
+    workflows = {p.stem for p in (ROOT / "plugin/workflow-templates").glob("*.js")}
     return {
         "agents": agents,
         "core": core,

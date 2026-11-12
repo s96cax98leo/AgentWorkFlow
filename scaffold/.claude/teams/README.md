@@ -10,12 +10,12 @@
 | plugin `agents/tpm-*.md`（5 個） | 通用角色：tpm-planner、tpm-researcher（含上游模式）、tpm-reviewer（含 SDLC 的 deliver 模式）、tpm-skeptic、tpm-writer |
 | plugin 的 2 個舊名薄殼 | 舊名 dev-pr-reviewer 已併入 tpm-reviewer、舊名 tpm-upstream-analyst 已併入 tpm-researcher；相容一版，下一版移除。專案還在用舊名時跑 `init.py --upgrade` |
 | plugin `hooks/` | 單一入口 `awf_hook.py`，有三個模式：`guard-shell`（Bash 與 PowerShell）、`guard-paths`（Edit、Write、NotebookEdit、Read、Grep；轉呼叫目標 repo 的 guard）、`envelope`。附測試 |
-| `.claude/workflows/sdlc-*.js`（8 支） | AI-native SDLC：plan、design、design-revise、build、sync、test、deliver、merge（Workflow 工具只讀專案的 `.claude/workflows`） |
-| `.claude/workflows/event-*.js`（8 支） | 簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看 |
+| plugin 的 `workflow-templates/sdlc-*.js`（8 支） | AI-native SDLC：plan、design、design-revise、build、sync、test、deliver、merge。不複製進專案：`awf.py next` 每段用範本加本專案的設定產生 `<run_dir>/.wf/<名>.js` |
+| plugin 的 `workflow-templates/event-*.js`（8 支） | 簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看 |
 | `.claude/teams/rules.md` | 硬規則：通用規則＋專案規則 |
 | `.claude/teams/VERSION`、`.claude/teams/workflow.config` | init 寫下的模版版本與佔位符值；`init.py --upgrade` 讀它們，不要手改 |
 | `.claude/teams/guard.config.json` | 守門設定，包括：<br>・目錄：run、repo<br>・repo：上游、fork、禁止路徑<br>・規範：允許的分支前綴、受保護分支、任務編號前綴、署名行<br>・開關：主 session 開關、`auto_merge` |
-| `.claude/teams/methodology.json` | 本專案的開發規範 profile（init 依使用者的習慣產生）：各段做法、慣例、平行處理參數（`parallelism`）。`build.py` 會把它內嵌進 `sdlc-*.js`，改了要重跑 |
+| `.claude/teams/methodology.json` | 本專案的開發規範 profile（init 依使用者的習慣產生）：各段做法、慣例、平行處理參數（`parallelism`）。`awf.py next` 產生腳本時內嵌，改了下一段就生效 |
 | `.claude/teams/methodologies/` | 模版內建的 profile：`default`（模版原本的做法）、`lightweight`（範例）。新增 profile 時從這裡複製 |
 | `.claude/teams/schemas/` | 交件信封與各種 payload 的 schema（唯一來源），另有 `methodology.schema.json` |
 | `.claude/teams/tools/` | 檢查、落檔與確定性工具，見〈工具〉 |
@@ -41,7 +41,7 @@
 - **加入自己的 agent**：
   - 用 `/agent-workflow:add-agent`（`add-agent` skill）設定，寫在 `methodology.json` 的 `extensions` 與 `guard.config.json` 的 `extension_agents`。
   - 擴充 agent 和該段的內建 agent 平行執行，交 findings，結果寫在 `<run_dir>/ext-<name>.md`。
-  - 只能套用唯讀類角色；沒登記守門角色時 `build.py` 會拒絕內嵌。
+  - 只能套用唯讀類角色；沒登記守門角色時 `awf.py` 會拒絕產生腳本。
   - build、merge 段不開放擴充。
 - **halted 時停下交人**：子計劃範圍重疊或相依循環、彙整後默默少了子任務、彙整時改了驗證結果或各分片驗的不是同一個 HEAD，workflow 都會回傳 `halted: true`。
 - **缺件不是「沒有發現」**：任何 agent 沒交件時記為 missing；審查、反駁、比對類的步驟缺件一律 halted（rules.md 規則 26）。各段閘門摘要要列出 missing。
@@ -73,7 +73,7 @@
   - `findings`、`verdicts`、`criteria`、`build-result`、`items`、`docs`。
   - `merge-decision`：steward 的需求對照表。
 - **強制方式**：
-  - Workflow 裡用 `agent({agentType, schema})` 派出：schema 由 `build.py` 從 `schemas/` 內嵌，驗證失敗會自動重試。
+  - Workflow 裡用 `agent({agentType, schema})` 派出：schema 已內嵌在 plugin 的範本裡，驗證失敗會自動重試。
   - 用 Agent 工具派出：回報最後要附一個 ```json 區塊，`awf_hook.py envelope` 會在 SubagentStop 檢查。
   - Agent Teams：任務描述寫 `output: {{RUNS_DIR}}/<run>/<檔>.json`，由 `TaskCompleted` 檢查。
 - **語意規則**：schema 表達不了的部分寫在 `tools/schemalib.py`：
@@ -132,7 +132,8 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 
 | 工具 | 用途 |
 |---|---|
-| `build.py [--check]` | 把 schema 與 profile 內嵌進 workflow；`--check` 只檢查有沒有一致 |
+| `awf.py start｜next｜done｜approve｜render` | 狀態機：告訴主 session 下一步做什麼、產生 workflow 腳本、存段結果、記核准。只由主 session 執行 |
+| `build.py [--check]` | 只有用了 workflow 覆寫檔（`.claude/workflows/*.js`，init 加 `--with-workflows`）才需要：把 schema、片段與 profile 內嵌進覆寫檔 |
 | `save_run.py` | run 目錄與閘門紀錄：init、stage（存回傳並驗證信封）、approve、status |
 | `check_envelope.py` | 單獨驗證一個信封 |
 | `check_rules.py` | 檢查文件與 commit 是否符合硬規則（`--audience owner|external`、`--git`） |
@@ -149,9 +150,9 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `awf_cost.py` | 讀 workflow transcript，依角色與模型加總 token、時間、平均 context（只做估算，不參與閘門） |
 
 ```bash
-python3 .claude/teams/tools/build.py --check
+python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 16 支腳本
 uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py
-node .claude/teams/tools/check_workflows.mjs --agents-dir <plugin>/agents
+node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir <plugin>/agents
 python3 .claude/teams/tools/check_agents.py --plugin-dir <plugin>
 python3 <plugin>/hooks/tests/run.py --project .
 python3 .claude/teams/tools/merge_gate.py --selftest
@@ -161,11 +162,12 @@ python3 .claude/teams/tools/pack.py --selftest
 python3 .claude/teams/tools/kb.py --selftest
 python3 .claude/teams/tools/locate.py --selftest
 python3 .claude/teams/tools/awf_cost.py --selftest
+python3 .claude/teams/tools/awf.py --selftest
 ```
 
 ## 新增一種事件
-1. 照 `event-*.js` 的骨架寫 workflow：拆工或固定角度 → 平行處理 → skeptic → writer。schema 用 `/*@schema:<payload>*/ null /*@end*/` 標記，agentType 寫 `NS + 'tpm-…'`。
-2. 跑 `build.py` 和 `check_workflows.mjs`；乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
+1. 照 plugin 的 `workflow-templates/event-*.js` 的骨架，在專案的 `.claude/workflows/` 寫 workflow：拆工或固定角度 → 平行處理 → skeptic → writer。schema 用 `/*@schema:<payload>*/ null /*@end*/` 標記，agentType 寫 `NS + 'tpm-…'`。
+2. 跑 `build.py`（內嵌 schema）和 `check_workflows.mjs --wf-dir .claude/workflows`；乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
 3. 在 `tpm-team` skill 的事件對照表加一列。
 4. 需要新的 payload 時，放到 `schemas/payloads/`，並在 `golden-set/` 補正例和反例。
 

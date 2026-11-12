@@ -5,7 +5,7 @@
 //   3. 用依 schema 產生的假回傳把腳本從頭跑到尾，確定沒有 runtime 錯誤
 //   4. 每張派工單都有 rules.md（含〈專案規則〉）、輸出語言，最後一行是「執行紀錄檔：<路徑>.md」；回傳帶 trace，筆數＝實際派出數
 //   5. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
-// 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>]
+// 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>] [--wf-dir <產生好的 workflow 目錄>]
 //   agents 目錄預設依序找：--agents-dir、環境變數 AWF_PLUGIN_DIR／CLAUDE_PLUGIN_ROOT 的 agents/、專案 .claude/agents
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -13,8 +13,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const claude = join(here, '..', '..')
-const wfDir = join(claude, 'workflows')
 const argAt = process.argv.indexOf('--agents-dir')
+// workflow 腳本的位置：--wf-dir（例如 awf.py render --all 產生的目錄），沒給就是專案的 .claude/workflows
+const wfAt = process.argv.indexOf('--wf-dir')
+const wfDir = wfAt > 0 ? process.argv[wfAt + 1] : join(claude, 'workflows')
 const pluginDir = process.env.AWF_PLUGIN_DIR || process.env.CLAUDE_PLUGIN_ROOT
 const agentsDir = argAt > 0 ? process.argv[argAt + 1] : (pluginDir && existsSync(join(pluginDir, 'agents')) ? join(pluginDir, 'agents') : join(claude, 'agents'))
 const role = (t) => String(t || '').split(':').pop()

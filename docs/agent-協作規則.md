@@ -111,7 +111,7 @@
 
 | 派工方式 | 驗證 |
 |---|---|
-| Workflow 的 `agent({agentType, schema})` | schema 由 `build.py` 從 `schemas/` 內嵌，驗證失敗自動重試 |
+| Workflow 的 `agent({agentType, schema})` | schema 已內嵌在 plugin 的範本裡，驗證失敗自動重試 |
 | Agent 工具（`subagent_type` 要帶 `{{AGENT_NS}}` 前綴，預設 `agent-workflow:`，例如 `agent-workflow:dev-implementer`） | 回報最後附 ```json 區塊，`${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py envelope` 在 SubagentStop 等時機檢查 |
 | Agent Teams | 任務描述寫 `output: <json>`，由 `TaskCompleted` hook 檢查 |
 

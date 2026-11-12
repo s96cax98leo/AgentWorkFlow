@@ -126,7 +126,7 @@ python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run 目錄>
 | `plugin/` | agents、skills、slash commands、hooks | 安裝 Claude Code plugin，每台機器裝一次，所有專案共用 | `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins` |
 | `scaffold/` | 硬規則、workflow、schema、開發規範 profile、工具、golden-set、settings、`CLAUDE.md` 範本 | `init.py` 複製進目標專案，同時換掉 `{{佔位符}}` | 在專案跑 `init.py --upgrade` |
 
-workflow 放在 `scaffold/` 而不放在 plugin 裡，因為 Workflow 工具只讀專案的 `.claude/workflows/`。所以只裝 plugin 還不夠，每個要用 SDLC 的專案都要跑一次 init。
+0.5 起 workflow 的範本也在 plugin 裡（`plugin/workflow-templates/`），不複製進專案：狀態機 `awf.py next` 每段用範本加專案的設定產生腳本，plugin 更新後流程跟著更新。專案仍要跑一次 init，因為規則、守門設定、開發規範 profile 與工具是每個專案自己的。
 
 你可以把自己的 agent 加進 plan、design、test、deliver 任一段（`/agent-workflow:add-agent`），也可以整份換掉開發規範 profile；見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)。
 
@@ -184,8 +184,8 @@ init 會在專案寫下 `.claude/teams/VERSION`（套用的模版版本）與 `.
 要驗證產出，在目標專案根目錄執行：
 
 ```bash
-python3 .claude/teams/tools/build.py --check
-node .claude/teams/tools/check_workflows.mjs --agents-dir ~/tools/AgentWorkFlow/plugin/agents
+python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check --plugin-dir ~/tools/AgentWorkFlow/plugin
+node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir ~/tools/AgentWorkFlow/plugin/agents
 python3 .claude/teams/tools/check_agents.py --plugin-dir ~/tools/AgentWorkFlow/plugin
 python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 ```
@@ -244,7 +244,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 
 **交件信封**：每個 `dev-*`／`tpm-*` agent 都用 JSON 信封交件，欄位是 status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload。成果寫成檔案，信封只放路徑；summary 不超過 400 字、evidence 最多 12 則。hook 會驗證信封，不合格就交不出去。
 
-**開發規範 profile**：各段的做法、慣例與 recipe 寫在目標專案的 `.claude/teams/methodology.json`。內建兩份：`default`（spec 驅動、測試先行、Conventional Commits）與 `lightweight`（需求來自 issue、實作後才補測試、格式自由）。改了這個檔要跑 `build.py`。
+**開發規範 profile**：各段的做法、慣例與 recipe 寫在目標專案的 `.claude/teams/methodology.json`。內建兩份：`default`（spec 驅動、測試先行、Conventional Commits）與 `lightweight`（需求來自 issue、實作後才補測試、格式自由）。改了這個檔下一段開跑時就生效。
 
 **平行處理**：觸發條件寫在 profile 的 `parallelism`：`split_threshold`（預估子任務超過幾個就拆子計劃，預設 8）、`max_sub_plans`（子計劃上限，預設 4）、`shard_verification`（有子計劃時驗證要不要分片平行，預設開）。子計劃範圍重疊、彙整後默默少了子任務、彙整時改了驗證結果，workflow 都會停下交人。
 
@@ -367,7 +367,7 @@ python3 init.py --target <專案> [--config workflow.config] [--answers <答案.
 | `--force` | 覆寫已存在的模版檔；使用者設定的保留規則和 `--upgrade` 相同 |
 | `--overwrite-user-files` | 連使用者的檔案（`CLAUDE.md`、`settings.json`、`methodology.json`、`guard.config.json`、〈專案規則〉）也整份覆寫，只在想重設時使用 |
 
-init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`、`VERSION`、`workflow.config`）、`.claude/workflows/`、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json.example`、run 目錄。
+init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`、`VERSION`、`workflow.config`）、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json.example`、run 目錄。
 
 ### 佔位符
 
@@ -410,10 +410,10 @@ AgentWorkFlow/
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
 │   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
+│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、event 8 支）與 legacy.json（舊副本指紋）；awf.py next 逐段產生腳本
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）、read_budget.py
 ├── scaffold/                         # init.py 複製進目標專案的內容
-│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、locate.py、awf_cost.py）、golden-set/
-│   ├── .claude/workflows/            # sdlc-*.js、event-*.js
+│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、locate.py、awf_cost.py、awf.py）、golden-set/
 │   ├── .github/workflows/            # agent-merge-gate.yml.tmpl（選用）
 │   ├── CLAUDE.md.tmpl、.mcp.json.tmpl
 │   └── _runs/                        # run 目錄說明

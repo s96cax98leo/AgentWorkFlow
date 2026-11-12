@@ -1,6 +1,6 @@
 # AI-native SDLC
 
-開發需求一律走這五段，PR 開好後再接合併段（`sdlc-merge`）。每段一支 workflow（`.claude/workflows/sdlc-*.js`），段與段之間的閘門由主 session 和決策者處理。入口是 `/sdlc` 或 `tpm-team` skill。
+開發需求一律走這五段，PR 開好後再接合併段（`sdlc-merge`）。每段一支 workflow（範本在 plugin 的 `workflow-templates/sdlc-*.js`，由 `awf.py next` 逐段產生腳本），段與段之間的閘門由主 session 和決策者處理。入口是 `/sdlc` 或 `tpm-team` skill。
 
 **模版只管流程，做法由開發規範 profile 決定。** 各段的產出文件、需求寫法、測試時機（要不要先寫會失敗的測試）、驗證方式，以及 code style、commit 格式、分支命名、PR 大小、文件格式，都寫在目標專案的 `.claude/teams/methodology.json`（init 時依使用者的習慣產生，格式與新增方式見 [`自訂與擴充.md`](自訂與擴充.md)〈自訂開發規範〉）。本文寫到的具體做法（EARS 句型、測試先行、Conventional Commits、300 行／15 檔）都是 default profile 的內容，換 profile 就跟著換。
 

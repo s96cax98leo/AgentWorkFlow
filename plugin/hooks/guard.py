@@ -835,7 +835,9 @@ def shell_writes_protected(seg: str) -> str | None:
 
 # B2：.claude/teams/（任何位置）、methodology.json、guard.config.json 是守門與 profile 設定：team agent 一律不能寫。
 # 工具會往上層目錄找 .claude/teams/methodology.json，放在 runs_dir 底下也可能劫持 recipe 解析（工具端另修，這裡是縱深）。
-TEAM_CONFIG_TARGET = re.compile(r"(?:^|[/\\\s\"'=])\.claude[/\\]teams(?:[/\\]|\s|$)|methodology\.json|guard\.config\.json", re.I)
+# 0.5：.claude/workflows/（覆寫檔）與 run 目錄的 .wf/（awf.py 產生、下一段要跑的腳本）也一樣：被改就等於改了流程。
+TEAM_CONFIG_TARGET = re.compile(r"(?:^|[/\\\s\"'=])\.claude[/\\](?:teams|workflows)(?:[/\\]|\s|$)|(?:^|[/\\\s\"'=])\.wf(?:[/\\]|\s|$)"
+                                r"|methodology\.json|guard\.config\.json", re.I)
 TEAM_TOOL_CALL = re.compile(r"(?:python[\d.]*|py|pypy[\d.]*)(?:\.exe)?(?:\s+-\S+)*\s+[\"']?[^\s\"']*\.claude[/\\]teams[/\\]tools[/\\][\w.-]+\.py[\"']?", re.I)
 
 
@@ -848,7 +850,9 @@ def team_config_path(p: str) -> bool:
         pass
     for c in cands:
         f = fold(c)
-        if "/.claude/teams/" in "/" + f or f.rsplit("/", 1)[-1] in ("methodology.json", "guard.config.json"):
+        g = "/" + f
+        if ("/.claude/teams/" in g or "/.claude/workflows/" in g or "/.wf/" in g
+                or f.rsplit("/", 1)[-1] in ("methodology.json", "guard.config.json")):
             return True
     return False
 
@@ -1370,6 +1374,9 @@ def _check_shell_rules(data: dict) -> None:
         if sr:
             block(f"{agent} 不能跑 save_run.py {sr}（team agent 只能跑唯讀的 status 與 --selftest）；"
                   "run 狀態、核准、放棄、升級、後續、結案一律由主 session（或人）執行")
+        aw = save_run_write(seg, "awf", {"--selftest"}) if team else None
+        if aw:
+            block(f"{agent} 不能跑 awf.py {aw}（狀態機會存段結果、核准、產生下一段的腳本，只由主 session 執行；team agent 只能跑 --selftest）")
         if team and awf_config.team_role(raw_agent, CFG) in awf_config.RECORD_ONLY_ROLES:
             why = record_shell_write(seg, d)
             if why:
@@ -1378,7 +1385,8 @@ def _check_shell_rules(data: dict) -> None:
         if team and agent_writes_state(seg, d):
             block(f"{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")
         if team and shell_writes_team_config(seg):
-            block(f"{agent} 不能寫 .claude/teams/、methodology.json 或 guard.config.json（守門與 profile 設定只由人或主 session 改）")
+            block(f"{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json"
+                  "（守門設定、profile 與 workflow 腳本只由人或主 session 改）")
         for tool in ("publish.py", "merge_gate.py"):
             if re.search(rf"(?:^|[\s/\\]){re.escape(tool)}\b", seg):
                 targs = shlex_tokens(seg)
@@ -1519,8 +1527,8 @@ def check_paths(data: dict) -> None:
     elif prot and CFG["_configured"] and (prot in AUDIT_FILES or (prot == "guard.config.json" and AM["enabled"])):
         block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
     if role and team_config_path(str(path)):
-        block(f"{agent} 不能寫 .claude/teams/ 底下的檔、methodology.json 或 guard.config.json（不論在哪個目錄；"
-              f"守門與 profile 設定只由人或主 session 改）（{rel or fp}）")
+        block(f"{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/ 底下的檔、methodology.json 或 guard.config.json（不論在哪個目錄；"
+              f"守門設定、profile 與 workflow 腳本只由人或主 session 改）（{rel or fp}）")
     if role and fold(path.name) == "run.json" and (not RUNS or fold(rel or "").startswith(fold(RUNS))):
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
     if role and RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in RUN_STATE_FILES:

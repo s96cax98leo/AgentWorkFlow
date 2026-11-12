@@ -8,10 +8,10 @@ AgentWorkFlow 是**模版本身**，不是套用了模版的專案。它分兩�
 
 | 部分 | 內容 | 發佈方式 | 更新方式 |
 |---|---|---|---|
-| `plugin/` | agents、skills、commands、hooks（plugin 名稱 `agent-workflow`，agent 命名空間 `agent-workflow:`） | `.claude-plugin/marketplace.json`（marketplace 名稱 `agentworkflow`），所有專案共用 | 使用者執行 `claude plugin update agent-workflow@agentworkflow`（或 `/plugin`），再 `/reload-plugins`；只跑 marketplace update 不會更新 plugin |
-| `scaffold/` | `.claude/teams/`（rules、schemas、methodologies、tools、golden-set）、`.claude/workflows/*.js`、`.github/workflows/agent-merge-gate.yml.tmpl`、settings、`CLAUDE.md.tmpl`、`.mcp.json.tmpl`、`_runs/` | `init.py` 複製進目標專案：把 `{{佔位符}}` 換成 `workflow.config`、init 問答或 `--answers` 的值，並去掉 `.tmpl` 副檔名；另寫 `.claude/teams/VERSION` 與 `.claude/teams/workflow.config` | 已 init 的專案**不會**自動更新，要跑 `init.py --upgrade`（`--adopt-new-fields` 補 profile 新欄位） |
+| `plugin/` | agents、skills、commands、hooks、workflow 範本（`workflow-templates/`）（plugin 名稱 `agent-workflow`，agent 命名空間 `agent-workflow:`） | `.claude-plugin/marketplace.json`（marketplace 名稱 `agentworkflow`），所有專案共用 | 使用者執行 `claude plugin update agent-workflow@agentworkflow`（或 `/plugin`），再 `/reload-plugins`；只跑 marketplace update 不會更新 plugin |
+| `scaffold/` | `.claude/teams/`（rules、schemas、methodologies、tools、golden-set）、`.github/workflows/agent-merge-gate.yml.tmpl`、settings、`CLAUDE.md.tmpl`、`.mcp.json.tmpl`、`_runs/` | `init.py` 複製進目標專案：把 `{{佔位符}}` 換成 `workflow.config`、init 問答或 `--answers` 的值，並去掉 `.tmpl` 副檔名；另寫 `.claude/teams/VERSION` 與 `.claude/teams/workflow.config` | 已 init 的專案**不會**自動更新，要跑 `init.py --upgrade`（`--adopt-new-fields` 補 profile 新欄位） |
 
-workflow 放在 `scaffold/` 而不放在 plugin 裡，因為 Workflow 工具只讀專案的 `.claude/workflows/`。
+workflow 範本放在 `plugin/workflow-templates/`（不叫 `workflows/`，避免被 Claude Code 當成 plugin workflow 自動登記），**不複製進專案**：專案的 `awf.py next` 每段用範本＋`workflow.config` 的佔位符值＋`methodology.json` 產生 `<run_dir>/.wf/<名>.js`，主 session 用 `Workflow({scriptPath})` 執行。工具仍然留在專案（agent 檔、hook 訊息、派工單都引用固定路徑 `.claude/teams/tools/`）。
 
 ## 原則
 
@@ -42,8 +42,10 @@ python3 init.py --target <專案> [--hooks plugin|project] [--answers <答案.js
 下面這些工具在 scaffold 裡，要在**已 init 的專案根目錄**執行。smoke_init 就是在暫存專案裡跑它們。
 
 ```bash
-python3 .claude/teams/tools/build.py [--check]   # 把 schemas 與 methodology profile 內嵌進 workflows/*.js
-node .claude/teams/tools/check_workflows.mjs --agents-dir <AgentWorkFlow>/plugin/agents   # 乾跑所有 workflow（含 tools/scenarios/*.mjs 的情境）
+python3 .claude/teams/tools/awf.py --selftest                                              # 狀態機（start／next／done／approve／render）
+python3 .claude/teams/tools/awf.py render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 16 支 workflow 腳本
+node .claude/teams/tools/check_workflows.mjs --agents-dir <AgentWorkFlow>/plugin/agents --wf-dir <目錄>   # 乾跑所有 workflow（含 tools/scenarios/*.mjs 的情境）
+python3 .claude/teams/tools/build.py [--check]   # 只處理專案的覆寫檔（.claude/workflows/*.js）；在模版 repo 裡處理 plugin/workflow-templates/
 python3 .claude/teams/tools/check_agents.py --plugin-dir <AgentWorkFlow>/plugin           # 檢查 tpm-*／dev-* agent 格式（16 個：14 個核心角色＋2 個舊名薄殼）
 uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py              # schema 正反例
 python3 .claude/teams/tools/merge_gate.py --selftest                                       # 確定性 merge gate
@@ -55,7 +57,7 @@ python3 .claude/teams/tools/locate.py --selftest                                
 python3 .claude/teams/tools/awf_cost.py --selftest                                         # workflow 的 token 與時間
 ```
 
-在 repo 內也可以直接驗 scaffold，例如 `python3 scaffold/.claude/teams/tools/build.py --check`，路徑會依檔案位置推算。
+在 repo 內也可以直接驗，例如 `python3 scaffold/.claude/teams/tools/build.py --check`（處理 `plugin/workflow-templates/`）、`node scaffold/.claude/teams/tools/check_workflows.mjs --agents-dir plugin/agents`，路徑會依檔案位置推算。
 
 計畫型的工作用可驗證 checklist：`python3 scaffold/.claude/teams/tools/checklist.py check <checklist.md> [--id <前綴>] [--write]`。打勾以驗證指令的實際執行結果為準。checklist 放在根目錄的 `plans/`（本機，不進版控）。
 
@@ -127,6 +129,16 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **讀取預算**：`plugin/hooks/read_budget.py`，由 `guard.read_budget_check` 呼叫。只套模版角色；**預設不啟用**（`limits` 沒寫 `mode` 就關閉，內建 profile 不預設 `mode`，由使用者在 init 問答、答案檔的 `read_limits` 或 `methodology.json` 決定要不要開與門檻）；任何例外都放行（I9）。狀態檔在系統暫存目錄的 `awf-read-budget/<session_id>/<agent_id>.json`（`AWF_READ_BUDGET_DIR` 可覆寫，測試用）。
 - **量成本**：`tools/awf_cost.py` 讀 Claude Code 的 workflow transcript（格式沒承諾穩定，解析集中在 `read_agent`、`read_wf_meta`）。基準實跑在 `tests/bench/`（`make_fixture.py` 產生虛構專案、`run_plan.py` 真的呼叫 claude，會花 token，不在 run_all 裡）。
 - 這些都是輔助：失敗只警告、不擋流程；gate 判定不看它們的輸出（調研重用例外：`verify_reuse` 不符會判 invalid，只會更嚴）。
+
+### 狀態機與 workflow 範本（0.5）
+
+- **`tools/awf.py`**：主 session 每段只做 `next`（回一個動作：`run_workflow`、`gate`、`need_input`、`manual`、`halted`、`done`）與 `done`（找到 Workflow 的回傳、轉給 `save_run.py stage`）。`approve` 轉給 `save_run.py approve`、時間自動取。它只排順序、組參數（`stage_args`）、跑 `pack.py`、產生腳本，**不放寬任何閘門**，也不會自己核准。等待中的段記在 run.json 的 `awf.pending`，Workflow 的 run id 記在 `stages[段].wf_run`（同一個 session 重跑 halted 的段時輸出 `resume_from`）。
+- **產生腳本**：`render` 只內嵌 methodology（片段與 schema 已由 `build.py` 內嵌在範本裡），args 內嵌成 `Object.assign(<JSON>, args || {})`。缺佔位符值、擴充 agent 沒登記都拒絕。
+- **找 plugin**：`--plugin-dir` → `AWF_PLUGIN_DIR`／`CLAUDE_PLUGIN_ROOT` → 模版 repo 自己 → `~/.claude/plugins/installed_plugins.json`（別的專案的安裝不算）。
+- **覆寫檔**：專案 `.claude/workflows/<名>.js` 結尾有 `// awf-override: <版本>` 才採用（版本不同會警告）；沒有標記的同名檔是舊副本，不採用（只有找不到 plugin 時才退回用）。`init.py --with-workflows` 放覆寫檔。
+- **舊副本整理**：`plugin/workflow-templates/legacy.json` 記已發佈各版範本的分段指紋（`tests/gen_legacy_templates.py` 從 git 歷史產生，發佈新版後重跑）；`init.py --upgrade` 的 `tidy_old_workflows` 移除原樣的舊副本、保留改過的並說明，要在 `build.py` 之前做。
+- **守門**：team agent 不能寫 `.claude/workflows/` 與 `.wf/`（`guard.team_config_path`、`TEAM_CONFIG_TARGET`），不能跑 `awf.py`（`--selftest` 除外）。
+- **測試**：`awf.py --selftest`、`smoke_init.py` 的 `check_with_workflows`（產生的腳本和 init＋build.py 內嵌的逐字相同）與升級四種情況、hook 測試的 B1 案例。
 
 ### 限制文件（0.5）
 
@@ -207,7 +219,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 ### Slash commands 與 skills
 
 - `plugin/commands/` 只負責把使用者的話整理成 `tpm-team` skill 的輸入。流程寫在 skill 和 workflow 裡，不要在 command 裡再寫一份。
-- 事件對照表與閘門規則寫在 `plugin/skills/tpm-team/SKILL.md`。
+- `plugin/skills/tpm-team/SKILL.md` 只寫 `awf.py next` → 照做 → `done` 的迴圈（不超過 60 行、描述不超過 200 字，`VP B1.5` 檢查）；事件對照表、recipe、閘門規則與手動執行在同目錄的 `reference/*.md`。
 - plugin 有 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`，都是薄殼。
 - 其他入口是 skill，用 `/agent-workflow:<skill>` 叫用（沒有同名指令時可省略前綴）。不要再新增和 skill 同名的 command。
   - `/agent-workflow:init-workflow`：先在對話中確認使用者的習慣，再跑 `init.py --answers`。
@@ -224,10 +236,11 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - 合併或改名角色時，舊名留在 `ALIASES`、`ROLE_ALIASES` 與 `RESERVED_ROLES` 相容一版，並留薄殼 agent 檔。
   - 更新 README、本檔、`scaffold/.claude/teams/README.md` 的角色數與名單，`tests/check_docs.py` 會核對。
 - **新增或刪除 command**：`tests/check_docs.py` 會核對 README 等文件的 command 名單；不要和 skill 同名。
-- **新增 workflow**：在 `tpm-team` skill 的事件對照表加一列，並加進 `tests/smoke_init.py` 的清單。
+- **新增 workflow**：範本放 `plugin/workflow-templates/`；在 `tpm-team` skill 的 `reference/事件.md` 對照表加一列，加進 `tests/smoke_init.py` 的清單與 `awf.py` 的 `EVENTS`／`REQUIRED`；重跑 `tests/gen_legacy_templates.py` 不需要（它只記已發佈的舊版）。
 - **改分支流程（scenarios）**：乾跑走不到的分支，在 `scaffold/.claude/teams/tools/scenarios/<workflow>.mjs` 補情境（`check_workflows.mjs` 自動載入，共用的 helper 在 `scenarios/_helpers.mjs`）。
 - **改 snippet**：改了 `scaffold/.claude/teams/tools/snippets/*.js`（workflow 共用片段）要重跑 `build.py`（`--check` 會抓漂移），不要手改內嵌進 workflow 的內容；並確認 `tools/scenarios/*.mjs` 用到的 agent label 沒變（情境靠 label 覆寫假回傳，label 一變情境就默默失效）。
 - **新增或修改 payload schema**：重跑 `build.py`；在 `golden-set/valid|invalid/` 補正例、反例，有語意規則的另補 `semantic` 反例；語意規則寫在 `schemalib.py`。
+- **改 awf.py**：`--selftest`；動作的欄位名（`action`、`script`、`then`、`approve`、`retry`、`resume_from`、`need`、`highlights`）改了，`plugin/skills/tpm-team/SKILL.md` 的動作表要一起改；改了 `render` 要確認 `smoke_init.py` 的逐字相同檢查仍通過。
 - **改擴充 agent 機制**：四支 sdlc workflow 的 `EXT` 片段要一致；`tools/scenarios/sdlc-*.mjs` 的擴充情境、`smoke_init.py` 的 `check_extensions`、`plugin/hooks/tests/run.py` 的擴充 agent 案例要一起改。
 - **新增 hook 規則**：在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的測試，Bash 與 PowerShell 各一。
 - **改 profile 格式**：`methodology.schema.json`、兩份內建 profile、`docs/自訂與擴充.md` 的欄位表要一起改。
