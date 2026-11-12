@@ -97,7 +97,7 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 | 讀取預算（預設不啟用） | 啟用後，hook 擋模版角色整檔讀大檔（建議門檻：超過 400 行要分段讀），並給每個 agent 讀取額度，用完要求收斂交件 | `limits.mode`：不寫或 `off`＝不啟用、`warn`＝只提醒、`enforce`＝擋；門檻是 `whole_file_lines`、`read_budget` |
 | 知識層 | `kb.py` 把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行；產出可以用 Obsidian 打開 | `knowledge` |
 | 資料包 | 每段開跑前由工具（不是 agent）整理好需求、知識庫命中的行段、前面各段的紀錄 | `pack.py` |
-| 兩段式調研 | 先用便宜的模型「定位」行段，再由分析 agent 只讀那些行段 | 內建於 `sdlc-plan` |
+| 兩段式調研 | 先「定位」行段，再由分析 agent 只讀那些行段。定位先由工具做（不花 token），不夠才派便宜的模型補 | 內建於 `sdlc-plan`；`locate.py` |
 | 調研重用 | plan 重跑時，來源檔沒變的調研角度直接沿用；閘門會重新核對來源的雜湊 | `pack.py --reuse-from`、`--keep-research` |
 | 派工數上限 | 一支 workflow 最多派幾個 agent，到上限就停下交人，不靜默截斷 | `limits.max_agents` |
 
@@ -408,7 +408,7 @@ AgentWorkFlow/
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）、read_budget.py
 ├── scaffold/                         # init.py 複製進目標專案的內容
-│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、awf_cost.py）、golden-set/
+│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、locate.py、awf_cost.py）、golden-set/
 │   ├── .claude/workflows/            # sdlc-*.js、event-*.js
 │   ├── .github/workflows/            # agent-merge-gate.yml.tmpl（選用）
 │   ├── CLAUDE.md.tmpl、.mcp.json.tmpl

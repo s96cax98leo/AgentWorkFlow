@@ -522,6 +522,20 @@ const reusable = (k) => {
   return r && typeof r === 'object' && r.plan_mode === MODE && r.envelope && typeof r.envelope === 'object' && r.envelope.payload ? r : null
 }
 
+// ── 工具先定位（B8）：tools/pack.py 用 locate.py 先找好的行段放在 args.located（{角度: {locations, enough}}）。
+// enough＝true（文件角度命中夠）：不派定位 agent，直接分析；否則照派定位 agent，把工具找到的當起點、輪數上限減半。
+// 格式不對的項目丟掉；args 是主 session 給的，這裡不當成結論，只當成「要讀哪裡」的建議 ──
+const LOC_MIN = 3
+const LOCATED = A.located && typeof A.located === 'object' && !Array.isArray(A.located) ? A.located : {}
+const toolLocated = (k) => {
+  const x = Object.prototype.hasOwnProperty.call(LOCATED, k) ? LOCATED[k] : null
+  const ok = (x && Array.isArray(x.locations) ? x.locations : []).filter((l) => l && typeof l === 'object' && typeof l.path === 'string' && l.path &&
+    !/^([\\/]|[A-Za-z]:)/.test(l.path) && !l.path.split(/[\\/]/).includes('..') && Number.isInteger(l.start) && Number.isInteger(l.end) && l.start >= 1 && l.end >= l.start)
+    .map((l) => ({ path: l.path, start: l.start, end: l.end, why: String(l.why || '工具定位').slice(0, 200) }))
+  return { locs: ok, enough: !!(x && x.enough === true) && ok.length >= LOC_MIN }
+}
+const skipLocate = (k) => twoStage(k) && toolLocated(k).enough
+
 // 使用者加進這一段的自己的 agent（profile 的 extensions，用 add-agent skill 設定）：和內建 agent 平行執行，交 findings；
 // blocker／important 的發現會擋住政策核准。守門依 guard.config.json 的 extension_agents 套用對應角色的規則
 const EXT = (MP.extensions || []).filter((e) => e.stage === 'plan')
@@ -537,7 +551,7 @@ function estimateAgents(r, triaged) {
   const s = new Set(r.stages)
   const t = r.test || {}
   const est = {}
-  est.plan = (triaged ? 1 : 0) + ANGLE_KEYS.filter((k) => !reusable(k)).reduce((n, k) => n + (twoStage(k) ? 2 : 1), 0) + EXT.length + 2 + (!s.has('design') && s.has('build') ? 1 : 0)
+  est.plan = (triaged ? 1 : 0) + ANGLE_KEYS.filter((k) => !reusable(k)).reduce((n, k) => n + (twoStage(k) && !skipLocate(k) ? 2 : 1), 0) + EXT.length + 2 + (!s.has('design') && s.has('build') ? 1 : 0)
   if (s.has('design')) est.design = 2 + (r.design_lenses || []).length
   if (s.has('build')) est.build = (r.build_kinds || []).includes('test') ? 4 : 3
   if (s.has('sync')) est.sync = 1
@@ -561,17 +575,31 @@ const nextFor = (r, extra) => {
 const LOC_MAX = 12
 const locations = {}
 const reused = []
+const locatedBy = {}
 const fmtLoc = (l) => `- ${l.path}:${l.start}-${l.end} ｜ ${l.why}`
 const researchAngle = async (k) => {
   const ru = reusable(k)
   if (ru) { reused.push(k); log(`調研角度 ${k}：來源沒變，沿用上次的結論，不派工`); return ru.envelope }
   let located = ''
-  if (twoStage(k)) {
+  const tl = twoStage(k) ? toolLocated(k) : { locs: [], enough: false }
+  if (twoStage(k) && tl.enough) {
+    // 工具定位就夠：不派定位 agent
+    const locs = tl.locs.slice(0, LOC_MAX)
+    locations[k] = locs
+    locatedBy[k] = 'tool'
+    log(`調研角度 ${k}：工具已定位 ${locs.length} 段，不派定位 agent`)
+    located = `\n\n## 定位結果（工具依需求的用詞找到的；只讀這些行段）\n${locs.map(fmtLoc).join('\n')}`
+  } else if (twoStage(k)) {
+    const seeds = tl.locs.slice(0, LOC_MAX)
+    locatedBy[k] = seeds.length ? 'tool+agent' : 'agent'
     const loc = await awfAgent(
       `${CTX}${RECIPE_NOTE}\n\n## 派工單（定位：${k}；兩段式調研的第一段）\n要回答的問題：${angleAsk(k)}\n` +
       `你只負責找出「哪個檔的哪幾行」值得讀，不下結論、不寫分析。\n` +
       `做法：${PACK ? '先讀資料包；再' : ''}用 python3 .claude/teams/tools/kb.py query "<關鍵詞>"、Grep（帶行號）、Glob 找行段；要確認內容時只讀命中處前後各 20 行以內，不整檔讀。\n` +
-      `上限：最多 6 輪、12 次查詢（每一輪都會重讀整個 context，所以彼此獨立的查詢要在同一輪一起發出），連續 3 次查詢沒有新的相關行段就停。最多回報 ${LOC_MAX} 段，每段不超過 120 行，依相關度排序。\n` +
+      (seeds.length
+        ? `工具已經依需求的用詞找到下面這些行段（字面對得上的檔與它們的引用關係）。不要重找它們：確認哪些真的相關，再補上工具找不到的（需求沒提到名字、但這次會用到或受影響的檔）。\n${seeds.map(fmtLoc).join('\n')}\n` +
+          `上限：最多 3 輪、6 次查詢（每一輪都會重讀整個 context，所以彼此獨立的查詢要在同一輪一起發出），連續 2 次查詢沒有新的相關行段就停。最多回報 ${LOC_MAX} 段（含上面確認相關的），每段不超過 120 行，依相關度排序。\n`
+        : `上限：最多 6 輪、12 次查詢（每一輪都會重讀整個 context，所以彼此獨立的查詢要在同一輪一起發出），連續 3 次查詢沒有新的相關行段就停。最多回報 ${LOC_MAX} 段，每段不超過 120 行，依相關度排序。\n`) +
       `payload 用 locations（angle=${k}）：path 寫相對 ${A.repo} 的路徑；找不到資料的部分與疑問寫進 gaps，open_questions 留空（定位段不下判斷）。`,
       { label: `locate:${k}`, phase: 'Locate', agentType: NS + 'tpm-researcher', schema: LOCATIONS, planKey: 'locate', tier: 'light' },
     )
@@ -586,7 +614,7 @@ const researchAngle = async (k) => {
   return awfAgent(
     `${CTX}${RECIPE_NOTE}\n\n## 派工單（調研角度：${k}${twoStage(k) ? '；第二段：分析' : ''}）\n${angleAsk(k)}\n` +
     (twoStage(k)
-      ? `只讀下面定位好的行段（Read 一律帶 offset／limit）；確實不夠時才用 kb.py query 或 Grep 補找，最多再補 4 段，補了什麼寫進紀錄。\n`
+      ? `只讀下面定位好的行段（Read 一律帶 offset／limit）；確實不夠時才用 kb.py query 或 Grep 補找，最多再補 ${locatedBy[k] === 'tool' ? 6 : 4} 段，補了什麼寫進紀錄。\n`
       : `這個角度不查本機檔案：只用上面寫的指令查，不讀 repo 的程式與文件。\n`) +
     `上限：最多 15 輪工具呼叫；連續 3 次查詢沒有新發現就收斂、交件。結論邊做邊寫進執行紀錄檔（不要等到最後一次寫），每個主張附出處（路徑:行號或指令）。\n` +
     `payload 用 findings，lens=${k}；artifacts 列出執行紀錄檔。${located}`,
@@ -603,7 +631,7 @@ const RESEARCH_LABELS = [...ANGLE_KEYS.map((k) => `research:${k}`), ...EXT.map((
 const missing = RESEARCH_LABELS.filter((l, i) => !research[i])
 // research_by_angle：workflow 自己依派工對應的 {角度: 信封}（save_run 記調研重用時用它，不用信封裡 agent 自填的 lens）
 const researchByAngle = Object.fromEntries(ANGLE_KEYS.map((k, i) => [k, research[i]]).filter(([, v]) => v))
-const common = () => ({ recipe, ...triageField(triage), angles, reused: [...reused], locations, research_by_angle: researchByAngle, estimated_agents: estimateAgents(recipe, !!triage) })
+const common = () => ({ recipe, ...triageField(triage), angles, reused: [...reused], locations, located_by: { ...locatedBy }, research_by_angle: researchByAngle, estimated_agents: estimateAgents(recipe, !!triage) })
 const halt = (reason, extra) => withTrace({ stage: 'plan', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, research: got, missing, ...common(), ...extra })
 const extMissing = missing.filter((l) => l.startsWith('ext:'))
 if (extMissing.length) return halt(`審查類 agent 缺件：${extMissing.join('、')}，停下交人（缺件不是沒有發現）`)

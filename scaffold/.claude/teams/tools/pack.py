@@ -456,6 +456,19 @@ def run_pack(argv: list[str], root: Path = PROJECT) -> int:
             reuse, notes = {}, [f"調研重用算不出來，全部重做（{type(e).__name__}：{e}）"]
         if reuse:
             out_args["reuse"] = reuse
+        # 工具先定位（locate.py）：各調研角度先用確定性的方式找行段；文件角度命中夠就不用派定位 agent，程式角度當成定位 agent 的起點
+        if "--no-locate" not in argv:
+            try:
+                import locate as loc_tool
+                found = loc_tool.locate_all(repo, requirement_text(requirement, root), requirement_file(requirement, root))
+                located = {a: {"locations": r["locations"], "enough": bool(r["enough"])} for a, r in sorted(found.items())
+                           if a not in reuse and r.get("locations")}
+                if located:
+                    out_args["located"] = located
+                    notes.append("工具定位：" + "；".join(f"{a} {len(v['locations'])} 段（{'夠，不派定位 agent' if v['enough'] else '當成定位 agent 的起點'}）"
+                                                       for a, v in located.items()))
+            except Exception as e:  # noqa: BLE001  輔助功能不擋流程
+                notes.append(f"工具定位失敗，照舊由定位 agent 找（{type(e).__name__}：{e}）")
     hits, kb_note = ([], "已用 --no-kb 關閉") if "--no-kb" in argv else kb_hits(root, requirement_text(requirement, root))
     d = run / stage
     try:
@@ -638,7 +651,24 @@ def selftest() -> int:
         first = (run / "plan" / "pack.md").read_bytes()
         run_pack(["plan", "--run", str(run), "--no-kb", "--json"], root)
         check("CLI：重跑結果逐位元相同", first == (run / "plan" / "pack.md").read_bytes())
+        # B8：工具先定位的結果進 pack-args.json；沿用的角度不重找；--no-locate 關掉；design 段不做
+        (repo / "docs" / "adr").mkdir(parents=True, exist_ok=True)
+        for i in range(4):
+            (repo / "docs" / "adr" / f"000{i}-export.md").write_text(f"# ADR {i}：示範客戶 ACME 匯出 CSV（{i}）\n\n匯出 CSV 的日期欄位錯位時，以第三欄為準。\n", encoding="utf-8")
+        loc = args.get("located") or {}
+        run_pack(["plan", "--run", str(run), "--no-kb", "--json"], root)
+        loc = (load_json(run / "plan" / ARGS) or {}).get("located") or {}
+        check("工具先定位：located 進 pack-args.json，文件角度命中夠標 enough；已沿用的角度（code-contracts）不重找",
+              "specs-adr" in loc and loc["specs-adr"]["enough"] is True and len(loc["specs-adr"]["locations"]) >= 3 and "code-contracts" not in loc
+              and all(set(x) == {"path", "start", "end", "why"} for x in loc["specs-adr"]["locations"]), str(loc))
+        check("工具先定位：資料包的說明列出各角度的結果", "工具定位：" in (run / "plan" / "pack.md").read_text(encoding="utf-8"))
+        again = (run / "plan" / ARGS).read_bytes()
+        run_pack(["plan", "--run", str(run), "--no-kb", "--json"], root)
+        check("工具先定位：重跑結果逐位元相同", again == (run / "plan" / ARGS).read_bytes())
+        run_pack(["plan", "--run", str(run), "--no-kb", "--no-locate", "--json"], root)
+        check("工具先定位：--no-locate 不產生 located", "located" not in (load_json(run / "plan" / ARGS) or {"located": 1}))
         code = run_pack(["design", "--run", str(run), "--no-kb", "--json"], root)
+        check("工具先定位：design 段不做", "located" not in (load_json(run / "design" / ARGS) or {"located": 1}))
         check("CLI：其他段也能產生資料包（沒有 reuse）", code == 0 and "reuse" not in (load_json(run / "design" / ARGS) or {"reuse": 1}))
         check("CLI：缺 --run 回 2", run_pack(["plan"], root) == 2)
     print(f"pack selftest：{'全部通過' if ok else '有失敗'}（{n} 項）")
