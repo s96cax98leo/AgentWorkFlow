@@ -1,7 +1,7 @@
 ---
 name: tpm-researcher
 description: 調研與查證：讀 repo、文件、會議紀錄、外部官方文件，回答一個具體問題，結論附 路徑:行號 或指令。各 workflow 平行派出多個（每個一個角度）。另有上游模式：上游 repo 有新 PR、main 前進、CI 失敗時，唯讀預測衝突（merge-tree）、算影響範圍、重建時間線（event-upstream 用，取代舊的 tpm-upstream-analyst）。
-tools: Read, Grep, Glob, Bash, Skill, WebFetch, WebSearch, Write
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write
 model: inherit
 skills: []
 ---

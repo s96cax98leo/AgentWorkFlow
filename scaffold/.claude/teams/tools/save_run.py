@@ -26,7 +26,9 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
           不存在、或缺必要的節（四節＋該 plan_mode 的專屬節，profile 可覆寫）→ invalid，不能核准。
         其他段：recipe 沒有這一段 → invalid（要加段走 escalate）。
         回傳帶 trace（[{label, agent_type, phase, record, ok}]）時，寫 <run_dir>/<stage>/執行紀錄索引.md，並核對紀錄檔：
-          ok=true 但紀錄檔不存在 → 記進該段 missing_records（缺件：不能政策核准；人工核准可以但會警告）。
+          ok=true 但紀錄檔不存在：對得回它的信封（artifacts 列了紀錄檔，或 trace 的 digest 和信封的 status＋summary 一致）
+          就依信封代寫（標明「由 save_run 代寫」，記進該段 ghostwritten_records）；對不回信封才記進 missing_records
+          （缺件：不能政策核准；人工核准可以但會警告）。agent 自己寫的紀錄不會被覆寫。
           dev-merge-steward（沒有 Write 工具）的紀錄由本工具依它的信封代寫（標明「由 save_run 代寫」）。
           回傳沒有 trace（舊 workflow）只印警告，不判缺件。
     python3 save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間> [--note <備註>] [--profile <檔>]（plan 以外的段會用 profile 重算 recipe，resolved 被改鬆就拒絕）
@@ -150,38 +152,58 @@ def record_candidates(run: Path, stage: str, record: str) -> list[Path]:
 
 
 def _envelope_of(entry: dict, stage: str, envs: list[dict]) -> dict | None:
-    """信封的 artifacts 列了這個 agent 的紀錄檔，就當成它的信封（agent 依派工前綴把紀錄檔列進 artifacts）。"""
+    """信封的 artifacts 列了這個 agent 的紀錄檔，就當成它的信封（agent 依派工前綴把紀錄檔列進 artifacts）。
+    對不到時用 trace 的 digest（執行核心記下的 status＋summary）找：剛好只有一個信封相符才算，零個或多個都不猜。"""
     rec = _norm(entry.get("record") or "")
-    if not rec:
-        return None
-    tail = f"{stage}/{Path(rec).name}"
-    for env in envs:
-        for a in env.get("artifacts") or []:
-            if isinstance(a, str) and (_norm(a) == rec or _norm(a).endswith("/" + tail) or _norm(a) == tail):
-                return env
+    if rec:
+        tail = f"{stage}/{Path(rec).name}"
+        for env in envs:
+            for a in env.get("artifacts") or []:
+                if isinstance(a, str) and (_norm(a) == rec or _norm(a).endswith("/" + tail) or _norm(a) == tail):
+                    return env
+    dg = entry.get("digest")
+    if isinstance(dg, dict) and isinstance(dg.get("summary"), str) and dg["summary"]:
+        same = [e for e in envs if isinstance(e.get("summary"), str) and e["summary"][:400] == dg["summary"]
+                and str(e.get("status") or "") == str(dg.get("status") or "")]
+        if len(same) == 1 or (same and all(e is same[0] or e == same[0] for e in same)):
+            return same[0]
     return None
 
 
 def _ghostwrite(path: Path, entry: dict, env: dict) -> None:
-    """dev-merge-steward 沒有 Write 工具：依它的信封代寫紀錄檔。"""
+    """依信封代寫紀錄檔：dev-merge-steward（沒有 Write 工具），以及有交件但漏寫紀錄檔的 agent。內容只來自信封，可重現。"""
     p = env.get("payload") if isinstance(env.get("payload"), dict) else {}
+    steward = "traceability" in p
+    why = "沒有 Write 工具" if steward else "有交件但沒有寫紀錄檔"
     lines = [f"# 執行紀錄：{entry.get('label', '')}（{GHOSTWRITTEN}）", "",
-             f"> {entry.get('agent_type', '')} 沒有 Write 工具，這份紀錄由 save_run.py 依它交回的信封代寫，內容只來自信封。", "",
+             f"> {entry.get('agent_type', '')} {why}，這份紀錄由 save_run.py 依它交回的信封代寫，內容只來自信封。", "",
              "## 任務摘要", "", str(env.get("summary") or "（信封沒有 summary）"), "",
              "## 做了什麼與證據", ""]
     ev = [e for e in env.get("evidence") or [] if isinstance(e, dict)]
     lines += [f"- {e.get('claim', '')}：{e.get('result', '')}（出處：{e.get('source', '')}）" for e in ev] or ["- （信封沒有 evidence）"]
-    lines += ["", "## 結論", "",
-              f"- decision：{p.get('decision', '')}", f"- head_sha：{p.get('head_sha', '')}",
-              f"- merge_state：{p.get('merge_state', '')}", f"- 需求對照：{len(p.get('traceability') or [])} 條；followups：{len(p.get('followups') or [])} 則",
-              f"- gate_reasons：{'；'.join(str(x) for x in p.get('gate_reasons') or []) or '（無）'}", "",
-              "## 成果檔", ""]
+    lines += ["", "## 結論", ""]
+    if steward:
+        lines += [f"- decision：{p.get('decision', '')}", f"- head_sha：{p.get('head_sha', '')}",
+                  f"- merge_state：{p.get('merge_state', '')}", f"- 需求對照：{len(p.get('traceability') or [])} 條；followups：{len(p.get('followups') or [])} 則",
+                  f"- gate_reasons：{'；'.join(str(x) for x in p.get('gate_reasons') or []) or '（無）'}"]
+    else:
+        lines += [f"- status：{env.get('status', '')}", f"- confidence：{env.get('confidence', '')}",
+                  f"- payload 的欄位：{'、'.join(sorted(str(k) for k in p)) or '（無）'}"]
+    lines += ["", "## 成果檔", ""]
     lines += [f"- {a}" for a in env.get("artifacts") or []] or ["- （無）"]
     lines += ["", "## 不確定的地方", ""]
     qs = [q for q in env.get("open_questions") or [] if isinstance(q, dict)]
     lines += [f"- {q.get('question', '')}" for q in qs] or ["- （信封沒有待決問題）"]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _head(path: Path) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.readline()
+    except OSError:
+        return ""
 
 
 def _retried_ok(trace: list, i: int) -> bool:
@@ -268,8 +290,20 @@ def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, lis
                 status = "缺紀錄檔（trace 沒有指定紀錄檔）"
                 missing.append(f"{label} 的 trace 沒有指定紀錄檔")
             elif not any(c.is_file() for c in record_candidates(run, stage, record)):
-                status = "缺紀錄檔"
-                missing.append(f"{label} 的紀錄檔 {record} 不存在")
+                target = run / stage / Path(record).name
+                if env is not None and write:
+                    _ghostwrite(target, t, env)
+                if env is not None and target.is_file():
+                    status = f"完成（{GHOSTWRITTEN}紀錄：agent 沒寫紀錄檔）"
+                else:
+                    status = "缺紀錄檔"
+                    missing.append(f"{label} 的紀錄檔 {record} 不存在" + ("" if env is None else "（還沒代寫：先跑 save_run.py stage）"))
+            elif env is None and GHOSTWRITTEN in _head(next(c for c in record_candidates(run, stage, record) if c.is_file())):
+                # 紀錄檔是之前代寫的，這次的回傳卻對不回信封（回傳被換過）：不沿用舊的代寫檔
+                status = "缺紀錄檔（代寫的紀錄對不回這次的信封）"
+                missing.append(f"{label} 的紀錄檔是代寫的，但這次的回傳裡找不到對應的信封")
+            elif GHOSTWRITTEN in _head(next(c for c in record_candidates(run, stage, record) if c.is_file())):
+                status = f"完成（{GHOSTWRITTEN}紀錄：agent 沒寫紀錄檔）"
         elif okv is False and _retried_ok(trace, i):
             # 執行核心的失敗升級：這一筆沒交件，後面同一個 label、同一個角色的重派有交件，不算缺件
             status = f"沒有交件，已升一級重派（{t.get('tier') or '?'} → 見下一筆）"
@@ -288,7 +322,8 @@ def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, lis
         d.mkdir(parents=True, exist_ok=True)
         lines = [f"# 執行紀錄索引：{stage}", "",
                  f"由 save_run.py 依 workflow 回傳的 trace 產生，每列是一次派工（共 {len(rows)} 次）。"
-                 "紀錄檔不存在算缺件，不能政策核准；成果檔取自該 agent 信封的 artifacts。", "",
+                 "agent 有交件但沒寫紀錄檔時，由 save_run 依信封代寫（狀態欄會標明）；連信封都對不回才算缺件，不能政策核准。"
+                 "成果檔取自該 agent 信封的 artifacts。", "",
                  "| label | 角色 | phase | 紀錄檔 | 成果檔 | 狀態 |", "|---|---|---|---|---|---|"]
         for r in rows:
             lines.append("| " + " | ".join(_md_cell(x) for x in (r["label"], r["agent_type"], r["phase"], r["record"],
@@ -773,6 +808,12 @@ def main(argv: list[str]) -> int:
             else:
                 st.pop("missing_records", None)
             print(f"{stage}：執行紀錄索引 {run / stage / INDEX_NAME}（{len(rows)} 列）")
+            ghost = [r["label"] for r in rows if "agent 沒寫紀錄檔" in r["status"]]
+            if ghost:
+                st["ghostwritten_records"] = ghost
+                print(f"{stage}：{len(ghost)} 個 agent 有交件但沒寫紀錄檔，已依信封代寫（內容較簡略）：{'、'.join(ghost[:8])}")
+            else:
+                st.pop("ghostwritten_records", None)
             for m in miss:
                 print(f"執行紀錄缺件：{m}（不能政策核准）", file=sys.stderr)
         dump(run, data)
@@ -1280,6 +1321,40 @@ def selftest() -> int:
               c == 0 and "| label | 角色 | phase | 紀錄檔 | 成果檔 | 狀態 |" in idx and idx.count("| outline |") == 1
               and "| challenge |" in idx and "specs/e/design.md" in idx and "missing_records" not in stages(d)["design"] and c2 == 0,
               out + idx + out2)
+        # B9：有交件（digest 對得回信封）但沒寫紀錄檔 → 依信封代寫，不算缺件；agent 自己寫的不覆寫；回傳換掉後舊的代寫檔不沿用
+        d = new_run()
+        walk(d, "design")
+        gd = Path(d) / "design"
+        gd.mkdir(exist_ok=True)
+        amb = [{"label": "challenge", "agent_type": "agent-workflow:tpm-skeptic", "phase": "Challenge", "record": str(gd / "challenge.md"), "ok": True,
+                "digest": {"status": ver.get("status", ""), "summary": ver.get("summary", "")[:400]}}]
+        c, out = call("stage", d, "design", stdin={"design": {**des, "artifacts": []}, "challenge": ver, "trace": amb})
+        check("B9 代寫：digest 對到多個不同的信封 → 不猜，仍是缺件", des.get("summary") == ver.get("summary") and bool(stages(d)["design"].get("missing_records"))
+              and not (gd / "challenge.md").exists(), out)
+        ver = {**ver, "summary": "skeptic 判定：設計成立，沒有推翻的項目"}
+        (gd / "outline.md").write_text("# agent 自己寫的紀錄\n", encoding="utf-8")
+        gt = [{"label": "outline", "agent_type": "agent-workflow:dev-spec-author", "phase": "Outline", "record": str(gd / "outline.md"), "ok": True,
+               "digest": {"status": des.get("status", ""), "summary": des.get("summary", "")[:400]}},
+              {"label": "challenge", "agent_type": "agent-workflow:tpm-skeptic", "phase": "Challenge", "record": str(gd / "challenge.md"), "ok": True,
+               "digest": {"status": ver.get("status", ""), "summary": ver.get("summary", "")[:400]}}]
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": gt})
+        gbody = (gd / "challenge.md").read_text(encoding="utf-8") if (gd / "challenge.md").is_file() else ""
+        gidx = (gd / INDEX_NAME).read_text(encoding="utf-8")
+        check("B9 代寫：有信封沒紀錄檔 → 依信封代寫、不算缺件、記 ghostwritten_records；agent 自己寫的紀錄不覆寫",
+              c == 0 and GHOSTWRITTEN in gbody and ver.get("summary", "") in gbody and "missing_records" not in stages(d)["design"]
+              and stages(d)["design"].get("ghostwritten_records") == ["challenge"] and "agent 沒寫紀錄檔" in gidx
+              and (gd / "outline.md").read_text(encoding="utf-8") == "# agent 自己寫的紀錄\n", out + gbody + gidx)
+        first = gbody
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": gt})
+        check("B9 代寫：重存結果相同（可重現）", c == 0 and (gd / "challenge.md").read_text(encoding="utf-8") == first and "missing_records" not in stages(d)["design"], out)
+        nodg = [{k: v for k, v in t.items() if k != "digest"} for t in gt]
+        (gd / "challenge.md").unlink()
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": nodg})
+        check("B9 代寫：對不回信封（沒有 digest、artifacts 也沒列）→ 仍是缺件", bool(stages(d)["design"].get("missing_records")) and not (gd / "challenge.md").exists(), out)
+        (gd / "challenge.md").write_text(first, encoding="utf-8")
+        wrong = [dict(gt[0]), {**gt[1], "digest": {"status": "done", "summary": "別的信封的摘要"}}]
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": wrong})
+        check("B9 代寫：舊的代寫檔對不回這次的信封 → 缺件（不沿用）", any("代寫" in m for m in stages(d)["design"].get("missing_records") or []), out)
         d = new_run()
         walk(d, "design")
         bad = trace + [{"label": "plan:a", "agent_type": "agent-workflow:dev-spec-author", "phase": "Plan", "record": str(Path(d) / "design/plan-a.md"), "ok": True},

@@ -1,7 +1,7 @@
 ---
 name: tpm-upstream-analyst
 description: 舊名（相容一版，下一版移除）：已併入 tpm-researcher 的上游模式。新 workflow 一律派 tpm-researcher；只有還沒升級的專案會派到這個名字。
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash
 model: inherit
 skills: []
 ---

@@ -1,7 +1,7 @@
 ---
 name: tpm-skeptic
 description: 對抗性驗證：專門試著反駁別人的發現或結論，不確定就判反駁成立。各 workflow 在採納發現前派出（每則或每批一個）。合併模式（sdlc-merge）規則反轉：只找合併 agent 漏掉的不一致，不確定就判 hold。
-tools: Read, Grep, Glob, Bash, Skill, Write
+tools: Read, Grep, Glob, Bash, Write
 model: inherit
 skills: []
 ---

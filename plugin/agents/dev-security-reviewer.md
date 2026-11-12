@@ -1,7 +1,7 @@
 ---
 name: dev-security-reviewer
 description: AI-native SDLC 第 4 段（有安全面時）：做 threat model、三階段審查、專案專屬安全規則（見 rules.md〈專案規則〉）、secrets 與供應鏈，寫 security-review.md。只審不改。
-tools: Read, Grep, Glob, Bash, Skill, Write
+tools: Read, Grep, Glob, Bash, Write
 model: inherit
 skills: []
 ---

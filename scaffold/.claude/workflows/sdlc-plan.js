@@ -52,10 +52,15 @@ function tryAgent(prompt, opts, meta) {
   const s = awfState()
   const entry = { label: o.label || '', agent_type: o.agentType || '', phase: o.phase || '', record: s.cfg ? awfRecordPath(o.label) : '', ok: null, ...(meta || {}) }
   s.trace.push(entry)
-  const full = s.cfg ? `${awfPrefix()}\n\n${prompt}\n\n交件前先把執行紀錄寫到下面這個檔（沒寫算缺件）。\n執行紀錄檔：${entry.record}` : prompt
+  const full = s.cfg ? `${awfPrefix()}\n\n${prompt}\n\n交件前先把執行紀錄寫到下面這個檔。\n執行紀錄檔：${entry.record}` : prompt
   const fail = (e) => { log(`agent ${o.label || ''} 失敗，當成缺件：${(e && e.message) || e}`); entry.ok = false; return null }
   try {
-    return Promise.resolve(agent(full, opts)).then((r) => { entry.ok = !!r; return r }, fail)
+    // digest：信封的 status 與 summary 記進 trace，save_run 靠它把信封對回這次派工（agent 漏寫紀錄檔時依信封代寫）
+    return Promise.resolve(agent(full, opts)).then((r) => {
+      entry.ok = !!r
+      if (r && typeof r === 'object' && typeof r.summary === 'string') entry.digest = { status: String(r.status || ''), summary: r.summary.slice(0, 400) }
+      return r
+    }, fail)
   } catch (e) {
     return Promise.resolve(fail(e))
   }

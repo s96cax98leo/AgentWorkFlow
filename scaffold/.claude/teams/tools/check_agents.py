@@ -79,6 +79,9 @@ for p in sorted(agents_dir.glob("*.md")):
     if fm.get("name") != p.stem: errs.append(f"{p.name}: name 與檔名不同")
     if fm.get("model") != "inherit": errs.append(f"{p.name}: model 應為 inherit")
     if "Bash(" in fm.get("tools", ""): errs.append(f"{p.name}: tools 不可用 Bash(...)（會讓 Bash 消失）")
+    # tools 有 Skill 的 agent 開工就多帶整份 skill 清單（實測約 12k token，每一輪都重讀）：內文沒寫要載入哪個 skill 的角色不給 Skill
+    if re.search(r"\bSkill\b", fm.get("tools", "")) and "Skill 工具" not in t[m.end():]:
+        errs.append(f"{p.name}: tools 有 Skill，內文卻沒寫用 Skill 工具載入什麼；用不到就拿掉（省每個 agent 約 12k 的開工 context）")
     if p.stem in ALIASES:  # 舊名薄殼：只檢查薄殼格式
         b = t[m.end():]
         if len(b) >= SHIM_MAX: errs.append(f"{p.name}: 舊名薄殼內文應短於 {SHIM_MAX} 字（目前 {len(b)}）")

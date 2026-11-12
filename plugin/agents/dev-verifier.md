@@ -1,7 +1,7 @@
 ---
 name: dev-verifier
 description: AI-native SDLC 第 4 段：在目前 HEAD 逐條驗證 spec 的驗收條件，做反作弊檢查，寫 specs/<epic>/verifier.md（有子計劃時分片平行驗證再彙整）。sdlc-test 用；只回報，不改程式與測試。
-tools: Read, Grep, Glob, Bash, Skill, Write
+tools: Read, Grep, Glob, Bash, Write
 model: inherit
 skills: []
 ---
