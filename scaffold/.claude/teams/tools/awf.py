@@ -5,6 +5,7 @@
     python3 .claude/teams/tools/awf.py start --run <run_dir> --event <sdlc|brief|upstream|…> [--repo <repo>] [--epic <短名>]
         [--requirement <需求原文或路徑>] [--base <base>] [--recipe <名>] [--modifiers a,b] [--size s] [--set k=v]… [--set-json k=<JSON>]…
     python3 .claude/teams/tools/awf.py next --run <run_dir> [--set k=v]… [--set-json k=<JSON>]… [--stage <段>] [--workflow <名>] [--text]
+    python3 .claude/teams/tools/awf.py next --run <run_dir> --script <自己寫的腳本.js> [--stage <段> --retry]   # design、build、deliver 段改用自訂腳本（先檢查再接上執行核心；見 awf_script.py）
     python3 .claude/teams/tools/awf.py done --run <run_dir> [--output <workflow 回傳的 JSON 檔>] [--stage <段>]
     python3 .claude/teams/tools/awf.py approve --run <run_dir> [<段>] --by <誰> [--note <備註>] [--answer "<問題>=<答覆>"]… [--accept-defaults]
     python3 .claude/teams/tools/awf.py handoff --run <run_dir> [--print]      # 寫 <run_dir>/接手摘要.md：換 session 或換人接手時看
@@ -50,6 +51,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import awf_cost  # noqa: E402
+import awf_script  # noqa: E402
 import build as buildlib  # noqa: E402
 import pack as packlib  # noqa: E402
 import recipe as rcp  # noqa: E402
@@ -268,6 +270,98 @@ def render(name: str, project: Path, plugin: Path | None, args: dict | None = No
     return text, notes
 
 
+def custom_roles(project: Path) -> list[str]:
+    """自訂腳本可以派的 agent_type：模版角色（不含 dev-merge-steward）加上 guard.config.json 登記過的擴充 agent。"""
+    ns = read_config(project).get("AGENT_NS", PLUGIN_NAME + ":")
+    g = load_json(project / ".claude" / "teams" / "guard.config.json") or {}
+    ext = g.get("extension_agents") if isinstance(g.get("extension_agents"), dict) else {}
+    return [ns + r for r in awf_script.ROLES] + sorted(str(k) for k in ext)
+
+
+def render_custom(src: Path, stage: str, project: Path, args: dict) -> tuple[str, dict]:
+    """檢查並組裝自訂腳本：（可以執行的腳本, {source, sha1}）。檢查不過丟 AwfError，不產生任何東西。"""
+    if stage not in awf_script.STAGES:
+        raise AwfError(f"{stage} 段不能用自訂腳本（只開放 {'、'.join(awf_script.STAGES)}）：plan 的調研重用、sync 的衝突核對、test 的分片核對都寫在標準腳本裡，merge 是信任邊界")
+    try:
+        text = src.read_text(encoding="utf-8").replace("\r\n", "\n")
+    except (OSError, UnicodeDecodeError) as e:
+        raise AwfError(f"讀不到自訂腳本 {src}：{e}")
+    cfg = read_config(project)
+    ns = cfg.get("AGENT_NS", PLUGIN_NAME + ":")
+    cache: dict = {}
+    try:
+        snippets = {n: buildlib.load_snippet(n, cache) for n in awf_script.SNIPPETS}
+    except buildlib.SnippetError as e:
+        raise AwfError(str(e))
+    roles = custom_roles(project)
+    errs = awf_script.check(text, set(roles), ns, awf_script.defined_names(snippets))
+    if errs:
+        raise AwfError(f"自訂腳本 {src.name} 沒通過檢查，不執行：\n  - " + "\n  - ".join(errs[:20]))
+    meth_file = project / ".claude" / "teams" / "methodology.json"
+    methodology = load_json(meth_file)
+    if meth_file.is_file() and not isinstance(methodology, dict):
+        raise AwfError(f"{meth_file} 讀不懂（不是 JSON 物件）")
+    if _unregistered(methodology, project):
+        raise AwfError("methodology.json 的 extensions 有 agent 沒登記在 guard.config.json 的 extension_agents（用 /agent-workflow:add-agent 設定）")
+    limits = (methodology or {}).get("limits") if isinstance((methodology or {}).get("limits"), dict) else {}
+    cap = limits.get("max_agents") if isinstance(limits.get("max_agents"), int) and limits.get("max_agents") > 0 else 40
+    js = lambda v: json.dumps(v, ensure_ascii=False, separators=(",", ":"))  # noqa: E731
+    S = js(stage)
+    pre = [f"// ── 以下由 awf.py 接上（自訂腳本，{stage} 段）：執行核心、pattern 庫、這一段的參數。不要手改 ──",
+           "const NS = " + js(ns),
+           "const A = Object.assign(" + js(args) + ", args || {})",
+           "const METHODOLOGY = " + js(methodology),
+           "const MP = METHODOLOGY || {}"]
+    pre += [f"// ── 片段 {n} ──\n{snippets[n]}" for n in awf_script.SNIPPETS]
+    pre += ["const R = resolveRecipe(METHODOLOGY, A.recipe, [].concat(A.modifiers || []), A.size)",
+            "if (R.errors.length) return { stage: " + S + ", halted: true, halt_reason: 'recipe 解析有錯：' + R.errors.join('；'), missing: [], "
+            "recipe: { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages }, trace: [] }",
+            "const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages, summary: recipeSummary(R) }",
+            "awfInit({ run_dir: A.run_dir, stage: " + S + ", lang: " + js(cfg.get("OUTPUT_LANGUAGE", "")) + ", rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, " + S + ") })",
+            "awfKernelInit({ profile: METHODOLOGY, stage: " + S + ", modifiers: [].concat(A.modifiers || []), max_agents: " + str(cap) + ", roles: " + js(roles) + " })"]
+    out = awf_script.assemble(text, "\n".join(pre))
+    out = buildlib.MARK.sub(lambda m: f"/*@schema:{m.group(1)}*/ {js(buildlib.schemalib.compose(None if m.group(1) == 'envelope' else m.group(1)))} /*@end*/", out)
+    import hashlib
+    return out, {"source": _posix(src.name), "sha1": hashlib.sha1(text.encode("utf-8")).hexdigest()}
+
+
+def custom_action(run: Path, run_arg: str, data: dict, project: Path, argv: list[str]) -> dict:
+    """awf.py next --script <檔>：用自訂腳本跑下一段（或 --stage 指定的段）。排序與閘門鏈照舊，只換腳本。"""
+    if str(data.get("event") or "") != "sdlc":
+        raise AwfError("自訂腳本只用在 SDLC 的 run")
+    if data.get("abandoned") or data.get("closed"):
+        raise AwfError("這個 run 已經結束")
+    stage = opt(argv, "--stage") or sr.next_stage(data)
+    if stage is None or stage not in data["stages"]:
+        raise AwfError("沒有要跑的段")
+    if stage not in awf_script.STAGES:
+        render_custom(Path(opt(argv, "--script")), stage, project, {})      # 丟出「這一段不能用自訂腳本」
+    st = data["stages"][stage]
+    if st.get("status") == "skipped":
+        raise AwfError(f"recipe 沒有 {stage} 段（要加段走 save_run.py escalate）")
+    if st.get("status") == "done" and st.get("gate") and not st.get("approved") and "--retry" not in argv:
+        raise AwfError(f"{stage} 段已經有結果、在等核准；要用自訂腳本重跑這一段就加 --stage {stage} --retry")
+    chain = sr.chain_errors(data, stage)
+    if chain:
+        raise AwfError("前面的段還沒過：" + "；".join(chain))
+    src = Path(opt(argv, "--script"))
+    src = src if src.is_absolute() else project / src
+    a, need, notes = stage_args(run, run_arg, data, stage, STAGE_WORKFLOW.get(stage, ""), project)
+    if need:
+        return {"action": "need_input", "stage": stage, "workflow": f"custom-{stage}", "need": {k: HINTS.get(k, "這一段需要的參數") for k in need},
+                "how": f"python3 .claude/teams/tools/awf.py next --run {run_arg} --script {opt(argv, '--script')} " + " ".join(f"--set {k}=<值>" for k in need)}
+    extra, pnotes = run_pack(stage, run_arg, a, run, project)
+    a.update(extra)
+    text, custom = render_custom(src, stage, project, a)
+    name = f"custom-{stage}"
+    _write(run / ".wf" / f"{name}.js", text)
+    _write(run / ".wf" / f"{name}.args.json", json.dumps(a, ensure_ascii=False, indent=1) + "\n")
+    return {"action": "run_workflow", "stage": stage, "workflow": name, "script": f"{run_arg}/.wf/{name}.js", "custom": custom,
+            "how": "用 Workflow 工具執行：scriptPath 給 script，不用傳 args（已經內嵌在腳本裡）。",
+            "then": f"python3 .claude/teams/tools/awf.py done --run {run_arg}",
+            "notes": notes + pnotes + [f"這一段用自訂腳本 {custom['source']} 跑：存檔時的檢查和標準腳本一樣（必要的角色、紀錄、模型下限、recipe），而且不能政策核准，一律由人核准"]}
+
+
 def _unregistered(methodology, project: Path) -> list[str]:
     ext = (methodology or {}).get("extensions") if isinstance(methodology, dict) else None
     if not isinstance(ext, list) or not ext:
@@ -484,7 +578,7 @@ def highlights(run: Path, run_arg: str, data: dict, stage: str) -> dict:
         prov = provisional(res)
         if prov:
             h["provisional"] = prov[:30]
-    for k in ("missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans"):
+    for k in ("missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans", "custom_script"):
         if res.get(k) not in (None, [], {}, ""):
             h[k] = res[k]
     if isinstance(res.get("angles"), dict) and res["angles"].get("skipped"):
@@ -839,11 +933,11 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
             errs = apply_sets(data, argv)
             if errs:
                 raise AwfError("；".join(errs))
-            act = carry(decide(run, run_arg, data, project, plugin, argv), data)
+            act = carry(custom_action(run, run_arg, data, project, argv) if opt(argv, "--script") else decide(run, run_arg, data, project, plugin, argv), data)
             if act.get("action") == "run_workflow":
                 act["notes"] = pnotes + act.get("notes", [])
                 data.setdefault("awf", {})["pending"] = {"stage": act["stage"], "workflow": act["workflow"], "script": act["script"], "at": now_iso(),
-                                                         "since": datetime.datetime.now().timestamp()}
+                                                         "since": datetime.datetime.now().timestamp(), **({"custom": act["custom"]} if act.get("custom") else {})}
             sr.dump(run, data)
             emit(act, argv)
             return 0
@@ -870,6 +964,8 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
                         pass
                 if not isinstance(result, (dict, list)):
                     raise AwfError(f"workflow 沒有回傳物件（status={meta.get('status')}）：{mf}。它可能還在跑，或中途失敗；失敗就重跑這一段")
+            if pend.get("custom") and pend.get("stage") == stage:      # 自訂腳本跑的段：記在結果裡，save_run 看到就不給政策核准
+                result = {**result, "custom_script": pend["custom"]} if isinstance(result, dict) else {"halted": True, "halt_reason": "自訂腳本沒有回傳物件", "custom_script": pend["custom"], "returned": result}
             code, out = _quiet(sr.main, ["stage", str(run), stage], stdin_text=json.dumps(result, ensure_ascii=False))
             print(out.rstrip())
             data = sr.load(run)
@@ -1247,6 +1343,93 @@ def selftest() -> int:
             c, out = call("approve", "--run", d, "--by", "human")
             check("approve：核准仍由 save_run 把關（沒有信封的段照樣拒絕，狀態機不放寬閘門）", c != 0 and "沒有任何信封" in out and not sr.load(run)["stages"]["design"].get("approved"), out)
             check("approve：沒有在等核准的段、缺 --by 都拒絕", call("approve", "--run", "_runs/args", "--by", "x")[0] != 0 and call("approve", "--run", d)[0] != 0)
+
+            # ── 自訂腳本（next --script）：先檢查、再接上執行核心；閘門條件不變，而且不能政策核准
+            def cs_run(name: str, upto: str, recipe: str = "feature") -> str:
+                d = f"_runs/{name}"
+                call("start", "--run", d, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "分波打地基")
+                run, data = proj / d, sr.load(proj / d)
+                res = rcp.resolve(default_profile, recipe, [])
+                data["recipe"] = {"name": recipe, "modifiers": [], "size": "", "resolved": res, "locked": True, "history": []}
+                sr.rebuild_stages(data, res)
+                for st in res["stages"]:
+                    if st == upto:
+                        break
+                    data["stages"][st].update({"status": "done", "envelopes": 1, "approved": {"by": "human", "at": "t", "kind": "human"}})
+                    (run / f"{st}.json").write_text(json.dumps({"stage": st, "subtasks": [{"id": "t1", "title": "x", "owns": ["a.py"]}]}), encoding="utf-8")
+                sr.dump(run, data)
+                return d
+
+            scripts = proj / "scripts"
+            scripts.mkdir()
+            (scripts / "waves.js").write_text(awf_script.GOOD.replace("'acme:a11y'", "NS + 'tpm-reviewer'"), encoding="utf-8")
+            (scripts / "direct.js").write_text(awf_script.GOOD.replace("'acme:a11y'", "NS + 'tpm-reviewer'").replace("const done = []", "const done = [await agent('x', {})]"), encoding="utf-8")
+            (scripts / "ext.js").write_text(awf_script.GOOD, encoding="utf-8")
+            d = cs_run("custom", "build")
+            c, out = call("next", "--run", d, "--script", "scripts/waves.js")
+            a = act_of(out) if not c else {}
+            wf = proj / d / ".wf" / "custom-build.js"
+            body = wf.read_text(encoding="utf-8") if wf.is_file() else ""
+            check("自訂腳本：合格的可以執行（run_workflow，腳本寫在 <run>/.wf/custom-<段>.js，記下來源與雜湊）",
+                  a.get("action") == "run_workflow" and a.get("stage") == "build" and a.get("script") == f"{d}/.wf/custom-build.js" and a.get("custom", {}).get("source") == "waves.js"
+                  and len(a.get("custom", {}).get("sha1", "")) == 40 and sr.load(proj / d)["awf"]["pending"].get("custom") == a.get("custom"), out)
+            check("自訂腳本：接上執行核心（角色白名單、派工數上限、這一段的參數、recipe、片段與 schema），meta 仍在最前面",
+                  body.startswith("export const meta = {") and "function awfAgent(" in body and "function awfLoop(" in body and "function awfInit(" in body
+                  and 'awfKernelInit({ profile: METHODOLOGY, stage: "build"' in body and '"agent-workflow:dev-implementer"' in body and '"agent-workflow:dev-merge-steward"' not in body.split("roles:")[1].split("\n")[0]
+                  and "max_agents: 40" in body and '"epic":"demo"' in body and "/*@schema:subtasks*/ {" in body and "null /*@end*/" not in body and not PH.search(body), body[:300])
+            for bad_name, why in (("direct.js", "不能直接用 agent()"), ("ext.js", "acme:a11y 不是登記過的角色")):
+                d_bad = cs_run("custom-" + bad_name[:-3], "build")
+                c, out = call("next", "--run", d_bad, "--script", f"scripts/{bad_name}")
+                check(f"自訂腳本：{why} → 不執行（不產生腳本、不記等待中的段）", c != 0 and why in out and "沒通過檢查" in out
+                      and not (proj / d_bad / ".wf" / "custom-build.js").exists() and "pending" not in (sr.load(proj / d_bad).get("awf") or {}), out)
+            g = load_json(teams / "guard.config.json")
+            (teams / "guard.config.json").write_text(json.dumps({**g, "extension_agents": {"acme:a11y": "tpm-reviewer"}}), encoding="utf-8")
+            d_ext = cs_run("custom-ext-ok", "build")
+            c, out = call("next", "--run", d_ext, "--script", "scripts/ext.js")
+            check("自訂腳本：guard.config.json 登記過的擴充 agent 可以派，而且進角色白名單", c == 0 and '"acme:a11y"' in (proj / d_ext / ".wf" / "custom-build.js").read_text(encoding="utf-8").split("roles:")[1].split("\n")[0], out)
+            (teams / "guard.config.json").write_text(json.dumps(g), encoding="utf-8")
+            for stg, upto in (("plan", "plan"), ("test", "test"), ("merge", "merge")):
+                d_no = cs_run("custom-no-" + stg, upto)
+                c, out = call("next", "--run", d_no, "--script", "scripts/waves.js")
+                check(f"自訂腳本：{stg} 段不開放", c != 0 and f"{stg} 段不能用自訂腳本" in out, out)
+            d_chain = cs_run("custom-chain", "build")
+            dd = sr.load(proj / d_chain)
+            dd["stages"]["design"].pop("approved")
+            sr.dump(proj / d_chain, dd)
+            c, out = call("next", "--run", d_chain, "--script", "scripts/waves.js", "--stage", "build")
+            check("自訂腳本：不能跳段（前面的段沒核准就拒絕）", c != 0 and "前面的段還沒過" in out, out)
+            c, out = call("next", "--run", "_runs/ev-cs", "--script", "scripts/waves.js") if not call("start", "--run", "_runs/ev-cs", "--event", "meeting")[0] else (1, "自訂腳本只用在 SDLC 的 run")
+            check("自訂腳本：事件的 run 不能用", c != 0 and "只用在 SDLC" in out, out)
+            # 存檔：條件和標準腳本一樣（沒有 trace 就是 invalid），結果帶 custom_script，政策核准一律拒絕
+            env = {"status": "done", "summary": "做完", "artifacts": [], "evidence": [], "confidence": 0.9, "derived_work": [], "payload": {}, "open_questions": []}
+            rec_dir = proj / d / "build"
+            rec_dir.mkdir(parents=True, exist_ok=True)
+            mk = lambda label, role: {"label": label, "agent_type": "agent-workflow:" + role, "phase": "Build", "record": str(rec_dir / (label.replace(":", "-") + ".md")), "ok": True, "tier": "standard", "model": "sonnet"}  # noqa: E731
+            res_rcp = {"name": "feature", "modifiers": [], "stages": rcp.resolve(default_profile, "feature", [])["stages"]}
+            notrace = root / "cs-notrace.json"
+            notrace.write_text(json.dumps({"stage": "build", "halted": False, "results": [env], "recipe": res_rcp}), encoding="utf-8")
+            c, out = call("done", "--run", d, "--output", str(notrace), "--no-next")
+            st_n = sr.load(proj / d)["stages"]["build"]
+            check("自訂腳本：回傳沒有 trace → 和標準腳本一樣記成紀錄缺件（閘門條件不變）", "回傳卻沒有 trace" in out and st_n.get("missing_records"), (out, st_n))
+            c, out = call("next", "--run", d, "--script", "scripts/waves.js")
+            check("自訂腳本：build 存檔後下一段是 sync，不開放自訂腳本；要重跑 build 得明講 --stage build --retry", c != 0 and "sync 段不能用自訂腳本" in out, out)
+            call("next", "--run", d, "--script", "scripts/waves.js", "--stage", "build", "--retry")
+            full_trace = [mk("Tests:t1", "dev-acceptance-tester"), mk("Implement:t1", "dev-implementer"), mk("Integrate", "dev-integrator")]
+            for x in full_trace:
+                Path(x["record"]).write_text("# 紀錄\n", encoding="utf-8")
+            good = root / "cs-good.json"
+            good.write_text(json.dumps({"stage": "build", "halted": False, "results": [env], "recipe": res_rcp, "trace": full_trace}), encoding="utf-8")
+            c, out = call("done", "--run", d, "--output", str(good), "--no-next")
+            saved = load_json(proj / d / "build.json") or {}
+            st_b = sr.load(proj / d)["stages"]["build"]
+            check("自訂腳本：存下來的結果帶 custom_script（來源與雜湊）", saved.get("custom_script") == a.get("custom") and st_b["status"] in ("done", "invalid"), (out, st_b))
+            check("自訂腳本：政策核准一律拒絕（要由人核准）", any("自訂腳本" in e for e in sr.policy_violations("build", saved, proj / d))
+                  and not any("自訂腳本" in e for e in sr.policy_violations("build", {k: v for k, v in saved.items() if k != "custom_script"}, proj / d)))
+            hl = highlights(proj / d, d, sr.load(proj / d), "build")
+            check("自訂腳本：閘門重點列出這一段用的是自訂腳本", hl.get("custom_script", {}).get("source") == "waves.js", hl)
+            src_roles = re.search(r"^CORE = \{(.*?)\}", (HERE / "check_agents.py").read_text(encoding="utf-8"), re.S | re.M)
+            core = set(re.findall(r'"([a-z-]+)"', src_roles.group(1))) if src_roles else set()
+            check("自訂腳本：可派的模版角色＝check_agents 的 CORE 扣掉 dev-merge-steward", core and set(awf_script.ROLES) == core - {"dev-merge-steward"}, sorted(core ^ set(awf_script.ROLES)))
 
             # ── done：自己找 workflow 的回傳
             d = "_runs/done"

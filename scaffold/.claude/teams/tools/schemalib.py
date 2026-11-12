@@ -195,6 +195,13 @@ def semantic_errors(env: dict) -> list[str]:
                         errs.append(f"子任務 {s.get('id')} 的子計劃依賴格式不合法（要是 @<子計劃 id>）：{d}")
                 elif d not in ids:
                     errs.append(f"子任務 {s.get('id')} 依賴不存在的 {d}")
+        # 波次：不能依賴比自己晚的波次（沒標的算第 1 波）
+        wave = {s.get("id"): (s.get("wave") if isinstance(s.get("wave"), int) and not isinstance(s.get("wave"), bool) and s.get("wave") > 0 else 1) for s in subtasks if isinstance(s, dict)}
+        for s in subtasks:
+            if isinstance(s, dict):
+                for d in s.get("depends_on") or []:
+                    if isinstance(d, str) and d in wave and wave[d] > wave[s.get("id")]:
+                        errs.append(f"子任務 {s.get('id')}（第 {wave[s.get('id')]} 波）依賴第 {wave[d]} 波的 {d}：不能依賴比自己晚的波次")
     errs.extend(merge_decision_errors(payload))
     errs.extend(plan_outline_errors(payload))
     return errs

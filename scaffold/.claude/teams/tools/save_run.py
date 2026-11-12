@@ -397,6 +397,7 @@ def policy_violations(stage: str, result, run: Path | None = None) -> list[str]:
     - plan 段一律由人核准（rules.md 規則 16），政策核准一律不行。
     - 一份信封都沒有、或回傳裡有 null（agent 缺件）不行：缺件不是「沒有發現」（rules.md 規則 26）。
     - 回傳標了 halted（流程中斷）不行。
+    - 回傳帶 custom_script（這一段用自訂腳本跑）不行：一律由人核准。
     - 任何信封的 open_questions 有 blocking=true 不行。
     - 任何 findings payload 有 blocker／important 等級的發現不行。
     - 任何 verdicts payload 有 refuted=true（skeptic 推翻了該段的產出）不行。
@@ -408,6 +409,8 @@ def policy_violations(stage: str, result, run: Path | None = None) -> list[str]:
         errs.append(f"{stage} 段一律由人核准（rules.md 規則 16），不能政策核准")
     if isinstance(result, dict) and result.get("halted"):
         errs.append(f"回傳標了 halted：{result.get('halt_reason') or result.get('halted')}")
+    if isinstance(result, dict) and result.get("custom_script"):
+        errs.append("這一段是用自訂腳本跑的（awf.py next --script）：流程沒有經過標準腳本的核對，要由人核准")
     envs = list(envelopes(result))
     if not envs:
         errs.append(NO_ENVELOPE)

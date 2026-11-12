@@ -85,7 +85,8 @@
       "properties": {
         "split_threshold": {"type": "integer", "minimum": 2, "description": "預估子任務數超過這個值（或有多個可獨立交付的區塊）就拆成子計劃；預設 8"},
         "max_sub_plans": {"type": "integer", "minimum": 2, "description": "子計劃數上限（同時也是平行規劃與分片驗證的 agent 數上限）；預設 4"},
-        "shard_verification": {"type": "boolean", "description": "有子計劃時，驗證是否每個子計劃派一個 dev-verifier 平行跑；預設 true"}
+        "shard_verification": {"type": "boolean", "description": "有子計劃時，驗證是否每個子計劃派一個 dev-verifier 平行跑；預設 true"},
+        "wave_pause": {"type": "boolean", "description": "子任務有分波（subtasks[].wave）時，sdlc-build 每做完一波是否停下交人確認再做下一波；預設 false（一路做完）"}
       }
     },
     "models": {

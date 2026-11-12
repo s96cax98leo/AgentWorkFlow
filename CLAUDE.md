@@ -58,6 +58,7 @@ python3 .claude/teams/tools/locate.py --selftest                                
 python3 .claude/teams/tools/awf_cost.py --selftest                                         # workflow 的 token 與時間
 python3 .claude/teams/tools/awf_watch.py --selftest                                        # watcher（進度事件、通知、狀態列）
 python3 .claude/teams/tools/awf_doctor.py --selftest                                       # 安裝檢查（awf.py doctor）
+python3 .claude/teams/tools/awf_script.py --selftest                                       # 自訂腳本的靜態檢查
 ```
 
 在 repo 內也可以直接驗，例如 `python3 scaffold/.claude/teams/tools/build.py --check`（處理 `plugin/workflow-templates/`），路徑會依檔案位置推算。範本帶佔位符，不能直接乾跑；乾跑由 `tests/smoke_init.py` 在 init 過的暫存專案裡做（`awf.py render --all` 後 `check_workflows.mjs --wf-dir`）。
@@ -94,7 +95,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 **改了 schema 或 profile 就要重跑 `build.py`**，並在 `golden-set/valid|invalid/` 補正例與反例。不要手改內嵌進去的 JSON。
 
-多支 workflow 共用的程式放在 `scaffold/.claude/teams/tools/snippets/<名>.js`（目前有 `challenge`、`review-skeptic`、`layers`、`recipe`、`kernel`），workflow 裡寫片段標記 `/*@snippet:<名>*/ … /*@end*/`，由 `build.py` 把片段內容內嵌在標記之間（標記保留，可重跑）。`build.py --check` 會偵測片段和 workflow 內嵌內容的漂移。片段的規則見下一節〈Workflow 腳本的限制〉。
+多支 workflow 共用的程式放在 `scaffold/.claude/teams/tools/snippets/<名>.js`（目前有 `challenge`、`review-skeptic`、`layers`、`recipe`、`kernel`、`patterns`），workflow 裡寫片段標記 `/*@snippet:<名>*/ … /*@end*/`，由 `build.py` 把片段內容內嵌在標記之間（標記保留，可重跑）。`build.py --check` 會偵測片段和 workflow 內嵌內容的漂移。片段的規則見下一節〈Workflow 腳本的限制〉。
 
 ### methodology profile
 
@@ -122,6 +123,9 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 ### 執行核心、模型分級與省 context（0.4）
 
 - **執行核心**：`tools/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限。**12 支 workflow 的派工都走它**（`save_run.KERNEL_STAGES` 是全部七段）；片段裡的派工（`challengeList`、`verifyFindings`）用 challenge 片段的 `awfDispatch`，啟用核心後也經過核心。上限＝`limits.max_agents`（沒寫用 40），design 另加 `3×max_sub_plans`、build 另加 `4×子任務數`、test 另加 `4×子計劃數`；到上限不再派、trace 記一筆 `capped: true`，`save_run.process_trace` 列成缺件並說明。`AWF_NO_RETRY`（dev-integrator、dev-merge-steward：有副作用）與 `retry: false` 的派工不自動重派。新寫的派工一律用 `awfAgent`。
+- **pattern 庫（0.5）**：`tools/snippets/patterns.js`（`@requires: challenge, recipe, kernel`）。六個函式 `awfFanOut`、`awfClassifyAct`、`awfAdversarial`、`awfGenerateFilter`、`awfTournament`、`awfLoop`，都走 `awfAgent`、都要給 `max`（沒給 throw）；超過上限、缺件、跑滿輪數一律回 `halted`。內建的 12 支範本沒有引用它（各自的流程已經寫好），目前給自訂腳本用。測試在 `tests/check_patterns.py`。
+- **自訂腳本（0.5）**：`awf.py next --script <檔>`（`custom_action`、`render_custom`）只開放 design、build、deliver（`awf_script.STAGES`）。`tools/awf_script.py` 做靜態檢查（`check`：直接用 `agent()`、未登記角色、無上限迴圈、return 沒帶 trace、改寫核心）並把 preamble 接在 meta 後面；核心的 `roles` 白名單在執行時再擋一次。`awf.py done` 把 `custom_script`（來源與 sha1）放進結果，`save_run.policy_violations` 看到就拒絕政策核准。排序與閘門鏈照舊。
+- **build 波次（0.5）**：子任務的 `wave`（`subtasks.schema.json`；`schemalib.semantic_errors` 擋「依賴比自己晚的波次」）。`sdlc-build` 依波次、波次內依相依分層（`layerWave`）；`parallelism.wave_pause` 開啟時每波做完回 halted（`wave_pause: true`、`remaining_subtasks`），由 `awf.py` 既有的續跑接下去。沒有標 wave 時行為不變。
 - **模型分級**：profile 的 `models`。解析在 `recipe.py` 的 `resolve_model` 與 `recipe.js` 的 `resolveModel`，兩邊必須一致（golden 的 `model_cases`）。結果＝max(AI 建議或預設, floor, modifier 的 `model_floors`)；內建 floor（`BUILTIN_MODEL_FLOORS`）profile 蓋不掉。`save_run.model_errors` 用 profile 重算，trace 的模型低於 floor 判 invalid。agent 檔的 frontmatter 仍然是 `model: inherit`，模型由派工時指定。
 - **兩段式調研**：`locate:<角度>`（light，payload `locations`）→ `research:<角度>`（只讀定位到的行段）。定位缺件時該角度列 missing、不派分析。triage 的 `angles` 只能從 recipe 自己的角度挑，modifier 帶進來的不能省。
 - **資料包與重用**：`tools/pack.py` 寫 `<run>/<段>/pack.md` 與 `pack-args.json`（無時間戳、可重現）；plan 段的 `reuse.json` 記各角度來源檔的 sha1，`save_run.py stage plan` 用 `verify_reuse` 重新核對、存檔後 `record_reuse`。這三個檔與 `pack.py` 只有主 session 能寫、能跑（`guard.py` 的 `PACK_STATE`、`SHARED_CONTEXT_NAMES`）。
@@ -264,6 +268,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改 profile 格式**：`methodology.schema.json`、兩份內建 profile、`docs/自訂與擴充.md` 的欄位表要一起改。
 - **改 recipe 或 modifier**：`tools/recipe.py` 的 `BUILTIN_RECIPES`／`BUILTIN_MODIFIERS`、`tools/snippets/recipe.js`、兩份內建 profile、`tools/scenarios/_helpers.mjs` 的 `RECIPE_STAGES`（手抄的段表）要一起改；在 `golden-set/recipes/` 補案例，跑 `tests/check_recipes.py`。新增的 recipe 不能省 plan 段，會寫程式的要有 build、deliver、merge（`schemalib.methodology_errors`）。
 - **改模型分級**：`recipe.py`（`BUILTIN_TIER_MODELS`、`BUILTIN_MODEL_FLOORS`、`resolve_model`）與 `snippets/recipe.js` 一起改，在 `golden-set/recipes/` 補 `model_cases`，跑 `tests/check_recipes.py`；floor 只能加、不能拿掉。
+- **改 pattern 庫或自訂腳本**：`tests/check_patterns.py`（每個 pattern 的正常、達上限、缺件，以及組裝後實際執行）、`awf_script.py --selftest`、`awf.py --selftest` 的自訂腳本案例；`awf_script.ROLES` 要等於 `check_agents.py` 的 `CORE` 扣掉 dev-merge-steward（selftest 會核對）；開放新的段之前先確認那一段的確定性核對不在 workflow 腳本裡；`docs/自訂與擴充.md`〈自訂腳本〉的規則表一起改。scaffold 的工具原始碼不能出現雙大括號（init 會當佔位符）。
 - **改執行核心（kernel 片段）**：重跑 `build.py`；`tools/scenarios/sdlc-plan.mjs` 的 `V04` 情境（升級、上限、重用、角度數）要一起改；`save_run.py` 的 `_retried_ok`、`model_errors` 依賴 trace 的 `model`、`tier`、`superseded`、`attempt` 欄位。
 - **改讀取預算**：`plugin/hooks/tests/run.py` 的 A2 一段補該擋與該放（Bash 與 PowerShell 各一），並確認效能檢查（計數路徑 50ms 內）仍通過；任何新的失敗路徑都要放行。
 - **改 pack.py／kb.py／locate.py**：各自的 `--selftest`；改了子任務資料包的路徑或 `pack-args.json` 的鍵，`sdlc-build.js` 的 `taskPack`／`REF_ERRS` 與 `tools/scenarios/sdlc-build.mjs` 的「子任務資料包」情境要一起改；改了 `locate.py` 的輸出格式，`sdlc-plan.js` 的 `toolLocated` 與 `tools/scenarios/sdlc-plan.mjs` 的「工具先定位」情境要一起改；`pack.md` 的內容不能有時間戳或絕對路徑以外會變動的東西（可重現是 `tests/bench/run_plan.py --selftest` 的檢查項）。

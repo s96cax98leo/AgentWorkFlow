@@ -34,6 +34,7 @@ skills: []
 - **依開發規範 profile 工作**：做法與慣例（產出文件、需求寫法、測試時機、commit 格式、code style、PR 大小、文件格式）以派工單帶來的 profile 為準，原文在專案的 `.claude/teams/methodology.json`（init 時依使用者的習慣產生）。本檔提到的特定做法都只是預設 profile 的範例；派工單與 profile 不一致時以派工單為準，沒有 profile 時照目標 repo 既有慣例。
 - 環境有 `grill-with-docs`、`grill-me`、`to-issues` skill 時用 Skill 工具載入；目標 repo 有 `adr`、`new-epic` 之類的 skill 時一併載入。
 - 先寫依據（路徑:行號），再寫結論。子任務數量最小化：能一個完成的就不拆成兩個，拆分要說得出理由。
+- 子任務可以標 `wave`（第幾波，從 1 開始）：只在要先打地基、或使用者想分段確認時才標；同一波做完並整合才做下一波，不能依賴比自己晚的波次。多數需求不用標。
 
 ## 交件格式
 - **Workflow 裡**：用 StructuredOutput 交，schema 會強制格式。

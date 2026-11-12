@@ -8,6 +8,46 @@ const out = (r) => r.out || {}
 
 export default [
   {
+    // 波次（0.5）：同一波做完、合進整合分支才做下一波；波次裡面照相依分層
+    name: '波次：t1 第 1 波、t2 與 t3 第 2 波 → t1 先做完並整合，才做 t2，再做 t3；回傳帶 waves',
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => ({ ...s, ...(s.id === 't1' ? { wave: 1 } : s.kind === 'code' ? { wave: 2 } : {}) })) },
+    expect: (r) => {
+      const errs = []
+      const at = (l) => r.labels.indexOf(l)
+      if (out(r).halted) errs.push(`不該 halted：${out(r).halt_reason}`)
+      if (!(at('Implement:t1') >= 0 && at('Implement:t1') < at('integrate:layer1') && at('integrate:layer1') < at('Implement:t2') && at('Implement:t2') < at('Implement:t3'))) errs.push(`順序不對：${r.labels.join(' → ')}`)
+      if (JSON.stringify(out(r).waves) !== '[1,2]') errs.push(`回傳要帶 waves：${JSON.stringify(out(r).waves)}`)
+      if ((out(r).layers || []).length !== 3) errs.push(`應該分 3 層（第 1 波 1 層、第 2 波 2 層）：${(out(r).layers || []).length}`)
+      return errs
+    },
+  },
+  {
+    name: '波次：wave_pause 開啟時第 1 波做完停下交人，回傳 remaining_subtasks 與 integrated 供續跑',
+    profile: { parallelism: { wave_pause: true } },
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => ({ ...s, ...(s.id === 't1' ? { wave: 1 } : s.kind === 'code' ? { wave: 2 } : {}) })) },
+    expect: (r) => {
+      const errs = []
+      const o = out(r)
+      const rem = (o.remaining_subtasks || []).map((s) => s.id)
+      if (!o.halted || !o.wave_pause || o.wave_done !== 1 || !/第 1 波做完/.test(o.halt_reason || '')) errs.push(`第 1 波做完要停下：${JSON.stringify({ halted: o.halted, wave_done: o.wave_done, why: o.halt_reason })}`)
+      if (r.labels.includes('Implement:t2') || r.labels.includes('Implement:t3')) errs.push(`第 2 波不該開工：${r.labels.join(' → ')}`)
+      if (!rem.includes('t2') || !rem.includes('t3') || rem.includes('t1') || !(o.integrated || []).includes('t1')) errs.push(`續跑資料不對：remaining=${rem}、integrated=${o.integrated}`)
+      if ((o.missing || []).length || (o.failures || []).length) errs.push(`這不是缺件，也沒有失敗：${JSON.stringify([o.missing, o.failures])}`)
+      return errs
+    },
+  },
+  {
+    name: '波次：續跑只剩最後一波時一路做完，不再停',
+    profile: { parallelism: { wave_pause: true } },
+    args: { subtasks: SAMPLE_SUBTASKS().filter((s) => s.id === 't2' || s.id === 't3').map((s) => ({ ...s, wave: 2 })), integrated: ['t0', 't1'] },
+    expect: (r) => (!out(r).halted && r.labels.includes('Implement:t2') && r.labels.includes('Implement:t3') && !r.labels.includes('Implement:t1') ? [] : [`續跑要做完剩下的波次：${JSON.stringify({ halted: out(r).halted, why: out(r).halt_reason, labels: r.labels })}`]),
+  },
+  {
+    name: '波次：依賴比自己晚的波次 → 開工前停下，不派任何 agent',
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => ({ ...s, ...(s.id === 't1' ? { wave: 2 } : s.id === 't3' ? { wave: 1 } : {}) })) },
+    expect: (r) => (out(r).halted && /比自己晚的波次/.test(out(r).halt_reason || '') && (out(r).bad_waves || []).length === 1 && r.calls.length === 0 ? [] : [`要開工前停下：${JSON.stringify({ why: out(r).halt_reason, bad: out(r).bad_waves, calls: r.calls.length })}`]),
+  },
+  {
     // 執行核心（0.5）：子任務的 complexity 是建議的模型等級，trace 每筆都有 model 與 tier
     name: '執行核心：子任務標 complexity=strong 時 implementer 用 strong，其他照預設；trace 都有 tier',
     profile: { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'opus' }, defaults: { '*': 'standard' }, floors: {} } },

@@ -488,7 +488,8 @@ function resolveModel(profile, role, stage, suggested, modifiers) {
 //      第一次那筆 trace 標 superseded，重派那筆記 attempt=2 與 escalated_from。再失敗就是缺件，由呼叫端 halted。
 //      dev-integrator、dev-merge-steward（會動到共用分支）與帶 retry:false 的派工不重派。
 //   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped，trace 記一筆 capped=true），呼叫端照缺件 halted 交人，不靜默截斷。
-// workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents })。
+// workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents[, roles] })。
+//   roles（選填）：只准派的 agent_type 清單；自訂腳本由 awf.py 帶入，派清單以外的 agent 會 throw。
 const AWF_NO_RETRY = ['dev-integrator', 'dev-merge-steward']
 function awfKernel() { return awfKernel.s || (awfKernel.s = { profile: null, stage: '', modifiers: [], plan: {}, max: 0, count: 0, capped: [], used: {} }) }
 function awfKernelInit(o) {
@@ -496,6 +497,7 @@ function awfKernelInit(o) {
   const c = o || {}
   k.profile = c.profile || null; k.stage = c.stage || ''; k.modifiers = [...(c.modifiers || [])]
   k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}; k.seen = {}
+  k.roles = Array.isArray(c.roles) ? [...c.roles] : null     // 有給就只准派這些 agent_type（自訂腳本用）；其他的直接 throw，不派
   awfState().dispatch = awfAgent     // 片段裡的派工（challengeList、verifyFindings）也經過核心
   return k
 }
@@ -531,6 +533,7 @@ function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ 
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   const o = opts || {}
+  if (k.roles && !k.roles.includes(o.agentType)) throw new Error(`不能派 ${o.agentType || '（沒給 agentType）'}：這支腳本只能派登記過的角色`)
   // label 要唯一（trace、紀錄檔、失敗升級都靠它對）：同一支 workflow 重複用同一個 label 時，第二次起自動加序號
   k.seen = k.seen || {}
   const raw = o.label || ''

@@ -345,7 +345,8 @@ const HAS_DESIGN = R.stages.includes('design')
 //      第一次那筆 trace 標 superseded，重派那筆記 attempt=2 與 escalated_from。再失敗就是缺件，由呼叫端 halted。
 //      dev-integrator、dev-merge-steward（會動到共用分支）與帶 retry:false 的派工不重派。
 //   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped，trace 記一筆 capped=true），呼叫端照缺件 halted 交人，不靜默截斷。
-// workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents })。
+// workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents[, roles] })。
+//   roles（選填）：只准派的 agent_type 清單；自訂腳本由 awf.py 帶入，派清單以外的 agent 會 throw。
 const AWF_NO_RETRY = ['dev-integrator', 'dev-merge-steward']
 function awfKernel() { return awfKernel.s || (awfKernel.s = { profile: null, stage: '', modifiers: [], plan: {}, max: 0, count: 0, capped: [], used: {} }) }
 function awfKernelInit(o) {
@@ -353,6 +354,7 @@ function awfKernelInit(o) {
   const c = o || {}
   k.profile = c.profile || null; k.stage = c.stage || ''; k.modifiers = [...(c.modifiers || [])]
   k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}; k.seen = {}
+  k.roles = Array.isArray(c.roles) ? [...c.roles] : null     // 有給就只准派這些 agent_type（自訂腳本用）；其他的直接 throw，不派
   awfState().dispatch = awfAgent     // 片段裡的派工（challengeList、verifyFindings）也經過核心
   return k
 }
@@ -388,6 +390,7 @@ function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ 
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   const o = opts || {}
+  if (k.roles && !k.roles.includes(o.agentType)) throw new Error(`不能派 ${o.agentType || '（沒給 agentType）'}：這支腳本只能派登記過的角色`)
   // label 要唯一（trace、紀錄檔、失敗升級都靠它對）：同一支 workflow 重複用同一個 label 時，第二次起自動加序號
   k.seen = k.seen || {}
   const raw = o.label || ''
@@ -487,7 +490,26 @@ function layerByDeps(items, o = {}) {
 /*@end*/
 // 相依指向清單外的子任務一律停下（gate 只會更嚴）；續跑時已合進整合分支的子任務由 args.integrated 明列，視為已滿足
 const PRIOR = A.integrated || []
-const { layers, unknown, cycle } = layerByDeps(work, { satisfied: [...tests.map((s) => s.id), ...PRIOR], known: new Set([...ids, ...PRIOR]) })
+// 波次（選填）：子任務可以標 wave（正整數，沒標算第 1 波）。同一波做完、合進整合分支才做下一波；波次裡面照相依分層。
+// 沒有任何子任務標 wave 時只有一波，分層結果和不分波完全一樣。parallelism.wave_pause（或 args.wave_pause）＝true 時每做完一波停下交人。
+const waveOf = (s) => (Number.isInteger(s.wave) && s.wave > 0 ? s.wave : 1)
+const WAVES = [...new Set(work.map(waveOf))].sort((a, b) => a - b)
+const WAVE_PAUSE = ((MP.parallelism || {}).wave_pause === true) || A.wave_pause === true
+const badWave = work.flatMap((s) => (s.depends_on || []).filter((d) => work.some((x) => x.id === d && waveOf(x) > waveOf(s))).map((d) => `${s.id}（第 ${waveOf(s)} 波）→${d}（第 ${waveOf(work.find((x) => x.id === d))} 波）`))
+const layers = []
+const layerWave = []      // layers[i] 屬於第幾波
+let unknown = []
+let cycle = []
+if (!badWave.length) {
+  const sat = [...tests.map((s) => s.id), ...PRIOR]
+  for (const w of WAVES) {
+    const mine = work.filter((s) => waveOf(s) === w)
+    const r = layerByDeps(mine, { satisfied: sat, known: new Set([...ids, ...PRIOR]) })
+    if (r.unknown.length || r.cycle.length) { unknown = r.unknown; cycle = r.cycle; layers.length = 0; layerWave.length = 0; break }
+    for (const l of r.layers) { layers.push(l); layerWave.push(w) }
+    mine.forEach((s) => sat.push(s.id))
+  }
+}
 // 依賴不屬於 Build 的子任務（research／check／decision 等）：Build 不做它們，排不進任何一層，明確停下（不是循環）
 const skippedIds = new Set(skipped.map((s) => s.id).filter((id) => !PRIOR.includes(id)))
 const onSkipped = [...tests, ...work].flatMap((s) => (s.depends_on || []).filter((d) => skippedIds.has(d)).map((d) => `${s.id}→${d}(${all.find((x) => x.id === d).kind})`))
@@ -568,9 +590,11 @@ if (badKinds.length) return preHalt(`子任務種類超出 recipe ${R.name} 允�
 // 拆工和 spec 對不上（pack.py 定位不到子任務的 spec_refs）：照做會做錯，停下交人
 const REF_ERRS = Array.isArray(A.spec_ref_errors) ? A.spec_ref_errors.filter((e) => typeof e === 'string' && e) : (A.spec_ref_errors ? [String(A.spec_ref_errors)] : [])
 if (REF_ERRS.length) return preHalt(`子任務的 spec_refs 對不到 spec：${REF_ERRS.slice(0, 8).join('；')}`, `修正子任務的 spec_refs 或 spec 的小節標題（回 ${HAS_DESIGN ? 'sdlc-design' : 'sdlc-plan'} 或交人），重跑 pack.py build 後再跑 sdlc-build`, { spec_ref_errors: REF_ERRS })
+if (badWave.length) return preHalt(`子任務依賴比自己晚的波次：${badWave.join('、')}`, `修正子任務的 wave 或 depends_on（回 ${HAS_DESIGN ? 'sdlc-design' : 'sdlc-plan'} 或交人）後重跑 sdlc-build`, { bad_waves: badWave })
 if (unknown.length) return preHalt(`子任務相依指向不存在的子任務：${unknown.join('、')}`, '確認 subtasks 是否完整；續跑時已合進整合分支的子任務要用 args.integrated 列出', { unknown })
 if (onSkipped.length) return preHalt(`依賴不屬於 Build 的子任務：${onSkipped.join('、')}`, '這些子任務（research／check／decision 等）不在 Build 裡做：先在對應流程完成並確認結果，再把它們列進 args.integrated（視為已滿足）後重跑 sdlc-build，或修正 depends_on', { skipped_deps: onSkipped })
 if (cycle.length) return preHalt(`子任務相依有循環：${cycle.join('、')}`, `修正 subtasks 的 depends_on（回 ${HAS_DESIGN ? 'sdlc-design' : 'sdlc-plan'} 或交人）後重跑 sdlc-build`, { cycle })
+if (WAVES.length > 1) log(`分 ${WAVES.length} 波：${WAVES.map((w) => `第 ${w} 波 ${work.filter((s) => waveOf(s) === w).map((s) => s.id).join('+')}`).join(' → ')}${WAVE_PAUSE ? '（每波做完停下交人）' : ''}`)
 log(`${TEST_FIRST ? 'Red（測試先行）' : 'Tests（實作後補驗證測試）'} ${tests.length} 個；實作分 ${layers.length} 層：${layers.map((l) => l.map((s) => s.id).join('+')).join(' → ')}`)
 
 function settle(subs, res, where) {
@@ -622,6 +646,10 @@ for (let i = 0; i < layers.length; i++) {
     if (h) return h
   }
   if (ok.length < layer.length) return halt(`第 ${i + 1} 層有 ${layer.length - ok.length} 個子任務沒完成，停下交人`)
+  // 一波做完（下一層是下一波）而且設定要停：停下交人確認，續跑時只做剩下的波次
+  if (WAVE_PAUSE && i + 1 < layers.length && layerWave[i + 1] !== layerWave[i]) {
+    return { ...halt(`第 ${layerWave[i]} 波做完並合進 ${BRANCH}，依設定（wave_pause）停下交人確認；確認後續跑做第 ${layerWave[i + 1]} 波`), missing: [], wave_pause: true, wave_done: layerWave[i], waves: WAVES }
+  }
 }
 
 if (!TEST_FIRST && tests.length) {
@@ -634,4 +662,4 @@ if (!TEST_FIRST && tests.length) {
 // 下一段依 recipe：有 sync 就 sync → 它的下一段；沒有 sync 就直接指向 test（沒有 test 就 deliver）
 const NX = NEXT_OF('build')
 const BUILD_NEXT = [NX, NX === 'sync' ? NEXT_OF('sync') : null].filter(Boolean).map((x) => `sdlc-${x}`).join(' → ') || '沒有下一段'
-return { stage: 'build', halted: false, missing: [], branch: BRANCH, test_first: TEST_FIRST, gate: null, next: `${BUILD_NEXT}${A.branch ? `（args 帶 branch=${BRANCH}）` : ''}`, ...results, red: TEST_FIRST ? results.tests : [], recipe: RECIPE, trace: awfTrace() }
+return { stage: 'build', halted: false, missing: [], branch: BRANCH, test_first: TEST_FIRST, gate: null, next: `${BUILD_NEXT}${A.branch ? `（args 帶 branch=${BRANCH}）` : ''}`, ...results, red: TEST_FIRST ? results.tests : [], ...(WAVES.length > 1 ? { waves: WAVES } : {}), recipe: RECIPE, trace: awfTrace() }
