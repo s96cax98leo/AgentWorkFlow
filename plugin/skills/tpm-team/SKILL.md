@@ -159,6 +159,8 @@ agent 沒交件（失敗、throw、逾時、被中止）不等於「沒有發現
 python3 .claude/teams/tools/save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間>
 ```
 
+使用者在閘門上回答了 agent 的問題（open_questions）或做了之後還會用到的決定時，核准指令加 `--answer "<問題>=<答覆>"`（可重複；整個專案都適用的加 `--answer-scope project`，有期限的加 `--answer-expires <YYYY-MM-DD>`）。它會記進決策記憶，之後的資料包自動帶上，agent 不再重問。不是在核准時的決定用 `save_run.py decide <run_dir> --question … --answer … --by … --at …`。答覆照使用者的原話記，不要自己延伸。
+
 `sdlc-merge` 的回傳：`merged`、`decision`、`followups`、`next`。回傳 `needs_sync: true`（PR 落後 base 或有衝突）時沒有退回 PR，照 `next` 走：`sdlc-sync`（args 加 `pr`）→ `sdlc-test` → 走了中轉分支就用 `publish.py --supersedes <原 PR>` 推中轉分支、開新 PR（原 PR 經使用者同意後再關閉）→ 再跑 `sdlc-merge`。`event-post-merge` 回傳 `freeze: true` 時，用 PushNotification 推播決策者（附 revert 提案路徑）；revert PR 由人決定、由人合併，凍結期間不跑合併。`sdlc-merge` 產生 followup 或 `event-post-merge` 歸因出的錯誤，若同一類已出現過，收尾時建議使用者載入 `correct` skill，把它變成強制機制而不只是再修一次。
 
 **sdlc-sync 之後（`branch` 與 `pr`）**：`sdlc-sync` 回傳的 `head_branch` 和原分支不同，表示走了中轉分支。之後：

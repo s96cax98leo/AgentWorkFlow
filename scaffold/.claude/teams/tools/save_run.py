@@ -31,7 +31,13 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
           （缺件：不能政策核准；人工核准可以但會警告）。agent 自己寫的紀錄不會被覆寫。
           dev-merge-steward（沒有 Write 工具）的紀錄由本工具依它的信封代寫（標明「由 save_run 代寫」）。
           回傳沒有 trace（舊 workflow）只印警告，不判缺件。
-    python3 save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間> [--note <備註>] [--profile <檔>]（plan 以外的段會用 profile 重算 recipe，resolved 被改鬆就拒絕）
+    python3 save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間> [--note <備註>] [--profile <檔>]
+        [--answer "<問題>=<答覆>"]… [--answer-scope epic|project] [--answer-expires <YYYY-MM-DD>]
+        --answer：人在閘門上回答的問題，記進 <runs_dir>/decisions.jsonl（決策記憶）；之後的資料包會帶上相關的，agent 不再重問。
+        只有人的核准能帶 --answer；範圍預設 epic（只給這個需求），project 是整個專案。
+    python3 save_run.py decide <run_dir> --question <問題> --answer <答覆> --by <誰> --at <ISO 時間> [--scope epic|project] [--expires <YYYY-MM-DD>]
+        不在核准時也可以記一筆決定。
+       （plan 以外的段會用 profile 重算 recipe，resolved 被改鬆就拒絕）
         只有狀態 done 的段能核准；recipe 裡 SDLC 前面的每一段都要 done，有閘門的都要已核准（整條閘門鏈，
         不只緊鄰的前一段：build、sync 沒有閘門，不能讓 test 跳過 design 的核准）。recipe 裡有、run.json 卻沒有的段判錯
         （只有沒有 recipe 的舊 run 容許缺 sync）；recipe 沒有的段（skipped）不檢查。已取消的 run 不能核准。
@@ -87,6 +93,52 @@ GHOSTWRITTEN = "由 save_run 代寫"
 
 def opt(argv: list[str], name: str, default: str = "") -> str:
     return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
+
+
+def opts(argv: list[str], name: str) -> list[str]:
+    return [argv[i + 1] for i, a in enumerate(argv) if a == name and i + 1 < len(argv)]
+
+
+def decision_errors(items: list[tuple], by: str, scope: str, expires: str) -> list[str]:
+    """決策記憶的輸入檢查：只有人能記、問題與答覆都要有、長度有上限、範圍與到期日格式要對。"""
+    errs = []
+    if by == "policy":
+        errs.append("決定只能由人記（--by policy 不能帶答覆）")
+    if scope not in packlib.DECISION_SCOPES:
+        errs.append(f"範圍只能是 {'、'.join(packlib.DECISION_SCOPES)}：{scope}")
+    if expires and not packlib.DATE.match(expires):
+        errs.append(f"到期日要寫成 YYYY-MM-DD：{expires}")
+    for q, a in items:
+        if not q.strip() or not a.strip():
+            errs.append(f"答覆要寫成「問題=答覆」，兩邊都不能空：{(q or a)[:60]}")
+        elif len(q) > 300 or len(a) > 600:
+            errs.append(f"問題最多 300 字、答覆最多 600 字：{q[:40]}")
+    return errs
+
+
+def record_decisions(run: Path, items: list[tuple], by: str, at: str, scope: str, expires: str, stage: str = "") -> int:
+    """把決定附加到 <runs_dir>/decisions.jsonl，並重寫給人與知識庫看的 決策記憶.md。"""
+    runs = run.resolve().parent
+    epic = packlib.run_epic(run)
+    with open(runs / packlib.DECISIONS, "a", encoding="utf-8", newline="\n") as f:
+        for q, a in items:
+            rec = {"question": " ".join(q.split()), "answer": " ".join(a.split()), "scope": scope, "by": by, "at": at, "run": run.resolve().name}
+            rec.update({k: v for k, v in (("stage", stage), ("epic", epic), ("expires", expires)) if v})
+            f.write(json.dumps(rec, ensure_ascii=False, sort_keys=True) + "\n")
+    try:
+        import datetime
+        packlib._write_lf(runs / packlib.DECISIONS_VIEW, packlib.decisions_view(runs, datetime.date.today().isoformat()))
+    except OSError as e:
+        print(f"警告：{packlib.DECISIONS_VIEW} 寫不出來（{e}）；decisions.jsonl 已記錄", file=sys.stderr)
+    return len(items)
+
+
+def split_answer(raw: str) -> tuple:
+    for sep in ("=", "＝"):
+        if sep in raw:
+            q, a = raw.split(sep, 1)
+            return q.strip(), a.strip()
+    return raw.strip(), ""
 
 
 def load(run: Path) -> dict:
@@ -928,6 +980,22 @@ def main(argv: list[str]) -> int:
             print(f"注意：{abandoned_error(data)}，這一段的結果只存檔，不能核准")
         print(f"{stage}：{len(envs)} 份信封，狀態 {st['status']}" + ("（需要使用者核准才能進下一段）" if st.get("gate") and st["status"] == "done" else ""))
         return 1 if errs else 0
+    if cmd == "decide":
+        q, a, by, at = opt(argv, "--question"), opt(argv, "--answer"), opt(argv, "--by"), opt(argv, "--at")
+        scope, exp = opt(argv, "--scope", "epic"), opt(argv, "--expires")
+        errs = ["--by 與 --at 都必填"] if not by or not at else []
+        errs += decision_errors([(q, a)], by, scope, exp)
+        if errs:
+            for e in errs:
+                print(f"不能記錄：{e}", file=sys.stderr)
+            return 1
+        try:
+            record_decisions(run, [(q, a)], by, at, scope, exp)
+        except OSError as e:
+            print(f"不能記錄：{e}", file=sys.stderr)
+            return 1
+        print(f"已記 1 筆決定（{packlib.DECISIONS}；範圍 {scope}）")
+        return 0
     if cmd == "approve":
         if len(argv) < 3:
             print(__doc__)
@@ -950,6 +1018,10 @@ def main(argv: list[str]) -> int:
             errs += recipe_tamper_errors(data, argv)
         if by == "policy" and not note:
             errs.append("--by policy 時 --note 要寫依據的政策名稱")
+        answers = [split_answer(a) for a in opts(argv, "--answer")]
+        a_scope, a_exp = opt(argv, "--answer-scope", "epic"), opt(argv, "--answer-expires")
+        if answers:
+            errs += decision_errors(answers, by, a_scope, a_exp)
         if by == "policy" and st is not None:
             f = run / f"{stage}.json"
             if not f.is_file():
@@ -973,6 +1045,11 @@ def main(argv: list[str]) -> int:
             data["recipe"]["locked"] = True
         dump(run, data)
         print(f"{stage} 已記錄核准：{by} @ {at}")
+        if answers:
+            try:
+                print(f"已記 {record_decisions(run, answers, by, at, a_scope, a_exp, stage)} 筆決定（{packlib.DECISIONS}；範圍 {a_scope}）")
+            except OSError as e:   # 決策記憶是輔助：寫不出來不影響核准
+                print(f"警告：決定沒記成（{e}）；核准已記錄", file=sys.stderr)
         if stage == "plan" and has_recipe(data):
             print(f"recipe 已鎖定：{recipe_summary(data['recipe'])}；之後要改只能 save_run.py escalate（只能加嚴）")
         if st.get("missing_records"):
@@ -1285,6 +1362,38 @@ def selftest() -> int:
         check("abandon：記錄 {by, at, reason}、之後不能核准、status 顯示已取消、缺 --reason 拒絕",
               c == 0 and ab == {"by": "human", "at": "t", "reason": "需求取消"} and c2 != 0 and "已取消" in out2
               and "已取消" in st_out and c3 != 0, out2 + st_out)
+
+        # ── B13 決策記憶
+        d = new_run({"name": "feature"})
+        runs_p = Path(d).parent
+        for f in (packlib.DECISIONS, packlib.DECISIONS_VIEW):
+            (runs_p / f).unlink(missing_ok=True)
+        c, out = call("approve", d, "plan", "--by", "human", "--at", "2026-11-12T01:00:00Z", "--answer", "匯出檔的編碼用什麼？=UTF-8 不加 BOM",
+                      "--answer", "要不要支援 xlsx＝這一版不要", "--answer-scope", "project", "--answer-expires", "2099-01-01")
+        decs = packlib.load_decisions(runs_p)
+        check("B13 決策記憶：人核准時的 --answer 記進 decisions.jsonl（問題、答覆、誰、何時、範圍、到期、run、epic、段）",
+              c == 0 and len(decs) == 2 and decs[0]["question"] == "匯出檔的編碼用什麼？" and decs[0]["answer"] == "UTF-8 不加 BOM" and decs[1]["answer"] == "這一版不要"
+              and decs[0]["by"] == "human" and decs[0]["scope"] == "project" and decs[0]["expires"] == "2099-01-01" and decs[0]["run"] == Path(d).name
+              and decs[0]["stage"] == "plan" and decs[0]["epic"] == "e" and "已記 2 筆決定" in out, out + str(decs))
+        check("B13 決策記憶：決策記憶.md 跟著更新（給人與知識庫看）", "UTF-8 不加 BOM" in (runs_p / packlib.DECISIONS_VIEW).read_text(encoding="utf-8"))
+        c, out = call("decide", d, "--question", "匯出檔的編碼用什麼？", "--answer", "改成加 BOM", "--by", "human", "--at", "t", "--scope", "project")
+        got = packlib.relevant_decisions(runs_p, "別的 run", "", "匯出檔的編碼", "2026-11-12")
+        check("B13 決策記憶：decide 可以在核准以外記一筆；同一題後面的答覆取代前面的；之後的 run 查得到", c == 0 and [x["answer"] for x in got if "編碼" in x["question"]] == ["改成加 BOM"], out + str(got))
+        check("B13 決策記憶：到期日過了就查不到", all("xlsx" not in x["question"] for x in packlib.relevant_decisions(runs_p, "x", "", "要不要支援 xlsx 匯出", "2099-06-01"))
+              and any("xlsx" in x["question"] for x in packlib.relevant_decisions(runs_p, "x", "", "要不要支援 xlsx 匯出", "2026-11-12")))
+        n0 = len(packlib.load_decisions(runs_p))
+        d2 = new_run({"name": "feature"})
+        bad = [call("approve", d2, "plan", "--by", "human", "--at", "t", "--answer", "沒有答覆"),
+               call("approve", d2, "plan", "--by", "human", "--at", "t", "--answer", "q=a", "--answer-scope", "everywhere"),
+               call("approve", d2, "plan", "--by", "human", "--at", "t", "--answer", "q=a", "--answer-expires", "明年"),
+               call("decide", d2, "--question", "q", "--answer", "a", "--by", "policy", "--at", "t"),
+               call("decide", d2, "--question", "q" * 301, "--answer", "a", "--by", "human", "--at", "t")]
+        check("B13 決策記憶：格式不對（沒答覆、範圍或到期日寫錯、太長）與政策核准都拒絕，而且不記、不核准",
+              all(c != 0 for c, _ in bad) and len(packlib.load_decisions(runs_p)) == n0 and not load(Path(d2))["stages"]["plan"].get("approved"), str([o for _, o in bad]))
+        d3 = new_run({"name": "feature"}, approve_plan=True)
+        call("stage", d3, "design", stdin={"stage": "design", "recipe": {"name": "feature"}, "design": _env({"epic": "e", "subtasks": [{"id": "t", "title": "t", "kind": "code", "owns": ["a"], "depends_on": [], "acceptance": ["x"]}]}), "trace": []})
+        c, out = call("approve", d3, "design", "--by", "policy", "--at", "t", "--note", "p", "--answer", "q=a")
+        check("B13 決策記憶：政策核准不能帶 --answer", c != 0 and "只能由人記" in out and len(packlib.load_decisions(runs_p)) == n0, out)
 
         # ── SP2.1 intent 檢查（I1）
         d = new_run()

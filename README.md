@@ -99,6 +99,7 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 | 資料包 | 每段開跑前由工具（不是 agent）整理好需求、知識庫命中的行段、前面各段的紀錄 | `pack.py` |
 | 兩段式調研 | 先「定位」行段，再由分析 agent 只讀那些行段。定位先由工具做（不花 token），不夠才派便宜的模型補 | 內建於 `sdlc-plan`；`locate.py` |
 | 子任務資料包 | build 前為每個子任務整理好 spec 對應小節的行段、對得上的限制文件、相依子任務的介面；實作的 agent 不用整份讀 spec | `pack.py build`、子任務的 `spec_refs` |
+| 決策記憶 | 人在閘門上答過的問題記下來，之後的資料包帶上相關的，agent 不再重問 | `save_run.py approve --answer`、`decide` |
 | 調研重用 | plan 重跑時，來源檔沒變的調研角度直接沿用；閘門會重新核對來源的雜湊 | `pack.py --reuse-from`、`--keep-research` |
 | 派工數上限 | 一支 workflow 最多派幾個 agent，到上限就停下交人，不靜默截斷 | `limits.max_agents` |
 

@@ -921,6 +921,20 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
         pair(2, f"I7 {short} 用 shell 寫 執行紀錄索引.md", "cp a.md repos/app/執行紀錄索引.md",
              "Copy-Item a.md repos/app/執行紀錄索引.md", agent=who)
         pair(0, f"I7 {short} 讀 context.md 放行", "cat _tpm/runs/x/context.md", "Get-Content _tpm/runs/x/context.md", agent=who)
+    # B13 決策記憶：decisions.jsonl 與 決策記憶.md 只由主 session 跑 save_run.py 寫（資料包會把它帶給之後的 agent）
+    for who in (WRT, IMP):
+        short = who.rsplit(":", 1)[-1]
+        tool(2, f"B13 {short} Write decisions.jsonl", "Write", {"file_path": str(H1W / "_tpm/runs/decisions.jsonl")}, who)
+        tool(2, f"B13 {short} Edit 決策記憶.md", "Edit", {"file_path": str(H1W / "_tpm/runs/決策記憶.md")}, who)
+        pair(2, f"B13 {short} 用 shell 寫 decisions.jsonl", "echo '{}' >> _tpm/runs/decisions.jsonl",
+             "Add-Content -Path _tpm/runs/decisions.jsonl -Value '{}'", agent=who)
+        pair(2, f"B13 {short} 跑 save_run.py decide", "python3 .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t",
+             "python .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t", agent=who)
+        pair(0, f"B13 {short} 讀 decisions.jsonl 放行", "cat _tpm/runs/decisions.jsonl", "Get-Content _tpm/runs/decisions.jsonl", agent=who)
+    tool(0, "B13 主 session Write decisions.jsonl 放行", "Write", {"file_path": str(H1W / "_tpm/runs/decisions.jsonl")})
+    pair(0, "B13 主 session 跑 save_run.py decide 放行", "python3 .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t",
+         "python .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t")
+    tool(0, "B13 tpm-writer 寫 <run>/decision/決策紀錄.md 放行（事件產出，不是決策記憶檔）", "Write", {"file_path": str(H1W / "_tpm/runs/x/decision/決策紀錄.md")}, WRT)
     tool(0, "I7 tpm-writer 寫 runs_dir/<run>/deliver/x.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/deliver/x.md")}, WRT)
     tool(0, "I7 dev-implementer 寫 repo 的 context.md 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "docs/context.md")}, IMP)
     tool(0, "I7 主 session Write context.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/context.md")})

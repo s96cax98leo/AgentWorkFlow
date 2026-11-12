@@ -614,8 +614,9 @@ STAGE_JSON_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:" + "|".join(re.escape(s) for 
                                  + r")\W{0,16}\.json\b", re.I)
 # context.md（runs_dir 底下，所有 agent 共用的背景，能寫等於持久注入指令）與執行紀錄索引.md（任何位置）只由主 session 跑 save_run.py 產生
 # pack.md（各段的資料包，agent 開工先讀）同樣只由主 session 跑 pack.py 產生
-SHARED_CONTEXT_NAMES = ("context.md", "pack.md")
-CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b", re.I)
+# decisions.jsonl 與 決策記憶.md（決策記憶：人在閘門上的答覆，資料包會帶給之後的 agent）只由主 session 跑 save_run.py 寫
+SHARED_CONTEXT_NAMES = ("context.md", "pack.md", "decisions.jsonl", "決策記憶.md")
+CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\bdecisions\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md", re.I)
 RUN_INDEX_FRAGMENT = re.compile(r"執行紀錄索引")
 
 
@@ -1469,7 +1470,7 @@ REVIEW_REPORTS = {
 }
 
 
-RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "pack.md", "執行紀錄索引.md", "run.json"))
+RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "pack.md", "執行紀錄索引.md", "run.json", "決策記憶.md"))
 
 
 def check_read(data: dict) -> None:
@@ -1526,7 +1527,7 @@ def check_paths(data: dict) -> None:
         block(f"{agent} 不能寫 {path.name}（{RUNS} 底下的 run.json、<段>.json 是 save_run.py 寫的閘門資料，publish.py 與政策核准會重讀）")
     if role and ((RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in SHARED_CONTEXT_NAMES)
                  or fold(path.name) == fold("執行紀錄索引.md")):
-        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md 是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
+        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md、決策記憶是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
               "都只由主 session 跑 save_run.py／pack.py 產生）")
     if role in awf_config.RECORD_ONLY_ROLES:
         # 只寫執行紀錄的角色：只能寫 <runs_dir>/<run>/<段>/<檔名>.md（白名單，照原樣比對；至少兩層子目錄，上一層是段名）；
