@@ -101,7 +101,8 @@ python3 .claude/teams/tools/save_run.py init <run_dir> --event <sdlc|brief|upstr
    ```bash
    python3 .claude/teams/tools/pack.py <stage> --run <run_dir>
    ```
-   它寫 `<run_dir>/<stage>/pack.md`（需求、知識庫命中的行段、前面各段的紀錄），並把要帶給 workflow 的參數寫在 `<run_dir>/<stage>/pack-args.json`：**把這個檔的內容併進 args**（`pack`；plan 段可能還有 `reuse`）。
+   它寫 `<run_dir>/<stage>/pack.md`（需求、知識庫命中的行段、前面各段的紀錄），並把要帶給 workflow 的參數寫在 `<run_dir>/<stage>/pack-args.json`：**把這個檔的內容併進 args**（`pack`；plan 段可能還有 `reuse`、`located`；build 段還有 `task_packs`，以及 `spec_ref_errors`）。
+   - build 段會多寫每個子任務的資料包 `<run_dir>/build/<子任務 id>/pack.md`（子任務說明、spec 對應小節的行段、對得上的限制文件、相依子任務的介面）。子任務清單取自 `<run_dir>/design.json`（沒有 design 段取 `plan.json`）；續跑只傳部分子任務時加 `--subtasks <檔>`。`spec_ref_errors` 不是空的代表拆工和 spec 對不上，`sdlc-build` 會停下：先修 spec_refs 或 spec 的標題。
    - plan 段重跑、或同一個 epic 另開 run（加 `--reuse-from <舊 run_dir>`）時，來源檔沒變的調研角度會放進 `reuse`，`sdlc-plan` 直接沿用、不再派工。需求文字改了預設全部重做；使用者確認「改的地方不影響調研」才加 `--keep-research`。
 1. 用 `Workflow({name: "<workflow>", args: {...}})` 執行。args 傳 JSON 物件，不要傳字串。
    - **例外**：涉及授權判斷的敏感流程（例如要 agent 執行它可能拒做的操作），改用 Agent 工具逐段派，不要用 Workflow 一次轉發；Workflow 會把使用者訊息當授權轉給 subagent，容易造成誤解或拒做。

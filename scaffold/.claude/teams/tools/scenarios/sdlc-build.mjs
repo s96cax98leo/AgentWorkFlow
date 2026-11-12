@@ -46,6 +46,31 @@ export default [
     },
   },
   {
+    // 子任務資料包（pack.py build）：派工單引用自己那一份；路徑不對的不採用
+    name: '子任務資料包：派工單引用自己的資料包，路徑不對的不採用',
+    args: { task_packs: { t1: '_runs/demo/build/t1/pack.md', t2: '_runs/demo/build/../../secrets/pack.md', t3: '_runs/demo/build/t1/pack.md' } },
+    expect: (r) => {
+      const errs = []
+      const all = Object.entries(r.prompts).filter(([, v]) => v)
+      const t1 = all.filter(([k]) => /:t1(#|$)/.test(k))
+      if (!t1.length || t1.some(([, v]) => !/子任務資料包（開工先讀這份[^\n]*：_runs\/demo\/build\/t1\/pack\.md/.test(v))) errs.push('t1 的派工單要引用自己的資料包')
+      if (all.some(([k, v]) => !/:t1(#|$)/.test(k) && /子任務資料包（開工先讀/.test(v))) errs.push('路徑含 .. 或不是自己那一份的資料包不該被引用')
+      if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
+      return errs
+    },
+  },
+  {
+    name: '子任務資料包：spec_refs 對不到 spec 就停下，不派任何 agent',
+    args: { spec_ref_errors: ['t1：spec.md#不存在的小節：spec.md 裡沒有這個標題'] },
+    expect: (r) => {
+      const errs = []
+      if (!out(r).halted || !/spec_refs 對不到 spec/.test(out(r).halt_reason || '')) errs.push(`應該停下：${JSON.stringify(out(r).halt_reason)}`)
+      if (Object.values(r.prompts).some((v) => v)) errs.push('停下前不該派工')
+      if (!Array.isArray(out(r).trace)) errs.push('halted 也要帶 trace')
+      return errs
+    },
+  },
+  {
     name: '缺件：實作子任務沒交件',
     fakes: { 'Implement:t2': NONE },
     expect: (r) => {

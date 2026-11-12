@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-build',
   description: 'AI-native SDLC 第 3 段 Build：依開發規範 profile（methodology）決定測試時機（測試先行＝先寫會失敗的測試；否則實作後補驗證測試）→ 依相依分層、每層子任務在各自 worktree 平行實作 → integrator 合併到 {{BRANCH_PREFIX}}<epic>',
-  whenToUse: 'sdlc-design 的 spec＋plan 核准之後（recipe 沒有 design 段時是 sdlc-plan 核准之後）；args 加 subtasks，可加 recipe／modifiers／size（沒給＝feature）、revert_commits（recipe=revert 要 revert 的 commit）（sdlc-design 回傳的 design.payload.subtasks）；sdlc-sync 走過中轉分支後退回 build 時加 branch（中轉分支名）；halted 後續跑 subtasks 只傳回傳的 remaining_subtasks，並把回傳的 integrated 傳成 args.integrated',
+  whenToUse: 'sdlc-design 的 spec＋plan 核准之後（recipe 沒有 design 段時是 sdlc-plan 核准之後）；args 加 subtasks，可加 pack.py build 寫的 task_packs／spec_ref_errors（pack-args.json 整份併進來）、recipe／modifiers／size（沒給＝feature）、revert_commits（recipe=revert 要 revert 的 commit）（sdlc-design 回傳的 design.payload.subtasks）；sdlc-sync 走過中轉分支後退回 build 時加 branch（中轉分支名）；halted 後續跑 subtasks 只傳回傳的 remaining_subtasks，並把回傳的 integrated 傳成 args.integrated',
   phases: [
     { title: 'Red', detail: 'profile 的 build.test_first=true 時：dev-acceptance-tester 每個 test 子任務一個，平行寫會失敗的測試，合進整合分支後才實作' },
     { title: 'Implement', detail: 'dev-implementer：同一層的子任務平行，各自 worktree' },
@@ -393,7 +393,11 @@ const onSkipped = [...tests, ...work].flatMap((s) => (s.depends_on || []).filter
 
 // 有 paths 的限制文件只給擁有的路徑對得上的子任務（例如前端規範不發給只改後端的子任務）
 const taskConstraints = (s) => { const l = awfConstraints(MP, 'build', s.owns || []); return l.length ? `\n這個子任務另外要遵守（依擁有的路徑對到的限制文件；先找相關行段再讀）：\n${awfConstraintLines(l)}` : '' }
-const taskBrief = (s) => `子任務 ${s.id}「${s.title}」\n擁有（只能改）：${(s.owns || []).join('、')}\n完成條件：${(s.acceptance || []).join('；')}\nStory：${(s.story_ids || []).join('、') || '見 spec'}${taskConstraints(s)}`
+// 子任務資料包（pack.py build 產生，主 session 把 pack-args.json 的 task_packs 併進 args）：路徑不是這個子任務在 run 目錄底下的 pack.md 就不採用
+const TASK_PACKS = (A.task_packs && typeof A.task_packs === 'object' && !Array.isArray(A.task_packs)) ? A.task_packs : {}
+const taskPack = (s) => { const p = TASK_PACKS[s.id]; return (typeof p === 'string' && p.replace(/\\/g, '/').endsWith(`/build/${s.id}/pack.md`) && !p.split(/[\\/]/).includes('..')) ? p : '' }
+const taskBrief = (s) => `子任務 ${s.id}「${s.title}」\n擁有（只能改）：${(s.owns || []).join('、')}\n完成條件：${(s.acceptance || []).join('；')}\nStory：${(s.story_ids || []).join('、') || '見 spec'}${taskConstraints(s)}` +
+  (taskPack(s) ? `\n子任務資料包（開工先讀這份；spec 與限制文件只讀它列的行段，不夠再找）：${taskPack(s)}` : '')
 const wtFor = (s) => `${A.repo}/.worktrees/${A.epic}--${s.id}`
 
 function runTask(s, role, phaseName, extra) {
@@ -451,6 +455,9 @@ if (R.errors.length) return preHalt(`recipe 解析有錯：${R.errors.join('；'
 // recipe 的 build_kinds：子任務種類超出就開工前停下（例如 docs 只能有 doc、test-only 只能有 test）；publish／merge_gate 另依實際 diff 反查
 const badKinds = [...tests, ...work].filter((s) => !R.build_kinds.includes(s.kind))
 if (badKinds.length) return preHalt(`子任務種類超出 recipe ${R.name} 允許的 build_kinds（${R.build_kinds.join('、') || '無'}）：${badKinds.map((s) => `${s.id}(${s.kind})`).join('、')}`, `改用涵蓋這些種類的 recipe（save_run.py escalate）或修正子任務後重跑 sdlc-build`, { bad_kinds: badKinds.map((s) => s.id) })
+// 拆工和 spec 對不上（pack.py 定位不到子任務的 spec_refs）：照做會做錯，停下交人
+const REF_ERRS = Array.isArray(A.spec_ref_errors) ? A.spec_ref_errors.filter((e) => typeof e === 'string' && e) : (A.spec_ref_errors ? [String(A.spec_ref_errors)] : [])
+if (REF_ERRS.length) return preHalt(`子任務的 spec_refs 對不到 spec：${REF_ERRS.slice(0, 8).join('；')}`, `修正子任務的 spec_refs 或 spec 的小節標題（回 ${HAS_DESIGN ? 'sdlc-design' : 'sdlc-plan'} 或交人），重跑 pack.py build 後再跑 sdlc-build`, { spec_ref_errors: REF_ERRS })
 if (unknown.length) return preHalt(`子任務相依指向不存在的子任務：${unknown.join('、')}`, '確認 subtasks 是否完整；續跑時已合進整合分支的子任務要用 args.integrated 列出', { unknown })
 if (onSkipped.length) return preHalt(`依賴不屬於 Build 的子任務：${onSkipped.join('、')}`, '這些子任務（research／check／decision 等）不在 Build 裡做：先在對應流程完成並確認結果，再把它們列進 args.integrated（視為已滿足）後重跑 sdlc-build，或修正 depends_on', { skipped_deps: onSkipped })
 if (cycle.length) return preHalt(`子任務相依有循環：${cycle.join('、')}`, `修正 subtasks 的 depends_on（回 ${HAS_DESIGN ? 'sdlc-design' : 'sdlc-plan'} 或交人）後重跑 sdlc-build`, { cycle })
