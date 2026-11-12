@@ -8,7 +8,7 @@ export default [
     {
       name: '已跟上',
       fakes: { plan: SYNC_PLAN({ strategy: 'none', behind: 0, conflicts: [] }) },
-      expect: (r) => (r.out && r.out.strategy === 'none' && !r.out.halted && !r.labels.some((l) => l.startsWith('apply')) ? [] : [`已跟上不該執行：${JSON.stringify(r.out && { strategy: r.out.strategy, halted: r.out.halted })}`]),
+      expect: (r) => (r.out && r.out.strategy === 'none' && !r.out.halted && !r.labels.some((l) => l.startsWith('apply')) && r.out.plan_agent && r.out.plan_agent.status === 'done' ? [] : [`已跟上不該執行：${JSON.stringify(r.out && { strategy: r.out.strategy, halted: r.out.halted })}`]),
     },
     {
       name: '已推送、沒衝突：merge',

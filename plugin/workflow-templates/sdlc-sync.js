@@ -336,7 +336,9 @@ const COMMON = `--repo "${EPIC_DIR}" --branch ${BRANCH} --base ${BASE}`
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，基準 ${BASE}）\nrun 目錄：${A.run_dir}\n不 push、不 force push；rebase 只能透過 sync_branch.py，而且只對沒推送過的分支。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}`
 
 const sameSet = (a, b) => { const x = [...new Set(a)].sort(); const y = [...new Set(b)].sort(); return x.length === y.length && x.every((v, i) => v === y[i]) }
-const out = (o) => ({ stage: 'sync', gate: null, branch: BRANCH, recipe: RECIPE, ...o, trace: awfTrace() })
+// plan agent 的信封一律放進回傳（plan_agent）：策略是 none 時沒有 apply，少了它 save_run.py stage 會把 plan 判成缺件
+let PLAN_ENV = null
+const out = (o) => ({ stage: 'sync', gate: null, branch: BRANCH, recipe: RECIPE, ...(PLAN_ENV ? { plan_agent: PLAN_ENV } : {}), ...o, trace: awfTrace() })
 // sync 之後的段（recipe 決定；預設 test）
 const AFTER = NEXT_OF('sync') || 'test'
 if (R.errors.length) return out({ halted: true, halt_reason: `recipe 解析有錯：${R.errors.join('；')}`, missing: [], next: '修正 args.recipe／modifiers 後重跑 sdlc-sync' })
@@ -347,6 +349,7 @@ const planRes = await tryAgent(
   `只跑這個指令，不改任何東西。把它印出的 JSON 原樣抄進 payload.sync（strategy、behind、published、conflicts、transit_branch、halted、reason）。exit 1（halted）時 status 填 needs_decision，open_questions 寫 reason。\npayload 用 build-result（task_id=sync-plan、branch=${BRANCH}、commits、files_changed、tests 給空陣列）。`,
   { label: 'plan', phase: 'Plan', agentType: NS + 'dev-integrator', schema: BUILD },
 )
+PLAN_ENV = planRes || null
 const plan = planRes && planRes.payload && planRes.payload.sync
 if (!plan) return out({ halted: true, halt_reason: `plan ${planRes ? '沒有回傳 payload.sync（沒照抄工具輸出）' : '缺件（agent 失敗、逾時或被中止）'}`, missing: planRes ? [] : ['plan'], next: null })
 if (plan.halted || planRes.status !== 'done') return out({ halted: true, halt_reason: `sync_branch.py plan 停下：${plan.reason || planRes.summary}`, plan, next: '依 reason 處理（例如固定 rebase 但分支已推送：改 strategy 或交人決定）後重跑 sdlc-sync' })

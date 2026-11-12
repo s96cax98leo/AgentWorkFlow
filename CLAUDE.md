@@ -57,7 +57,7 @@ python3 .claude/teams/tools/locate.py --selftest                                
 python3 .claude/teams/tools/awf_cost.py --selftest                                         # workflow 的 token 與時間
 ```
 
-在 repo 內也可以直接驗，例如 `python3 scaffold/.claude/teams/tools/build.py --check`（處理 `plugin/workflow-templates/`）、`node scaffold/.claude/teams/tools/check_workflows.mjs --agents-dir plugin/agents`，路徑會依檔案位置推算。
+在 repo 內也可以直接驗，例如 `python3 scaffold/.claude/teams/tools/build.py --check`（處理 `plugin/workflow-templates/`），路徑會依檔案位置推算。範本帶佔位符，不能直接乾跑；乾跑由 `tests/smoke_init.py` 在 init 過的暫存專案裡做（`awf.py render --all` 後 `check_workflows.mjs --wf-dir`）。
 
 計畫型的工作用可驗證 checklist：`python3 scaffold/.claude/teams/tools/checklist.py check <checklist.md> [--id <前綴>] [--write]`。打勾以驗證指令的實際執行結果為準。checklist 放在根目錄的 `plans/`（本機，不進版控）。
 

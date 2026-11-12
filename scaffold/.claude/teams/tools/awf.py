@@ -303,7 +303,8 @@ def stage_args(run: Path, run_arg: str, data: dict, stage: str, workflow: str, p
     store = dict(data.get("args") or {})
     notes: list[str] = []
     a: dict = {k: v for k, v in store.items() if v not in (None, "")}
-    a["run_dir"] = run_arg
+    # run 目錄給絕對路徑：agent 常常 cd 進目標 repo 的 worktree 工作，相對路徑會讓紀錄與 log 寫到別的目錄
+    a["run_dir"] = Path(run).resolve().as_posix()
     if data.get("target_repo") and "repo" not in a:
         a["repo"] = data["target_repo"]
     if data.get("requirement") and workflow in ("sdlc-plan", "sdlc-design"):
@@ -362,7 +363,14 @@ def run_pack(stage: str, run_arg: str, a: dict, run: Path, project: Path) -> tup
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             packlib.run_pack(argv, project)
         extra = load_json(run / stage / packlib.ARGS)
-        return (extra if isinstance(extra, dict) else {}), [ln.strip() for ln in buf.getvalue().splitlines() if ln.strip()][:6]
+        extra = extra if isinstance(extra, dict) else {}
+        # 資料包路徑也給絕對路徑（和 run_dir 同理）；pack-args.json 本身維持相對路徑，內容可重現
+        absp = lambda v: (Path(project) / v).resolve().as_posix() if isinstance(v, str) and v and not Path(v).is_absolute() else v
+        if "pack" in extra:
+            extra["pack"] = absp(extra["pack"])
+        if isinstance(extra.get("task_packs"), dict):
+            extra["task_packs"] = {k: absp(v) for k, v in extra["task_packs"].items()}
+        return extra, [ln.strip() for ln in buf.getvalue().splitlines() if ln.strip()][:6]
     except Exception as e:  # noqa: BLE001  輔助功能不擋流程
         return {}, [f"資料包沒有產生（{type(e).__name__}：{e}）；這一段照常跑"]
     finally:
@@ -910,8 +918,8 @@ def selftest() -> int:
             a = act_of(out)
             emb = json.loads((proj / d / ".wf" / "sdlc-plan.args.json").read_text(encoding="utf-8"))
             check("參數：plan 段帶 repo、epic、requirement、run_dir、使用者指定的 recipe 與 --set 的值，並備好資料包", a["action"] == "run_workflow" and emb.get("repo") == "repos/app"
-                  and emb.get("epic") == "demo" and emb.get("requirement") == "需求" and emb.get("run_dir") == d and emb.get("recipe") == "bugfix" and emb.get("base") == "main"
-                  and str(emb.get("pack", "")).endswith("/plan/pack.md") and (proj / d / "plan" / "pack.md").is_file(), emb)
+                  and emb.get("epic") == "demo" and emb.get("requirement") == "需求" and emb.get("run_dir") == (proj / d).resolve().as_posix() and emb.get("recipe") == "bugfix" and emb.get("base") == "main"
+                  and emb.get("pack") == (proj / d).resolve().as_posix() + "/plan/pack.md" and (proj / d / "plan" / "pack.md").is_file(), emb)
             check("參數：腳本裡內嵌同一份 args，next 記下等待中的段", json.dumps(emb, ensure_ascii=False, separators=(",", ":")) in (proj / d / ".wf" / "sdlc-plan.js").read_text(encoding="utf-8")
                   and sr.load(proj / d)["awf"]["pending"]["stage"] == "plan")
             run = proj / d
@@ -1015,7 +1023,7 @@ def selftest() -> int:
             call("start", "--run", d, "--event", "meeting", "--set", "source=meetings/a.md")
             a = act_of(call("next", "--run", d)[1])
             check("事件：meeting 用 event-meeting，帶 source 與 run_dir；缺參數時回 need_input", a["action"] == "run_workflow" and a["workflow"] == "event-meeting" and a["stage"] == "meeting"
-                  and json.loads((proj / d / ".wf" / "event-meeting.args.json").read_text(encoding="utf-8")) == {"source": "meetings/a.md", "run_dir": d}, a)
+                  and json.loads((proj / d / ".wf" / "event-meeting.args.json").read_text(encoding="utf-8")) == {"source": "meetings/a.md", "run_dir": (proj / d).resolve().as_posix()}, a)
             call("start", "--run", "_runs/ev2", "--event", "upstream")
             a = act_of(call("next", "--run", "_runs/ev2")[1])
             check("事件：缺必要參數回 need_input 並說明怎麼補", a["action"] == "need_input" and set(a["need"]) == {"what", "repo"} and "--set what=" in a["how"], a)
