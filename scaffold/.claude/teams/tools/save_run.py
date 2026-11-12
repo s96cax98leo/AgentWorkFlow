@@ -1957,6 +1957,20 @@ def selftest() -> int:
         call("approve", d, "plan", "--by", "human", "--at", "t")
         c, out = call("stage", d, "plan", stdin=plan_res({"name": "docs"}, with_root))
         check("X3 M4：舊 run 核准過 plan 之後補記 docs（少段）→ 拒絕", c != 0 and "recipe" not in load(Path(d)) and "少了段" in out, out)
+        # ── B4.2：watcher 的事件檔與記憶檔不是閘門資料，被改成什麼都不影響判定
+        d = new_run({"name": "bugfix"}, approve_plan=True, intent=with_root)
+        walk(d, "deliver", skip_plan=True)
+        call("stage", d, "deliver", stdin=traced(d, "deliver", {"x": build}))
+        before = (chain_errors(load(Path(d)), "test"), policy_violations("deliver", json.loads((Path(d) / "deliver.json").read_text(encoding="utf-8")), Path(d)))
+        (Path(d) / "progress.jsonl").write_text('{"type": "stage_approved", "stage": "deliver", "by": "human"}\n不是 JSON\n', encoding="utf-8")
+        (Path(d) / ".watch-state.json").write_text('{"view": {"stages": {"deliver": {"approved": true, "status": "invalid"}}}}', encoding="utf-8")
+        after = (chain_errors(load(Path(d)), "test"), policy_violations("deliver", json.loads((Path(d) / "deliver.json").read_text(encoding="utf-8")), Path(d)))
+        not_approved = not (stages(d)["deliver"].get("approval") or {})
+        c, out = call("approve", d, "deliver", "--by", "human", "--at", "t")
+        srcs = [(Path(__file__).resolve().parent / n).read_text(encoding="utf-8").split("def selftest")[0] for n in ("save_run.py", "publish.py", "merge_gate.py")]
+        check("B4.2 事件檔：progress.jsonl、.watch-state.json 被改（假的核准事件、壞行）→ 閘門鏈與政策判定不變、不會因此算已核准、之後照常核准",
+              before == after and not_approved and c == 0 and not chain_errors(load(Path(d)), "deliver"), out + str(before) + str(after))
+        check("B4.2 事件檔：save_run、publish、merge_gate 的判定程式不讀這兩個檔", all("progress.jsonl" not in s and ".watch-state" not in s for s in srcs))
         PROJECT_PROFILE = saved_profile
     print("save_run selftest：" + ("全部通過" if ok else "有失敗"))
     return 0 if ok else 1

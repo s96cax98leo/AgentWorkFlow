@@ -148,6 +148,7 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `locate.py --repo <repo> --requirement <需求>` | 工具先定位：用需求的用詞對程式與文件做排序，找出要讀的行段。由 `pack.py plan` 呼叫，結果放進 `pack-args.json` 的 `located`；文件角度命中夠就不派定位 agent |
 | `kb.py build｜query｜lint` | 知識層：把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行 |
 | `awf_cost.py` | 讀 workflow transcript，依角色與模型加總 token、時間、平均 context（只做估算，不參與閘門） |
+| `awf_watch.py` | 給外部程式看進度：`awf.py watch` 把 run 的變化寫成 `<run_dir>/progress.jsonl`，`awf.py statusline` 印一行狀態；唯讀、不參與閘門 |
 
 ```bash
 python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 16 支腳本
@@ -162,6 +163,7 @@ python3 .claude/teams/tools/pack.py --selftest
 python3 .claude/teams/tools/kb.py --selftest
 python3 .claude/teams/tools/locate.py --selftest
 python3 .claude/teams/tools/awf_cost.py --selftest
+python3 .claude/teams/tools/awf_watch.py --selftest
 python3 .claude/teams/tools/awf.py --selftest
 ```
 

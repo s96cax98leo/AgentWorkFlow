@@ -133,6 +133,23 @@
         "dir": {"type": "string", "minLength": 1, "description": "索引與檢視（INDEX.md、cards/、hot.md）放哪；預設 _tpm/kb"}
       }
     },
+    "progress": {
+      "type": "object",
+      "description": "選填：進度監看（awf.py watch）。不設就只寫 <run_dir>/progress.jsonl，不呼叫任何外部指令",
+      "additionalProperties": false,
+      "properties": {
+        "notify": {
+          "type": "object",
+          "description": "選填：每個事件呼叫一次的外部指令（例如送到聊天室）。事件以 JSON 從 stdin 給，只含狀態與數字的白名單欄位；內容像機敏值就不送。指令失敗只警告",
+          "required": ["command"],
+          "additionalProperties": false,
+          "properties": {
+            "command": {"description": "指令：字串或參數陣列（不經 shell）", "type": ["string", "array"], "minLength": 1, "minItems": 1, "items": {"type": "string", "minLength": 1}},
+            "events": {"type": "array", "description": "只送這些事件類型；省略＝全部", "items": {"enum": ["run_state", "stage_started", "stage_saved", "waiting_gate", "stage_approved", "record_written", "agent_started", "agent_progress", "workflow_finished", "workflow_stalled", "watch_note"]}}
+          }
+        }
+      }
+    },
     "constraints": {
       "type": "array",
       "description": "選填：限制文件。使用者指定哪份文件（架構、設計、前後端規範、審查規範…）套用到哪些段、哪些路徑；workflow 只帶給對得上的 agent，閘門可以要求逐條對照或跑檢查指令",

@@ -55,6 +55,7 @@ python3 .claude/teams/tools/pack.py --selftest                                  
 python3 .claude/teams/tools/kb.py --selftest                                               # 知識層
 python3 .claude/teams/tools/locate.py --selftest                                           # 工具先定位
 python3 .claude/teams/tools/awf_cost.py --selftest                                         # workflow 的 token 與時間
+python3 .claude/teams/tools/awf_watch.py --selftest                                        # watcher（進度事件、通知、狀態列）
 ```
 
 在 repo 內也可以直接驗，例如 `python3 scaffold/.claude/teams/tools/build.py --check`（處理 `plugin/workflow-templates/`），路徑會依檔案位置推算。範本帶佔位符，不能直接乾跑；乾跑由 `tests/smoke_init.py` 在 init 過的暫存專案裡做（`awf.py render --all` 後 `check_workflows.mjs --wf-dir`）。
@@ -128,6 +129,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **知識層**：`tools/kb.py`（FTS5，退回純 Python BM25；中文 bigram）。輸出包在資料標籤裡；卡片只放標題樹與行號，不放內文。
 - **讀取預算**：`plugin/hooks/read_budget.py`，由 `guard.read_budget_check` 呼叫。只套模版角色；**預設不啟用**（`limits` 沒寫 `mode` 就關閉，內建 profile 不預設 `mode`，由使用者在 init 問答、答案檔的 `read_limits` 或 `methodology.json` 決定要不要開與門檻）；任何例外都放行（I9）。狀態檔在系統暫存目錄的 `awf-read-budget/<session_id>/<agent_id>.json`（`AWF_READ_BUDGET_DIR` 可覆寫，測試用）。
 - **量成本**：`tools/awf_cost.py` 讀 Claude Code 的 workflow transcript（格式沒承諾穩定，解析集中在 `read_agent`、`read_wf_meta`）。基準實跑在 `tests/bench/`（`make_fixture.py` 產生虛構專案、`run_plan.py` 真的呼叫 claude，會花 token，不在 run_all 裡）。
+- **watcher（0.5）**：`tools/awf_watch.py`（`awf.py watch`、`awf.py statusline` 轉給它）。唯讀合併 run.json、執行紀錄檔、workflow transcript（`awf_cost.tail_agent` 增量讀），把前後兩份快照的差異（`diff_events`）附加到 `<run>/progress.jsonl`（格式 `schemas/progress-event.schema.json`），記憶在 `<run>/.watch-state.json`。`workflow_stalled` 只回報、不處理。profile 的 `progress.notify` 預設不設；有設時只送 `NOTIFY_FIELDS` 的欄位，命中 `SECRETISH` 整筆不送。閘門工具不讀這兩個檔（`save_run.py --selftest` 的 B4.2 案例）。整合方式見 `docs/監控與整合.md`。
 - 這些都是輔助：失敗只警告、不擋流程；gate 判定不看它們的輸出（調研重用例外：`verify_reuse` 不符會判 invalid，只會更嚴）。
 
 ### 狀態機與 workflow 範本（0.5）
@@ -251,6 +253,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改執行核心（kernel 片段）**：重跑 `build.py`；`tools/scenarios/sdlc-plan.mjs` 的 `V04` 情境（升級、上限、重用、角度數）要一起改；`save_run.py` 的 `_retried_ok`、`model_errors` 依賴 trace 的 `model`、`tier`、`superseded`、`attempt` 欄位。
 - **改讀取預算**：`plugin/hooks/tests/run.py` 的 A2 一段補該擋與該放（Bash 與 PowerShell 各一），並確認效能檢查（計數路徑 50ms 內）仍通過；任何新的失敗路徑都要放行。
 - **改 pack.py／kb.py／locate.py**：各自的 `--selftest`；改了子任務資料包的路徑或 `pack-args.json` 的鍵，`sdlc-build.js` 的 `taskPack`／`REF_ERRS` 與 `tools/scenarios/sdlc-build.mjs` 的「子任務資料包」情境要一起改；改了 `locate.py` 的輸出格式，`sdlc-plan.js` 的 `toolLocated` 與 `tools/scenarios/sdlc-plan.mjs` 的「工具先定位」情境要一起改；`pack.md` 的內容不能有時間戳或絕對路徑以外會變動的東西（可重現是 `tests/bench/run_plan.py --selftest` 的檢查項）。
+- **改 watcher**：`awf_watch.py --selftest`；事件類型或欄位改了，`schemas/progress-event.schema.json`、`methodology.schema.json` 的 `progress.notify.events`、`docs/監控與整合.md` 的事件表要一起改；送給外部指令的欄位只能加進 `NOTIFY_FIELDS`（不放需求內容、摘要、路徑）；任何失敗都只警告。
 - **改派工單或派工數**：跑 `tests/check_budget.py`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。
 - **新增會寫紀錄的唯讀角色**：加進 `awf_config.py` 的 `RECORD_ONLY_ROLES` 與 `check_agents.py` 的對應檢查，hook 測試補該擋（寫 repo、run.json、merge-audit）與該放（寫 runs_dir 的 `.md`）。
 - **新增 guard.config 欄位**：`guard.config.json.tmpl` 的 `_說明`、`awf_config.py` 的預設值、`docs/自動合併信任模型.md` 或 `docs/自訂與擴充.md` 一起改；`init.py --upgrade` 會把新鍵補進既有專案。

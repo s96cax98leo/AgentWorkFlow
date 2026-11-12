@@ -436,6 +436,7 @@ AgentWorkFlow/
 | [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) | 自動合併的防線分層、啟用前檢查清單、revert 演練 |
 | [`docs/adr-agent-auto-merge.md`](docs/adr-agent-auto-merge.md) | 自動合併的架構決策紀錄 |
 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md) | 開發規範 profile、recipe、平行參數、把自己的 agent 加進 workflow、新增 agent／skill／hook／workflow、套用到既有專案、升級 |
+| [`docs/監控與整合.md`](docs/監控與整合.md) | 從外面看進度與成本：`awf.py watch`、事件流、通知、狀態列、OTel |
 | [`docs/踩坑手冊.md`](docs/踩坑手冊.md) | 實戰教訓：症狀、原因、做法 |
 | [`docs/參考-pstack.md`](docs/參考-pstack.md) | 參考過的外部 plugin（pstack）：差異、引進與沒引進的做法 |
 | [`docs/套用範例.md`](docs/套用範例.md) | 用虛構的「示範客戶 ACME」從 init 走到 deliver |
