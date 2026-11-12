@@ -282,7 +282,7 @@ function awfKernelInit(o) {
   const k = awfKernel()
   const c = o || {}
   k.profile = c.profile || null; k.stage = c.stage || ''; k.modifiers = [...(c.modifiers || [])]
-  k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}
+  k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}; k.seen = {}
   return k
 }
 function awfSetModifiers(mods) { awfKernel().modifiers = [...(mods || [])] }
@@ -317,7 +317,11 @@ function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ 
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   const o = opts || {}
-  const label = o.label || ''
+  // label 要唯一（trace、紀錄檔、失敗升級都靠它對）：同一支 workflow 重複用同一個 label 時，第二次起自動加序號
+  k.seen = k.seen || {}
+  const raw = o.label || ''
+  const nth = (k.seen[raw] = (k.seen[raw] || 0) + 1)
+  const label = nth > 1 ? `${raw}#${nth}` : raw
   const valid = typeof o.valid === 'function' ? o.valid : (r) => !!r && typeof r === 'object' && r.payload !== undefined && r.payload !== null
   const base = { label, phase: o.phase, agentType: o.agentType, schema: o.schema }
   const over = () => { k.capped.push(label); log(`派工數到上限 ${k.max}，不再派 ${label}`); return null }

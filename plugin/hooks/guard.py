@@ -1491,8 +1491,7 @@ def check_read(data: dict) -> None:
 def check_paths(data: dict) -> None:
     if data.get("tool_name") in ("Read", "Grep"):
         check_read(data)  # 機敏檔先擋
-        if data.get("tool_name") == "Read":
-            read_budget_check("read", data)
+        read_budget_check("read", data)  # Read 記帳並擋大檔；Grep 的 content 模式也計入額度
         return
     ti = data.get("tool_input") or {}
     fp = ti.get("file_path") or ti.get("notebook_path") or ""

@@ -158,6 +158,34 @@ def save_store(run: Path, angles: dict) -> None:
     tmp.replace(d / STORE)
 
 
+_SKIP_LISTING = {".git", "__pycache__", "node_modules", ".DS_Store", ".worktrees"}
+
+
+def dir_listing_sha1(d: Path | None) -> str | None:
+    """目錄清單的雜湊（只看這一層的檔名與是不是目錄，不看內容）：目錄裡新增、刪除、改名檔案時會變。讀不到回 None。"""
+    try:
+        names = sorted(f"{e.name}/" if e.is_dir() else e.name for e in d.iterdir() if e.name not in _SKIP_LISTING)  # type: ignore[union-attr]
+    except (OSError, AttributeError):
+        return None
+    return sha1_text("\n".join(names))
+
+
+def source_dirs(repo: Path | None, srcs: list[dict], root: Path | None = None) -> list[dict] | None:
+    """來源檔所在的目錄與清單雜湊；任何一個目錄讀不到回 None。"""
+    out, seen = [], set()
+    for s_ in srcs:
+        parent = _posix(str(Path(s_["path"]).parent))
+        if parent in seen:
+            continue
+        seen.add(parent)
+        full = resolve_source(repo, s_["path"], root)
+        h = dir_listing_sha1(full.parent) if full else None
+        if h is None:
+            return None
+        out.append({"path": parent, "listing_sha1": h})
+    return out
+
+
 def sources_changed(repo: Path | None, entry: dict, root: Path | None = None) -> list[str]:
     """這個角度的來源檔哪些變了（或讀不到）；沒有來源檔的角度一律當成變了（不能沿用）。"""
     srcs = entry.get("sources") if isinstance(entry, dict) else None
@@ -174,6 +202,18 @@ def sources_changed(repo: Path | None, entry: dict, root: Path | None = None) ->
             out.append(f"{s['path']}（讀不到）")
         elif now != s.get("sha1"):
             out.append(f"{s['path']}（內容變了）")
+    if out:
+        return out
+    # 來源檔沒變，再看它們所在的目錄有沒有新增或刪除檔案（新的檔可能就是該讀的）；舊版紀錄沒有 dirs，不能沿用
+    dirs = entry.get("dirs")
+    if not isinstance(dirs, list) or not dirs:
+        return ["沒有目錄清單紀錄（舊版的重用紀錄）"]
+    now_dirs = {d["path"]: d["listing_sha1"] for d in (source_dirs(repo, [s for s in srcs if isinstance(s, dict)], root) or [])}
+    for d in dirs:
+        if not isinstance(d, dict) or now_dirs.get(d.get("path")) is None:
+            out.append(f"{(d or {}).get('path') if isinstance(d, dict) else d}/（目錄讀不到）")
+        elif now_dirs[d["path"]] != d.get("listing_sha1"):
+            out.append(f"{d['path']}/（目錄裡新增、刪除或改名了檔案）")
     return out
 
 
@@ -308,8 +348,12 @@ def record_reuse(run: Path, repo: Path | None, result, requirement: str, root: P
                 warns.append(f"{angle}：來源 {raw} 讀不到，這個角度下次不能沿用")
                 break
             srcs.append({"path": _posix(raw), "sha1": h})
+        dirs = source_dirs(repo, srcs, root) if srcs else None
+        if srcs and dirs is None:
+            warns.append(f"{angle}：來源所在的目錄讀不到，這個角度下次不能沿用")
+            srcs = []
         if srcs:
-            store[angle] = {"plan_mode": mode or "", "requirement_sha1": requirement_key(requirement, root), "sources": srcs,
+            store[angle] = {"plan_mode": mode or "", "requirement_sha1": requirement_key(requirement, root), "sources": srcs, "dirs": dirs,
                             "status": env.get("status"), "envelope": env}
         else:
             store.pop(angle, None)
@@ -489,6 +533,22 @@ def selftest() -> int:
         check("verify：沒有沿用就不檢查", verify_reuse(run, repo, result) == [])
         record_reuse(run, repo, res2, req)
         check("record：沿用的角度保留原紀錄", load_store(run)["code-contracts"]["envelope"] == env("code-contracts"))
+
+        # B12.2：來源檔沒變，但它所在的目錄新增了檔案 → 不沿用（新的檔可能就是該讀的）；拿掉後恢復沿用；舊版紀錄（沒有 dirs）不沿用
+        (repo / "services" / "b.py").write_text("def export_v2():\n    return 2\n", encoding="utf-8")
+        got, notes = reuse_candidates(run, repo, req, "diagnose")
+        check("目錄新增檔案：不沿用並說明", got == {} and any("目錄裡新增" in x for x in notes), str(notes))
+        check("目錄新增檔案：verify 也判不符", verify_reuse(run, repo, res2) != [])
+        (repo / "services" / "b.py").unlink()
+        (repo / "services" / "__pycache__").mkdir()
+        got, notes = reuse_candidates(run, repo, req, "diagnose")
+        check("目錄清單沒變（__pycache__ 之類不算）：照舊沿用", list(got) == ["code-contracts"], str(notes))
+        legacy = load_store(run)
+        legacy["code-contracts"].pop("dirs")
+        save_store(run, legacy)
+        got, notes = reuse_candidates(run, repo, req, "diagnose")
+        check("舊版紀錄沒有目錄清單：不沿用", got == {} and any("目錄清單" in x for x in notes), str(notes))
+        record_reuse(run, repo, result, req)
 
         # 需求文字改了
         got, notes = reuse_candidates(run, repo, req + "（補充）", "diagnose")

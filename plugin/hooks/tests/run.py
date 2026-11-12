@@ -1138,6 +1138,44 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     for i in range(3):
         rb(0, f"沒有 agent_id 不記帳、不擋（第 {i + 1} 次）", R2, no_id)
     check("讀取預算：沒有 agent_id 時沒有寫出 type- 的狀態檔", [], [x.name for x in (RB_STATE / "rb2").glob("type-*")])
+    # B12.1：Grep 的 content 模式與 shell 的 grep 類也計入額度（估計值）；只列檔名、計數、-q、管線不計
+    def gp(w: Path, agent: str = RES, aid: str = "g1", **kw) -> dict:
+        d = {"hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": str(w), "session_id": w.name, "tool_input": {"pattern": "第 1", "path": str(w), **kw}}
+        if agent:
+            d["agent_type"] = agent
+            d["agent_id"] = aid
+        return d
+    RG = rbws("rb-grep", rb_limits(default=30000))
+    rb(0, "Grep 只列檔名（預設模式）不計", RG, gp(RG))
+    rb(0, "Grep count 模式不計", RG, gp(RG, output_mode="count"))
+    rb(2, "Grep content：估計量跨過 80% 先提醒", RG, gp(RG, output_mode="content"), expect="已用 80%")
+    rb(0, "Grep content：重試放行並計入", RG, gp(RG, output_mode="content"))
+    rb(2, "Grep content：額度用完後擋", RG, gp(RG, output_mode="content"), expect="額度已用完")
+    rb(0, "Grep 只列檔名：額度用完後照樣放（讓 agent 能收尾）", RG, gp(RG, output_mode="files_with_matches"))
+    rb(2, "Grep content 用掉的額度和 Read 共用", RG, rd(RG, "small.md", aid="g1"), expect="額度已用完")
+    rb(0, "Grep content：主 session 不計", RG, gp(RG, "", output_mode="content"))
+    rb(0, "Grep content：使用者自己的 agent 不計", RG, gp(RG, "dev-helper", output_mode="content"))
+    rb(0, "Grep content：帶小的 head_limit 估得少（另一個 agent 不會一次跨過 80%）", RG, gp(RG, aid="g2", output_mode="content", head_limit=20))
+    RGS = rbws("rb-grep-sh", rb_limits(default=20000))
+    rb(2, "shell grep 印內容：跨過 80% 先提醒", RGS, rb_sh(RGS, "grep -n 第 big.md"), S, expect="已用 80%")
+    rb(0, "shell grep 印內容：重試放行並計入", RGS, rb_sh(RGS, "grep -n 第 big.md"), S)
+    rb(0, "shell rg 印內容：再計一次", RGS, rb_sh(RGS, "rg 第 big.md"), S)
+    rb(2, "shell grep 印內容：額度用完後擋", RGS, rb_sh(RGS, "grep 第 big.md"), S, expect="額度已用完")
+    rb(0, "shell grep -q 不計也不擋", RGS, rb_sh(RGS, "grep -q 第 big.md"), S)
+    rb(0, "shell grep -l 不計也不擋", RGS, rb_sh(RGS, "grep -rl 第 ."), S)
+    rb(0, "shell grep -c 不計也不擋", RGS, rb_sh(RGS, "grep -c 第 big.md"), S)
+    rb(0, "shell grep 接管線（不是單一簡單指令）不計", RGS, rb_sh(RGS, "grep 第 big.md | head -5"), S)
+    RGP = rbws("rb-grep-ps", rb_limits(default=20000))
+    rb(2, "PS：Select-String 印內容：跨過 80% 先提醒", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md", tool="PowerShell"), S, expect="已用 80%")
+    rb(0, "PS：Select-String 重試放行並計入", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md", tool="PowerShell"), S)
+    rb(0, "PS：sls 再計一次", RGP, rb_sh(RGP, "sls 第 big.md", tool="PowerShell"), S)
+    rb(2, "PS：Select-String 額度用完後擋", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md", tool="PowerShell"), S, expect="額度已用完")
+    rb(0, "PS：Select-String -Quiet 不計也不擋", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md -Quiet", tool="PowerShell"), S)
+    rb(0, "PS：Select-String 接管線不計", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md | Select-Object -First 3", tool="PowerShell"), S)
+    RGW = rbws("rb-grep-off", {"limits": {"whole_file_lines": 400, "read_budget": {"default": 1, "roles": {}}}})
+    rb(0, "沒啟用（沒寫 mode）：Grep content 不計不擋", RGW, gp(RGW, output_mode="content"))
+    rb(0, "沒啟用（沒寫 mode）：shell grep 不計不擋", RGW, rb_sh(RGW, "grep 第 big.md"), S)
+
     # 單行的大檔：行數過得了門檻，但一次最多記 100KB，不會一次把額度扣光
     (R2 / "oneline.txt").write_text("x" * 900000, encoding="utf-8")
     R2B = rbws("rb2b", rb_limits(default=1000000))
