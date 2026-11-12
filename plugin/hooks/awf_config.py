@@ -22,6 +22,9 @@ DEFAULTS = {
     "runs_dir": "_tpm/runs",
     "briefs_dir": "_tpm/briefs",
     "repos_dir": "",  # 空字串＝工作區本身就是目標 repo
+    # 工作區以外、也算「我方 clone」的 repo 目錄（絕對路徑、~ 開頭，或相對於工作區）：dev-* 可以改裡面的檔、tpm-writer 可以寫它的 specs/<epic>/*.md，
+    # 其餘規則照舊（禁止路徑、.claude/、驗收測試目錄、唯讀審查角色只能寫報告）。空＝只認工作區。
+    "linked_repos": [],
     "upstream_repos": [],
     "fork_repo": "",
     "forbidden_paths": [],
@@ -73,7 +76,7 @@ AUTO_MERGE_DEFAULTS = {
     "freeze_file": "",  # 空＝<runs_dir>/auto-merge.freeze.json；內容 {"frozen": true, "reason": …}（event-post-merge 寫）
 }
 LIST_KEYS = ("upstream_repos", "forbidden_paths", "allowed_branch_prefixes", "writer_dirs", "team_agent_prefixes", "protected_branches",
-             "acceptance_test_dirs")
+             "acceptance_test_dirs", "linked_repos")
 BOOL_KEYS = ("main_session_git_rules", "main_session_github_rules")
 PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
 
@@ -88,6 +91,15 @@ def config_path() -> Path:
 
 def methodology_path() -> Path:
     return workspace() / ".claude" / "teams" / "methodology.json"
+
+
+def custom_event_stages() -> list:
+    """profile 的 events 裡自訂的事件類型名（段名）。讀不到、格式不對一律回空清單。"""
+    try:
+        ev = json.loads(methodology_path().read_text(encoding="utf-8")).get("events")
+        return [k for k in ev if isinstance(k, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,39}", k)] if isinstance(ev, dict) else []
+    except Exception:
+        return []
 
 
 LIMIT_MODES = ("enforce", "warn", "off")

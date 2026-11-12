@@ -1,4 +1,7 @@
-"""把 schemas/ 內嵌進 .claude/workflows/*.js（Workflow 腳本不能 import 檔案）。
+"""把 schemas/ 內嵌進 workflow 腳本（Workflow 腳本不能 import 檔案）。
+
+處理哪些檔：模版 repo 裡是 plugin/workflow-templates/*.js（範本）；已 init 的專案裡是 .claude/workflows/*.js
+（使用者留在專案的覆寫檔，沒有就什麼都不做。0.5 起 workflow 由 awf.py next 依 plugin 的範本逐段產生，專案不必放副本）。
 
 標記寫法（腳本內）：
     const SUBTASKS = /*@schema:subtasks*/ null /*@end*/
@@ -35,7 +38,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import schemalib  # noqa: E402
 
-WF_DIR = Path(__file__).resolve().parents[2] / "workflows"
+_HERE = Path(__file__).resolve()
+_REPO_TEMPLATES = _HERE.parents[4] / "plugin" / "workflow-templates" if len(_HERE.parents) > 4 else None
+# 模版 repo（scaffold/.claude/teams/tools/）→ plugin 的範本；專案（.claude/teams/tools/）→ 專案自己的 .claude/workflows/
+WF_DIR = _REPO_TEMPLATES if _REPO_TEMPLATES is not None and _REPO_TEMPLATES.is_dir() and _HERE.parents[3].name == "scaffold" else _HERE.parents[2] / "workflows"
 METHODOLOGY = schemalib.TEAMS_DIR / "methodology.json"
 MARK = re.compile(r"/\*@schema:([a-z-]+)\*/.*?/\*@end\*/", re.S)
 METH_MARK = re.compile(r"/\*@methodology\*/.*?/\*@end\*/", re.S)
@@ -123,7 +129,7 @@ def render(text: str, methodology=None, cache: dict | None = None) -> str:
 def main() -> int:
     check = "--check" in sys.argv
     stale = []
-    files = sorted(WF_DIR.glob("*.js"))
+    files = sorted(WF_DIR.glob("*.js")) if WF_DIR.is_dir() else []
     methodology = load_methodology()
     missing = unregistered_extensions(methodology)
     if missing:

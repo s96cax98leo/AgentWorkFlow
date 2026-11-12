@@ -73,6 +73,49 @@ def rel_to_workspace(p: Path) -> str | None:
         return None
 
 
+def linked_rel(p: Path) -> str | None:
+    """路徑在 guard.config.json 的 linked_repos（工作區以外、也算我方 clone 的 repo）底下時，回它相對於那個 repo 的路徑。
+    設定寫錯（空字串、檔案系統根目錄、家目錄本身）的項目不算，避免一筆設定把整台機器都放行。"""
+    try:
+        target = Path(norm(str(p))).resolve()
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        return None
+    for e in CFG.get("linked_repos") or []:
+        e = str(e or "").strip()
+        if not e:
+            continue
+        try:
+            root = Path(os.path.expanduser(e))
+            root = (root if root.is_absolute() else WORKSPACE / root).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if len(root.parts) < 3 or root == home:
+            continue
+        try:
+            return target.relative_to(root).as_posix()
+        except ValueError:
+            continue
+    return None
+
+
+def in_scratchpad(p: Path, data: dict) -> bool:
+    """這個 session 自己的 scratchpad（系統暫存目錄底下的 …/<session_id>/scratchpad/…）：agent 放中間產物的地方，不在工作區裡。"""
+    sid = str(data.get("session_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{7,}", sid):
+        return False
+    try:
+        import tempfile
+        target = Path(norm(str(p))).resolve()
+        roots = {Path(r).resolve() for r in (tempfile.gettempdir(), "/tmp", "/private/tmp") if r and os.path.isdir(r)}
+    except (OSError, RuntimeError):
+        return False
+    if not any(r == target or r in target.parents for r in roots):
+        return False
+    parts = target.parts
+    return any(parts[k] == sid and parts[k + 1] == "scratchpad" for k in range(len(parts) - 2))
+
+
 def run_git(*a: str) -> subprocess.CompletedProcess | None:
     """跑 git 並回傳結果；找不到 git（PATH 上沒有、無法執行，OSError）回 None。
     hook 跑得起來但環境沒有 git 時不能因此鎖死所有工具：呼叫端一律當成「不在 repo／查不到」處理，
@@ -605,6 +648,11 @@ RUN_STAGES = frozenset({
     "plan", "design", "design-revise", "build", "sync", "test", "deliver", "merge",
     "brief", "meeting", "demo-check", "decision", "post-merge", "upstream", "pr-review", "reqs-change", "run",
 })
+# profile 的 events 裡自訂的事件類型也是段名：它的 <類型>.json 一樣不准寫、<類型>/<label>.md 一樣可以當執行紀錄。讀不到就只用內建的
+try:
+    RUN_STAGES = RUN_STAGES | frozenset(awf_config.custom_event_stages())
+except Exception:
+    pass
 # runs_dir 底下只由 save_run.py（主 session）寫的閘門資料：run.json、<段>.json；所有 team agent 都不能寫（Write／Edit 與 shell）。
 # 稽核紀錄（AUDIT_FILES）與凍結檔另由 protected_target() 在任何位置都擋。
 # 資料包工具（pack.py）寫的 reuse.json（調研重用的來源 hash 與結論，save_run 的閘門核對會讀）與 pack-args.json 也算。
@@ -614,8 +662,9 @@ STAGE_JSON_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:" + "|".join(re.escape(s) for 
                                  + r")\W{0,16}\.json\b", re.I)
 # context.md（runs_dir 底下，所有 agent 共用的背景，能寫等於持久注入指令）與執行紀錄索引.md（任何位置）只由主 session 跑 save_run.py 產生
 # pack.md（各段的資料包，agent 開工先讀）同樣只由主 session 跑 pack.py 產生
-SHARED_CONTEXT_NAMES = ("context.md", "pack.md")
-CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b", re.I)
+# decisions.jsonl 與 決策記憶.md（決策記憶：人在閘門上的答覆，資料包會帶給之後的 agent）只由主 session 跑 save_run.py 寫
+SHARED_CONTEXT_NAMES = ("context.md", "pack.md", "decisions.jsonl", "決策記憶.md")
+CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\bdecisions\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md", re.I)
 RUN_INDEX_FRAGMENT = re.compile(r"執行紀錄索引")
 
 
@@ -834,7 +883,9 @@ def shell_writes_protected(seg: str) -> str | None:
 
 # B2：.claude/teams/（任何位置）、methodology.json、guard.config.json 是守門與 profile 設定：team agent 一律不能寫。
 # 工具會往上層目錄找 .claude/teams/methodology.json，放在 runs_dir 底下也可能劫持 recipe 解析（工具端另修，這裡是縱深）。
-TEAM_CONFIG_TARGET = re.compile(r"(?:^|[/\\\s\"'=])\.claude[/\\]teams(?:[/\\]|\s|$)|methodology\.json|guard\.config\.json", re.I)
+# 0.5：.claude/workflows/（覆寫檔）與 run 目錄的 .wf/（awf.py 產生、下一段要跑的腳本）也一樣：被改就等於改了流程。
+TEAM_CONFIG_TARGET = re.compile(r"(?:^|[/\\\s\"'=])\.claude[/\\](?:teams|workflows)(?:[/\\]|\s|$)|(?:^|[/\\\s\"'=])\.wf(?:[/\\]|\s|$)"
+                                r"|methodology\.json|guard\.config\.json", re.I)
 TEAM_TOOL_CALL = re.compile(r"(?:python[\d.]*|py|pypy[\d.]*)(?:\.exe)?(?:\s+-\S+)*\s+[\"']?[^\s\"']*\.claude[/\\]teams[/\\]tools[/\\][\w.-]+\.py[\"']?", re.I)
 
 
@@ -847,19 +898,32 @@ def team_config_path(p: str) -> bool:
         pass
     for c in cands:
         f = fold(c)
-        if "/.claude/teams/" in "/" + f or f.rsplit("/", 1)[-1] in ("methodology.json", "guard.config.json"):
+        g = "/" + f
+        if ("/.claude/teams/" in g or "/.claude/workflows/" in g or "/.wf/" in g
+                or f.rsplit("/", 1)[-1] in ("methodology.json", "guard.config.json")):
             return True
     return False
 
 
-def shell_writes_team_config(seg: str) -> bool:
-    """shell 寫入 .claude/teams/、methodology.json、guard.config.json（盡力而為）。
-    python3 .claude/teams/tools/<工具>.py 這種「執行工具」不算提到路徑（工具本身的寫入由各自的規則管）。"""
+TEAM_CONFIG_MKDIR = re.compile(r"(?:^|[\s;&|(`])(?:mkdir|md|rmdir)(?:\.exe)?(?=\s|$)", re.I)
+
+
+def shell_writes_team_config(seg: str, cwd: Path | None = None) -> bool:
+    """shell 寫入 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json、guard.config.json（盡力而為）。
+    python3 .claude/teams/tools/<工具>.py 這種「執行工具」不算提到路徑（工具本身的寫入由各自的規則管）。
+    cwd 是這一段指令實際作用的目錄：先 cd 進這些目錄再寫（指令裡看不到路徑）也算。"""
     probe = TEAM_TOOL_CALL.sub(" ", norm(seg))
-    if not TEAM_CONFIG_TARGET.search(probe):
+    inside = False
+    if cwd is not None:
+        try:
+            here = "/" + fold(Path(cwd).resolve().as_posix()).strip("/") + "/"
+        except OSError:
+            here = "/" + fold(norm(str(cwd))).strip("/") + "/"
+        inside = "/.claude/teams/" in here or "/.claude/workflows/" in here or "/.wf/" in here
+    if not inside and not TEAM_CONFIG_TARGET.search(probe):
         return False
     probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", probe, flags=re.I)
-    return bool(SHELL_WRITE.search(probe) or (INTERP.search(probe) and INTERP_WRITE.search(probe)))
+    return bool(SHELL_WRITE.search(probe) or TEAM_CONFIG_MKDIR.search(probe) or (INTERP.search(probe) and INTERP_WRITE.search(probe)))
 
 
 PUSH_RE = re.compile(r"\bgit\b.*\b(?:push|send-pack)\b")
@@ -1369,6 +1433,9 @@ def _check_shell_rules(data: dict) -> None:
         if sr:
             block(f"{agent} 不能跑 save_run.py {sr}（team agent 只能跑唯讀的 status 與 --selftest）；"
                   "run 狀態、核准、放棄、升級、後續、結案一律由主 session（或人）執行")
+        aw = save_run_write(seg, "awf", {"--selftest"}) if team else None
+        if aw:
+            block(f"{agent} 不能跑 awf.py {aw}（狀態機會存段結果、核准、產生下一段的腳本，只由主 session 執行；team agent 只能跑 --selftest）")
         if team and awf_config.team_role(raw_agent, CFG) in awf_config.RECORD_ONLY_ROLES:
             why = record_shell_write(seg, d)
             if why:
@@ -1376,8 +1443,9 @@ def _check_shell_rules(data: dict) -> None:
                       f"（{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 run_brief.py --log {RUNS}<run>/<段>/logs/<label>.log -- <指令>")
         if team and agent_writes_state(seg, d):
             block(f"{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")
-        if team and shell_writes_team_config(seg):
-            block(f"{agent} 不能寫 .claude/teams/、methodology.json 或 guard.config.json（守門與 profile 設定只由人或主 session 改）")
+        if team and shell_writes_team_config(seg, d):
+            block(f"{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json"
+                  "（守門設定、profile 與 workflow 腳本只由人或主 session 改）")
         for tool in ("publish.py", "merge_gate.py"):
             if re.search(rf"(?:^|[\s/\\]){re.escape(tool)}\b", seg):
                 targs = shlex_tokens(seg)
@@ -1442,6 +1510,9 @@ def spec_doc_pattern() -> re.Pattern:
     return re.compile(rf"^{repo}(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$")
 
 
+LINKED_SPEC_DOC = re.compile(r"^(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$")   # linked repo 裡的 specs/<epic>/*.md（相對於那個 repo）
+
+
 def writes_freeze(data: dict) -> bool:
     """freeze_writers 用 Write 寫入的內容是 {"frozen": true, …}（只能凍結，不能解凍；Edit／NotebookEdit 一律不算）。"""
     a = data.get("agent_type") or ""
@@ -1469,7 +1540,7 @@ REVIEW_REPORTS = {
 }
 
 
-RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "pack.md", "執行紀錄索引.md", "run.json"))
+RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "pack.md", "執行紀錄索引.md", "run.json", "決策記憶.md"))
 
 
 def check_read(data: dict) -> None:
@@ -1491,8 +1562,7 @@ def check_read(data: dict) -> None:
 def check_paths(data: dict) -> None:
     if data.get("tool_name") in ("Read", "Grep"):
         check_read(data)  # 機敏檔先擋
-        if data.get("tool_name") == "Read":
-            read_budget_check("read", data)
+        read_budget_check("read", data)  # Read 記帳並擋大檔；Grep 的 content 模式也計入額度
         return
     ti = data.get("tool_input") or {}
     fp = ti.get("file_path") or ti.get("notebook_path") or ""
@@ -1519,16 +1589,21 @@ def check_paths(data: dict) -> None:
     elif prot and CFG["_configured"] and (prot in AUDIT_FILES or (prot == "guard.config.json" and AM["enabled"])):
         block(f"主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")
     if role and team_config_path(str(path)):
-        block(f"{agent} 不能寫 .claude/teams/ 底下的檔、methodology.json 或 guard.config.json（不論在哪個目錄；"
-              f"守門與 profile 設定只由人或主 session 改）（{rel or fp}）")
+        block(f"{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/ 底下的檔、methodology.json 或 guard.config.json（不論在哪個目錄；"
+              f"守門設定、profile 與 workflow 腳本只由人或主 session 改）（{rel or fp}）")
     if role and fold(path.name) == "run.json" and (not RUNS or fold(rel or "").startswith(fold(RUNS))):
         block(f"{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")
     if role and RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in RUN_STATE_FILES:
         block(f"{agent} 不能寫 {path.name}（{RUNS} 底下的 run.json、<段>.json 是 save_run.py 寫的閘門資料，publish.py 與政策核准會重讀）")
     if role and ((RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in SHARED_CONTEXT_NAMES)
                  or fold(path.name) == fold("執行紀錄索引.md")):
-        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md 是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
+        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md、決策記憶是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
               "都只由主 session 跑 save_run.py／pack.py 產生）")
+    if role and in_scratchpad(path, data):
+        # 這個 session 的 scratchpad：模版角色都可以寫（中間產物）。上面的規則（禁止路徑、守門設定、run.json、閘門資料檔名）已經判過
+        forward(git_toplevel(path.parent), "guard-paths", data)
+        return
+    lrel = linked_rel(path) if role else None
     if role in awf_config.RECORD_ONLY_ROLES:
         # 只寫執行紀錄的角色：只能寫 <runs_dir>/<run>/<段>/<檔名>.md（白名單，照原樣比對；至少兩層子目錄，上一層是段名）；
         # run.json、<段>.json、稽核紀錄、凍結檔已在上面擋；context.md、執行紀錄索引.md 是 save_run.py 產生的，也不能寫。
@@ -1544,7 +1619,8 @@ def check_paths(data: dict) -> None:
         # 凍結檔照 auto_merge.freeze_file 的實際設定（可能不在 writer_dirs 裡）；能不能寫已由上面的 writes_freeze 判定
         # 只認設定的那個路徑本身（同名的其他檔不算）
         is_freeze = prot == AM["freeze_file"] and path.resolve() == freeze_path().resolve() and writes_freeze(data)
-        ok = is_freeze or (rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None))
+        ok = is_freeze or (rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None)) \
+            or (lrel is not None and LINKED_SPEC_DOC.match(lrel) is not None)
         if not ok:
             block(f"tpm-writer 只能寫 {'、'.join(CFG['writer_dirs'])} 與 repo 的 specs/<epic>/*.md（{rel or fp}）")
     elif role.startswith("tpm-"):
@@ -1553,10 +1629,13 @@ def check_paths(data: dict) -> None:
     elif role.startswith("dev-"):
         # .claude/ 是黑名單（不分大小寫：.CLAUDE/hooks 在 macOS／Windows 是同一個目錄）；repos_dir、runs_dir 是白名單，照原樣比對
         ok = rel is not None and ((rel.startswith(REPOS) if REPOS else not fold(rel).startswith(".claude/")) or (RUNS and rel.startswith(RUNS)))
-        if not ok:
+        linked = not ok and lrel is not None and not fold(lrel).startswith(".claude/")
+        if not ok and not linked:
             where = f"{REPOS}<repo>/" if REPOS else "工作區（.claude/ 除外）"
-            block(f"{agent} 只能改 {where} 與 {RUNS}（{rel or fp}）")
-        in_runs = bool(RUNS) and rel.startswith(RUNS)
+            block(f"{agent} 只能改 {where} 與 {RUNS}（{rel or fp}）；工作區以外的 repo 要先由人登記在 guard.config.json 的 linked_repos")
+        if linked:
+            rel = lrel          # 之後的規則（唯讀審查角色、驗收測試目錄）照相對於那個 repo 的路徑判
+        in_runs = not linked and bool(RUNS) and rel.startswith(RUNS)
         pat = REVIEW_REPORTS.get(role)
         if pat and not in_runs and not pat.fullmatch(path.name) and not (role != "dev-verifier" and "/evidence/" in "/" + rel):
             block(f"{agent} 是唯讀審查角色，只能寫自己的報告（{pat.pattern}）"

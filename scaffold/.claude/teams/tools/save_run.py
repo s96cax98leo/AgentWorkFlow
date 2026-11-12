@@ -26,10 +26,18 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
           不存在、或缺必要的節（四節＋該 plan_mode 的專屬節，profile 可覆寫）→ invalid，不能核准。
         其他段：recipe 沒有這一段 → invalid（要加段走 escalate）。
         回傳帶 trace（[{label, agent_type, phase, record, ok}]）時，寫 <run_dir>/<stage>/執行紀錄索引.md，並核對紀錄檔：
-          ok=true 但紀錄檔不存在 → 記進該段 missing_records（缺件：不能政策核准；人工核准可以但會警告）。
+          ok=true 但紀錄檔不存在：對得回它的信封（artifacts 列了紀錄檔，或 trace 的 digest 和信封的 status＋summary 一致）
+          就依信封代寫（標明「由 save_run 代寫」，記進該段 ghostwritten_records）；對不回信封才記進 missing_records
+          （缺件：不能政策核准；人工核准可以但會警告）。agent 自己寫的紀錄不會被覆寫。
           dev-merge-steward（沒有 Write 工具）的紀錄由本工具依它的信封代寫（標明「由 save_run 代寫」）。
           回傳沒有 trace（舊 workflow）只印警告，不判缺件。
-    python3 save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間> [--note <備註>] [--profile <檔>]（plan 以外的段會用 profile 重算 recipe，resolved 被改鬆就拒絕）
+    python3 save_run.py approve <run_dir> <stage> --by <誰> --at <ISO 時間> [--note <備註>] [--profile <檔>]
+        [--answer "<問題>=<答覆>"]… [--answer-scope epic|project] [--answer-expires <YYYY-MM-DD>]
+        --answer：人在閘門上回答的問題，記進 <runs_dir>/decisions.jsonl（決策記憶）；之後的資料包會帶上相關的，agent 不再重問。
+        只有人的核准能帶 --answer；範圍預設 epic（只給這個需求），project 是整個專案。
+    python3 save_run.py decide <run_dir> --question <問題> --answer <答覆> --by <誰> --at <ISO 時間> [--scope epic|project] [--expires <YYYY-MM-DD>]
+        不在核准時也可以記一筆決定。
+       （plan 以外的段會用 profile 重算 recipe，resolved 被改鬆就拒絕）
         只有狀態 done 的段能核准；recipe 裡 SDLC 前面的每一段都要 done，有閘門的都要已核准（整條閘門鏈，
         不只緊鄰的前一段：build、sync 沒有閘門，不能讓 test 跳過 design 的核准）。recipe 裡有、run.json 卻沒有的段判錯
         （只有沒有 recipe 的舊 run 容許缺 sync）；recipe 沒有的段（skipped）不檢查。已取消的 run 不能核准。
@@ -56,6 +64,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -84,6 +93,52 @@ GHOSTWRITTEN = "由 save_run 代寫"
 
 def opt(argv: list[str], name: str, default: str = "") -> str:
     return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
+
+
+def opts(argv: list[str], name: str) -> list[str]:
+    return [argv[i + 1] for i, a in enumerate(argv) if a == name and i + 1 < len(argv)]
+
+
+def decision_errors(items: list[tuple], by: str, scope: str, expires: str) -> list[str]:
+    """決策記憶的輸入檢查：只有人能記、問題與答覆都要有、長度有上限、範圍與到期日格式要對。"""
+    errs = []
+    if by == "policy":
+        errs.append("決定只能由人記（--by policy 不能帶答覆）")
+    if scope not in packlib.DECISION_SCOPES:
+        errs.append(f"範圍只能是 {'、'.join(packlib.DECISION_SCOPES)}：{scope}")
+    if expires and not packlib.DATE.match(expires):
+        errs.append(f"到期日要寫成 YYYY-MM-DD：{expires}")
+    for q, a in items:
+        if not q.strip() or not a.strip():
+            errs.append(f"答覆要寫成「問題=答覆」，兩邊都不能空：{(q or a)[:60]}")
+        elif len(q) > 300 or len(a) > 600:
+            errs.append(f"問題最多 300 字、答覆最多 600 字：{q[:40]}")
+    return errs
+
+
+def record_decisions(run: Path, items: list[tuple], by: str, at: str, scope: str, expires: str, stage: str = "") -> int:
+    """把決定附加到 <runs_dir>/decisions.jsonl，並重寫給人與知識庫看的 決策記憶.md。"""
+    runs = run.resolve().parent
+    epic = packlib.run_epic(run)
+    with open(runs / packlib.DECISIONS, "a", encoding="utf-8", newline="\n") as f:
+        for q, a in items:
+            rec = {"question": " ".join(q.split()), "answer": " ".join(a.split()), "scope": scope, "by": by, "at": at, "run": run.resolve().name}
+            rec.update({k: v for k, v in (("stage", stage), ("epic", epic), ("expires", expires)) if v})
+            f.write(json.dumps(rec, ensure_ascii=False, sort_keys=True) + "\n")
+    try:
+        import datetime
+        packlib._write_lf(runs / packlib.DECISIONS_VIEW, packlib.decisions_view(runs, datetime.date.today().isoformat()))
+    except OSError as e:
+        print(f"警告：{packlib.DECISIONS_VIEW} 寫不出來（{e}）；decisions.jsonl 已記錄", file=sys.stderr)
+    return len(items)
+
+
+def split_answer(raw: str) -> tuple:
+    for sep in ("=", "＝"):
+        if sep in raw:
+            q, a = raw.split(sep, 1)
+            return q.strip(), a.strip()
+    return raw.strip(), ""
 
 
 def load(run: Path) -> dict:
@@ -146,42 +201,69 @@ def record_candidates(run: Path, stage: str, record: str) -> list[Path]:
     if not record:
         return []
     p = Path(record)
-    return [p if p.is_absolute() else Path.cwd() / p, run / stage / p.name]
+    given = p if p.is_absolute() else Path.cwd() / p
+    out = [run / stage / p.name]
+    try:      # trace 給的路徑只在 run 目錄底下才採用：拿 run 以外隨便一個存在的檔當紀錄不算
+        given.resolve().relative_to(Path(run).resolve())
+        out.insert(0, given)
+    except (ValueError, OSError):
+        pass
+    return out
 
 
 def _envelope_of(entry: dict, stage: str, envs: list[dict]) -> dict | None:
-    """信封的 artifacts 列了這個 agent 的紀錄檔，就當成它的信封（agent 依派工前綴把紀錄檔列進 artifacts）。"""
+    """信封的 artifacts 列了這個 agent 的紀錄檔，就當成它的信封（agent 依派工前綴把紀錄檔列進 artifacts）。
+    對不到時用 trace 的 digest（執行核心記下的 status＋summary）找：剛好只有一個信封相符才算，零個或多個都不猜。"""
     rec = _norm(entry.get("record") or "")
-    if not rec:
-        return None
-    tail = f"{stage}/{Path(rec).name}"
-    for env in envs:
-        for a in env.get("artifacts") or []:
-            if isinstance(a, str) and (_norm(a) == rec or _norm(a).endswith("/" + tail) or _norm(a) == tail):
-                return env
+    if rec:
+        tail = f"{stage}/{Path(rec).name}"
+        for env in envs:
+            for a in env.get("artifacts") or []:
+                if isinstance(a, str) and (_norm(a) == rec or _norm(a).endswith("/" + tail) or _norm(a) == tail):
+                    return env
+    dg = entry.get("digest")
+    if isinstance(dg, dict) and isinstance(dg.get("summary"), str) and dg["summary"]:
+        same = [e for e in envs if isinstance(e.get("summary"), str) and e["summary"][:400] == dg["summary"]
+                and str(e.get("status") or "") == str(dg.get("status") or "")]
+        if len(same) == 1 or (same and all(e is same[0] or e == same[0] for e in same)):
+            return same[0]
     return None
 
 
 def _ghostwrite(path: Path, entry: dict, env: dict) -> None:
-    """dev-merge-steward 沒有 Write 工具：依它的信封代寫紀錄檔。"""
+    """依信封代寫紀錄檔：dev-merge-steward（沒有 Write 工具），以及有交件但漏寫紀錄檔的 agent。內容只來自信封，可重現。"""
     p = env.get("payload") if isinstance(env.get("payload"), dict) else {}
+    steward = "traceability" in p
+    why = "沒有 Write 工具" if steward else "有交件但沒有寫紀錄檔"
     lines = [f"# 執行紀錄：{entry.get('label', '')}（{GHOSTWRITTEN}）", "",
-             f"> {entry.get('agent_type', '')} 沒有 Write 工具，這份紀錄由 save_run.py 依它交回的信封代寫，內容只來自信封。", "",
+             f"> {entry.get('agent_type', '')} {why}，這份紀錄由 save_run.py 依它交回的信封代寫，內容只來自信封。", "",
              "## 任務摘要", "", str(env.get("summary") or "（信封沒有 summary）"), "",
              "## 做了什麼與證據", ""]
     ev = [e for e in env.get("evidence") or [] if isinstance(e, dict)]
     lines += [f"- {e.get('claim', '')}：{e.get('result', '')}（出處：{e.get('source', '')}）" for e in ev] or ["- （信封沒有 evidence）"]
-    lines += ["", "## 結論", "",
-              f"- decision：{p.get('decision', '')}", f"- head_sha：{p.get('head_sha', '')}",
-              f"- merge_state：{p.get('merge_state', '')}", f"- 需求對照：{len(p.get('traceability') or [])} 條；followups：{len(p.get('followups') or [])} 則",
-              f"- gate_reasons：{'；'.join(str(x) for x in p.get('gate_reasons') or []) or '（無）'}", "",
-              "## 成果檔", ""]
+    lines += ["", "## 結論", ""]
+    if steward:
+        lines += [f"- decision：{p.get('decision', '')}", f"- head_sha：{p.get('head_sha', '')}",
+                  f"- merge_state：{p.get('merge_state', '')}", f"- 需求對照：{len(p.get('traceability') or [])} 條；followups：{len(p.get('followups') or [])} 則",
+                  f"- gate_reasons：{'；'.join(str(x) for x in p.get('gate_reasons') or []) or '（無）'}"]
+    else:
+        lines += [f"- status：{env.get('status', '')}", f"- confidence：{env.get('confidence', '')}",
+                  f"- payload 的欄位：{'、'.join(sorted(str(k) for k in p)) or '（無）'}"]
+    lines += ["", "## 成果檔", ""]
     lines += [f"- {a}" for a in env.get("artifacts") or []] or ["- （無）"]
     lines += ["", "## 不確定的地方", ""]
     qs = [q for q in env.get("open_questions") or [] if isinstance(q, dict)]
     lines += [f"- {q.get('question', '')}" for q in qs] or ["- （信封沒有待決問題）"]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _head(path: Path) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.readline()
+    except OSError:
+        return ""
 
 
 def _retried_ok(trace: list, i: int) -> bool:
@@ -193,8 +275,8 @@ def _retried_ok(trace: list, i: int) -> bool:
                for x in trace[i + 1:])
 
 
-# 已經改用執行核心（kernel 片段）的段：profile 有設 models 時，trace 每筆都要有 model 與 tier
-KERNEL_STAGES = {"plan"}
+# 已經改用執行核心（kernel 片段）的段：profile 有設 models 時，trace 每筆都要有 model 與 tier。0.5 起 SDLC 每一段都是
+KERNEL_STAGES = {"plan", "design", "build", "sync", "test", "deliver", "merge"}
 
 
 def model_errors(stage: str, result, profile: dict | None, modifiers) -> list[str]:
@@ -268,11 +350,26 @@ def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, lis
                 status = "缺紀錄檔（trace 沒有指定紀錄檔）"
                 missing.append(f"{label} 的 trace 沒有指定紀錄檔")
             elif not any(c.is_file() for c in record_candidates(run, stage, record)):
-                status = "缺紀錄檔"
-                missing.append(f"{label} 的紀錄檔 {record} 不存在")
+                target = run / stage / Path(record).name
+                if env is not None and write:
+                    _ghostwrite(target, t, env)
+                if env is not None and target.is_file():
+                    status = f"完成（{GHOSTWRITTEN}紀錄：agent 沒寫紀錄檔）"
+                else:
+                    status = "缺紀錄檔"
+                    missing.append(f"{label} 的紀錄檔 {record} 不存在" + ("" if env is None else "（還沒代寫：先跑 save_run.py stage）"))
+            elif env is None and GHOSTWRITTEN in _head(next(c for c in record_candidates(run, stage, record) if c.is_file())):
+                # 紀錄檔是之前代寫的，這次的回傳卻對不回信封（回傳被換過）：不沿用舊的代寫檔
+                status = "缺紀錄檔（代寫的紀錄對不回這次的信封）"
+                missing.append(f"{label} 的紀錄檔是代寫的，但這次的回傳裡找不到對應的信封")
+            elif GHOSTWRITTEN in _head(next(c for c in record_candidates(run, stage, record) if c.is_file())):
+                status = f"完成（{GHOSTWRITTEN}紀錄：agent 沒寫紀錄檔）"
         elif okv is False and _retried_ok(trace, i):
             # 執行核心的失敗升級：這一筆沒交件，後面同一個 label、同一個角色的重派有交件，不算缺件
             status = f"沒有交件，已升一級重派（{t.get('tier') or '?'} → 見下一筆）"
+        elif okv is False and t.get("capped") is True:
+            status = "沒有派出（派工數到上限）"
+            missing.append(f"{label} 沒有派出：派工數到上限（{t.get('max_agents') or '?'}；profile 的 limits.max_agents），要人決定是調高上限還是拆小")
         elif okv is False:
             status = "agent 沒有交件（失敗或交件無效）"
             missing.append(f"{label} 沒有交件（失敗或交件無效）")
@@ -288,7 +385,8 @@ def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, lis
         d.mkdir(parents=True, exist_ok=True)
         lines = [f"# 執行紀錄索引：{stage}", "",
                  f"由 save_run.py 依 workflow 回傳的 trace 產生，每列是一次派工（共 {len(rows)} 次）。"
-                 "紀錄檔不存在算缺件，不能政策核准；成果檔取自該 agent 信封的 artifacts。", "",
+                 "agent 有交件但沒寫紀錄檔時，由 save_run 依信封代寫（狀態欄會標明）；連信封都對不回才算缺件，不能政策核准。"
+                 "成果檔取自該 agent 信封的 artifacts。", "",
                  "| label | 角色 | phase | 紀錄檔 | 成果檔 | 狀態 |", "|---|---|---|---|---|---|"]
         for r in rows:
             lines.append("| " + " | ".join(_md_cell(x) for x in (r["label"], r["agent_type"], r["phase"], r["record"],
@@ -306,6 +404,7 @@ def policy_violations(stage: str, result, run: Path | None = None) -> list[str]:
     - plan 段一律由人核准（rules.md 規則 16），政策核准一律不行。
     - 一份信封都沒有、或回傳裡有 null（agent 缺件）不行：缺件不是「沒有發現」（rules.md 規則 26）。
     - 回傳標了 halted（流程中斷）不行。
+    - 回傳帶 custom_script（自訂腳本）、override_script（覆寫檔或舊副本）、manual_output（done --output 手動給的結果）不行：一律由人核准。
     - 任何信封的 open_questions 有 blocking=true 不行。
     - 任何 findings payload 有 blocker／important 等級的發現不行。
     - 任何 verdicts payload 有 refuted=true（skeptic 推翻了該段的產出）不行。
@@ -317,6 +416,12 @@ def policy_violations(stage: str, result, run: Path | None = None) -> list[str]:
         errs.append(f"{stage} 段一律由人核准（rules.md 規則 16），不能政策核准")
     if isinstance(result, dict) and result.get("halted"):
         errs.append(f"回傳標了 halted：{result.get('halt_reason') or result.get('halted')}")
+    if isinstance(result, dict) and result.get("custom_script"):
+        errs.append("這一段是用自訂腳本跑的（awf.py next --script）：流程沒有經過標準腳本的核對，要由人核准")
+    if isinstance(result, dict) and result.get("override_script"):
+        errs.append("這一段用的是專案自己的 workflow 腳本（覆寫檔或舊副本），不是 plugin 的範本：要由人核准")
+    if isinstance(result, dict) and result.get("manual_output"):
+        errs.append("這一段的結果是用 awf.py done --output 手動給的（不是 awf 從 workflow 紀錄取得的）：要由人核准")
     envs = list(envelopes(result))
     if not envs:
         errs.append(NO_ENVELOPE)
@@ -413,6 +518,164 @@ def has_recipe(data: dict) -> bool:
 
 
 PROJECT_PROFILE = Path(__file__).resolve().parent.parent / "methodology.json"
+
+# ------------------------------------------------------------------ 限制文件（profile 的 constraints）
+CONSTRAINT_VERDICTS = ("符合", "偏離", "不適用")
+CONSTRAINT_CHECK_TIMEOUT = 300
+
+
+def project_root() -> Path:
+    """專案根目錄：methodology.json 在 <專案>/.claude/teams/ 底下。"""
+    return PROJECT_PROFILE.parent.parent.parent
+
+
+def constraint_file(c: dict, repo: Path | None) -> Path | None:
+    """限制文件的實際位置：先找專案根目錄，再找目標 repo；都沒有回 None。"""
+    f = str(c.get("file") or "")
+    for base in (project_root(), repo):
+        if base is not None and f and (base / f).is_file():
+            return base / f
+    return None
+
+
+def constraint_rows(run: Path, stage: str) -> dict:
+    """這一段的執行紀錄（<run>/<stage>/*.md）裡的〈限制對照〉列：{id: [(判定, 紀錄檔名)]}。"""
+    out: dict = {}
+    d = run / stage
+    if not d.is_dir():
+        return out
+    row = re.compile(r"^\s*\|\s*`?\[?([a-z0-9][a-z0-9-]{0,39})\]?`?\s*\|\s*(" + "|".join(CONSTRAINT_VERDICTS) + r")\s*\|")
+    for f in sorted(d.glob("*.md")):
+        if f.name == INDEX_NAME:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if text.startswith("# 執行紀錄：") and GHOSTWRITTEN in text.split("\n", 1)[0]:
+            continue  # 代寫的紀錄只來自信封，不算 agent 做過對照
+        for line in text.splitlines():
+            m = row.match(line)
+            if m:
+                out.setdefault(m.group(1), []).append((m.group(2), f.name))
+    return out
+
+
+AC_ID = re.compile(r"(?<![\w-])AC[-_][A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*")
+
+
+def _result_subtasks(result) -> list[dict]:
+    """這一段回傳裡的子任務清單（design.payload.subtasks、payload.subtasks 或頂層 subtasks）。"""
+    r = result if isinstance(result, dict) else {}
+    for c in ((r.get("design") or {}).get("payload") if isinstance(r.get("design"), dict) else None, r.get("payload"), r):
+        subs = c.get("subtasks") if isinstance(c, dict) else None
+        if isinstance(subs, list) and subs and all(isinstance(x, dict) for x in subs):
+            return subs
+    return []
+
+
+def plan_check_issues(result, spec: Path | None = None) -> list[str]:
+    """拆工的確定性檢查（plan_check）：在 design 閘門就抓出來，不要拖到 build 才爆。回傳問題清單（空＝沒問題）。
+    - 子任務 id 重複、相依指向不存在的子任務、相依有循環。
+    - 子任務沒有驗收條件（acceptance 是空的）；會改檔的子任務（code、test、doc）沒有 owns。
+    - 有 spec 檔而且 spec 與子任務都用「AC-…」編號時：spec 有、沒有任何子任務對應的驗收條件；子任務引用了 spec 沒有的驗收條件。
+      其中一邊沒用這種編號就不比（專案的寫法不同，工具判不了）。
+    回傳裡沒有子任務時不檢查（那一段沒拆工）。"""
+    subs = _result_subtasks(result)
+    if not subs:
+        return []
+    errs: list[str] = []
+    ids = [str(x.get("id") or "") for x in subs]
+    dup = sorted({i for i in ids if i and ids.count(i) > 1})
+    if dup:
+        errs.append("子任務 id 重複：" + "、".join(dup))
+    known = set(ids)
+    deps = {str(x.get("id") or ""): [str(d) for d in x.get("depends_on") or []] for x in subs}
+    for x in subs:          # 逐筆看（id 重複時 deps 這個表只留得住一筆）
+        lost = [str(d) for d in x.get("depends_on") or [] if str(d) not in known]
+        if lost:
+            errs.append(f"子任務 {x.get('id')} 相依指向不存在的子任務：" + "、".join(lost))
+    left = {i: {d for d in ds if d in known} for i, ds in deps.items()}
+    while True:
+        free = [i for i, ds in left.items() if not ds]
+        if not free:
+            break
+        for i in free:
+            left.pop(i)
+        for ds in left.values():
+            ds.difference_update(free)
+    if left:
+        errs.append("子任務相依有循環：" + "、".join(sorted(left)))
+    for x in subs:
+        i = str(x.get("id") or "?")
+        if not [a for a in x.get("acceptance") or [] if str(a).strip()]:
+            errs.append(f"子任務 {i} 沒有驗收條件（acceptance 是空的）")
+        if x.get("kind") in ("code", "test", "doc") and not [o for o in x.get("owns") or [] if str(o).strip()]:
+            errs.append(f"子任務 {i}（{x.get('kind')}）沒有 owns：不知道它可以改哪些檔")
+    if spec is not None and spec.is_file():
+        try:
+            in_spec = set(AC_ID.findall(spec.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            in_spec = set()
+        used = set()
+        for x in subs:
+            for t in [*(x.get("acceptance") or []), *(x.get("story_ids") or [])]:
+                used.update(AC_ID.findall(str(t)))
+        if in_spec and used:
+            orphan, ghost = sorted(in_spec - used), sorted(used - in_spec)
+            if orphan:
+                errs.append(f"spec 有 {len(orphan)} 條驗收條件沒有任何子任務對應：" + "、".join(orphan[:12]) + ("…" if len(orphan) > 12 else ""))
+            if ghost:
+                errs.append(f"子任務引用了 spec 沒有的驗收條件：" + "、".join(ghost[:12]) + ("…" if len(ghost) > 12 else ""))
+    return errs
+
+
+def _plan_check_for(run: Path, stage: str, result, data: dict) -> list[str]:
+    if stage not in ("plan", "design"):
+        return []
+    repo = Path(str(data.get("target_repo"))) if data.get("target_repo") else None
+    sd = packlib.spec_dir(repo, packlib.run_epic(run) or str((data.get("args") or {}).get("epic") or ""))
+    return plan_check_issues(result, sd / "spec.md" if sd is not None else None)
+
+
+def constraint_issues(run: Path, stage: str, profile: dict | None, repo: Path | None, run_checks: bool = True) -> tuple[list[str], list[dict]]:
+    """這一段適用的限制文件有沒有被遵守的確定性檢查。回傳（不能政策核准的理由, 檢查指令的結果）。
+    - 文件不存在：不行（限制讀不到，agent 等於沒有依據）。
+    - trace=table：這一段的執行紀錄要有該限制的對照列；沒有不行，有「偏離」不行（偏離要由人決定）。
+      build 段有 paths 的限制只發給對得上的子任務，不在這裡要求對照（test、deliver 有套用時在那裡要求）。
+    - check：在目標 repo（沒有就專案根目錄）執行，exit 非 0 或逾時不行。"""
+    cons = [c for c in (profile or {}).get("constraints") or [] if isinstance(c, dict) and stage in (c.get("stages") or [])]
+    if not cons:
+        return [], []
+    issues: list[str] = []
+    checks: list[dict] = []
+    rows = constraint_rows(run, stage)
+    for c in cons:
+        cid, f = str(c.get("id") or ""), str(c.get("file") or "")
+        if constraint_file(c, repo) is None:
+            issues.append(f"限制文件 [{cid}] {f} 不存在（專案根目錄與目標 repo 都找不到）")
+        if c.get("trace") == "table" and not (stage == "build" and c.get("paths")):
+            got = rows.get(cid) or []
+            if not got:
+                issues.append(f"限制 [{cid}] 要逐條對照，這一段的執行紀錄卻沒有它的〈限制對照〉列")
+            for verdict, name in got:
+                if verdict == "偏離":
+                    issues.append(f"限制 [{cid}] 有偏離（{name}），要由人決定")
+        cmd = c.get("check")
+        if isinstance(cmd, str) and cmd.strip() and run_checks:
+            cwd = repo if repo is not None and repo.is_dir() else project_root()
+            try:
+                q = subprocess.run(cmd, shell=True, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   timeout=CONSTRAINT_CHECK_TIMEOUT)
+                code, tail = q.returncode, (q.stdout + q.stderr).strip()[-300:]
+            except subprocess.TimeoutExpired:
+                code, tail = -1, f"逾時（{CONSTRAINT_CHECK_TIMEOUT} 秒）"
+            except OSError as e:
+                code, tail = -1, f"跑不起來：{e}"
+            checks.append({"id": cid, "command": cmd, "exit": code, "output": tail})
+            if code != 0:
+                issues.append(f"限制 [{cid}] 的檢查指令沒過（exit {code}）：{cmd}")
+    return issues, checks
 
 
 def load_profile_for(run: Path, argv: list[str]) -> tuple[dict | None, str]:
@@ -760,6 +1023,26 @@ def main(argv: list[str]) -> int:
         else:
             st.pop("halted", None)
         has_trace, rows, miss = process_trace(run, stage, result, write=True)
+        if stage in SDLC:
+            cprof, _ = load_profile_for(run, argv)
+            c_issues, c_checks = constraint_issues(run, stage, cprof, target)
+            if c_issues:
+                st["constraint_issues"] = c_issues
+                for m in c_issues:
+                    print(f"限制文件：{m}（不能政策核准）", file=sys.stderr)
+            else:
+                st.pop("constraint_issues", None)
+            if c_checks:
+                st["constraint_checks"] = c_checks
+            else:
+                st.pop("constraint_checks", None)
+            pc = _plan_check_for(run, stage, result, data)
+            if pc:
+                st["plan_check"] = pc
+                for m in pc:
+                    print(f"拆工檢查：{m}（不能政策核准；人工核准前請先確認）", file=sys.stderr)
+            else:
+                st.pop("plan_check", None)
         if not has_trace and has_recipe(data) and stage in SDLC:
             miss = ["這個 run 有 recipe，回傳卻沒有 trace（無法核對每個 agent 的紀錄）"]
             st["missing_records"] = miss
@@ -773,6 +1056,12 @@ def main(argv: list[str]) -> int:
             else:
                 st.pop("missing_records", None)
             print(f"{stage}：執行紀錄索引 {run / stage / INDEX_NAME}（{len(rows)} 列）")
+            ghost = [r["label"] for r in rows if "agent 沒寫紀錄檔" in r["status"]]
+            if ghost:
+                st["ghostwritten_records"] = ghost
+                print(f"{stage}：{len(ghost)} 個 agent 有交件但沒寫紀錄檔，已依信封代寫（內容較簡略）：{'、'.join(ghost[:8])}")
+            else:
+                st.pop("ghostwritten_records", None)
             for m in miss:
                 print(f"執行紀錄缺件：{m}（不能政策核准）", file=sys.stderr)
         dump(run, data)
@@ -792,6 +1081,22 @@ def main(argv: list[str]) -> int:
             print(f"注意：{abandoned_error(data)}，這一段的結果只存檔，不能核准")
         print(f"{stage}：{len(envs)} 份信封，狀態 {st['status']}" + ("（需要使用者核准才能進下一段）" if st.get("gate") and st["status"] == "done" else ""))
         return 1 if errs else 0
+    if cmd == "decide":
+        q, a, by, at = opt(argv, "--question"), opt(argv, "--answer"), opt(argv, "--by"), opt(argv, "--at")
+        scope, exp = opt(argv, "--scope", "epic"), opt(argv, "--expires")
+        errs = ["--by 與 --at 都必填"] if not by or not at else []
+        errs += decision_errors([(q, a)], by, scope, exp)
+        if errs:
+            for e in errs:
+                print(f"不能記錄：{e}", file=sys.stderr)
+            return 1
+        try:
+            record_decisions(run, [(q, a)], by, at, scope, exp)
+        except OSError as e:
+            print(f"不能記錄：{e}", file=sys.stderr)
+            return 1
+        print(f"已記 1 筆決定（{packlib.DECISIONS}；範圍 {scope}）")
+        return 0
     if cmd == "approve":
         if len(argv) < 3:
             print(__doc__)
@@ -814,12 +1119,22 @@ def main(argv: list[str]) -> int:
             errs += recipe_tamper_errors(data, argv)
         if by == "policy" and not note:
             errs.append("--by policy 時 --note 要寫依據的政策名稱")
+        answers = [split_answer(a) for a in opts(argv, "--answer")]
+        a_scope, a_exp = opt(argv, "--answer-scope", "epic"), opt(argv, "--answer-expires")
+        if answers:
+            errs += decision_errors(answers, by, a_scope, a_exp)
         if by == "policy" and st is not None:
             f = run / f"{stage}.json"
             if not f.is_file():
                 errs.append(f"找不到 {f.name}，政策核准要讀該段的實際結果")
             else:
                 errs += [f"政策判定：{e}" for e in policy_violations(stage, json.loads(f.read_text(encoding="utf-8")), run)]
+                cprof, cperr = load_profile_for(run, argv)
+                if cperr:
+                    errs.append(cperr)
+                crepo = Path(str(data.get("target_repo"))) if data.get("target_repo") else None
+                errs += [f"限制文件：{e}" for e in constraint_issues(run, stage, cprof, crepo)[0]]
+                errs += [f"拆工檢查：{e}" for e in _plan_check_for(run, stage, json.loads(f.read_text(encoding="utf-8")), data)]
             if stage in HUMAN_ONLY and not any("一律由人核准" in e for e in errs):
                 errs.append(f"{stage} 段一律由人核准，不能政策核准")
         errs += chain_errors(data, stage)
@@ -832,10 +1147,19 @@ def main(argv: list[str]) -> int:
             data["recipe"]["locked"] = True
         dump(run, data)
         print(f"{stage} 已記錄核准：{by} @ {at}")
+        if answers:
+            try:
+                print(f"已記 {record_decisions(run, answers, by, at, a_scope, a_exp, stage)} 筆決定（{packlib.DECISIONS}；範圍 {a_scope}）")
+            except OSError as e:   # 決策記憶是輔助：寫不出來不影響核准
+                print(f"警告：決定沒記成（{e}）；核准已記錄", file=sys.stderr)
         if stage == "plan" and has_recipe(data):
             print(f"recipe 已鎖定：{recipe_summary(data['recipe'])}；之後要改只能 save_run.py escalate（只能加嚴）")
         if st.get("missing_records"):
             print(f"警告：{stage} 有 {len(st['missing_records'])} 個執行紀錄缺件（人工核准照記，但請先確認）：" + "；".join(st["missing_records"][:5]), file=sys.stderr)
+        if st.get("constraint_issues"):
+            print(f"警告：{stage} 有 {len(st['constraint_issues'])} 項限制文件的問題（人工核准照記，但請先確認）：" + "；".join(st["constraint_issues"][:5]), file=sys.stderr)
+        if st.get("plan_check"):
+            print(f"警告：{stage} 的拆工檢查有 {len(st['plan_check'])} 項問題（人工核准照記，但請先確認）：" + "；".join(st["plan_check"][:5]), file=sys.stderr)
         return 0
     if cmd == "escalate":
         name, by, at, reason = opt(argv, "--recipe"), opt(argv, "--by"), opt(argv, "--at"), opt(argv, "--reason")
@@ -961,6 +1285,8 @@ def main(argv: list[str]) -> int:
             print(f"{name:8} {st['status']:15} {gate} {ok}")
             if st.get("missing_records"):
                 print(f"         警告：執行紀錄缺件 {len(st['missing_records'])} 個（不能政策核准）：" + "；".join(st["missing_records"][:3]))
+            if st.get("constraint_issues"):
+                print(f"         警告：限制文件 {len(st['constraint_issues'])} 項（不能政策核准）：" + "；".join(st["constraint_issues"][:3]))
         if data.get("followup_run"):
             print(f"後續 run：{data['followup_run'].get('run')}")
         if data.get("closed"):
@@ -1141,6 +1467,38 @@ def selftest() -> int:
               c == 0 and ab == {"by": "human", "at": "t", "reason": "需求取消"} and c2 != 0 and "已取消" in out2
               and "已取消" in st_out and c3 != 0, out2 + st_out)
 
+        # ── B13 決策記憶
+        d = new_run({"name": "feature"})
+        runs_p = Path(d).parent
+        for f in (packlib.DECISIONS, packlib.DECISIONS_VIEW):
+            (runs_p / f).unlink(missing_ok=True)
+        c, out = call("approve", d, "plan", "--by", "human", "--at", "2026-11-12T01:00:00Z", "--answer", "匯出檔的編碼用什麼？=UTF-8 不加 BOM",
+                      "--answer", "要不要支援 xlsx＝這一版不要", "--answer-scope", "project", "--answer-expires", "2099-01-01")
+        decs = packlib.load_decisions(runs_p)
+        check("B13 決策記憶：人核准時的 --answer 記進 decisions.jsonl（問題、答覆、誰、何時、範圍、到期、run、epic、段）",
+              c == 0 and len(decs) == 2 and decs[0]["question"] == "匯出檔的編碼用什麼？" and decs[0]["answer"] == "UTF-8 不加 BOM" and decs[1]["answer"] == "這一版不要"
+              and decs[0]["by"] == "human" and decs[0]["scope"] == "project" and decs[0]["expires"] == "2099-01-01" and decs[0]["run"] == Path(d).name
+              and decs[0]["stage"] == "plan" and decs[0]["epic"] == "e" and "已記 2 筆決定" in out, out + str(decs))
+        check("B13 決策記憶：決策記憶.md 跟著更新（給人與知識庫看）", "UTF-8 不加 BOM" in (runs_p / packlib.DECISIONS_VIEW).read_text(encoding="utf-8"))
+        c, out = call("decide", d, "--question", "匯出檔的編碼用什麼？", "--answer", "改成加 BOM", "--by", "human", "--at", "t", "--scope", "project")
+        got = packlib.relevant_decisions(runs_p, "別的 run", "", "匯出檔的編碼", "2026-11-12")
+        check("B13 決策記憶：decide 可以在核准以外記一筆；同一題後面的答覆取代前面的；之後的 run 查得到", c == 0 and [x["answer"] for x in got if "編碼" in x["question"]] == ["改成加 BOM"], out + str(got))
+        check("B13 決策記憶：到期日過了就查不到", all("xlsx" not in x["question"] for x in packlib.relevant_decisions(runs_p, "x", "", "要不要支援 xlsx 匯出", "2099-06-01"))
+              and any("xlsx" in x["question"] for x in packlib.relevant_decisions(runs_p, "x", "", "要不要支援 xlsx 匯出", "2026-11-12")))
+        n0 = len(packlib.load_decisions(runs_p))
+        d2 = new_run({"name": "feature"})
+        bad = [call("approve", d2, "plan", "--by", "human", "--at", "t", "--answer", "沒有答覆"),
+               call("approve", d2, "plan", "--by", "human", "--at", "t", "--answer", "q=a", "--answer-scope", "everywhere"),
+               call("approve", d2, "plan", "--by", "human", "--at", "t", "--answer", "q=a", "--answer-expires", "明年"),
+               call("decide", d2, "--question", "q", "--answer", "a", "--by", "policy", "--at", "t"),
+               call("decide", d2, "--question", "q" * 301, "--answer", "a", "--by", "human", "--at", "t")]
+        check("B13 決策記憶：格式不對（沒答覆、範圍或到期日寫錯、太長）與政策核准都拒絕，而且不記、不核准",
+              all(c != 0 for c, _ in bad) and len(packlib.load_decisions(runs_p)) == n0 and not load(Path(d2))["stages"]["plan"].get("approved"), str([o for _, o in bad]))
+        d3 = new_run({"name": "feature"}, approve_plan=True)
+        call("stage", d3, "design", stdin={"stage": "design", "recipe": {"name": "feature"}, "design": _env({"epic": "e", "subtasks": [{"id": "t", "title": "t", "kind": "code", "owns": ["a"], "depends_on": [], "acceptance": ["x"]}]}), "trace": []})
+        c, out = call("approve", d3, "design", "--by", "policy", "--at", "t", "--note", "p", "--answer", "q=a")
+        check("B13 決策記憶：政策核准不能帶 --answer", c != 0 and "只能由人記" in out and len(packlib.load_decisions(runs_p)) == n0, out)
+
         # ── SP2.1 intent 檢查（I1）
         d = new_run()
         c, out = call("stage", d, "plan", stdin=plan_res({"name": "feature"}, "specs/e/沒有這個檔.md"))
@@ -1280,6 +1638,115 @@ def selftest() -> int:
               c == 0 and "| label | 角色 | phase | 紀錄檔 | 成果檔 | 狀態 |" in idx and idx.count("| outline |") == 1
               and "| challenge |" in idx and "specs/e/design.md" in idx and "missing_records" not in stages(d)["design"] and c2 == 0,
               out + idx + out2)
+        # B7 限制文件：文件不存在、缺對照列、有偏離、檢查指令沒過 → 不能政策核准；都符合才行；沒有 constraints 的 profile 行為不變
+        keep_profile = PROJECT_PROFILE.read_text(encoding="utf-8")
+        cbase = json.loads(keep_profile)
+        ok_cmd = f'"{sys.executable}" -c "import sys; sys.exit(0)"'
+        bad_cmd = f'"{sys.executable}" -c "import sys; sys.exit(3)"'
+
+        def with_constraints(cons: list) -> None:
+            PROJECT_PROFILE.write_text(json.dumps({**cbase, "constraints": cons}, ensure_ascii=False), encoding="utf-8")
+
+        def design_run(table: str | None) -> tuple[str, int, str]:
+            d_ = new_run()
+            walk(d_, "design")
+            g = Path(d_) / "design"
+            g.mkdir(exist_ok=True)
+            (g / "outline.md").write_text("# 紀錄\n" + (f"\n## 限制對照\n\n| 限制 | 判定 | 依據 |\n|---|---|---|\n{table}\n" if table else ""), encoding="utf-8")
+            (g / "challenge.md").write_text("# 紀錄\n", encoding="utf-8")
+            tr = [{"label": "outline", "agent_type": "agent-workflow:dev-spec-author", "phase": "Outline", "record": str(g / "outline.md"), "ok": True},
+                  {"label": "challenge", "agent_type": "agent-workflow:tpm-skeptic", "phase": "Challenge", "record": str(g / "challenge.md"), "ok": True}]
+            c_, o_ = call("stage", d_, "design", stdin={"design": des, "challenge": ver, "trace": tr})
+            return d_, c_, o_
+        (proj / "ARCHITECTURE.md").write_text("# 架構\n\n分層：api → service → repository。\n", encoding="utf-8")
+        arch = {"id": "arch", "file": "ARCHITECTURE.md", "stages": ["design"], "trace": "table"}
+        with_constraints([arch])
+        d, c, out = design_run("| arch | 符合 | design.md:12 |")
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：文件在、對照列是「符合」→ 可以政策核准", c == 0 and "constraint_issues" not in stages(d)["design"] and c2 == 0, out + out2)
+        d, c, out = design_run(None)
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        c3, out3 = call("approve", d, "design", "--by", "human", "--at", "t")
+        check("B7 限制文件：沒有對照列 → 記 constraint_issues、政策核准被擋；人工核准照記並警告",
+              any("沒有它的〈限制對照〉列" in m for m in stages(d)["design"].get("constraint_issues") or []) and c2 != 0 and "限制文件" in out2
+              and c3 == 0 and "限制文件" in out3, out + out2 + out3)
+        d, c, out = design_run("| arch | 偏離 | 這次要讓 api 直接讀 repository，理由見 design.md:40 |")
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：對照列是「偏離」→ 政策核准被擋（要由人決定）", c2 != 0 and "偏離" in out2, out + out2)
+        with_constraints([{**arch, "file": "docs/NOPE.md"}])
+        d, c, out = design_run("| arch | 符合 | x |")
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：文件不存在 → 政策核准被擋", c2 != 0 and "不存在" in out2, out + out2)
+        with_constraints([{"id": "lint", "file": "ARCHITECTURE.md", "stages": ["design"], "check": bad_cmd}])
+        d, c, out = design_run(None)
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        chk = stages(d)["design"].get("constraint_checks") or []
+        check("B7 限制文件：檢查指令 exit 非 0 → 記結果、政策核准被擋", c2 != 0 and "檢查指令沒過" in out2 and chk and chk[0]["exit"] == 3, out + out2 + str(chk))
+        with_constraints([{"id": "lint", "file": "ARCHITECTURE.md", "stages": ["design"], "check": ok_cmd}, {"id": "rev", "file": "docs/NOPE.md", "stages": ["deliver"], "trace": "table"}])
+        d, c, out = design_run(None)
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：檢查指令通過、trace 沒設、別段的限制不算 → 可以政策核准", c2 == 0 and "constraint_issues" not in stages(d)["design"], out + out2)
+        ci, _ = constraint_issues(Path(d), "build", {"constraints": [{"id": "fe", "file": "ARCHITECTURE.md", "stages": ["build"], "paths": ["web/**"], "trace": "table"}]}, None)
+        check("B7 限制文件：build 段有 paths 的限制不在這裡要求對照（只發給對得上的子任務）", ci == [], str(ci))
+        PROJECT_PROFILE.write_text(keep_profile, encoding="utf-8")
+        d, c, out = design_run(None)
+        check("B7 限制文件：profile 沒有 constraints → 行為不變", c == 0 and "constraint_issues" not in stages(d)["design"], out)
+        # ── B5 plan_check：拆工的確定性檢查
+        T = lambda i, deps=(), acc=("AC-1 通過",), kind="code", owns=("src/a.py",): {"id": i, "title": i, "kind": kind, "owns": list(owns), "depends_on": list(deps), "acceptance": list(acc)}  # noqa: E731
+        wrap = lambda subs: {"stage": "design", "design": {"status": "done", "payload": {"epic": "demo", "subtasks": subs}}}  # noqa: E731
+        check("B5 plan_check：乾淨的拆工沒有問題；回傳沒有子任務時不檢查", plan_check_issues(wrap([T("t1"), T("t2", ["t1"], owns=("src/b.py",))])) == [] and plan_check_issues({"stage": "design"}) == [])
+        pc = plan_check_issues(wrap([T("t1", ["t9"]), T("t1"), T("t2", ["t3"]), T("t3", ["t2"])]))
+        check("B5 plan_check：id 重複、相依指向不存在、相依循環都列出", any("id 重複：t1" in m for m in pc) and any("不存在的子任務：t9" in m for m in pc) and any("循環：t2、t3" in m for m in pc), str(pc))
+        pc = plan_check_issues(wrap([T("t1", acc=()), T("t2", owns=()), T("t3", kind="research", owns=())]))
+        check("B5 plan_check：沒有驗收條件、會改檔卻沒有 owns 都列出；research 不要求 owns", any("t1 沒有驗收條件" in m for m in pc) and any("t2（code）沒有 owns" in m for m in pc) and not any("t3" in m for m in pc), str(pc))
+        spec_f = Path(d) / "spec-for-plan-check.md"
+        spec_f.write_text("# spec\n- AC-1 可以登入\n- AC-2 可以登出\n- AC-MUT-3 不可變\n", encoding="utf-8")
+        pc = plan_check_issues(wrap([T("t1", acc=("AC-1 通過", "AC-9 通過"))]), spec_f)
+        check("B5 plan_check：spec 有、沒人對應的驗收條件，與子任務引用了 spec 沒有的，都列出", any("沒有任何子任務對應：AC-2、AC-MUT-3" in m for m in pc) and any("spec 沒有的驗收條件：AC-9" in m for m in pc), str(pc))
+        check("B5 plan_check：子任務沒用 AC 編號（寫測試指令）時不比對；spec 檔不存在也不比對",
+              plan_check_issues(wrap([T("t1", acc=("pytest tests/test_a.py",))]), spec_f) == [] and plan_check_issues(wrap([T("t1")]), Path(d) / "nope.md") == [])
+        bad = wrap([T("t1", ["t9"])])
+        bad["design"].update({"summary": "s", "artifacts": [], "evidence": [], "confidence": 0.9, "open_questions": [], "derived_work": []})
+        dpc = new_run()
+        walk(dpc, "design")
+        c, out = call("stage", dpc, "design", stdin=bad)
+        c2, out2 = call("approve", dpc, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B5 plan_check：存檔時記進 run.json，政策核准被擋並說明", any("t9" in m for m in stages(dpc)["design"].get("plan_check") or []) and c2 != 0 and "拆工檢查" in out2, out + out2)
+
+        # B9：有交件（digest 對得回信封）但沒寫紀錄檔 → 依信封代寫，不算缺件；agent 自己寫的不覆寫；回傳換掉後舊的代寫檔不沿用
+        d = new_run()
+        walk(d, "design")
+        gd = Path(d) / "design"
+        gd.mkdir(exist_ok=True)
+        amb = [{"label": "challenge", "agent_type": "agent-workflow:tpm-skeptic", "phase": "Challenge", "record": str(gd / "challenge.md"), "ok": True,
+                "digest": {"status": ver.get("status", ""), "summary": ver.get("summary", "")[:400]}}]
+        c, out = call("stage", d, "design", stdin={"design": {**des, "artifacts": []}, "challenge": ver, "trace": amb})
+        check("B9 代寫：digest 對到多個不同的信封 → 不猜，仍是缺件", des.get("summary") == ver.get("summary") and bool(stages(d)["design"].get("missing_records"))
+              and not (gd / "challenge.md").exists(), out)
+        ver = {**ver, "summary": "skeptic 判定：設計成立，沒有推翻的項目"}
+        (gd / "outline.md").write_text("# agent 自己寫的紀錄\n", encoding="utf-8")
+        gt = [{"label": "outline", "agent_type": "agent-workflow:dev-spec-author", "phase": "Outline", "record": str(gd / "outline.md"), "ok": True,
+               "digest": {"status": des.get("status", ""), "summary": des.get("summary", "")[:400]}},
+              {"label": "challenge", "agent_type": "agent-workflow:tpm-skeptic", "phase": "Challenge", "record": str(gd / "challenge.md"), "ok": True,
+               "digest": {"status": ver.get("status", ""), "summary": ver.get("summary", "")[:400]}}]
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": gt})
+        gbody = (gd / "challenge.md").read_text(encoding="utf-8") if (gd / "challenge.md").is_file() else ""
+        gidx = (gd / INDEX_NAME).read_text(encoding="utf-8")
+        check("B9 代寫：有信封沒紀錄檔 → 依信封代寫、不算缺件、記 ghostwritten_records；agent 自己寫的紀錄不覆寫",
+              c == 0 and GHOSTWRITTEN in gbody and ver.get("summary", "") in gbody and "missing_records" not in stages(d)["design"]
+              and stages(d)["design"].get("ghostwritten_records") == ["challenge"] and "agent 沒寫紀錄檔" in gidx
+              and (gd / "outline.md").read_text(encoding="utf-8") == "# agent 自己寫的紀錄\n", out + gbody + gidx)
+        first = gbody
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": gt})
+        check("B9 代寫：重存結果相同（可重現）", c == 0 and (gd / "challenge.md").read_text(encoding="utf-8") == first and "missing_records" not in stages(d)["design"], out)
+        nodg = [{k: v for k, v in t.items() if k != "digest"} for t in gt]
+        (gd / "challenge.md").unlink()
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": nodg})
+        check("B9 代寫：對不回信封（沒有 digest、artifacts 也沒列）→ 仍是缺件", bool(stages(d)["design"].get("missing_records")) and not (gd / "challenge.md").exists(), out)
+        (gd / "challenge.md").write_text(first, encoding="utf-8")
+        wrong = [dict(gt[0]), {**gt[1], "digest": {"status": "done", "summary": "別的信封的摘要"}}]
+        c, out = call("stage", d, "design", stdin={"design": des, "challenge": ver, "trace": wrong})
+        check("B9 代寫：舊的代寫檔對不回這次的信封 → 缺件（不沿用）", any("代寫" in m for m in stages(d)["design"].get("missing_records") or []), out)
         d = new_run()
         walk(d, "design")
         bad = trace + [{"label": "plan:a", "agent_type": "agent-workflow:dev-spec-author", "phase": "Plan", "record": str(Path(d) / "design/plan-a.md"), "ok": True},
@@ -1416,6 +1883,26 @@ def selftest() -> int:
         check("模型分級：profile 有 models，plan 的 trace 沒有 tier → invalid", c == 1 and "沒有 model／tier" in out, out)
         c, out = k_stage(d, [k_entry(d, "intent", SPEC, "ultra", "opus")])
         check("模型分級：不認得的等級 → invalid", c == 1 and "不認得" in out, out)
+        # 0.5：SDLC 每一段都經過執行核心
+        impl = lambda **kw: {"label": "Implement:t1", "agent_type": "agent-workflow:dev-implementer", "phase": "Implement", "record": "x.md", "ok": True, **kw}  # noqa: E731
+        check("模型分級（0.5）：build、test、deliver 等段的 trace 沒有 tier → 判錯（都要經過執行核心）",
+              all(any("沒有 model／tier" in e for e in model_errors(s, {"trace": [impl()]}, with_models, [])) for s in ("design", "build", "sync", "test", "deliver", "merge")))
+        check("模型分級（0.5）：build 段的 implementer 用 standard、model 對得上 → 通過；擴充 agent 沒有 tier 不檢查",
+              not model_errors("build", {"trace": [impl(tier="standard", model="sonnet"), {"label": "ext", "agent_type": "my:agent", "ok": True}]}, with_models, []))
+        check("模型分級（0.5）：merge 段的 steward 用 standard（低於下限 strong）→ 判錯",
+              any("低於下限 strong" in e for e in model_errors("merge", {"trace": [{"label": "execute", "agent_type": "agent-workflow:dev-merge-steward", "ok": True, "tier": "standard", "model": "sonnet"}]}, with_models, [])))
+        cap_run = Path(k_run())
+        _has, rows, miss = process_trace(cap_run, "build", {"trace": [{"label": "Implement:t9", "agent_type": "agent-workflow:dev-implementer", "phase": "Implement",
+                                                                     "record": str(cap_run / "build/Implement-t9.md"), "ok": False, "capped": True, "max_agents": 40}]}, False)
+        out_file = Path(d) / "outside.md"
+        out_file.write_text("# 不是紀錄\n", encoding="utf-8")
+        rc_run = Path(k_run())
+        (rc_run / "build").mkdir(parents=True, exist_ok=True)
+        (rc_run / "build" / "real.md").write_text("# 紀錄\n", encoding="utf-8")
+        check("紀錄檔路徑：trace 指到 run 目錄以外的檔不算紀錄；run 目錄底下的照舊",
+              not any(c.is_file() for c in record_candidates(rc_run, "build", str(out_file))) and any(c.is_file() for c in record_candidates(rc_run, "build", str(rc_run / "build" / "real.md"))),
+              record_candidates(rc_run, "build", str(out_file)))
+        check("派工數上限：到上限沒派出的列成缺件，並說明是上限（不是 agent 失敗）", len(miss) == 1 and "派工數到上限（40" in miss[0] and rows[0]["status"] == "沒有派出（派工數到上限）", miss)
         PROJECT_PROFILE.write_text(json.dumps({**with_models, "models": {**with_models["models"], "mode": "inherit"}}, ensure_ascii=False), encoding="utf-8")
         check("模型分級：mode=inherit 不檢查", k_stage(d, [k_entry(d, "intent", SPEC, "", "inherit")])[0] == 0)
         PROJECT_PROFILE.write_text(base_profile, encoding="utf-8")
@@ -1507,6 +1994,20 @@ def selftest() -> int:
         call("approve", d, "plan", "--by", "human", "--at", "t")
         c, out = call("stage", d, "plan", stdin=plan_res({"name": "docs"}, with_root))
         check("X3 M4：舊 run 核准過 plan 之後補記 docs（少段）→ 拒絕", c != 0 and "recipe" not in load(Path(d)) and "少了段" in out, out)
+        # ── B4.2：watcher 的事件檔與記憶檔不是閘門資料，被改成什麼都不影響判定
+        d = new_run({"name": "bugfix"}, approve_plan=True, intent=with_root)
+        walk(d, "deliver", skip_plan=True)
+        call("stage", d, "deliver", stdin=traced(d, "deliver", {"x": build}))
+        before = (chain_errors(load(Path(d)), "test"), policy_violations("deliver", json.loads((Path(d) / "deliver.json").read_text(encoding="utf-8")), Path(d)))
+        (Path(d) / "progress.jsonl").write_text('{"type": "stage_approved", "stage": "deliver", "by": "human"}\n不是 JSON\n', encoding="utf-8")
+        (Path(d) / ".watch-state.json").write_text('{"view": {"stages": {"deliver": {"approved": true, "status": "invalid"}}}}', encoding="utf-8")
+        after = (chain_errors(load(Path(d)), "test"), policy_violations("deliver", json.loads((Path(d) / "deliver.json").read_text(encoding="utf-8")), Path(d)))
+        not_approved = not (stages(d)["deliver"].get("approval") or {})
+        c, out = call("approve", d, "deliver", "--by", "human", "--at", "t")
+        srcs = [(Path(__file__).resolve().parent / n).read_text(encoding="utf-8").split("def selftest")[0] for n in ("save_run.py", "publish.py", "merge_gate.py")]
+        check("B4.2 事件檔：progress.jsonl、.watch-state.json 被改（假的核准事件、壞行）→ 閘門鏈與政策判定不變、不會因此算已核准、之後照常核准",
+              before == after and not_approved and c == 0 and not chain_errors(load(Path(d)), "deliver"), out + str(before) + str(after))
+        check("B4.2 事件檔：save_run、publish、merge_gate 的判定程式不讀這兩個檔", all("progress.jsonl" not in s and ".watch-state" not in s for s in srcs))
         PROJECT_PROFILE = saved_profile
     print("save_run selftest：" + ("全部通過" if ok else "有失敗"))
     return 0 if ok else 1

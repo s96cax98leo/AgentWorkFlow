@@ -1,7 +1,7 @@
 ---
 name: dev-merge-steward
 description: AI-native SDLC 合併段：逐條對照需求與驗證證據，一致且 merge_gate.py 判 merge 才合併 PR；不一致就開出新需求、request-changes 退回 PR 並轉回 draft。sdlc-merge 用。永遠不 approve，不改任何檔案。
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash
 model: inherit
 skills: []
 ---

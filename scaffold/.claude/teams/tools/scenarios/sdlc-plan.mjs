@@ -249,6 +249,49 @@ const V04 = [
     expect: (r) => (r.calls.filter((c) => c.label === 'research:requirement').length === 1 ? [] : ['fixed 不該升級重派']),
   },
   {
+    name: '工具先定位：文件角度命中夠就不派定位 agent，分析只收到工具給的行段',
+    profile: MP,
+    args: { recipe: 'feature', located: {
+      'specs-adr': { enough: true, locations: [{ path: 'docs/adr/0003.md', start: 1, end: 30, why: '工具定位：命中 匯出' }, { path: 'specs/export/spec.md', start: 5, end: 40, why: '工具定位：命中 驗收' }, { path: 'docs/plan/q3.md', start: 10, end: 20, why: '工具定位：命中 批次' }] },
+    } },
+    fakes: { 'research:specs-adr': (base, prompt) => { if (!/工具依需求的用詞找到的/.test(prompt) || !/docs\/adr\/0003\.md:1-30/.test(prompt) || !/最多再補 6 段/.test(prompt)) throw new Error('分析沒有收到工具定位的行段'); return base } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:specs-adr') ? ['工具定位夠了還派 locate:specs-adr'] : []),
+      ...(r.labels.includes('research:specs-adr') ? [] : ['沒有派 research:specs-adr']),
+      ...(r.labels.includes('locate:code-contracts') ? [] : ['沒有工具定位的角度要照派定位 agent']),
+      ...(r.out && r.out.located_by && r.out.located_by['specs-adr'] === 'tool' && r.out.located_by['code-contracts'] === 'agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+      ...(r.out && r.out.locations && (r.out.locations['specs-adr'] || []).length === 3 ? [] : ['工具定位的行段要進 locations（調研重用靠它記來源）']),
+      ...(r.out && r.out.estimated_agents && r.out.halted !== true ? [] : ['不該 halted']),
+    ],
+  },
+  {
+    name: '工具先定位：不夠（或程式角度的種子）照派定位 agent，派工單帶著工具找到的行段、輪數上限減半',
+    profile: MP,
+    args: { recipe: 'feature', located: {
+      'code-contracts': { enough: false, locations: [{ path: 'src/export.py', start: 151, end: 190, why: '工具定位：命中 export' }] },
+      'specs-adr': { enough: true, locations: [{ path: 'docs/a.md', start: 1, end: 9, why: 'x' }] },
+    } },
+    fakes: { 'locate:code-contracts': (base, prompt) => { if (!/src\/export\.py:151-190/.test(prompt) || !/最多 3 輪、6 次查詢/.test(prompt) || !/不要重找它們/.test(prompt)) throw new Error('定位 agent 沒有收到工具找到的行段或上限沒減半'); return base },
+      'locate:specs-adr': (base, prompt) => { if (!/最多 3 輪、6 次查詢/.test(prompt)) throw new Error('enough=true 但只有 1 段（不到 3 段）要當成種子'); return base } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:code-contracts') && r.labels.includes('locate:specs-adr') ? [] : ['不夠的角度要照派定位 agent（enough=true 但不到 3 段也算不夠）']),
+      ...(r.out && r.out.located_by && r.out.located_by['code-contracts'] === 'tool+agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+    ],
+  },
+  {
+    name: '工具先定位：格式不對或路徑越界的項目丟掉（絕對路徑、..、行號不是整數）',
+    profile: MP,
+    args: { recipe: 'feature', located: {
+      'specs-adr': { enough: true, locations: [{ path: '/etc/passwd', start: 1, end: 9 }, { path: '../secrets.md', start: 1, end: 9 }, { path: 'docs/a.md', start: '1', end: 9 }, { path: 'docs/b.md', start: 9, end: 1 }] },
+      requirement: 'enough',
+    } },
+    fakes: { 'locate:specs-adr': (base, prompt) => { if (/passwd|secrets\.md|docs\/a\.md|docs\/b\.md/.test(prompt)) throw new Error('不合格的行段被帶進派工單'); return base } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:specs-adr') && r.labels.includes('locate:requirement') ? [] : ['不合格的工具定位要當成沒有，照派定位 agent']),
+      ...(r.out && r.out.located_by && r.out.located_by['specs-adr'] === 'agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+    ],
+  },
+  {
     name: '派工數上限：到上限就 halted，不靜默截斷',
     profile: { ...RP, limits: { max_agents: 3 } }, args: { recipe: 'feature' },
     expect: (r) => [

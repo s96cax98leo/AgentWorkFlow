@@ -34,7 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
 WORKFLOWS = ("sdlc-plan", "sdlc-design", "sdlc-design-revise", "sdlc-build", "sdlc-sync", "sdlc-test", "sdlc-deliver", "sdlc-merge",
-             "event-brief", "event-upstream", "event-meeting", "event-pr-review", "event-reqs-change", "event-decision", "event-demo-check", "event-post-merge")
+             "event", "event-brief", "event-pr-review", "event-post-merge")
 REQUIRED = [
     "CLAUDE.md",
     ".claude/settings.json",
@@ -53,7 +53,6 @@ REQUIRED = [
     ".claude/teams/methodology.json",
     ".claude/teams/schemas/methodology.schema.json",
     ".claude/teams/methodologies/default.json",
-    *[f".claude/workflows/{w}.js" for w in WORKFLOWS],
 ]
 
 SELFTEST_REQUIRED = ("merge_gate.py", "publish.py", "sync_branch.py", "checklist.py")
@@ -65,6 +64,27 @@ def selftest_tools(tools: Path) -> list[Path]:
 
 
 fail = False
+_rendered: dict = {}
+
+
+def render_wf(target: Path, fresh: bool = False) -> Path:
+    """0.5 起 workflow 不放在專案：用 awf.py 依 plugin 的範本產生一份來檢查（專案的設定改了要 fresh=True 重新產生）。"""
+    out = target / "_tpm" / "wf-check"
+    if fresh or target not in _rendered:
+        r = run([PY, ".claude/teams/tools/awf.py", "render", "--all", "--out", str(out), "--plugin-dir", str(ROOT / "plugin")], cwd=target)
+        if r.returncode != 0:
+            bad("awf.py render --all 失敗：", r.stdout + r.stderr)
+        _rendered[target] = out
+    return out
+
+
+def wf_text(target: Path, name: str, fresh: bool = False) -> str:
+    f = render_wf(target, fresh) / f"{name}.js"
+    return f.read_text(encoding="utf-8") if f.is_file() else ""
+
+
+def wf_check_argv(node: str, target: Path) -> list[str]:
+    return [node, ".claude/teams/tools/check_workflows.mjs", "--agents-dir", str(ROOT / "plugin" / "agents"), "--wf-dir", str(render_wf(target, fresh=True))]
 GH_EXPR = re.compile(r"\$\{\{.*?\}\}")  # GitHub Actions 的 ${{ … }} 運算式不是佔位符
 
 
@@ -186,10 +206,13 @@ def check_tools(target: Path) -> None:
     if (target / ".claude/teams/tools/build.py").is_file():
         r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=target)
         ok("build.py --check") if r.returncode == 0 else bad("build.py --check 失敗：", r.stdout + r.stderr)
+    ok("預設不把 workflow 複製進專案（由 awf.py 依 plugin 的範本產生）") if not (target / ".claude/workflows").exists() else bad("預設 init 不該有 .claude/workflows/")
+    got = sorted(p.stem for p in render_wf(target).glob("*.js"))
+    ok(f"awf.py render --all 產生 {len(got)} 支 workflow，沒有殘留佔位符") if got == sorted(WORKFLOWS) and all("{{" not in wf_text(target, w) for w in WORKFLOWS) else bad(f"awf.py render --all 的產出不對：{got}")
     if (target / ".claude/teams/tools/check_workflows.mjs").is_file():
         node = shutil.which("node")
         if node:
-            r = run([node, ".claude/teams/tools/check_workflows.mjs", "--agents-dir", str(ROOT / "plugin" / "agents")], cwd=target)
+            r = run(wf_check_argv(node, target), cwd=target)
             ok(f"check_workflows.mjs：{last_line(r.stdout)}") if r.returncode == 0 else bad("check_workflows.mjs 失敗：", r.stdout + r.stderr)
         else:
             skip("沒有 node，略過 check_workflows.mjs")
@@ -212,7 +235,7 @@ def dry_run_phases(target: Path, workflow: str) -> str | None:
     node = shutil.which("node")
     if not node:
         return None
-    r = run([node, ".claude/teams/tools/check_workflows.mjs", "--agents-dir", str(ROOT / "plugin" / "agents")], cwd=target)
+    r = run(wf_check_argv(node, target), cwd=target)
     m = re.search(rf"^ok\s+{re.escape(workflow)}\.js.*phases: ([^）]*)）", r.stdout, re.M)
     return m.group(1) if m else ""
 
@@ -249,6 +272,7 @@ ANSWERS = {
     "pr_size": {"max_lines": 400, "max_files": None},
     "doc_format": "Markdown",
     "read_limits": {"mode": "warn", "whole_file_lines": 300, "read_budget": 500000},
+    "constraints": ["ARCHITECTURE.md", "docs/frontend.md=build+deliver", {"id": "review", "file": "REVIEW.md", "stages": ["deliver"], "trace": "table"}],
     "main_session_push_merge": True,
 }
 
@@ -261,6 +285,12 @@ def check_answers_methodology(target: Path) -> None:
         bad(f"methodology.json 讀不到：{e}")
         return
     conv = prof.get("conventions", {})
+    cons = prof.get("constraints") or []
+    ok("答案檔的 constraints 寫進 profile（簡寫展開成 id、file、stages；物件原樣保留）") if (
+        [c.get("id") for c in cons] == ["architecture", "frontend", "review"] and cons[0]["stages"] == ["design", "deliver"]
+        and cons[1]["stages"] == ["build", "deliver"] and cons[2].get("trace") == "table") else bad(f"constraints 沒寫對：{cons}")
+    wf = wf_text(target, "sdlc-deliver", fresh=True)
+    ok("限制文件內嵌進 workflow（sdlc-deliver.js 的 profile 有 REVIEW.md）") if "REVIEW.md" in wf and "awfConstraints(MP, 'deliver')" in wf else bad("sdlc-deliver.js 沒有內嵌限制文件")
     lim = prof.get("limits", {})
     ok("答案檔的 read_limits 寫進 limits（mode、行數、預設額度；沒回答的角色額度沿用 profile）") if (
         lim.get("mode") == "warn" and lim.get("whole_file_lines") == 300 and lim.get("read_budget", {}).get("default") == 500000
@@ -280,7 +310,7 @@ def check_answers_methodology(target: Path) -> None:
     loose = gcfg.get("main_session_git_rules") is False and gcfg.get("main_session_github_rules") is False
     ok("main_session_push_merge=true：主 session 的 git／GitHub 限制放寬") if loose else bad(f"答案檔的 main_session_push_merge 沒套用：{gcfg.get('main_session_git_rules')}, {gcfg.get('main_session_github_rules')}")
     ok("分支前綴加進 allowed_branch_prefixes") if "feat/" in gcfg.get("allowed_branch_prefixes", "") else bad(f"allowed_branch_prefixes 沒有 feat/：{gcfg.get('allowed_branch_prefixes')}")
-    build = (target / ".claude/workflows/sdlc-build.js").read_text(encoding="utf-8")
+    build = wf_text(target, "sdlc-build", fresh=True)
     ok("sdlc-build.js 內嵌了 lightweight profile") if '"name":"lightweight"' in build else bad("sdlc-build.js 沒有內嵌 lightweight profile")
     ok("workflow 的分支用答案的前綴 feat/") if "feat/${A.epic}" in build else bad("sdlc-build.js 的分支前綴沒換成 feat/")
     r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=target)
@@ -294,7 +324,7 @@ def check_answers_methodology(target: Path) -> None:
         bad(f"test_first=false 的 sdlc-build phases 不對：{phases!r}")
     node = shutil.which("node")
     if node:
-        r = run([node, ".claude/teams/tools/check_workflows.mjs", "--agents-dir", str(ROOT / "plugin" / "agents")], cwd=target)
+        r = run(wf_check_argv(node, target), cwd=target)
         ok(f"check_workflows.mjs：{last_line(r.stdout)}") if r.returncode == 0 else bad("check_workflows.mjs 失敗：", r.stdout + r.stderr)
     r = run([PY, ".claude/teams/tools/merge_gate.py", "--selftest"], cwd=target)
     ok(f"merge_gate.py --selftest：{last_line(r.stdout)}") if r.returncode == 0 else bad("merge_gate.py --selftest 失敗：", r.stdout + r.stderr)
@@ -327,6 +357,8 @@ def check_extensions(target: Path, work: Path) -> None:
     (teams / "methodology.json").write_text(json.dumps(meth, ensure_ascii=False), encoding="utf-8")
     r = run([PY, ".claude/teams/tools/build.py"], cwd=t)
     ok("擴充 agent：沒登記 extension_agents 時 build.py 擋下") if r.returncode == 1 and "extension_agents" in r.stdout else bad("擴充 agent：沒登記卻沒擋", r.stdout + r.stderr)
+    r = run([PY, ".claude/teams/tools/awf.py", "render", "sdlc-test", "--out", str(t / "_tpm/x"), "--plugin-dir", str(ROOT / "plugin")], cwd=t)
+    ok("擴充 agent：沒登記時 awf.py 也不產生 workflow") if r.returncode == 1 and "extension_agents" in r.stdout + r.stderr else bad("擴充 agent：沒登記 awf.py 卻照樣產生", r.stdout + r.stderr)
     guard = json.loads((teams / "guard.config.json").read_text(encoding="utf-8"))
     guard.setdefault("extension_agents", {})["acme-db-reviewer"] = "tpm-reviewer"
     (teams / "guard.config.json").write_text(json.dumps(guard, ensure_ascii=False), encoding="utf-8")
@@ -336,7 +368,7 @@ def check_extensions(target: Path, work: Path) -> None:
     ok("擴充 agent：登記後 build.py 通過") if r.returncode == 0 else bad("擴充 agent：登記後 build.py 失敗", r.stdout + r.stderr)
     node = shutil.which("node")
     if node:
-        r = run([node, ".claude/teams/tools/check_workflows.mjs", "--agents-dir", str(ROOT / "plugin" / "agents")], cwd=t)
+        r = run(wf_check_argv(node, t), cwd=t)
         ok("擴充 agent：workflow 乾跑通過") if r.returncode == 0 else bad("擴充 agent：workflow 乾跑失敗", r.stdout[-800:])
     else:
         skip("擴充 agent：沒有 node，略過 workflow 乾跑")
@@ -555,7 +587,20 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     tool = teams / "tools/schemalib.py"
     tool.write_text(tool.read_text(encoding="utf-8") + "\n# 舊版殘留\n", encoding="utf-8")
     rules_p.write_text(rules_p.read_text(encoding="utf-8").replace("## 專案規則", "（舊版通用規則）\n\n## 專案規則", 1), encoding="utf-8")
-    (t / ".claude/workflows/sdlc-sync.js").unlink()
+    # 0.4 以前的 init 會把 workflow 複製進專案：一支原樣的舊副本、一支改過的、一支有覆寫標記的、一支使用者自己的
+    wfd = t / ".claude/workflows"
+    wfd.mkdir(parents=True, exist_ok=True)
+    kv = {k: (v[1:-1] if len(v) >= 2 and v[0] == v[-1] == '"' else v) for k, v in
+          (l.split("=", 1) for l in (teams / "workflow.config").read_text(encoding="utf-8").splitlines() if re.match(r"^[A-Z_]+=", l))}
+    old = {}
+    for name in ("event-meeting.js", "event-reqs-change.js"):
+        body = (ROOT / "tests/fixtures/legacy-0.4.1" / name).read_text(encoding="utf-8")
+        body = re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: kv.get(m.group(1), m.group(0)), body)
+        old[name] = body.replace("/*@methodology*/ null /*@end*/", "/*@methodology*/ " + json.dumps(meth, ensure_ascii=False, separators=(",", ":")) + " /*@end*/")
+    (wfd / "event-meeting.js").write_text(old["event-meeting.js"], encoding="utf-8")
+    (wfd / "event-reqs-change.js").write_text(old["event-reqs-change.js"].replace("const A = args || {}", "const A = args || {} // 我改過"), encoding="utf-8")
+    (wfd / "sdlc-plan.js").write_text("export const meta = { name: 'sdlc-plan', description: '我的版本' }\nconst X = /*@schema:findings*/ null /*@end*/\n// awf-override: 0.1.0\n", encoding="utf-8")
+    (wfd / "my-own.js").write_text("export const meta = { name: 'my-own', description: '使用者自己的' }\n", encoding="utf-8")
     (teams / "tools/old_tool.py").write_text("# 舊版才有的工具\n", encoding="utf-8")
     (teams / "VERSION").write_text("0.1.0\n", encoding="utf-8")
 
@@ -571,8 +616,20 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     ok(f"升級後 VERSION＝{vf}") if vf == new_ver else bad(f"升級後 VERSION 是 {vf}，不是 {new_ver}")
 
     src_tool = (ROOT / "scaffold/.claude/teams/tools/schemalib.py").read_text(encoding="utf-8")
-    good = tool.read_text(encoding="utf-8") == src_tool and (t / ".claude/workflows/sdlc-sync.js").is_file()
-    ok("升級：被改過的工具檔換成新版、缺的 workflow 補上") if good else bad("升級：模版檔沒有更新")
+    good = tool.read_text(encoding="utf-8") == src_tool
+    ok("升級：被改過的工具檔換成新版") if good else bad("升級：模版檔沒有更新")
+    ok("升級：原樣的舊 workflow 副本移除") if not (wfd / "event-meeting.js").exists() and "event-meeting.js" in out else bad("升級：原樣的舊 workflow 副本沒有移除", out)
+    ok("升級：改過的舊 workflow 保留並說明 awf.py 不會採用") if (wfd / "event-reqs-change.js").is_file() and "對不上" in out and "event-reqs-change.js" in out else bad("升級：改過的 workflow 沒保留或沒說明", out)
+    ok("升級：有 awf-override 標記的覆寫檔、使用者自己的 workflow 都保留") if "awf-override: 0.1.0" in (wfd / "sdlc-plan.js").read_text(encoding="utf-8") and (wfd / "my-own.js").is_file() else bad("升級：覆寫檔或使用者的 workflow 被動到了")
+    # 0.5 把這支併進 event.js：plugin 已經沒有同名範本，沒有標記的舊副本不能被拿來跑
+    r = run([PY, ".claude/teams/tools/awf.py", "render", "event-reqs-change", "--out", str(t / "_tpm/x"), "--plugin-dir", str(ROOT / "plugin")], cwd=t)
+    ok("升級：plugin 已經沒有的 workflow，沒有標記的舊副本 awf.py 不採用並說明改用 event.js") if r.returncode != 0 and not (t / "_tpm/x/event-reqs-change.js").exists() and "不採用" in r.stdout + r.stderr and "event.js" in r.stdout + r.stderr else bad("升級：awf.py 用了沒有標記的舊副本", r.stdout + r.stderr)
+    (wfd / "sdlc-design.js").write_text("// 沒有標記的舊副本 我改過\n", encoding="utf-8")
+    r = run([PY, ".claude/teams/tools/awf.py", "render", "sdlc-design", "--out", str(t / "_tpm/x"), "--plugin-dir", str(ROOT / "plugin")], cwd=t)
+    got = (t / "_tpm/x/sdlc-design.js").read_text(encoding="utf-8") if (t / "_tpm/x/sdlc-design.js").is_file() else ""
+    ok("升級：plugin 還有的 workflow，沒有標記的舊副本不採用（用 plugin 的範本）並提醒") if "我改過" not in got and got and "不採用" in r.stderr else bad("升級：awf.py 用了沒有標記的舊副本", r.stdout + r.stderr)
+    (wfd / "sdlc-design.js").unlink()
+    (wfd / "sdlc-plan.js").unlink()   # 這支假的覆寫檔不是完整的 workflow，後面的檢查不用它
     ok("升級：列出這版已不提供的舊檔（old_tool.py，不刪）") if "old_tool.py" in out and (teams / "tools/old_tool.py").is_file() else bad("升級：沒列出舊版殘留的工具檔", out)
 
     m2 = json.loads(meth_p.read_text(encoding="utf-8"))
@@ -625,23 +682,53 @@ def check_force_keeps_values(work: Path, config: Path, env: dict) -> None:
     custom.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if not init(t, custom, env=env):
         return
-    wf = t / ".claude/workflows/event-post-merge.js"
     record = t / ".claude/teams/workflow.config"
     want = f"const RUNS = '{custom_runs}'"
-    if want not in wf.read_text(encoding="utf-8") or read_kv(record, "RUNS_DIR") != custom_runs:
-        bad(f"自訂 RUNS_DIR 的 init 結果不對（{wf.name} 或 workflow.config 紀錄）")
+    if want not in wf_text(t, "event-post-merge") or read_kv(record, "RUNS_DIR") != custom_runs:
+        bad("自訂 RUNS_DIR 的 init 結果不對（event-post-merge.js 或 workflow.config 紀錄）")
         return
     r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--force"], cwd=t.parent, env=env)
     if r.returncode != 0:
         bad("init.py --force（沒給 --config）失敗：", r.stdout + r.stderr)
         return
-    text = wf.read_text(encoding="utf-8")
+    text = wf_text(t, "event-post-merge", fresh=True)
     ok(f"升級：--force 沒給 --config，workflow 的 runs 路徑仍是 {custom_runs}") if want in text else bad(
         f"升級：--force 沒給 --config，workflow 的 runs 路徑被換掉了：{[l for l in text.splitlines() if 'const RUNS' in l]}")
     got = read_kv(record, "RUNS_DIR")
     ok("升級：--force 沒給 --config，workflow.config 紀錄沒被範例預設值覆寫") if got == custom_runs else bad(f"升級：--force 後 workflow.config 紀錄的 RUNS_DIR 變成 {got}")
     g = json.loads((t / ".claude/teams/guard.config.json").read_text(encoding="utf-8"))
     ok("升級：--force 後 guard.config.json 的 runs_dir 仍是自訂值") if g.get("runs_dir") == custom_runs else bad(f"升級：--force 後 runs_dir 變成 {g.get('runs_dir')}")
+
+
+def check_with_workflows(work: Path, config: Path, env: dict) -> None:
+    """--with-workflows：放一份覆寫檔（結尾有 awf-override 標記）；內容和 awf.py 依範本產生的相同；再升級不覆蓋使用者改過的覆寫檔。"""
+    print("\n== --with-workflows（把 workflow 放進專案當覆寫檔） ==")
+    t = work / "project-with-wf"
+    t.mkdir()
+    if not init(t, config, "--with-workflows", env=env):
+        return
+    wfd = t / ".claude/workflows"
+    ver = json.loads((ROOT / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
+    files = sorted(p.stem for p in wfd.glob("*.js"))
+    stamp = f"// awf-override: {ver}\n"
+    ok(f"--with-workflows：{len(files)} 支覆寫檔，結尾都有 awf-override 標記") if files == sorted(WORKFLOWS) and all(
+        (wfd / f"{w}.js").read_text(encoding="utf-8").endswith(stamp) for w in WORKFLOWS) else bad(f"--with-workflows 的產出不對：{files}")
+    r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=t)
+    ok("--with-workflows：build.py --check 通過（覆寫檔可以用 build.py 重新內嵌）") if r.returncode == 0 and f"{len(WORKFLOWS)} 支" in r.stdout else bad("--with-workflows：build.py --check 失敗", r.stdout + r.stderr)
+    # 覆寫檔拿掉標記那一行，應該和「沒有覆寫檔時 awf.py 依 plugin 範本產生的」逐字相同（同一套佔位符與 profile）
+    plain = work / "project-with-wf-plain"
+    shutil.copytree(t, plain)
+    shutil.rmtree(plain / ".claude/workflows")
+    diff = [w for w in WORKFLOWS if (wfd / f"{w}.js").read_text(encoding="utf-8")[: -len(stamp)] != wf_text(plain, w)]
+    ok("awf.py 產生的腳本和 init＋build.py 內嵌的逐字相同") if not diff else bad(f"awf.py 產生的和 init 寫的不同：{diff}")
+    mine = wfd / "sdlc-plan.js"
+    mine.write_text(mine.read_text(encoding="utf-8").replace(stamp, "// 我改過這支\n" + stamp), encoding="utf-8")
+    r = run([PY, ".claude/teams/tools/awf.py", "render", "sdlc-plan", "--out", str(t / "_tpm/x"), "--plugin-dir", str(ROOT / "plugin")], cwd=t)
+    ok("覆寫檔生效：awf.py 用專案的版本") if "我改過這支" in (t / "_tpm/x/sdlc-plan.js").read_text(encoding="utf-8") and "覆寫檔" in r.stderr else bad("覆寫檔沒有生效", r.stdout + r.stderr)
+    r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--upgrade", "--with-workflows"], cwd=t.parent, env=env)
+    ok("--upgrade --with-workflows：不覆蓋已經有標記的覆寫檔") if r.returncode == 0 and "我改過這支" in mine.read_text(encoding="utf-8") else bad("--upgrade 把覆寫檔蓋掉了", r.stdout + r.stderr)
+    r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--upgrade"], cwd=t.parent, env=env)
+    ok("--upgrade（沒有 --with-workflows）：覆寫檔全部保留並列出") if r.returncode == 0 and len(list(wfd.glob("*.js"))) == len(WORKFLOWS) and "覆寫檔" in r.stdout else bad("--upgrade 動到了覆寫檔", r.stdout + r.stderr)
 
 
 def main(argv: list[str]) -> int:
@@ -696,6 +783,7 @@ def main(argv: list[str]) -> int:
 
         check_existing_project(work, config, env)
         check_upgrade(work, config, env)
+        check_with_workflows(work, config, env)
     finally:
         if os.environ.get("KEEP") == "1":
             print(f"保留暫存目錄：{work}")

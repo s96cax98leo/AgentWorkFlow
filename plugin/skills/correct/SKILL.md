@@ -53,7 +53,7 @@ argument-hint: <錯誤描述、踩坑手冊條目、followup 路徑或 commit／
 **在模版 repo 自己身上用時的對應**（照 `CLAUDE.md`〈改動時的檢查清單〉）：
 - 語意規則：寫在 `schemalib.py`，在 `golden-set/invalid/` 補 `semantic` 反例、`valid/` 補正例；改了 schema 重跑 `build.py`。
 - guard 規則：寫在 `plugin/hooks/` 的 guard，在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的案例，Bash 與 PowerShell 各一。
-- workflow 核對：寫在 `scaffold/.claude/workflows/*.js`，乾跑走不到的分支在 `check_workflows.mjs` 的 `SCENARIOS` 補情境。
+- workflow 核對：寫在 `plugin/workflow-templates/*.js`，乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
 
 ## 3. 列計畫，等使用者同意
 

@@ -6,14 +6,19 @@
 //      trace 每筆記 model、tier、reason。profile 沒有 models 或 mode=inherit 時不指定模型（沿用主對話模型）。
 //   2. 失敗升級：mode=auto 時，較低等級沒有交件（null、throw、交件無效）就用高一級重派一次，最多一次；
 //      第一次那筆 trace 標 superseded，重派那筆記 attempt=2 與 escalated_from。再失敗就是缺件，由呼叫端 halted。
-//   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped），呼叫端要 halted 交人，不靜默截斷。
-// workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents })。
+//      dev-integrator、dev-merge-steward（會動到共用分支）與帶 retry:false 的派工不重派。
+//   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped，trace 記一筆 capped=true），呼叫端照缺件 halted 交人，不靜默截斷。
+// workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents[, roles] })。
+//   roles（選填）：只准派的 agent_type 清單；自訂腳本由 awf.py 帶入，派清單以外的 agent 會 throw。
+const AWF_NO_RETRY = ['dev-integrator', 'dev-merge-steward']
 function awfKernel() { return awfKernel.s || (awfKernel.s = { profile: null, stage: '', modifiers: [], plan: {}, max: 0, count: 0, capped: [], used: {} }) }
 function awfKernelInit(o) {
   const k = awfKernel()
   const c = o || {}
   k.profile = c.profile || null; k.stage = c.stage || ''; k.modifiers = [...(c.modifiers || [])]
-  k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}
+  k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}; k.seen = {}
+  k.roles = Array.isArray(c.roles) ? [...c.roles] : null     // 有給就只准派這些 agent_type（自訂腳本用）；其他的直接 throw，不派
+  awfState().dispatch = awfAgent     // 片段裡的派工（challengeList、verifyFindings）也經過核心
   return k
 }
 function awfSetModifiers(mods) { awfKernel().modifiers = [...(mods || [])] }
@@ -44,14 +49,26 @@ function awfCapped() { return [...awfKernel().capped] }
 function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ ...x })) }
 
 // 派一個 agent。opts 同 tryAgent，另可帶 tier（workflow 建議的等級）、planKey（對 model_plan 的鍵，預設角色名）、stage、
-// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）。回傳交件或 null（缺件）。
+// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
-  const o = opts || {}
-  const label = o.label || ''
+  // 先把 opts 複製成普通物件：agentType 等欄位只讀一次（getter 不能第一次回白名單裡的角色、第二次回別的）
+  const o = { ...(opts || {}) }
+  if (typeof o.agentType !== 'string') o.agentType = ''
+  if (k.roles && !k.roles.includes(o.agentType)) throw new Error(`不能派 ${o.agentType || '（沒給 agentType）'}：這支腳本只能派登記過的角色`)
+  // label 要唯一（trace、紀錄檔、失敗升級都靠它對）：同一支 workflow 重複用同一個 label 時，第二次起自動加序號
+  k.seen = k.seen || {}
+  const raw = o.label || ''
+  const nth = (k.seen[raw] = (k.seen[raw] || 0) + 1)
+  const label = nth > 1 ? `${raw}#${nth}` : raw
   const valid = typeof o.valid === 'function' ? o.valid : (r) => !!r && typeof r === 'object' && r.payload !== undefined && r.payload !== null
   const base = { label, phase: o.phase, agentType: o.agentType, schema: o.schema }
-  const over = () => { k.capped.push(label); log(`派工數到上限 ${k.max}，不再派 ${label}`); return null }
+  // 到上限沒派出去的也記一筆 trace（capped=true、ok=false）：workflow 不用每個 return 都自己處理，save_run 看得到、會列成缺件並說明原因
+  const over = () => {
+    k.capped.push(label); log(`派工數到上限 ${k.max}，不再派 ${label}`)
+    awfState().trace.push({ label, agent_type: o.agentType || '', phase: o.phase || '', record: awfState().cfg ? awfRecordPath(label) : '', ok: false, capped: true, max_agents: k.max })
+    return null
+  }
   if (k.max && k.count >= k.max) return over()
   k.count++
   const m = awfModelFor(o)
@@ -61,7 +78,8 @@ async function awfAgent(prompt, opts) {
   const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...meta })
   const first = await run(m, { attempt: 1 })
   if (valid(first)) return first
-  const up = m.mode === 'auto' ? modelUp(m.tier) : ''
+  // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷
+  const up = m.mode === 'auto' && o.retry !== false && !AWF_NO_RETRY.includes(awfRole(o.agentType)) ? modelUp(m.tier) : ''
   const mine = () => awfState().trace.filter((t) => t.label === label)
   if (!up) { const t = mine().pop(); if (t) t.ok = false; return null }
   if (k.max && k.count >= k.max) { const t = mine().pop(); if (t) t.ok = false; return over() }

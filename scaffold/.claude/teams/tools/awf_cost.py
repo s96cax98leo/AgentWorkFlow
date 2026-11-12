@@ -92,6 +92,46 @@ def read_agent(path: Path) -> dict:
             "head": head}
 
 
+def tail_agent(path: Path, st: dict | None = None) -> dict:
+    """轉接函式（增量版，watcher 用）：從上次讀到的位置往後讀，累加到 st 並回傳它。
+    st：{offset, tokens, seen, requests, model, first, last}；第一次給 None。只讀完整的行（最後一行還沒寫完就留到下次）。"""
+    st = st if isinstance(st, dict) else {"offset": 0, "tokens": 0, "seen": set(), "requests": 0, "model": "", "first": None, "last": None}
+    try:
+        with path.open("rb") as fh:
+            fh.seek(st["offset"])
+            chunk = fh.read()
+    except OSError:
+        return st
+    end = chunk.rfind(b"\n")
+    if end < 0:
+        return st
+    st["offset"] += end + 1
+    for raw in chunk[: end + 1].splitlines():
+        try:
+            e = json.loads(raw.decode("utf-8", errors="replace"))
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        t = parse_ts(e.get("timestamp"))
+        if t:
+            st["first"] = t if st["first"] is None or t < st["first"] else st["first"]
+            st["last"] = t if st["last"] is None or t > st["last"] else st["last"]
+        m = e.get("message")
+        if not isinstance(m, dict) or not isinstance(m.get("usage"), dict):
+            continue
+        rid = e.get("requestId") or m.get("id")
+        if rid is not None:
+            if rid in st["seen"]:
+                continue
+            st["seen"].add(rid)
+        st["requests"] += 1
+        st["tokens"] += sum(v for k in KINDS if isinstance(v := m["usage"].get(k), int))
+        if isinstance(m.get("model"), str):
+            st["model"] = m["model"]
+    return st
+
+
 def read_meta(path: Path) -> dict:
     try:
         d = json.loads(path.read_text(encoding="utf-8"))

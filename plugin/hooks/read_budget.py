@@ -209,9 +209,74 @@ def _kb(n: int) -> str:
 
 
 # ---------------------------------------------------------------- Read
+def _charge(data: dict, role: str, lim: dict, est: int, what: str) -> str | None:
+    """把這次讀取的估計量記進這個 agent 的額度。回傳擋下的訊息；None＝放行。"""
+    enforce = lim["mode"] == "enforce"
+    rb = lim["read_budget"]
+    budget = rb["roles"].get(role, rb["default"])
+    if budget <= 0:
+        return None
+    if not isinstance(data.get("agent_id"), str) or not data.get("agent_id"):
+        return None  # 沒有 agent_id 就分不出是哪一個 agent：不記帳（不然同型別的 agent 會共用額度，後派的一開工就被擋）
+    est = min(est, MAX_SINGLE_READ)  # Read 一次回傳的內容有上限：單行的大檔不能一次把額度扣光
+    sp = _state_path(data)
+    st, is_new = _load_state(sp)
+    if is_new:
+        _cleanup(sp.parent.parent)
+    if st["used"] >= budget:
+        if enforce:
+            return (f"{role} 的讀取額度已用完（已讀約 {_kb(st['used'])}，額度 {_kb(budget)}）。"
+                    "請把目前結論寫進執行紀錄檔並交件；不確定的地方寫進 open_questions。"
+                    "（設定：.claude/teams/methodology.json 的 limits.read_budget）")
+        _warn_log(data, role, "budget_exhausted", file=what, used=st["used"], budget=budget)
+    elif not st["warned"] and st["used"] + est >= budget * WARN_RATIO:
+        st["warned"] = True
+        if enforce:
+            _save_state(sp, st)  # 這次被擋的讀取不計入額度
+            return (f"{role} 的讀取額度已用 80%（已讀約 {_kb(st['used'])}，這次約 {_kb(est)}，額度 {_kb(budget)}，"
+                    f"剩約 {_kb(budget - st['used'])}）。這次讀取重試一次就會放行；請開始收斂、把已知結論寫進執行紀錄檔。"
+                    "（這個提醒每個 agent 只出現一次）")
+        _warn_log(data, role, "budget_80", file=what, used=st["used"], estimate=est, budget=budget)
+    st["used"] += est
+    st["reads"] += 1
+    _save_state(sp, st)
+    return None
+
+
+# Grep 的 content 模式會把符合的行印出來，也是讀取：依輸出上限估算後計入額度（只看得到輸入，看不到實際輸出，所以是估計）
+GREP_DEFAULT_LINES = 250   # Grep 工具沒給 head_limit 時的輸出上限
+GREP_LINE_BYTES = 150      # 每行估多少位元組
+SHELL_GREP_BYTES = 16 * 1024  # shell 的 grep／rg／Select-String 印出內容時，一次估這麼多
+
+
+def _check_grep(data: dict, cfg: dict) -> str | None:
+    ti = data.get("tool_input") or {}
+    if ti.get("output_mode") != "content":
+        return None  # 只列檔名或計數：輸出很小，不計
+    role = _role(data, cfg)
+    if not role:
+        return None
+    lim = awf_config.limits()
+    if not lim:
+        return None
+    head = _int(ti.get("head_limit"))
+    lines = min(head, GREP_DEFAULT_LINES * 8) if head and head > 0 else GREP_DEFAULT_LINES
+    ctx = 0
+    for k in ("-A", "-B"):
+        v = _int(ti.get(k))
+        ctx += v if v and v > 0 else 0
+    for k in ("-C", "context"):
+        v = _int(ti.get(k))
+        ctx += 2 * v if v and v > 0 else 0
+    est = min(lines * (1 + min(ctx, 20)) * GREP_LINE_BYTES, MAX_SINGLE_READ)
+    return _charge(data, role, lim, est, f"Grep content：{str(ti.get('pattern') or '')[:60]}")
+
+
 def check_read(data: dict, cfg: dict) -> str | None:
     """回傳擋下的訊息；None＝放行。任何例外都放行。"""
     try:
+        if data.get("tool_name") == "Grep":
+            return _check_grep(data, cfg)
         return _check_read(data, cfg)
     except Exception:  # noqa: BLE001  輔助功能不擋流程
         return None
@@ -254,35 +319,7 @@ def _check_read(data: dict, cfg: dict) -> str | None:
             return (f"{role} 讀 {fp}：這次要讀 {want} 行，超過一次讀取的門檻 {n} 行（檔案{total_txt}）。" + HINT.format(n=n))
         _warn_log(data, role, "whole_file", file=fp, lines=want, total_lines=total, threshold=n)
 
-    rb = lim["read_budget"]
-    budget = rb["roles"].get(role, rb["default"])
-    if budget <= 0:
-        return None
-    if not isinstance(data.get("agent_id"), str) or not data.get("agent_id"):
-        return None  # 沒有 agent_id 就分不出是哪一個 agent：不記帳（不然同型別的 agent 會共用額度，後派的一開工就被擋）
-    est = min(est, MAX_SINGLE_READ)  # Read 一次回傳的內容有上限：單行的大檔不能一次把額度扣光
-    sp = _state_path(data)
-    st, is_new = _load_state(sp)
-    if is_new:
-        _cleanup(sp.parent.parent)
-    if st["used"] >= budget:
-        if enforce:
-            return (f"{role} 的讀取額度已用完（已讀約 {_kb(st['used'])}，額度 {_kb(budget)}）。"
-                    "請把目前結論寫進執行紀錄檔並交件；不確定的地方寫進 open_questions。"
-                    "（設定：.claude/teams/methodology.json 的 limits.read_budget）")
-        _warn_log(data, role, "budget_exhausted", file=fp, used=st["used"], budget=budget)
-    elif not st["warned"] and st["used"] + est >= budget * WARN_RATIO:
-        st["warned"] = True
-        if enforce:
-            _save_state(sp, st)  # 這次被擋的讀取不計入額度
-            return (f"{role} 的讀取額度已用 80%（已讀約 {_kb(st['used'])}，這次約 {_kb(est)}，額度 {_kb(budget)}，"
-                    f"剩約 {_kb(budget - st['used'])}）。這次讀取重試一次就會放行；請開始收斂、把已知結論寫進執行紀錄檔。"
-                    "（這個提醒每個 agent 只出現一次）")
-        _warn_log(data, role, "budget_80", file=fp, used=st["used"], estimate=est, budget=budget)
-    st["used"] += est
-    st["reads"] += 1
-    _save_state(sp, st)
-    return None
+    return _charge(data, role, lim, est, fp)
 
 
 # ---------------------------------------------------------------- shell 的 cat 類讀取
@@ -328,6 +365,31 @@ def _ps_split(cmd: str) -> list[str] | None:
     if started:
         toks.append("".join(cur))
     return toks
+
+
+BASH_GREPS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack"})
+PS_GREPS = frozenset({"select-string", "sls", "findstr"})
+# 這些旗標表示不印內容（只回有沒有、檔名或數量）：不計
+GREP_QUIET = re.compile(r"^(-[a-zA-Z]*[qlLc][a-zA-Z]*|--quiet|--silent|--files-with-matches|--files-without-match|--count|--count-matches|--files)$")
+PS_GREP_QUIET = frozenset({"-quiet", "-list", "/m"})
+
+
+def _is_content_grep(tool: str, cmd: str) -> bool:
+    """單一簡單指令的 grep 類搜尋而且會印出符合的內容。看不懂（管線、導向、引號沒關…）一律回 False＝不計。"""
+    if len(cmd) > MAX_SHELL_LEN:
+        return False
+    if tool == "PowerShell":
+        if re.search(r"[|;&<>\n\r(){}$`]", cmd):
+            return False
+        toks = _ps_split(cmd)
+        return bool(toks) and _cmd_name(toks[0]) in PS_GREPS and not any(t.lower() in PS_GREP_QUIET for t in toks[1:])
+    if re.search(r"[|;&<>\n\r`]|\$\(", cmd):
+        return False
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        return False
+    return bool(toks) and _cmd_name(toks[0]) in BASH_GREPS and not any(GREP_QUIET.match(t) for t in toks[1:])
 
 
 def _cat_targets(tool: str, cmd: str) -> list[str]:
@@ -397,6 +459,9 @@ def _check_shell(data: dict, cfg: dict) -> str | None:
         return None
     files = _cat_targets(tool, cmd.strip())
     if not files:
+        if _is_content_grep(tool, cmd.strip()):
+            lim = awf_config.limits()
+            return _charge(data, role, lim, SHELL_GREP_BYTES, f"shell：{cmd.strip()[:60]}") if lim else None
         return None
     lim = awf_config.limits()
     if not lim or not lim["whole_file_lines"]:

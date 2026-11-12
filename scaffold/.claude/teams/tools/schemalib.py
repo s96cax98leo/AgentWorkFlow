@@ -195,6 +195,13 @@ def semantic_errors(env: dict) -> list[str]:
                         errs.append(f"子任務 {s.get('id')} 的子計劃依賴格式不合法（要是 @<子計劃 id>）：{d}")
                 elif d not in ids:
                     errs.append(f"子任務 {s.get('id')} 依賴不存在的 {d}")
+        # 波次：不能依賴比自己晚的波次（沒標的算第 1 波）
+        wave = {s.get("id"): (s.get("wave") if isinstance(s.get("wave"), int) and not isinstance(s.get("wave"), bool) and s.get("wave") > 0 else 1) for s in subtasks if isinstance(s, dict)}
+        for s in subtasks:
+            if isinstance(s, dict):
+                for d in s.get("depends_on") or []:
+                    if isinstance(d, str) and d in wave and wave[d] > wave[s.get("id")]:
+                        errs.append(f"子任務 {s.get('id')}（第 {wave[s.get('id')]} 波）依賴第 {wave[d]} 波的 {d}：不能依賴比自己晚的波次")
     errs.extend(merge_decision_errors(payload))
     errs.extend(plan_outline_errors(payload))
     return errs
@@ -293,6 +300,10 @@ def doc_schema(name: str) -> dict:
     return _strip_meta(load(name))
 
 
+# 不能拿來當自訂事件名的字：不是 event.js 的事件、SDLC 的段、工具自己的目錄名
+EVENT_RESERVED = {"sdlc", "brief", "pr-review", "post-merge", "merge", "debate", "run", "plan", "design", "build", "sync", "test", "deliver", "archive", "logs"}
+
+
 def methodology_errors(doc: dict) -> list[str]:
     """開發規範 profile 的語意規則（schema 表達不了的部分）。"""
     errs: list[str] = []
@@ -304,6 +315,54 @@ def methodology_errors(doc: dict) -> list[str]:
             re.compile(rx)
         except re.error as e:
             errs.append(f"conventions.commit.check_regex 不是合法的正規式：{e}")
+    # 自訂事件類型（event.js）：名字不能和不是 event.js 的事件或 SDLC 的段撞名；data 的 from 要指得到東西；回傳的鍵不能蓋掉固定欄位
+    events = doc.get("events") if isinstance(doc.get("events"), dict) else {}
+    for name, ev in events.items():
+        if not isinstance(ev, dict):
+            continue
+        if not re.match(r"^[a-z][a-z0-9-]{0,31}$", str(name)):
+            errs.append(f"events 的事件名「{name}」要是小寫英數與連字號（32 字以內）")
+        if name in EVENT_RESERVED:
+            errs.append(f"events 不能用「{name}」當事件名（已經是別的流程或 SDLC 的段）")
+        steps = [s for k in ("before", "after") for s in ev.get(k) or [] if isinstance(s, dict)]
+        names = [str(s.get("name")) for s in steps]
+        labels = [str(s.get("label")) for s in steps]
+        if len(set(names)) != len(names) or len(set(labels)) != len(labels):
+            errs.append(f"events[{name}] 的 before／after 步驟 name 或 label 重複")
+        gather = ev.get("gather") if isinstance(ev.get("gather"), dict) else {}
+        keys = [str(a.get("key")) for a in gather.get("angles") or [] if isinstance(a, dict)]
+        if len(set(keys)) != len(keys):
+            errs.append(f"events[{name}].gather.angles 的 key 重複")
+        glabel = str(gather.get("label") or "gather")
+        if any(lb in ("write", "challenge") or lb.startswith(glabel + ":") for lb in labels) or glabel in ("write", "challenge"):
+            errs.append(f"events[{name}] 的 label 和 challenge、write 或角度的 label 撞名")
+        before_names = {str(s.get("name")) for s in ev.get("before") or [] if isinstance(s, dict)}
+        for where, pool in (("gather", before_names), ("write", set(names) | {"all", "kept", "doubted", "doubted_ids"})):
+            part = ev.get(where) if isinstance(ev.get(where), dict) else {}
+            for d in part.get("data") or []:
+                if isinstance(d, dict) and d.get("from") not in pool:
+                    errs.append(f"events[{name}].{where}.data 的 from「{d.get('from')}」指不到東西（可用：{'、'.join(sorted(pool)) or '沒有'}）")
+        ret = ev.get("returns") if isinstance(ev.get("returns"), dict) else {}
+        used = [str(ret.get("all") or "items"), str(ret.get("doubted") or "refuted")] + names
+        fixed = {"trace", "event", "docs", "halted", "stage", "halt_reason", "missing", "note", "capped", "challenge"}
+        if len(set(used)) != len(used) or set(used) & fixed:
+            errs.append(f"events[{name}] 回傳的鍵名（returns 與步驟的 name）重複，或用到固定欄位（{'、'.join(sorted(fixed))}）")
+    cons = [c for c in doc.get("constraints") or [] if isinstance(c, dict)]
+    ids = [c.get("id") for c in cons]
+    for n in sorted({x for x in ids if isinstance(x, str) and ids.count(x) > 1}):
+        errs.append(f"constraints 的 id「{n}」重複")
+    for c in cons:
+        f = c.get("file")
+        if isinstance(f, str) and f:
+            norm = f.replace("\\", "/")
+            if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
+                errs.append(f"constraints[{c.get('id')}].file 要是相對路徑，不能是絕對路徑或含 ..（收到 {f}）")
+            base = norm.rsplit("/", 1)[-1].lower()
+            if base.startswith(".env") or base.endswith((".pem", ".key", ".p12", ".pfx")):
+                errs.append(f"constraints[{c.get('id')}].file 不能是機敏檔（{f}）")
+        for g in c.get("paths") or []:
+            if isinstance(g, str) and (g.replace("\\", "/").startswith("/") or ".." in g.replace("\\", "/").split("/")):
+                errs.append(f"constraints[{c.get('id')}].paths 的 glob 要相對目標 repo，不能是絕對路徑或含 ..（收到 {g}）")
     names = [e.get("name") for e in doc.get("extensions") or [] if isinstance(e, dict)]
     for n in sorted({x for x in names if names.count(x) > 1}, key=str):
         errs.append(f"extensions：name {n} 重複")

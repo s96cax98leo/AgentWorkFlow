@@ -5,7 +5,7 @@
 //   3. 用依 schema 產生的假回傳把腳本從頭跑到尾，確定沒有 runtime 錯誤
 //   4. 每張派工單都有 rules.md（含〈專案規則〉）、輸出語言，最後一行是「執行紀錄檔：<路徑>.md」；回傳帶 trace，筆數＝實際派出數
 //   5. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
-// 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>]
+// 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>] [--wf-dir <產生好的 workflow 目錄>]
 //   agents 目錄預設依序找：--agents-dir、環境變數 AWF_PLUGIN_DIR／CLAUDE_PLUGIN_ROOT 的 agents/、專案 .claude/agents
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -13,16 +13,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const claude = join(here, '..', '..')
-const wfDir = join(claude, 'workflows')
 const argAt = process.argv.indexOf('--agents-dir')
+// workflow 腳本的位置：--wf-dir（例如 awf.py render --all 產生的目錄），沒給就是專案的 .claude/workflows（範本帶佔位符，不能直接乾跑）
+const wfAt = process.argv.indexOf('--wf-dir')
+const wfDir = wfAt > 0 ? process.argv[wfAt + 1] : join(claude, 'workflows')
+if (!existsSync(wfDir)) { console.log(`找不到 workflow 目錄 ${wfDir}：先跑 python3 .claude/teams/tools/awf.py render --all --out <目錄>，再加 --wf-dir <目錄>`); process.exit(1) }
 const pluginDir = process.env.AWF_PLUGIN_DIR || process.env.CLAUDE_PLUGIN_ROOT
 const agentsDir = argAt > 0 ? process.argv[argAt + 1] : (pluginDir && existsSync(join(pluginDir, 'agents')) ? join(pluginDir, 'agents') : join(claude, 'agents'))
 const role = (t) => String(t || '').split(':').pop()
 const projectAgents = join(claude, 'agents')
 const METH_RE = /\/\*@methodology\*\/ ([\s\S]*?) \/\*@end\*\//
 const embedded = (src) => { const m = src.match(METH_RE); try { return m ? JSON.parse(m[1]) : null } catch { return null } }
-// 情境可以覆寫內嵌的 profile（例如加 extensions），測擴充 agent 的分支
-const withProfile = (src, patch) => patch ? src.replace(METH_RE, () => `/*@methodology*/ ${JSON.stringify({ ...(embedded(src) || {}), ...patch })} /*@end*/`) : src
+// 情境可以覆寫內嵌的 profile（例如加 extensions），測擴充 agent 的分支；profile 給函式時拿到內嵌的 profile、回傳要覆寫的鍵（只改深層的一個值時用）
+const withProfile = (src, patch) => patch ? src.replace(METH_RE, () => `/*@methodology*/ ${JSON.stringify({ ...(embedded(src) || {}), ...(typeof patch === 'function' ? patch(embedded(src) || {}) : patch) })} /*@end*/`) : src
 
 const SAMPLE_ARGS = {
   repo: '/tmp/repo', epic: 'demo-999-sample', requirement: '範例需求', base: 'origin/main', run_dir: '/tmp/run',
@@ -34,7 +37,7 @@ const SAMPLE_ARGS = {
   ],
   has_ui: true, has_security: true,
   decisions: ['同意只新增的測試修改'], issues: [{ target_id: 'spec §2', reason: '缺驗收條件' }],
-  brief: 'briefs/sample_x.md', what: 'PR #999', source: 'meetings/x.md', target: 'PR 1', change: 'x', decision: 'x', script: 'x', date: '2026-10-12', pr: 1,
+  event: 'meeting', brief: 'briefs/sample_x.md', what: 'PR #999', source: 'meetings/x.md', target: 'PR 1', change: 'x', decision: 'x', script: 'x', date: '2026-10-12', pr: 1,
 }
 
 // 派工單的固定要求（I3：rules.md 與輸出語言；I6：最後一行是執行紀錄檔）
@@ -125,7 +128,7 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
     // I6：每個 return（含 halted、提早結束）都帶 trace，筆數＝實際派出數（缺件也列，ok=false）
     else if (out && typeof out === 'object') {
       if (!Array.isArray(out.trace)) errs.push('回傳沒有 trace（每個 return 都要帶 trace: awfTrace()）')
-      else if (out.trace.length !== agents) errs.push(`trace ${out.trace.length} 筆，實際派出 ${agents} 個 agent`)
+      else if (out.trace.filter((t) => !t.capped).length !== agents) errs.push(`trace ${out.trace.filter((t) => !t.capped).length} 筆（不含到上限沒派的），實際派出 ${agents} 個 agent`)
       else if (out.trace.some((t) => !t.record)) errs.push('trace 有沒有執行紀錄檔路徑的項目')
     }
   } catch (e) { errs.push(`乾跑失敗：${e.message}`) }
@@ -164,6 +167,11 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
   const scenarios = [{ name: '', args: {}, fakes: {} }, ...(SCENARIOS[f] || [])]
   for (const sc of scenarios) {
     const r = await dryRun(withProfile(src, sc.profile), titles, { ...SAMPLE_ARGS, ...sc.args }, sc.fakes || {}, sc.virtualAgents)
+    // 情境可以宣告「這組參數應該被拒絕執行」（throws：比對錯誤訊息的正規式）：有丟出相符的錯誤才算過
+    if (sc.throws) {
+      const hit = r.errs.filter((e) => e.startsWith('乾跑失敗：') && sc.throws.test(e))
+      r.errs = hit.length ? r.errs.filter((e) => !hit.includes(e)) : [...r.errs, `應該拒絕執行（${sc.throws}），實際沒有`]
+    }
     agents += r.agents
     r.visited.forEach((t) => { if (!visited.includes(t)) visited.push(t) })
     errs.push(...r.errs.map((e) => (sc.name ? `[情境：${sc.name}] ${e}` : e)))

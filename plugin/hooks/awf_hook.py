@@ -1,6 +1,6 @@
 """agent-workflow hooks 的單一入口（macOS、Linux、Windows 都直接用 Python 跑）。
 
-用法：python3 awf_hook.py <guard-shell|guard-paths|envelope> < hook-input.json
+用法：python3 awf_hook.py <guard-shell|guard-paths|envelope|session-start> < hook-input.json
 
   guard-shell  PreToolUse（matcher: Bash|PowerShell）：擋 agent push、agent 的 GitHub 寫入、寫入上游、動禁止路徑、
                不合規的分支名；PowerShell 指令先解析成段落再套同一套規則（guard.py），之後轉呼叫目標 repo 自己的 guard-git。
@@ -8,6 +8,10 @@
                Read 另套讀取預算（read_budget.py，設定在 methodology.json 的 limits）：模版角色讀大檔要分段、每個 agent 有讀取額度；
                guard-shell 也擋模版角色用 cat／Get-Content 整檔印出大檔。
   envelope     PreToolUse（SubagentHandback、StructuredOutput）、SubagentStop、TaskCompleted：檢查交件信封（envelope_hook.py）。
+
+  session-start SessionStart：plugin 版本和專案 .claude/teams/VERSION 不一致時印一行提示（JSON，一行）。只是提示，不是守門：
+               永遠 exit 0；沒套用的專案、讀不到版本、輸入壞掉、任何例外都不印任何東西。只在以 plugin 註冊時有作用
+               （複製進專案的 hook 旁邊沒有 plugin.json，不會提示）。
 
 結束碼：0 放行；2 擋下（stderr 回給 Claude）。
 
@@ -123,6 +127,47 @@ def _fallback(mode: str, data: dict, err: BaseException) -> int:
     return 0
 
 
+# ───────── SessionStart 的版本提示：只用標準庫，任何問題都安靜結束 ─────────
+
+_VER = re.compile(r"\s*v?(\d+(?:\.\d+)*)")
+_SAFE_VER = re.compile(r"^v?\d[0-9A-Za-z.+-]{0,39}$")
+
+
+def _vt(v: str) -> tuple:
+    m = _VER.match(v or "")
+    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
+
+
+def version_hint(project: Path, plugin_root: Path) -> str:
+    """要提示的那一行；不用提示回空字串。"""
+    pv = str(json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("version") or "").strip()
+    tv = (project / ".claude" / "teams" / "VERSION").read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    if not _SAFE_VER.match(pv) or not _SAFE_VER.match(tv) or not _vt(pv) or not _vt(tv) or _vt(pv) == _vt(tv):   # 版本字串會進對話，只收單純的版本格式
+        return ""
+    if _vt(tv) < _vt(pv):
+        fix = "已套用的專案不會自動更新，請跑模版 repo 的 init.py --target <這個專案> --upgrade"
+    else:
+        fix = "請更新 plugin：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins"
+    return f"agent-workflow：plugin 是 {pv}，這個專案的工具是 {tv}。{fix}（檢查細節：python3 .claude/teams/tools/awf.py doctor）"
+
+
+def _session_start() -> int:
+    try:
+        raw = sys.stdin.buffer.read(1 << 20).decode("utf-8-sig", errors="replace") if not sys.stdin.isatty() else ""
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            data = {}
+        root = os.environ.get("CLAUDE_PROJECT_DIR") or (data.get("cwd") if isinstance(data, dict) else "") or os.getcwd()
+        msg = version_hint(Path(str(root)), HERE.parent)
+        if msg:
+            sys.stdout.write(json.dumps({"systemMessage": msg, "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": msg}},
+                                        ensure_ascii=False) + "\n")
+    except BaseException:  # noqa: BLE001  提示不能擋住開工，也不印 traceback
+        pass
+    return 0
+
+
 # ───────── 主流程 ─────────
 
 
@@ -169,6 +214,8 @@ def _dispatch(mode: str) -> int:
 
 def main(argv: list[str]) -> int:
     _utf8()
+    if argv == ["session-start"]:
+        return _session_start()
     if len(argv) != 1 or argv[0] not in MODES:
         _say(f"用法：awf_hook.py <{'|'.join(MODES)}> < hook-input.json")
         return 1

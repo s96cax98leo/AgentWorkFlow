@@ -8,6 +8,62 @@ const out = (r) => r.out || {}
 
 export default [
   {
+    // 波次（0.5）：同一波做完、合進整合分支才做下一波；波次裡面照相依分層
+    name: '波次：t1 第 1 波、t2 與 t3 第 2 波 → t1 先做完並整合，才做 t2，再做 t3；回傳帶 waves',
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => ({ ...s, ...(s.id === 't1' ? { wave: 1 } : s.kind === 'code' ? { wave: 2 } : {}) })) },
+    expect: (r) => {
+      const errs = []
+      const at = (l) => r.labels.indexOf(l)
+      if (out(r).halted) errs.push(`不該 halted：${out(r).halt_reason}`)
+      if (!(at('Implement:t1') >= 0 && at('Implement:t1') < at('integrate:layer1') && at('integrate:layer1') < at('Implement:t2') && at('Implement:t2') < at('Implement:t3'))) errs.push(`順序不對：${r.labels.join(' → ')}`)
+      if (JSON.stringify(out(r).waves) !== '[1,2]') errs.push(`回傳要帶 waves：${JSON.stringify(out(r).waves)}`)
+      if ((out(r).layers || []).length !== 3) errs.push(`應該分 3 層（第 1 波 1 層、第 2 波 2 層）：${(out(r).layers || []).length}`)
+      return errs
+    },
+  },
+  {
+    name: '波次：wave_pause 開啟時第 1 波做完停下交人，回傳 remaining_subtasks 與 integrated 供續跑',
+    profile: { parallelism: { wave_pause: true } },
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => ({ ...s, ...(s.id === 't1' ? { wave: 1 } : s.kind === 'code' ? { wave: 2 } : {}) })) },
+    expect: (r) => {
+      const errs = []
+      const o = out(r)
+      const rem = (o.remaining_subtasks || []).map((s) => s.id)
+      if (!o.halted || !o.wave_pause || o.wave_done !== 1 || !/第 1 波做完/.test(o.halt_reason || '')) errs.push(`第 1 波做完要停下：${JSON.stringify({ halted: o.halted, wave_done: o.wave_done, why: o.halt_reason })}`)
+      if (r.labels.includes('Implement:t2') || r.labels.includes('Implement:t3')) errs.push(`第 2 波不該開工：${r.labels.join(' → ')}`)
+      if (!rem.includes('t2') || !rem.includes('t3') || rem.includes('t1') || !(o.integrated || []).includes('t1')) errs.push(`續跑資料不對：remaining=${rem}、integrated=${o.integrated}`)
+      if ((o.missing || []).length || (o.failures || []).length) errs.push(`這不是缺件，也沒有失敗：${JSON.stringify([o.missing, o.failures])}`)
+      return errs
+    },
+  },
+  {
+    name: '波次：續跑只剩最後一波時一路做完，不再停',
+    profile: { parallelism: { wave_pause: true } },
+    args: { subtasks: SAMPLE_SUBTASKS().filter((s) => s.id === 't2' || s.id === 't3').map((s) => ({ ...s, wave: 2 })), integrated: ['t0', 't1'] },
+    expect: (r) => (!out(r).halted && r.labels.includes('Implement:t2') && r.labels.includes('Implement:t3') && !r.labels.includes('Implement:t1') ? [] : [`續跑要做完剩下的波次：${JSON.stringify({ halted: out(r).halted, why: out(r).halt_reason, labels: r.labels })}`]),
+  },
+  {
+    name: '波次：依賴比自己晚的波次 → 開工前停下，不派任何 agent',
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => ({ ...s, ...(s.id === 't1' ? { wave: 2 } : s.id === 't3' ? { wave: 1 } : {}) })) },
+    expect: (r) => (out(r).halted && /比自己晚的波次/.test(out(r).halt_reason || '') && (out(r).bad_waves || []).length === 1 && r.calls.length === 0 ? [] : [`要開工前停下：${JSON.stringify({ why: out(r).halt_reason, bad: out(r).bad_waves, calls: r.calls.length })}`]),
+  },
+  {
+    // 執行核心（0.5）：子任務的 complexity 是建議的模型等級，trace 每筆都有 model 與 tier
+    name: '執行核心：子任務標 complexity=strong 時 implementer 用 strong，其他照預設；trace 都有 tier',
+    profile: { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'opus' }, defaults: { '*': 'standard' }, floors: {} } },
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => (s.id === 't1' ? { ...s, complexity: 'strong', complexity_reason: '跨模組' } : s)) },
+    expect: (r) => {
+      const errs = []
+      const tr = out(r).trace || []
+      const of = (label) => tr.find((t) => t.label === label) || {}
+      if (of('Implement:t1').tier !== 'strong' || of('Implement:t1').model !== 'opus') errs.push(`t1 應該用 strong／opus：${JSON.stringify(of('Implement:t1'))}`)
+      if (of('Implement:t2').tier !== 'standard' || of('Implement:t2').model !== 'sonnet') errs.push(`t2 應該用 standard／sonnet：${JSON.stringify(of('Implement:t2'))}`)
+      if (tr.some((t) => !t.tier)) errs.push(`trace 有沒有 tier 的項目：${tr.filter((t) => !t.tier).map((t) => t.label).join('、')}`)
+      if (!r.calls.some((c) => c.label === 'Implement:t1' && c.model === 'opus')) errs.push('派 t1 的時候沒有帶 model=opus')
+      return errs
+    },
+  },
+  {
     // 走過中轉分支後 merge 退回 build：子任務分支要從中轉分支開、integrator 要合回中轉分支
     name: 'branch：args.branch 帶中轉分支',
     args: { branch: 'merge/demo-transit' },
@@ -20,6 +76,81 @@ export default [
       if (out(r).branch !== 'merge/demo-transit') errs.push(`回傳的 branch 應為 merge/demo-transit：${out(r).branch}`)
       if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
       return errs
+    },
+  },
+  {
+    // 限制文件（profile 的 constraints）：有 paths 的只給擁有的路徑對得上的子任務；沒有 paths 的整段都帶（共同前綴）
+    name: '限制文件：前端規範只發給前端子任務，整段適用的每張派工單都有',
+    profile: { constraints: [
+      { id: 'arch', file: 'ARCHITECTURE.md', note: '分層', stages: ['design', 'build'], trace: 'table' },
+      { id: 'frontend', file: 'docs/fe.md', stages: ['build'], paths: ['apps/**'] },
+      { id: 'backend', file: 'docs/be.md', stages: ['build'], paths: ['services/**'] },
+      { id: 'review', file: 'REVIEW.md', stages: ['deliver'] },
+    ] },
+    expect: (r) => {
+      const errs = []
+      const be = r.prompts['Implement:t1'] || ''
+      const fe = r.prompts['Implement:t2'] || ''
+      if (!/\[backend\] docs\/be\.md/.test(be) || /\[frontend\]/.test(be)) errs.push('後端子任務要收到後端規範、不能收到前端規範')
+      if (!/\[frontend\] docs\/fe\.md/.test(fe) || /\[backend\]/.test(fe)) errs.push('前端子任務要收到前端規範、不能收到後端規範')
+      const all = Object.entries(r.prompts).filter(([, v]) => v)
+      const noArch = all.filter(([, v]) => !/\[arch\] ARCHITECTURE\.md：分層（要對照）/.test(v)).map(([k]) => k)
+      if (noArch.length) errs.push(`整段適用的限制每張派工單都要有：${noArch.join(',')}`)
+      if (all.some(([, v]) => /\[review\]/.test(v))) errs.push('只套用到 deliver 的限制不該出現在 build')
+      if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
+      return errs
+    },
+  },
+  {
+    // 子任務資料包（pack.py build）：派工單引用自己那一份；路徑不對的不採用
+    name: '子任務資料包：派工單引用自己的資料包，路徑不對的不採用',
+    args: { task_packs: { t1: '_runs/demo/build/t1/pack.md', t2: '_runs/demo/build/../../secrets/pack.md', t3: '_runs/demo/build/t1/pack.md' } },
+    expect: (r) => {
+      const errs = []
+      const all = Object.entries(r.prompts).filter(([, v]) => v)
+      const t1 = all.filter(([k]) => /:t1(#|$)/.test(k))
+      if (!t1.length || t1.some(([, v]) => !/子任務資料包（開工先讀這份[^\n]*：_runs\/demo\/build\/t1\/pack\.md/.test(v))) errs.push('t1 的派工單要引用自己的資料包')
+      if (all.some(([k, v]) => !/:t1(#|$)/.test(k) && /子任務資料包（開工先讀/.test(v))) errs.push('路徑含 .. 或不是自己那一份的資料包不該被引用')
+      if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
+      return errs
+    },
+  },
+  {
+    name: '子任務資料包：spec_refs 對不到 spec 就停下，不派任何 agent',
+    args: { spec_ref_errors: ['t1：spec.md#不存在的小節：spec.md 裡沒有這個標題'] },
+    expect: (r) => {
+      const errs = []
+      if (!out(r).halted || !/spec_refs 對不到 spec/.test(out(r).halt_reason || '')) errs.push(`應該停下：${JSON.stringify(out(r).halt_reason)}`)
+      if (Object.values(r.prompts).some((v) => v)) errs.push('停下前不該派工')
+      if (!Array.isArray(out(r).trace)) errs.push('halted 也要帶 trace')
+      return errs
+    },
+  },
+  {
+    // 預期內的紅：負責的子任務還沒合進來時，整合派工單列出來（不當成失敗）；合進來的那一層之後不再列
+    name: '預期內的紅：等後面的子任務的檢查不算整合失敗，合進來之後照常擋',
+    args: { subtasks: [
+      { id: 't1', title: '後端', kind: 'code', owns: ['services/a.py'], depends_on: [], acceptance: ['pytest a'] },
+      { id: 't2', title: '換截圖', kind: 'code', owns: ['apps/web/a.tsx'], depends_on: ['t1'], acceptance: ['vitest a'], expected_red: ['截圖比對 shell.png'] },
+    ] },
+    expect: (r) => {
+      const errs = []
+      const l1 = r.prompts['integrate:layer1'] || ''
+      const l2 = r.prompts['integrate:layer2'] || ''
+      if (!/截圖比對 shell\.png（等子任務 t2）/.test(l1) || !/不算失敗/.test(l1)) errs.push('t2 還沒合進來時，layer1 的整合派工單要列出預期內的紅')
+      if (/截圖比對 shell\.png/.test(l2)) errs.push('t2 合進來的那一層不能再把它當成預期內的紅')
+      if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
+      return errs
+    },
+  },
+  {
+    // profile 的 design 產出文件沒列 progress.md：build 不要求看它、更新它
+    name: 'progress.md：profile 的產出文件沒列就不要求',
+    // 只換 design 的產出文件，其餘照專案的 profile（不動 test_first：smoke_init 用乾跑經過的 phases 檢查它）
+    profile: (p) => ({ stages: { ...(p.stages || {}), design: { ...((p.stages || {}).design || {}), artifacts: ['design.md', 'spec.md', 'plan.md'] } } }),
+    expect: (r) => {
+      const hit = Object.entries(r.prompts).filter(([, v]) => /progress\.md/.test(v || '')).map(([k]) => k)
+      return hit.length ? [`這些派工單還在提 progress.md：${hit.join('、')}`] : []
     },
   },
   {

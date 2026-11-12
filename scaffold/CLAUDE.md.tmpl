@@ -44,7 +44,7 @@
 
 ## 開發規範與慣例
 - 開發規範 profile 是 `{{METHODOLOGY}}`，實際內容在 `.claude/teams/methodology.json`（init 時依使用者的習慣產生）。各段做法（產出文件、需求寫法、測試時機、驗證方式）與慣例（code style、commit、分支命名、PR 大小、文件格式）都以它為準；模版只管工作流程。
-- 改了 `methodology.json` 要重跑 `python3 .claude/teams/tools/build.py`，把新的 profile 內嵌進 workflow。
+- 流程由 `python3 .claude/teams/tools/awf.py next`／`done` 排；workflow 腳本每段由它用 plugin 的範本加 `methodology.json` 產生，改了 profile 不用另外重建。
 
 ## commit 與分支
 - commit 格式照 `methodology.json` 的 `conventions.commit`，結尾加署名行：

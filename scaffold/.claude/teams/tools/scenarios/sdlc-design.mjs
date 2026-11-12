@@ -11,6 +11,23 @@ export default [
       expect: (r) => (r.labels.includes('analyze:system-design') ? [] : [`沒有派出 system-design lens：${r.labels.join(',')}`]),
     },
     {
+      name: '限制文件：design 段的派工單帶出對得上的限制與對照表格式',
+      profile: { constraints: [
+        { id: 'arch', file: 'ARCHITECTURE.md', note: '分層與模組邊界', stages: ['design'], trace: 'table' },
+        { id: 'frontend', file: 'docs/fe.md', stages: ['design', 'build'], paths: ['apps/**'] },
+        { id: 'review', file: 'REVIEW.md', stages: ['deliver'] },
+      ] },
+      expect: (r) => {
+        const all = Object.entries(r.prompts).filter(([, v]) => v)
+        const bad = all.filter(([, v]) => !/\[arch\] ARCHITECTURE\.md：分層與模組邊界（要對照）/.test(v) || !/\[frontend\] docs\/fe\.md（只適用於碰到 apps\/\*\* 的部分）/.test(v) || !/符合／偏離／不適用/.test(v)).map(([k]) => k)
+        return [
+          ...(all.length ? [] : ['沒有任何派工']),
+          ...(bad.length ? [`派工單沒帶出限制文件：${bad.join(',')}`] : []),
+          ...(all.some(([, v]) => /\[review\]/.test(v)) ? ['只套用到 deliver 的限制不該出現在 design'] : []),
+        ]
+      },
+    },
+    {
       name: '拆成子計劃',
       fakes: {
         outline: ENV({ epic: 'demo', split: true, reason: '預估 12 個子任務', sub_plans: SUB_PLANS }),

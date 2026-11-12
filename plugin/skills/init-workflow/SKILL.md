@@ -12,6 +12,8 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 
 每一步先說明要做什麼，等使用者同意再執行。提問用選項式（AskUserQuestion），每題附預設值，使用者可以直接接受。
 
+**先用預設值套用（零設定起步）**：使用者說「先用預設值」「之後再調」時，不問第 3、4 步。做完第 1、2 步後，把會做的事列給使用者（新增 `.claude/teams/`、`CLAUDE.md` 追加一行引用、settings 深度合併；開發規範用 default profile；repo 與目錄用預設值），同意後執行 `python3 <模版根目錄>/init.py --target <目標專案> --defaults`，再做最後的驗證步驟。提醒使用者：`UPSTREAM_REPO`、`FORK_REPO` 等值是空的，推送與合併之前要補（改 `workflow.config` 後跑 `init.py --upgrade`），開發規範之後可以改 `.claude/teams/methodology.json`。
+
 ## 1. 確認位置
 找到 AgentWorkFlow 模版根目錄（有 `init.py`、`workflow.config.example`、`scaffold/` 的那個目錄）。`${CLAUDE_PLUGIN_ROOT}` 指向 plugin 快取（`~/.claude/plugins/cache/…`），裡面只有 plugin 目錄、沒有 `init.py`，不能從它往上找。依序試：
 
@@ -24,7 +26,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 ## 2. 檢查目標專案
 目標專案已經有 `.claude/teams/` 時，它已 init 過：讀 `.claude/teams/VERSION`（沒有＝0.2.0 以前的版本），和第 1 步的模版版本比較，建議改走升級（第 5 步的 `--upgrade`），不要重新問一輪設定。
 
-列出目標專案已存在的 `.claude/teams/`（含 `methodology.json`）、`.claude/workflows/`、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json`。已存在的檔案**不覆蓋**，先列給使用者決定。init.py 對既有專案的預設做法：`.claude/agents`、`skills`、`commands` 不碰；既有的 `CLAUDE.md` 只在結尾追加一行 `@.claude/teams/agent-workflow.CLAUDE.md` 引用；既有的 `settings.json` 深度合併（使用者的值優先）；不是模版產生的同名 workflow 保留。使用者要整份換成模版版本時才加 `--overwrite-user-files`。也列出專案 `.claude/agents/` 裡叫 `dev-*`／`tpm-*` 的 agent，告訴使用者它們不會被當成模版角色（模版角色都帶 `agent-workflow:` 命名空間）。
+列出目標專案已存在的 `.claude/teams/`（含 `methodology.json`）、`.claude/workflows/`（0.4 以前的副本或使用者的覆寫檔）、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json`。已存在的檔案**不覆蓋**，先列給使用者決定。init.py 對既有專案的預設做法：`.claude/agents`、`skills`、`commands` 不碰；既有的 `CLAUDE.md` 只在結尾追加一行 `@.claude/teams/agent-workflow.CLAUDE.md` 引用；既有的 `settings.json` 深度合併（使用者的值優先）；不是模版產生的同名 workflow 保留。使用者要整份換成模版版本時才加 `--overwrite-user-files`。也列出專案 `.claude/agents/` 裡叫 `dev-*`／`tpm-*` 的 agent，告訴使用者它們不會被當成模版角色（模版角色都帶 `agent-workflow:` 命名空間）。
 
 ## 3. 問專案設定（workflow.config）
 把 `workflow.config.example` 複製成目標專案的 `workflow.config`，逐項確認：
@@ -49,6 +51,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 | PR 大小 | 上限行數、檔案數（可以不限） | 依 profile | `pr_size` |
 | 文件格式 | specs 等文件用什麼格式 | `Markdown` | `doc_format` |
 | 需求來源 | 需求從哪裡來（spec 檔、需求 JSON、issue 轉出的指令），merge 段的 gate 也用它 | 依 profile | `requirements` |
+| 限制文件 | 有沒有要 agent 遵守的文件（架構 ARCHITECTURE.md、設計 DESIGN.md、前後端規範、審查 REVIEW.md…）。每份問：套用到哪些段、只適用哪些路徑（例如前端規範只管 `web/**`）、要不要逐條對照（`trace: table`）、有沒有檢查指令 | 沒有 | `constraints`（清單；每項是 `路徑`、`路徑=段+段`，或完整物件 `{id, file, stages, paths, trace, check, note}`） |
 | 讀取上限 | 要不要限制模版 agent 的讀取量來省 token（擋整檔讀大檔、每個 agent 有讀取額度；不限制輸出）。選啟用才接著問門檻：超過幾行要分段讀、每個 agent 的讀取額度（位元組）。建議先用 `warn` 觀察 | 不啟用 | `read_limits`（`off`／`warn`／`enforce`，或 `{mode, whole_file_lines, read_budget}`） |
 | 主 session 習慣 | 你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR？答會時放寬主 session 的 git／GitHub 限制（`main_session_git_rules`、`main_session_github_rules` 設 false），並提醒：啟用 auto_merge 後主 session 仍不能合併 | 不會 | `main_session_push_merge` |
 
@@ -82,16 +85,16 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 - `--hooks plugin|project`：hooks 用 plugin 內建的，或複製到專案（Windows 建議 project）
 - `--with-mcp`：一併產生 `.mcp.json`
 
-init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 schema 驗過，再跑 `build.py` 內嵌進 `sdlc-*.js`；並寫入 `.claude/teams/VERSION`（模版版本）與 `.claude/teams/workflow.config`（這次用的佔位符值，之後 `--upgrade`、`--force` 沒給 `--config` 時沿用）。
+init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 schema 驗過（workflow 腳本不複製進專案，之後由 `awf.py next` 用 plugin 的範本加這份 profile 逐段產生）；並寫入 `.claude/teams/VERSION`（模版版本）與 `.claude/teams/workflow.config`（這次用的佔位符值，之後 `--upgrade`、`--force` 沒給 `--config` 時沿用）。
 
 ## 6. 驗證
 - 產出的檔案裡不應再有未替換的 `{{…}}`：`grep -rn '{{[A-Z_]*}}' <目標專案>/.claude <目標專案>/CLAUDE.md`。
-- `.claude/teams/methodology.json` 的內容跟使用者確認的習慣一致；`python3 .claude/teams/tools/build.py --check` 通過。
+- `.claude/teams/methodology.json` 的內容跟使用者確認的習慣一致；`python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check` 能產生 12 支腳本。
 - `.claude/teams/rules.md` 有〈專案規則〉段、`.claude/teams/guard.config.json` 是合法 JSON。
 - 跑 golden-set、`check_workflows.mjs`、`check_agents.py`（指令見 init.py 最後印出的「下一步」）。
 
 ## 7. 後續
-- 告訴使用者：之後要改開發規範或慣例，直接改 `.claude/teams/methodology.json`，再跑 `python3 .claude/teams/tools/build.py`；格式與新增 profile 的方式見模版的 `docs/自訂與擴充.md`〈自訂開發規範〉。
+- 告訴使用者：之後要改開發規範或慣例，直接改 `.claude/teams/methodology.json`，下一段開跑時就生效（不用再跑 `build.py`）；格式與新增 profile 的方式見模版的 `docs/自訂與擴充.md`〈自訂開發規範〉。
 - 安裝 plugin（若尚未）：照模版 README 的安裝段。
 - 問使用者有沒有自己的 agent 想加進 workflow（例如團隊自己的審查或調研 agent）：有的話接著跑 `/agent-workflow:add-agent`（`add-agent` skill）幫他設定。
 - 有設計正本時，複製 plugin 的 `design-system-template` skill 成專案自己的設計系統 skill，並登記在〈專案規則〉。

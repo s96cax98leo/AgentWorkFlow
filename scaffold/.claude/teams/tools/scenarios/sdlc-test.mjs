@@ -96,10 +96,24 @@ export default [
       expect: (r) => (r.out && r.out.halted && (r.out.left_worktrees || []).length === 2 ? [] : ['平行修正整合缺件要 halted 並列出 worktree']),
     },
     {
+      // 驗證途中分支多了 commit：第一次各分片 HEAD 不一致，全部重驗一次後一致就照常彙整，不停下交人
+      name: '分片 HEAD 不一致：自動重驗一次，一致就繼續',
+      args: { sub_plans: SUB_PLANS },
+      fakes: { ...SHARD1, 'verify:api#1': CRIT([crit('A1', 'pass')]), 'verify:ui#1': atCommit(CRIT([crit('U1', 'pass')]), 'def'),
+        'verify:api#1r': CRIT([crit('A1', 'pass')]), 'verify:ui#1r': CRIT([crit('U1', 'pass')]), 'verify:integration#1r': CRIT([crit('I1', 'pass')]),
+        'consolidate#1': CRIT([crit('api:A1', 'pass'), crit('ui:U1', 'pass'), crit('integration:I1', 'pass')]) },
+      expect: (r) => [
+        ...(['verify:api#1r', 'verify:ui#1r', 'verify:integration#1r'].every((l) => r.labels.includes(l)) ? [] : [`三個分片都要重驗：${r.labels.filter((l) => l.startsWith('verify')).join('、')}`]),
+        ...(r.out && !r.out.halted ? [] : [`重驗後一致不該停下：${r.out && r.out.halt_reason}`]),
+        ...(r.labels.filter((l) => /^verify:.*#1r$/.test(l)).length === 3 ? [] : ['只能重驗一次']),
+      ],
+    },
+    {
       // B-5：分片驗的 HEAD 不一致（ui 驗的是另一個 commit），彙整再怎麼照抄都不能用
       name: '分片 HEAD 不一致要停下',
       args: { sub_plans: SUB_PLANS },
-      fakes: { ...SHARD1, 'verify:ui#1': atCommit(CRIT([crit('U1', 'pass')]), 'def') },
+      fakes: { ...SHARD1, 'verify:ui#1': atCommit(CRIT([crit('U1', 'pass')]), 'def'),
+        'verify:api#1r': SHARD1['verify:api#1'], 'verify:ui#1r': atCommit(CRIT([crit('U1', 'pass')]), 'def'), 'verify:integration#1r': SHARD1['verify:integration#1'] },
       expect: (r) => (r.out && r.out.halted && /HEAD 不一致/.test(r.out.halt_reason || '') ? [] : [`分片 HEAD 不一致要 halted 並寫出：${JSON.stringify(r.out && { halted: r.out.halted, why: r.out.halt_reason })}`]),
     },
     {

@@ -2,6 +2,22 @@
 import { ENV, extScenario, recipeScenarios } from './_helpers.mjs'
 
 export default [
+  {
+    // 執行核心（0.5）：派工數到上限就不再派，沒派出的在 trace 記 capped，workflow 照缺件停下交人（I8：不靜默截斷）
+    name: '執行核心：派工數到上限（limits.max_agents=2）停下交人，trace 記 capped',
+    profile: { limits: { max_agents: 2 } },
+    expect: (r) => {
+      const errs = []
+      const o = r.out || {}
+      const tr = o.trace || []
+      const capped = tr.filter((t) => t.capped)
+      if (!o.halted) errs.push('到上限要 halted')
+      if (r.calls.length !== 2) errs.push(`只該派出 2 個 agent，實際 ${r.calls.length}`)
+      if (!capped.length || capped.some((t) => t.ok !== false || t.max_agents !== 2)) errs.push(`沒派出的要記 capped：${JSON.stringify(capped)}`)
+      if (r.labels.includes('write')) errs.push('到上限不該寫 PR 說明')
+      return errs
+    },
+  },
   extScenario('ext:a11y'),
   {
     name: '缺件：審查軸沒交件',

@@ -44,7 +44,12 @@ def measure() -> dict:
         if p.returncode != 0:
             raise SystemExit(f"init.py 失敗：{(p.stdout + p.stderr)[-1500:]}")
         rep = Path(tmp) / "report.json"
-        p = subprocess.run(["node", str(proj / ".claude/teams/tools/check_workflows.mjs"), "--agents-dir", str(ROOT / "plugin/agents")],
+        wfd = Path(tmp) / "wf"
+        p = subprocess.run([sys.executable, str(proj / ".claude/teams/tools/awf.py"), "render", "--all", "--out", str(wfd), "--plugin-dir", str(ROOT / "plugin")],
+                           cwd=proj, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if p.returncode != 0:
+            raise SystemExit(f"awf.py render 失敗：{(p.stdout + p.stderr)[-1500:]}")
+        p = subprocess.run(["node", str(proj / ".claude/teams/tools/check_workflows.mjs"), "--agents-dir", str(ROOT / "plugin/agents"), "--wf-dir", str(wfd)],
                            cwd=proj, env={**env, "AWF_SCENARIO_REPORT": str(rep)}, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if not rep.is_file():
             raise SystemExit(f"check_workflows 沒有產出報告：{(p.stdout + p.stderr)[-1500:]}")
@@ -56,6 +61,12 @@ def measure() -> dict:
         ps = list(sc["prompts"].values())
         prefix = len(os.path.commonprefix(ps)) if len(ps) > 1 else 0
         out["workflows"][wf] = {"agents": len(sc["labels"]), "prompt_chars": sum(len(x) for x in ps), "shared_prefix_chars": prefix}
+        # 一支腳本處理多種類型時（event.js），名字是「類型：<名>」的情境各量一次，記成 <檔名>#<類型>
+        for x in v["scenarios"]:
+            if x["name"].startswith("類型："):
+                ps = list(x["prompts"].values())
+                out["workflows"][f"{wf}#{x['name'][3:]}"] = {"agents": len(x["labels"]), "prompt_chars": sum(len(p) for p in ps),
+                                                            "shared_prefix_chars": len(os.path.commonprefix(ps)) if len(ps) > 1 else 0}
     bi = {"recipes": recipe.BUILTIN_RECIPES, "modifiers": recipe.BUILTIN_MODIFIERS}
     for name in recipe.BUILTIN_RECIPES:
         total = 0

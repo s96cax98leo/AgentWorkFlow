@@ -8,7 +8,7 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 - **其他事件**（簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看）各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
 
-所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python 標準庫，在 macOS、Linux、Windows（PowerShell）上都能執行。目前版本 **0.4.1**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
+所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python 標準庫，在 macOS、Linux、Windows（PowerShell）上都能執行。目前版本 **0.5.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 做法
 
@@ -97,7 +97,9 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 | 讀取預算（預設不啟用） | 啟用後，hook 擋模版角色整檔讀大檔（建議門檻：超過 400 行要分段讀），並給每個 agent 讀取額度，用完要求收斂交件 | `limits.mode`：不寫或 `off`＝不啟用、`warn`＝只提醒、`enforce`＝擋；門檻是 `whole_file_lines`、`read_budget` |
 | 知識層 | `kb.py` 把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行；產出可以用 Obsidian 打開 | `knowledge` |
 | 資料包 | 每段開跑前由工具（不是 agent）整理好需求、知識庫命中的行段、前面各段的紀錄 | `pack.py` |
-| 兩段式調研 | 先用便宜的模型「定位」行段，再由分析 agent 只讀那些行段 | 內建於 `sdlc-plan` |
+| 兩段式調研 | 先「定位」行段，再由分析 agent 只讀那些行段。定位先由工具做（不花 token），不夠才派便宜的模型補 | 內建於 `sdlc-plan`；`locate.py` |
+| 子任務資料包 | build 前為每個子任務整理好 spec 對應小節的行段、對得上的限制文件、相依子任務的介面；實作的 agent 不用整份讀 spec | `pack.py build`、子任務的 `spec_refs` |
+| 決策記憶 | 人在閘門上答過的問題記下來，之後的資料包帶上相關的，agent 不再重問 | `save_run.py approve --answer`、`decide` |
 | 調研重用 | plan 重跑時，來源檔沒變的調研角度直接沿用；閘門會重新核對來源的雜湊 | `pack.py --reuse-from`、`--keep-research` |
 | 派工數上限 | 一支 workflow 最多派幾個 agent，到上限就停下交人，不靜默截斷 | `limits.max_agents` |
 
@@ -124,9 +126,11 @@ python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run 目錄>
 | `plugin/` | agents、skills、slash commands、hooks | 安裝 Claude Code plugin，每台機器裝一次，所有專案共用 | `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins` |
 | `scaffold/` | 硬規則、workflow、schema、開發規範 profile、工具、golden-set、settings、`CLAUDE.md` 範本 | `init.py` 複製進目標專案，同時換掉 `{{佔位符}}` | 在專案跑 `init.py --upgrade` |
 
-workflow 放在 `scaffold/` 而不放在 plugin 裡，因為 Workflow 工具只讀專案的 `.claude/workflows/`。所以只裝 plugin 還不夠，每個要用 SDLC 的專案都要跑一次 init。
+0.5 起 workflow 的範本也在 plugin 裡（`plugin/workflow-templates/`），不複製進專案：狀態機 `awf.py next` 每段用範本加專案的設定產生腳本，plugin 更新後流程跟著更新。專案仍要跑一次 init，因為規則、守門設定、開發規範 profile 與工具是每個專案自己的。
 
 你可以把自己的 agent 加進 plan、design、test、deliver 任一段（`/agent-workflow:add-agent`），也可以整份換掉開發規範 profile；見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)。
+
+**加入自己的限制**：把要 agent 遵守的文件（架構 `ARCHITECTURE.md`、設計 `DESIGN.md`、前後端規範、審查 `REVIEW.md`…）登記在 profile 的 `constraints`，指定套用到哪些段、哪些路徑。工作流程只把它帶給對得上的 agent（前端規範不會發給只改後端的子任務），閘門可以要求逐條對照或跑你指定的檢查指令。
 
 ## 需求
 
@@ -180,8 +184,8 @@ init 會在專案寫下 `.claude/teams/VERSION`（套用的模版版本）與 `.
 要驗證產出，在目標專案根目錄執行：
 
 ```bash
-python3 .claude/teams/tools/build.py --check
-node .claude/teams/tools/check_workflows.mjs --agents-dir ~/tools/AgentWorkFlow/plugin/agents
+python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check --plugin-dir ~/tools/AgentWorkFlow/plugin
+node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir ~/tools/AgentWorkFlow/plugin/agents
 python3 .claude/teams/tools/check_agents.py --plugin-dir ~/tools/AgentWorkFlow/plugin
 python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 ```
@@ -240,7 +244,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 
 **交件信封**：每個 `dev-*`／`tpm-*` agent 都用 JSON 信封交件，欄位是 status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload。成果寫成檔案，信封只放路徑；summary 不超過 400 字、evidence 最多 12 則。hook 會驗證信封，不合格就交不出去。
 
-**開發規範 profile**：各段的做法、慣例與 recipe 寫在目標專案的 `.claude/teams/methodology.json`。內建兩份：`default`（spec 驅動、測試先行、Conventional Commits）與 `lightweight`（需求來自 issue、實作後才補測試、格式自由）。改了這個檔要跑 `build.py`。
+**開發規範 profile**：各段的做法、慣例與 recipe 寫在目標專案的 `.claude/teams/methodology.json`。內建兩份：`default`（spec 驅動、測試先行、Conventional Commits）與 `lightweight`（需求來自 issue、實作後才補測試、格式自由）。改了這個檔下一段開跑時就生效。
 
 **平行處理**：觸發條件寫在 profile 的 `parallelism`：`split_threshold`（預估子任務超過幾個就拆子計劃，預設 8）、`max_sub_plans`（子計劃上限，預設 4）、`shard_verification`（有子計劃時驗證要不要分片平行，預設開）。子計劃範圍重疊、彙整後默默少了子任務、彙整時改了驗證結果，workflow 都會停下交人。
 
@@ -266,23 +270,28 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 |---|---|---|
 | `/sdlc <需求>`、開發、修 bug、改需求 | `sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge`（實際走哪幾段依 recipe） | repo、epic、requirement、base、run_dir |
 | `/brief <簡報>`、照任務單做 | `event-brief`（程式子任務轉進 SDLC） | brief、run_dir |
-| 上游有新 PR、main 前進、CI 紅了 | `event-upstream` | what、repo、run_dir |
-| 整理會議、逐字稿 | `event-meeting` | source、run_dir |
+| 上游有新 PR、main 前進、CI 紅了 | `event`（類型 `upstream`） | what、repo、run_dir |
+| 整理會議、逐字稿 | `event`（類型 `meeting`） | source、run_dir |
 | 審 PR、審分支 | `event-pr-review` | target、repo、run_dir |
-| 需求更新了 | `event-reqs-change` | change、run_dir |
-| 某某決定了、定案 | `event-decision` | decision、run_dir |
-| `/demo-check`、demo 前、彩排 | `event-demo-check` | target、run_dir |
+| 需求更新了 | `event`（類型 `reqs-change`） | change、run_dir |
+| 某某決定了、定案 | `event`（類型 `decision`） | decision、run_dir |
+| `/demo-check`、demo 前、彩排 | `event`（類型 `demo-check`） | target、run_dir |
 | 分支落後 main、PR 有衝突 | `sdlc-sync` | repo、epic、run_dir |
 | 合併這個 PR | `sdlc-merge` | repo、pr、run_dir |
+| 自己定義的事件（例如事故回顧） | `event`（類型寫在 `methodology.json` 的 `events`） | 該類型的 `args`、run_dir |
 | 合併後 main 紅了 | `event-post-merge` | repo、run_dir |
 | `/agent-workflow:add-agent`、加我自己的 agent | `add-agent` skill | — |
 | `/agent-workflow:correct`、把這個錯誤變成做不到 | `correct` skill | 錯誤描述或出處 |
+| `/agent-workflow:status`、現在跑到哪 | `status` skill | run 目錄（可省略） |
+| `/agent-workflow:cost`、花了多少 token | `cost` skill | run 目錄（可省略） |
+| `/agent-workflow:kb`、文件裡哪裡有寫 | `kb` skill | 要查的問題 |
+| `/agent-workflow:doctor`、檢查安裝 | `doctor` skill | — |
 | 比較方案、A 還是 B | `team-debate` skill | — |
 | 分析某個網站 | `site-report` skill | 網址 |
 
 `/event <描述>` 會自動判斷事件類型。事件判斷與閘門的完整規則寫在 `tpm-team` skill。
 
-plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。其他功能是 skill，用 `/agent-workflow:<skill 名>` 叫用（例如 `/agent-workflow:add-agent`）；依 [Claude Code 文件](https://code.claude.com/docs/en/skills)，沒有其他指令同名時，也可以省略 `agent-workflow:` 前綴。
+plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。其他功能是 skill，用 `/agent-workflow:<skill 名>` 叫用（例如 `/agent-workflow:add-agent`）；依 [Claude Code 文件](https://code.claude.com/docs/en/skills)，沒有其他指令同名時，也可以省略 `agent-workflow:` 前綴。`status`、`cost`、`doctor` 和 Claude Code 內建指令同名，要用完整名稱。
 
 ## 角色
 
@@ -363,7 +372,7 @@ python3 init.py --target <專案> [--config workflow.config] [--answers <答案.
 | `--force` | 覆寫已存在的模版檔；使用者設定的保留規則和 `--upgrade` 相同 |
 | `--overwrite-user-files` | 連使用者的檔案（`CLAUDE.md`、`settings.json`、`methodology.json`、`guard.config.json`、〈專案規則〉）也整份覆寫，只在想重設時使用 |
 
-init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`、`VERSION`、`workflow.config`）、`.claude/workflows/`、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json.example`、run 目錄。
+init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`、`VERSION`、`workflow.config`）、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json.example`、run 目錄。
 
 ### 佔位符
 
@@ -404,12 +413,12 @@ AgentWorkFlow/
 ├── .github/                          # 本 repo 的 CI（ci.yml）與 Dependabot 設定
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
-│   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、team-debate、site-report 系列、design-system-template
+│   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
+│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge）與 legacy.json（舊副本指紋）；awf.py next 逐段產生腳本
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）、read_budget.py
 ├── scaffold/                         # init.py 複製進目標專案的內容
-│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、awf_cost.py）、golden-set/
-│   ├── .claude/workflows/            # sdlc-*.js、event-*.js
+│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、locate.py、awf_cost.py、awf.py）、golden-set/
 │   ├── .github/workflows/            # agent-merge-gate.yml.tmpl（選用）
 │   ├── CLAUDE.md.tmpl、.mcp.json.tmpl
 │   └── _runs/                        # run 目錄說明
@@ -432,6 +441,7 @@ AgentWorkFlow/
 | [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) | 自動合併的防線分層、啟用前檢查清單、revert 演練 |
 | [`docs/adr-agent-auto-merge.md`](docs/adr-agent-auto-merge.md) | 自動合併的架構決策紀錄 |
 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md) | 開發規範 profile、recipe、平行參數、把自己的 agent 加進 workflow、新增 agent／skill／hook／workflow、套用到既有專案、升級 |
+| [`docs/監控與整合.md`](docs/監控與整合.md) | 從外面看進度與成本：`awf.py watch`、事件流、通知、狀態列、OTel |
 | [`docs/踩坑手冊.md`](docs/踩坑手冊.md) | 實戰教訓：症狀、原因、做法 |
 | [`docs/參考-pstack.md`](docs/參考-pstack.md) | 參考過的外部 plugin（pstack）：差異、引進與沒引進的做法 |
 | [`docs/套用範例.md`](docs/套用範例.md) | 用虛構的「示範客戶 ACME」從 init 走到 deliver |

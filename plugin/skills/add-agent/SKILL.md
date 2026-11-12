@@ -88,24 +88,24 @@ model: inherit
 
 0. **備份**：改之前把 `.claude/teams/guard.config.json`、`.claude/teams/methodology.json` 原內容存起來（例如複製到 run 目錄的 `add-agent.backup/`，或確認兩檔在 git 裡沒有未提交的改動，之後可用 `git checkout -- <檔>` 還原）。
 1. **先登記守門**：`guard.config.json` 的 `extension_agents` 加一筆：`"acme-db-reviewer": "tpm-reviewer"`。
-   沒登記的話 `build.py` 會拒絕內嵌，因為沒登記的 agent 不套任何角色規則。寫完確認它仍是合法 JSON，並用第 6 步的 hook 指令確認這個 agentType 已經被擋 push，再往下。
+   沒登記的話 `awf.py` 會拒絕產生 workflow 腳本，因為沒登記的 agent 不套任何角色規則。寫完確認它仍是合法 JSON，並用第 6 步的 hook 指令確認這個 agentType 已經被擋 push，再往下。
    `auto_merge.enabled` 是 true 時：不寫檔，把這兩份改動整理成 diff 交給使用者走 PR，流程到此為止（第 6 步等 PR 合併後再跑）。
 2. **再寫 profile**：`methodology.json` 的 `extensions` 加一筆：
    ```json
    {"name": "db-migration", "agent": "acme-db-reviewer", "stage": "test", "instructions": "檢查 migration 能不能回滾……"}
    ```
-3. 跑 `python3 .claude/teams/tools/build.py`，把新的 profile 內嵌進 `sdlc-*.js`。
+3. 不用另外內嵌：`awf.py next` 每次產生腳本時讀 profile。專案有 workflow 覆寫檔（`.claude/workflows/*.js`，init 加 `--with-workflows` 才有）時才要跑 `python3 .claude/teams/tools/build.py`。
 
 **回滾**（第 1–3 步或第 6 步驗證任何一項失敗時）：
 1. 先把 `methodology.json` 還原成備份（移除剛加的 extension），再還原 `guard.config.json`；順序和寫入相反，過程中不會出現「在 workflow 裡卻沒登記守門」的狀態。
-2. 重跑 `python3 .claude/teams/tools/build.py`，再跑 `python3 .claude/teams/tools/build.py --check` 確認 workflow 回到原狀。
+2. 有 workflow 覆寫檔時重跑 `python3 .claude/teams/tools/build.py`，再跑 `build.py --check` 確認回到原狀；沒有覆寫檔不用做。
 3. 第 4 步新建的 agent 定義檔問使用者要不要留著。
 4. 把失敗的訊息與已還原的檔案回報給使用者。
 
 ## 6. 驗證
 ```bash
-python3 .claude/teams/tools/build.py --check
-node .claude/teams/tools/check_workflows.mjs --agents-dir <AgentWorkFlow>/plugin/agents   # 確認擴充 agent 會被派出、定義檔存在
+python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 12 支腳本
+node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir <AgentWorkFlow>/plugin/agents   # 確認擴充 agent 會被派出、定義檔存在
 uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py              # methodology.json 合法
 ```
 再用 hook 確認守門生效（應該 exit 2，被擋）：
@@ -117,4 +117,4 @@ Windows（PowerShell）把 `CLAUDE_PROJECT_DIR=...` 換成先執行 `$env:CLAUDE
 
 ## 7. 回報
 列出：加在哪一段、agentType、套用的角色、派工內容摘要、改了哪些檔、驗證結果。
-說明怎麼移除：先刪掉 `methodology.json` 的 `extensions` 那一筆並跑 `build.py`，再刪 `guard.config.json` 的 `extension_agents` 那一筆（和加入的順序相反，守門最後才拿掉）。
+說明怎麼移除：先刪掉 `methodology.json` 的 `extensions` 那一筆（有 workflow 覆寫檔時跑 `build.py`），再刪 `guard.config.json` 的 `extension_agents` 那一筆（和加入的順序相反，守門最後才拿掉）。

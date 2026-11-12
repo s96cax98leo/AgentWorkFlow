@@ -477,6 +477,43 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     def stop(agent: str) -> dict:
         return {"hook_event_name": "SubagentStop", "agent_type": agent, "last_assistant_message": "完成，沒有信封"}
 
+    # ------------------------------------------------------------ 0.5 B5：linked_repos（工作區以外的我方 repo）與 session 的 scratchpad
+    LINKED, OTHER = tmp / "linked-app", tmp / "not-linked"
+    for d_ in (LINKED / "src", LINKED / "e2e", LINKED / "specs" / "demo", LINKED / ".claude" / "teams", OTHER / "src"):
+        d_.mkdir(parents=True)
+    LWS = mkws("ws-linked", {"linked_repos": [str(LINKED), "", "/"], "acceptance_test_dirs": ["e2e"]})
+    IMPL, VER = "agent-workflow:dev-implementer", "agent-workflow:dev-verifier"
+    run(P, 0, "B5 linked_repos：implementer 可以改登記過的 repo", edit(LINKED / "src/a.py", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：沒登記的工作區外目錄照舊擋", edit(OTHER / "src/a.py", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：設定裡的「/」不會把整台機器放行", edit(tmp / "anywhere.py", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：linked repo 的 .claude/ 仍不能改", edit(LINKED / ".claude/settings.json", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：linked repo 的 .claude/teams 仍不能改", edit(LINKED / ".claude/teams/rules.md", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：implementer 仍不能改 linked repo 的驗收測試", edit(LINKED / "e2e/a.spec.ts", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：verifier 在 linked repo 仍只能寫自己的報告", edit(LINKED / "src/a.py", VER, LWS), LWS)
+    run(P, 0, "B5 linked_repos：verifier 可以寫 linked repo 的 verifier.md", edit(LINKED / "specs/demo/verifier.md", VER, LWS), LWS)
+    run(P, 0, "B5 linked_repos：writer 可以寫 linked repo 的 specs/<epic>/*.md", edit(LINKED / "specs/demo/spec.md", "agent-workflow:tpm-writer", LWS), LWS)
+    run(P, 2, "B5 linked_repos：writer 不能改 linked repo 的程式", edit(LINKED / "src/a.py", "agent-workflow:tpm-writer", LWS), LWS)
+    run(P, 2, "B5 linked_repos：researcher 仍只能寫 run 目錄", edit(LINKED / "src/a.py", "agent-workflow:tpm-researcher", LWS), LWS)
+    run(P, 2, "B5 linked_repos：沒設定時工作區外一律擋", edit(LINKED / "src/a.py", IMPL, UWS_PRE := mkws("ws-nolink", {})), UWS_PRE)
+    both(2, "B5 linked_repos：agent 在 linked repo 用 shell 寫守門設定仍擋", LWS, f"echo x > {LINKED.as_posix()}/.claude/teams/guard.config.json", IMPL)
+    both(2, "B5 linked_repos：agent 在 linked repo 推送仍擋", LWS, f"git -C {LINKED.as_posix()} push origin feature/x", IMPL)
+    both(0, "B5 linked_repos：agent 在 linked repo 跑測試放行", LWS, f"git -C {LINKED.as_posix()} status", IMPL)
+    SID = "0f3c2a9e-1111-2222-3333-444455556666"
+    SCR = tmp / "claude-501" / "-proj" / SID / "scratchpad"
+    (SCR / ".claude" / "teams").mkdir(parents=True)
+    (tmp / "claude-501" / "-proj" / "other-session-9999" / "scratchpad").mkdir(parents=True)
+
+    def scr(path: Path, agent: str, sid: str = SID) -> dict:
+        return {**edit(path, agent, LWS), "session_id": sid}
+    run(P, 0, "B5 scratchpad：researcher 可以寫這個 session 的 scratchpad", scr(SCR / "notes.md", "agent-workflow:tpm-researcher"), LWS)
+    run(P, 0, "B5 scratchpad：唯讀角色（skeptic）也可以", scr(SCR / "tmp/out.json", "agent-workflow:tpm-skeptic"), LWS)
+    run(P, 0, "B5 scratchpad：implementer 可以", scr(SCR / "probe.py", IMPL), LWS)
+    run(P, 2, "B5 scratchpad：別的 session 的 scratchpad 不行", scr(tmp / "claude-501" / "-proj" / "other-session-9999" / "scratchpad" / "a.md", "agent-workflow:tpm-researcher"), LWS)
+    run(P, 2, "B5 scratchpad：沒有 session_id 時照舊擋", edit(SCR / "notes.md", "agent-workflow:tpm-researcher", LWS), LWS)
+    run(P, 2, "B5 scratchpad：暫存目錄的其他位置照舊擋", scr(tmp / "claude-501" / "x.md", "agent-workflow:tpm-researcher"), LWS)
+    run(P, 2, "B5 scratchpad：裡面的 .claude/teams、guard.config.json 這類路徑仍擋", scr(SCR / ".claude/teams/guard.config.json", IMPL), LWS)
+    run(P, 2, "B5 scratchpad：run 目錄不是 scratchpad，run.json 照舊擋", scr(LWS / "_tpm/runs/x/run.json", IMPL), LWS)
+
     UWS = mkws("ws-user", {})
     both(0, "使用者 agent dev-helper push 功能分支", UWS, "git push origin feature/x", "dev-helper")
     both(0, "使用者 agent tpm-notes 開 PR（帶 --repo）", UWS, "gh pr create --repo acme-fork/app --title t --body b", "tpm-notes")
@@ -640,6 +677,31 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     pair(2, "agent save_run approve", "python3 .claude/teams/tools/save_run.py approve _tpm/runs/x plan --by human --at t", agent=WRT)
     pair(2, "agent save_run abandon", "python3 .claude/teams/tools/save_run.py abandon _tpm/runs/x --reason r --by a --at t", agent=WRT)
     pair(0, "主 session save_run approve 放行", "python3 .claude/teams/tools/save_run.py approve _tpm/runs/x plan --by human --at t")
+    # 0.5 B1：狀態機與 workflow 腳本。agent 改得到腳本就等於改了下一段的流程；awf.py approve 會轉給 save_run。
+    pair(2, "B1 agent 跑 awf.py approve", "python3 .claude/teams/tools/awf.py approve --run _tpm/runs/x --by human", agent=WRT)
+    pair(2, "B1 agent 跑 awf.py done", "python3 .claude/teams/tools/awf.py done --run _tpm/runs/x", agent=WRT)
+    pair(2, "B1 agent 跑 awf.py next", "python3 .claude/teams/tools/awf.py next --run _tpm/runs/x", agent=WRT)
+    pair(0, "B1 agent 跑 awf.py --selftest 放行", "python3 .claude/teams/tools/awf.py --selftest", agent=WRT)
+    pair(0, "B1 agent 讀 awf.py 放行", "grep -n next .claude/teams/tools/awf.py", agent=WRT)
+    pair(0, "B1 主 session 跑 awf.py next 放行", "python3 .claude/teams/tools/awf.py next --run _tpm/runs/x")
+    pair(2, "B1 agent 用重新導向寫覆寫檔", "echo 'x' > .claude/workflows/sdlc-plan.js", agent=WRT)
+    pair(2, "B1 agent 用 cp 蓋掉產生的腳本", "cp /tmp/evil.js _tpm/runs/x/.wf/sdlc-design.js", agent=WRT)
+    pair(0, "B1 agent 讀產生的腳本放行", "cat _tpm/runs/x/.wf/sdlc-design.js", agent=WRT)
+    # 審查發現：先 cd 進去再寫，指令裡看不到路徑，也要擋（看這一段實際作用的目錄）
+    IMP = "agent-workflow:dev-implementer"
+    pair(2, "B1 agent 先 cd 進覆寫檔目錄再重新導向", "cd .claude/workflows && echo x > sdlc-deliver.js", agent=IMP)
+    pair(2, "B1 agent 先 cd 進 .wf 再 cp", "cd _tpm/runs/x/.wf && cp /tmp/e.js sdlc-test.js", agent=IMP)
+    pair(2, "B1 agent 先 cd 進工具目錄再改工具", "cd .claude/teams/tools && echo x >> recipe.py", agent=IMP)
+    pair(2, "B1 agent 建覆寫檔目錄", "mkdir -p .claude/workflows", agent=IMP)
+    pair(0, "B1 agent 在覆寫檔目錄裡只讀放行", "cd .claude/workflows && ls", agent=IMP)
+    pair(0, "B1 agent 在工具目錄跑 selftest 放行", "cd .claude/teams/tools && python3 recipe.py --selftest", agent=IMP)
+    pair(0, "B1 主 session 先 cd 再寫覆寫檔放行", "cd .claude/workflows && echo x > sdlc-plan.js")
+    pair(0, "B1 主 session 寫覆寫檔放行", "cp a.js .claude/workflows/sdlc-plan.js")
+    run(P, 2, "B1 agent 用 Write 寫覆寫檔", edit(WS / ".claude/workflows/sdlc-plan.js", WRT))
+    run(P, 2, "B1 agent 用 Write 寫產生的腳本", edit(WS / "_tpm/runs/x/.wf/sdlc-design.js", "agent-workflow:dev-implementer"))
+    run(P, 2, "B1 agent 用 Write 寫產生的腳本（大小寫不同）", edit(WS / "_tpm/runs/x/.WF/sdlc-design.js", "agent-workflow:tpm-skeptic"))
+    run(P, 0, "B1 主 session 用 Write 寫覆寫檔放行", edit(WS / ".claude/workflows/sdlc-plan.js"))
+    run(P, 0, "B1 使用者自己的 agent 寫自己的 workflow 放行", edit(WS / ".claude/workflows/my-flow.js", "my-helper"))
     pair(2, "agent 拆字串寫 merge-audit", "python3 -c \"open('_tpm/runs/merge-'+'audit.jsonl','a').write('x')\"", agent=WRT)
     pair(2, "agent 拆字串寫 run.json", "python3 -c \"open('_tpm/runs/x/run'+'.json','w').write('{}')\"", agent=WRT)
     pair(0, "agent 用 python 讀 run 目錄放行", "python3 -c \"print(open('_tpm/runs/x/notes.md').read())\"", agent=WRT)
@@ -872,6 +934,18 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
              {"file_path": str(H1W / "_tpm/runs/.claude/teams/methodology.json"), "content": "{}"}, who)
     tool(2, "B2 dev-implementer 寫 repo 裡的 .claude/teams/rules.md", "Write", {"file_path": str(H1R / ".claude/teams/rules.md")}, IMP)
     tool(2, "B2 tpm-writer 寫 docs/methodology.json", "Write", {"file_path": str(H1W / "docs/methodology.json"), "content": "{}"}, WRT)
+    # 審查發現：profile 的 events 裡自訂的事件類型也是段名（<類型>.json 不准寫、<類型>/<label>.md 可以當執行紀錄）
+    mfile = H1W / ".claude/teams/methodology.json"
+    had = mfile.read_text(encoding="utf-8") if mfile.is_file() else None
+    mfile.parent.mkdir(parents=True, exist_ok=True)
+    mfile.write_text(json.dumps({"events": {"retro": {"title": "回顧"}, "壞 名字": {}}}, ensure_ascii=False), encoding="utf-8")
+    tool(2, "自訂事件類型：tpm-researcher 不能寫 runs_dir 的 retro.json", "Write", {"file_path": str(H1W / "_tpm/runs/x/retro.json"), "content": "{}"}, "agent-workflow:tpm-researcher")
+    tool(0, "自訂事件類型：tpm-skeptic 可以寫 retro/ 底下的執行紀錄", "Write", {"file_path": str(H1W / "_tpm/runs/x/retro/challenge.md"), "content": "# x"}, "agent-workflow:tpm-skeptic")
+    tool(2, "自訂事件類型：沒登記的段名仍然不能當執行紀錄的目錄", "Write", {"file_path": str(H1W / "_tpm/runs/x/nope/challenge.md"), "content": "# x"}, "agent-workflow:tpm-skeptic")
+    if had is None:
+        mfile.unlink()
+    else:
+        mfile.write_text(had, encoding="utf-8")
     tool(2, "B2 tpm-researcher 用 Edit 改 runs_dir 下的 guard.config.json", "Edit", {"file_path": str(H1W / "_tpm/runs/x/guard.config.json")}, RSR)
     tool(2, "B2 dev-implementer 用 NotebookEdit 寫 .Claude/Teams/ 底下（大小寫不同）", "NotebookEdit",
          {"notebook_path": str(H1R / ".Claude/Teams/x.ipynb")}, IMP)
@@ -921,6 +995,20 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
         pair(2, f"I7 {short} 用 shell 寫 執行紀錄索引.md", "cp a.md repos/app/執行紀錄索引.md",
              "Copy-Item a.md repos/app/執行紀錄索引.md", agent=who)
         pair(0, f"I7 {short} 讀 context.md 放行", "cat _tpm/runs/x/context.md", "Get-Content _tpm/runs/x/context.md", agent=who)
+    # B13 決策記憶：decisions.jsonl 與 決策記憶.md 只由主 session 跑 save_run.py 寫（資料包會把它帶給之後的 agent）
+    for who in (WRT, IMP):
+        short = who.rsplit(":", 1)[-1]
+        tool(2, f"B13 {short} Write decisions.jsonl", "Write", {"file_path": str(H1W / "_tpm/runs/decisions.jsonl")}, who)
+        tool(2, f"B13 {short} Edit 決策記憶.md", "Edit", {"file_path": str(H1W / "_tpm/runs/決策記憶.md")}, who)
+        pair(2, f"B13 {short} 用 shell 寫 decisions.jsonl", "echo '{}' >> _tpm/runs/decisions.jsonl",
+             "Add-Content -Path _tpm/runs/decisions.jsonl -Value '{}'", agent=who)
+        pair(2, f"B13 {short} 跑 save_run.py decide", "python3 .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t",
+             "python .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t", agent=who)
+        pair(0, f"B13 {short} 讀 decisions.jsonl 放行", "cat _tpm/runs/decisions.jsonl", "Get-Content _tpm/runs/decisions.jsonl", agent=who)
+    tool(0, "B13 主 session Write decisions.jsonl 放行", "Write", {"file_path": str(H1W / "_tpm/runs/decisions.jsonl")})
+    pair(0, "B13 主 session 跑 save_run.py decide 放行", "python3 .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t",
+         "python .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t")
+    tool(0, "B13 tpm-writer 寫 <run>/decision/決策紀錄.md 放行（事件產出，不是決策記憶檔）", "Write", {"file_path": str(H1W / "_tpm/runs/x/decision/決策紀錄.md")}, WRT)
     tool(0, "I7 tpm-writer 寫 runs_dir/<run>/deliver/x.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/deliver/x.md")}, WRT)
     tool(0, "I7 dev-implementer 寫 repo 的 context.md 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "docs/context.md")}, IMP)
     tool(0, "I7 主 session Write context.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/context.md")})
@@ -1138,6 +1226,44 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     for i in range(3):
         rb(0, f"沒有 agent_id 不記帳、不擋（第 {i + 1} 次）", R2, no_id)
     check("讀取預算：沒有 agent_id 時沒有寫出 type- 的狀態檔", [], [x.name for x in (RB_STATE / "rb2").glob("type-*")])
+    # B12.1：Grep 的 content 模式與 shell 的 grep 類也計入額度（估計值）；只列檔名、計數、-q、管線不計
+    def gp(w: Path, agent: str = RES, aid: str = "g1", **kw) -> dict:
+        d = {"hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": str(w), "session_id": w.name, "tool_input": {"pattern": "第 1", "path": str(w), **kw}}
+        if agent:
+            d["agent_type"] = agent
+            d["agent_id"] = aid
+        return d
+    RG = rbws("rb-grep", rb_limits(default=30000))
+    rb(0, "Grep 只列檔名（預設模式）不計", RG, gp(RG))
+    rb(0, "Grep count 模式不計", RG, gp(RG, output_mode="count"))
+    rb(2, "Grep content：估計量跨過 80% 先提醒", RG, gp(RG, output_mode="content"), expect="已用 80%")
+    rb(0, "Grep content：重試放行並計入", RG, gp(RG, output_mode="content"))
+    rb(2, "Grep content：額度用完後擋", RG, gp(RG, output_mode="content"), expect="額度已用完")
+    rb(0, "Grep 只列檔名：額度用完後照樣放（讓 agent 能收尾）", RG, gp(RG, output_mode="files_with_matches"))
+    rb(2, "Grep content 用掉的額度和 Read 共用", RG, rd(RG, "small.md", aid="g1"), expect="額度已用完")
+    rb(0, "Grep content：主 session 不計", RG, gp(RG, "", output_mode="content"))
+    rb(0, "Grep content：使用者自己的 agent 不計", RG, gp(RG, "dev-helper", output_mode="content"))
+    rb(0, "Grep content：帶小的 head_limit 估得少（另一個 agent 不會一次跨過 80%）", RG, gp(RG, aid="g2", output_mode="content", head_limit=20))
+    RGS = rbws("rb-grep-sh", rb_limits(default=20000))
+    rb(2, "shell grep 印內容：跨過 80% 先提醒", RGS, rb_sh(RGS, "grep -n 第 big.md"), S, expect="已用 80%")
+    rb(0, "shell grep 印內容：重試放行並計入", RGS, rb_sh(RGS, "grep -n 第 big.md"), S)
+    rb(0, "shell rg 印內容：再計一次", RGS, rb_sh(RGS, "rg 第 big.md"), S)
+    rb(2, "shell grep 印內容：額度用完後擋", RGS, rb_sh(RGS, "grep 第 big.md"), S, expect="額度已用完")
+    rb(0, "shell grep -q 不計也不擋", RGS, rb_sh(RGS, "grep -q 第 big.md"), S)
+    rb(0, "shell grep -l 不計也不擋", RGS, rb_sh(RGS, "grep -rl 第 ."), S)
+    rb(0, "shell grep -c 不計也不擋", RGS, rb_sh(RGS, "grep -c 第 big.md"), S)
+    rb(0, "shell grep 接管線（不是單一簡單指令）不計", RGS, rb_sh(RGS, "grep 第 big.md | head -5"), S)
+    RGP = rbws("rb-grep-ps", rb_limits(default=20000))
+    rb(2, "PS：Select-String 印內容：跨過 80% 先提醒", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md", tool="PowerShell"), S, expect="已用 80%")
+    rb(0, "PS：Select-String 重試放行並計入", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md", tool="PowerShell"), S)
+    rb(0, "PS：sls 再計一次", RGP, rb_sh(RGP, "sls 第 big.md", tool="PowerShell"), S)
+    rb(2, "PS：Select-String 額度用完後擋", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md", tool="PowerShell"), S, expect="額度已用完")
+    rb(0, "PS：Select-String -Quiet 不計也不擋", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md -Quiet", tool="PowerShell"), S)
+    rb(0, "PS：Select-String 接管線不計", RGP, rb_sh(RGP, "Select-String -Pattern 第 big.md | Select-Object -First 3", tool="PowerShell"), S)
+    RGW = rbws("rb-grep-off", {"limits": {"whole_file_lines": 400, "read_budget": {"default": 1, "roles": {}}}})
+    rb(0, "沒啟用（沒寫 mode）：Grep content 不計不擋", RGW, gp(RGW, output_mode="content"))
+    rb(0, "沒啟用（沒寫 mode）：shell grep 不計不擋", RGW, rb_sh(RGW, "grep 第 big.md"), S)
+
     # 單行的大檔：行數過得了門檻，但一次最多記 100KB，不會一次把額度扣光
     (R2 / "oneline.txt").write_text("x" * 900000, encoding="utf-8")
     R2B = rbws("rb2b", rb_limits(default=1000000))

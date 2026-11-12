@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "progress-event.schema.json",
+  "title": "awf.py watch 寫進 <run_dir>/progress.jsonl 的事件（一行一個）",
+  "description": "給外部程式讀的進度事件。只整理 run.json、執行紀錄檔與 workflow transcript，不參與任何閘門判定；格式有變會遞增 v。",
+  "type": "object",
+  "required": ["v", "seq", "at", "type", "run"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "seq": {"type": "integer", "minimum": 1, "description": "這個 run 的事件序號，從 1 連續遞增"},
+    "at": {"type": "string", "minLength": 1, "description": "watcher 看到這件事的時間（UTC，ISO 8601）；不是事情發生的精確時間"},
+    "type": {"enum": ["run_state", "stage_started", "stage_saved", "waiting_gate", "stage_approved", "record_written", "agent_started", "agent_progress", "workflow_finished", "workflow_stalled", "watch_note"]},
+    "run": {"type": "string", "minLength": 1, "description": "run 目錄名"},
+    "state": {"enum": ["running", "waiting_gate", "blocked", "done", "closed", "abandoned"], "description": "run_state：整個 run 的狀態"},
+    "stage": {"type": "string", "description": "段名（plan、design、build…或事件名）"},
+    "status": {"type": "string", "description": "stage_saved：段的狀態；workflow_finished：workflow 的結束狀態；watch_note：說明文字"},
+    "workflow": {"type": "string"},
+    "wf_run": {"type": "string", "description": "Claude Code 的 workflow run id（wf_…）"},
+    "by": {"type": "string", "description": "stage_approved：誰核准"},
+    "kind": {"type": "string", "description": "stage_approved：human 或 policy"},
+    "label": {"type": "string", "description": "agent 的派工 label，或紀錄檔名"},
+    "role": {"type": "string"},
+    "model": {"type": "string"},
+    "tokens": {"type": "integer", "minimum": 0, "description": "到目前為止的 token（input＋cache＋output）；讀不懂 transcript 時是 0"},
+    "requests": {"type": "integer", "minimum": 0},
+    "idle_seconds": {"type": "integer", "minimum": 0, "description": "workflow_stalled：最後一次有動靜到現在的秒數"}
+  }
+}
