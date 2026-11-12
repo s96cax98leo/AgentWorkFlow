@@ -197,9 +197,9 @@ def repos_dir(root_p: Path) -> str:
     return guard_dir(root_p, "repos_dir")
 
 
-# 過程保存：結案摘要（save_run.py close／abandon 寫的）與 plan 段的調研結論。只在 runs_dir 底下真的有 run 時才加，
-# 沒跑過流程的專案來源不變。
-RUN_SOURCES = ("*/archive/*.md", "*/plan/research-*.md")
+# 過程保存：結案摘要（save_run.py close／abandon 寫的，team agent 寫不到）。只在 runs_dir 底下真的有 run 時才加，
+# 沒跑過流程的專案來源不變。調研的執行紀錄不收：那是 agent 寫的、還沒經過 skeptic，結論已經濃縮進結案摘要。
+RUN_SOURCES = ("*/archive/結案摘要.md",)
 
 
 def run_sources(root_p: Path) -> list:
@@ -1375,10 +1375,11 @@ def _selftest() -> int:
         write(root / "_tpm/runs/r1/plan/research-code.md", "# 調研\n\n結論的獨特詞 tapirwombat。\n")
         write(root / "_tpm/runs/r1/plan/pack.md", "# 資料包\n\nokapinumbat tapirwombat\n")
         cfg = load_config(str(root))
-        check("過程保存：預設來源加上結案摘要與調研結論", "_tpm/runs/*/archive/*.md" in cfg["sources"] and "_tpm/runs/*/plan/research-*.md" in cfg["sources"], str(cfg["sources"]))
+        write(root / "_tpm/runs/r1/archive/notes.md", "# 筆記\n\nokapinumbat 假的摘要。\n")
+        check("過程保存：預設來源只加結案摘要（調研紀錄、archive 裡的其他檔不收）", "_tpm/runs/*/archive/結案摘要.md" in cfg["sources"] and not any("research" in x or x.endswith("archive/*.md") for x in cfg["sources"]), str(cfg["sources"]))
         build(str(root))
-        check("過程保存：查得到結案摘要", [r["path"] for r in query(str(root), "okapinumbat")] == ["_tpm/runs/r1/archive/結案摘要.md"])
-        check("過程保存：查得到調研結論，資料包不進索引", [r["path"] for r in query(str(root), "tapirwombat")] == ["_tpm/runs/r1/plan/research-code.md"])
+        check("過程保存：查得到結案摘要，archive 裡的其他檔不進索引", [r["path"] for r in query(str(root), "okapinumbat")] == ["_tpm/runs/r1/archive/結案摘要.md"])
+        check("過程保存：調研紀錄與資料包不進索引", query(str(root), "tapirwombat") == [])
         write(root / ".claude/teams/guard.config.json", json.dumps({"runs_dir": "work/runs"}))
         check("過程保存：runs_dir 取自 guard.config（那裡沒有 run 就不加）", load_config(str(root))["sources"] == DEFAULT_SOURCES)
         check("過程保存：呼叫端自己給 sources 時不加", load_config(str(root), sources=["a.md"])["sources"] == ["a.md"])

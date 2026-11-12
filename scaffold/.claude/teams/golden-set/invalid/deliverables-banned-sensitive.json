@@ -1,0 +1,9 @@
+{
+ "schema": "deliverables",
+ "semantic": true,
+ "expect": "不能是機敏檔",
+ "data": {
+  "banned_terms_file": ".env",
+  "documents": []
+ }
+}

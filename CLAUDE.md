@@ -167,6 +167,16 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **閘門端**在 `save_run.py`：`constraint_issues`（文件不存在、`trace: table` 缺〈限制對照〉列或有「偏離」、`check` 指令沒過）。`stage` 存檔時算並記 `constraint_issues`／`constraint_checks`；`approve --by policy` 重算（不採信 run.json）；人工核准只警告。代寫的紀錄不算有對照。
 - 測試：`tests/check_kernel.py`（片段）、`tools/scenarios/sdlc-build.mjs` 與 `sdlc-design.mjs` 的「限制文件」情境、`save_run.py --selftest` 的 B7 案例、golden 的 `methodology-constraints*`。
 
+### 過程保存與交付文件（0.6）
+
+- **結案摘要**：`save_run.py close`／`abandon` 寫 `<run>/archive/結案摘要.md`（`archive_text`：可重現、不讀 transcript；失敗只警告），`save_run.py archive <run_dir>` 重寫。`kb.py` 在 runs_dir 底下有 run 時，預設來源加上 `*/archive/結案摘要.md`（`run_sources`；調研紀錄是 agent 寫的、不收）。team agent 不能寫 run 目錄的 `archive/`（`guard.py`）。摘要開頭註明哪些節是 agent 原文。
+- **型錄**：`scaffold/.claude/teams/deliverables/catalog.json`（八組、56 種；`source` 分 auto／assisted／external；`on` 觸發條件、`section_on`、`design_sections`、`suggest`、`aliases`；`presets` 五個情境組合）。
+- **交付設定**：專案的 `.claude/teams/deliverables.json`（schema `schemas/deliverables.schema.json`），沒有時看 profile 的 `deliverables`（要 `enabled: true`；內建 profile 只放範例、不啟用）。語意規則在 `schemalib.deliverables_errors`。**沒有交付設定時流程完全不變**。
+- **`tools/deliverables.py`**：`configure`（情境組合、`--suggest` 依 repo 實況、`--import` 對照清單；`--write --by` 才寫入）、`init`、`status`（齊全／過期／缺原料／等人補）、`check`、`index`、`affected`、`matrix`（需求追溯矩陣）、`sync`、`export`。小節的來源標記只寫 glob，雜湊在 `.claude/teams/deliverables.state.json`；實際比對的來源＝文件層級 `sources` ∪ 標記（標記只能加）；`stamp` 只記內文改過的小節（`body_hash` 不看空白與標點），人用 `--reviewed` 才能放行過期小節；`awf.py done` 的自動同步只記 workflow 回傳的 `deliverables.updated`，清單外的改動列出來交人，最後跑一次 `check_all`。隱私規則（`PRIVACY`、`privacy_text` 先正規化、`run_name_rule`）只能加不能拿掉；追溯矩陣的證據只留檔名（`strip_paths`），核准者名字預設不寫（`show_approvers`）。
+- **流程接點**：`pack.py` 在 design／deliver 段呼叫 `deliverables.pack_args`，結果放 `pack-args.json` 的 `deliverables`；`sdlc-design` 的 `DELIV_NOTE` 要求 design.md 留小節；`sdlc-deliver` 多派一個 `deliverables`（tpm-writer）只改受影響的小節並寫 `交付摘要.md`，路徑先過 `dRel`；`awf.py done` 存完 deliver 段自動跑 `deliverables_sync`。新領域只提示（`hints`），不自動加。
+- **守門**：team agent 只能跑 `deliverables.py status`／`check`／`affected`（`save_run_write` 會展開 `bash -c`、`eval`、`pwsh -Command` 的內層指令，`xargs` 這類轉呼叫看不到子指令就當寫入；save_run、pack、kb 同樣適用）；`deliverables.json`、`deliverables.state.json` 在 `.claude/teams/`，team agent 寫不到。
+- 測試：`deliverables.py --selftest`、`pack.py --selftest` 與 `awf.py --selftest` 的交付案例、`tools/scenarios/sdlc-deliver.mjs`／`sdlc-design.mjs` 的「交付文件」情境、hook 測試的 C1／C2 案例、golden 的 `deliverables*`、`methodology-deliverables*`。說明在 `docs/交付文件.md`。
+
 ### 平行處理
 
 - **`sdlc-design`**：先由 dev-spec-author 出大綱（`plan-outline`）。預估子任務超過 `parallelism.split_threshold`，或有多個可以各自規劃的區塊時，拆成最多 `max_sub_plans` 個子計劃。每個子計劃由一個 dev-spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，不 commit；最後由一個 dev-spec-author 彙整並 commit。跨子計劃的相依寫成 `@<子計劃 id>`，由 workflow 展開；指向不存在、沒有子任務或自己的子計劃時 halted。
@@ -246,6 +256,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - `/agent-workflow:init-workflow`：先在對話中確認使用者的習慣，再跑 `init.py --answers`。
   - `/agent-workflow:add-agent`：把使用者自己的 agent 加進 SDLC。
   - `/agent-workflow:correct`：把一則教訓變成最高可行層級的強制機制，並在 rules.md〈專案規則〉維護「規則 ↔ 強制方式」對照表。
+  - `/agent-workflow:deliverables`：薄殼，在對話中走交付設定（提案 → 人確認 → `--write`）與盤點（`status`、`check`）。
   - `/agent-workflow:status`、`cost`、`kb`、`doctor`：薄殼，各自只叫 `awf.py watch --once`、`awf_cost.py`、`kb.py`、`awf.py doctor` 並說明怎麼回報。`status`、`cost`、`doctor` 和 Claude Code 內建指令同名，文件一律寫完整名稱。
 
 ## 改動時的檢查清單
@@ -273,6 +284,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改執行核心（kernel 片段）**：重跑 `build.py`；`tools/scenarios/sdlc-plan.mjs` 的 `V04` 情境（升級、上限、重用、角度數）要一起改；`save_run.py` 的 `_retried_ok`、`model_errors` 依賴 trace 的 `model`、`tier`、`superseded`、`attempt` 欄位。
 - **改讀取預算**：`plugin/hooks/tests/run.py` 的 A2 一段補該擋與該放（Bash 與 PowerShell 各一），並確認效能檢查（計數路徑 50ms 內）仍通過；任何新的失敗路徑都要放行。
 - **改 pack.py／kb.py／locate.py**：各自的 `--selftest`；改了子任務資料包的路徑或 `pack-args.json` 的鍵，`sdlc-build.js` 的 `taskPack`／`REF_ERRS` 與 `tools/scenarios/sdlc-build.mjs` 的「子任務資料包」情境要一起改；改了 `locate.py` 的輸出格式，`sdlc-plan.js` 的 `toolLocated` 與 `tools/scenarios/sdlc-plan.mjs` 的「工具先定位」情境要一起改；`pack.md` 的內容不能有時間戳或絕對路徑以外會變動的東西（可重現是 `tests/bench/run_plan.py --selftest` 的檢查項）。
+- **改交付文件**：`deliverables.py --selftest`；改了型錄的欄位，`schemas/deliverables.schema.json`、`methodology.schema.json` 的 `deliverables`、`docs/交付文件.md` 一起改；改了 `pack_args` 的輸出鍵，`sdlc-design.js`／`sdlc-deliver.js` 與 `tools/scenarios/` 的「交付文件」情境一起改；隱私規則只能加不能拿掉（交付文件給外部的人看）。
 - **改 doctor**：`awf_doctor.py --selftest`；新的檢查項要有修法（`fix`），而且單項出錯不能讓整支失敗。所有 Python 檔的語法由 `tests/check_compile.py` 檢查（CI 在 3.9 與最新版各跑一次）。
 - **改 watcher**：`awf_watch.py --selftest`；事件類型或欄位改了，`schemas/progress-event.schema.json`、`methodology.schema.json` 的 `progress.notify.events`、`docs/監控與整合.md` 的事件表要一起改；送給外部指令的欄位只能加進 `NOTIFY_FIELDS`（不放需求內容、摘要、路徑）；任何失敗都只警告。
 - **改派工單或派工數**：跑 `tests/check_budget.py`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。

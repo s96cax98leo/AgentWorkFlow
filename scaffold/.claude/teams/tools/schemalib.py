@@ -408,6 +408,45 @@ def methodology_errors(doc: dict) -> list[str]:
                 errs.append("requirements.id_pattern 要有一個群組（需求 ID）")
         except re.error as e:
             errs.append(f"requirements.id_pattern 不是合法的正規式：{e}")
+    errs += deliverables_errors(doc.get("deliverables"))
+    return errs
+
+
+def deliverables_errors(d, where: str = "deliverables") -> list[str]:
+    """交付設定的語意規則（profile 的 deliverables 與專案的 deliverables.json 共用）。"""
+    errs: list[str] = []
+    if not isinstance(d, dict):
+        return errs
+
+    def outside(v) -> bool:
+        s = str(v).replace("\\", "/")
+        return s.startswith("/") or bool(re.match(r"^[A-Za-z]:", s)) or ".." in s.split("/")
+
+    for key in ("dir", "repo", "banned_terms_file"):
+        v = d.get(key)
+        if isinstance(v, str) and v and outside(v):
+            errs.append(f"{where}.{key} 要是專案內的相對路徑，不能是絕對路徑或含 ..（收到 {v}）")
+    bt = d.get("banned_terms_file")
+    if isinstance(bt, str) and re.search(r"(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx)|id_rsa|id_ed25519|credentials.*|secrets?\..*)$", bt.replace("\\", "/"), re.I):
+        errs.append(f"{where}.banned_terms_file 不能是機敏檔（{bt}）")
+    docs = [x for x in d.get("documents") or [] if isinstance(x, dict)]
+    ids = [x.get("id") for x in docs]
+    for n in sorted({x for x in ids if isinstance(x, str) and ids.count(x) > 1}):
+        errs.append(f"{where}.documents 的 id「{n}」重複")
+    for x in docs:
+        for g in x.get("sources") or []:
+            if isinstance(g, str) and outside(g):
+                errs.append(f"{where}.documents[{x.get('id')}].sources 的 glob 要相對目標 repo，不能是絕對路徑或含 ..（收到 {g}）")
+        so = x.get("section_on")
+        if isinstance(so, dict):
+            for k, v in so.items():
+                if not (isinstance(v, list) and all(isinstance(t, str) and t for t in v)):
+                    errs.append(f"{where}.documents[{x.get('id')}].section_on[{k}] 要是字串陣列")
+    for rx in d.get("privacy_allow") or []:
+        try:
+            re.compile(rx)
+        except (re.error, TypeError):
+            errs.append(f"{where}.privacy_allow 有寫壞的正規式")
     return errs
 
 
@@ -416,6 +455,8 @@ def check_doc(data, name: str) -> list[str]:
     errs = validate(data, doc_schema(name))
     if name == "methodology" and isinstance(data, dict):
         errs += methodology_errors(data)
+    if name == "deliverables" and isinstance(data, dict):
+        errs += deliverables_errors(data, "交付設定")
     return errs
 
 

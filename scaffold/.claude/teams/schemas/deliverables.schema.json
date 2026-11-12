@@ -1,0 +1,127 @@
+{
+  "$id": "deliverables",
+  "title": "交付設定（.claude/teams/deliverables.json）",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documents"
+  ],
+  "properties": {
+    "dir": {
+      "type": "string",
+      "minLength": 1,
+      "description": "交付文件放哪（相對專案根目錄）；預設 docs/deliverables"
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1,
+      "description": "選填：原料 glob 的基準（相對專案根目錄）；不寫就用 run 的目標 repo 或專案根目錄"
+    },
+    "banned_terms_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "選填：禁用字清單（一行一個正規式），交付文件出現就檢查不過"
+    },
+    "privacy_allow": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "選填：可以出現在交付文件的字串（正規式），例如對外的客服信箱"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "description": "型錄（.claude/teams/deliverables/catalog.json）的文件 id；型錄沒有的就是自訂文件"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "group": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "assisted",
+              "external"
+            ],
+            "description": "auto＝可以從 SDLC 產物產生；assisted＝工具給範本與原料、人補內容；external＝外部證據，只檢查有沒有附"
+          },
+          "depth": {
+            "type": "string",
+            "enum": [
+              "full",
+              "summary"
+            ]
+          },
+          "when": {
+            "type": "string",
+            "enum": [
+              "run",
+              "milestone",
+              "close"
+            ],
+            "description": "run＝每次交付都更新受影響的小節；milestone、close＝只在里程碑或結案時更新"
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "原料：相對目標 repo 的 glob"
+          },
+          "on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "哪類改動會影響它：改動分類（code、test、doc、migration、manifest）、mod:<modifier>、path:<glob>、stage:<段>、recipe:<名>、event:<事件>"
+          },
+          "section_on": {
+            "type": "object",
+            "description": "選填：某個小節只在特定改動時更新。鍵是小節標題，值同 on"
+          },
+          "design_sections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "design.md 要先留的小節"
+          }
+        }
+      }
+    },
+    "confirmed_by": {
+      "type": "string",
+      "description": "誰確認了這份設定（deliverables.py configure --write --by）"
+    },
+    "show_approvers": {
+      "type": "boolean",
+      "description": "選填：功能開發紀錄的核准紀錄要不要寫核准者名字；預設 false（只寫「人工核准」或「依政策自動核准」）"
+    }
+  }
+}

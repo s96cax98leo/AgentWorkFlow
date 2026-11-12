@@ -1,0 +1,15 @@
+{
+ "schema": "deliverables",
+ "semantic": true,
+ "expect": "sources 的 glob",
+ "data": {
+  "documents": [
+   {
+    "id": "db-design",
+    "sources": [
+     "/etc/**"
+    ]
+   }
+  ]
+ }
+}

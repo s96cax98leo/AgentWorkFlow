@@ -898,7 +898,8 @@ def archive_text(run: Path, data: dict) -> str:
     ab, cl = data.get("abandoned"), data.get("closed")
     state = f"已取消（{ab.get('by')} @ {ab.get('at')}）：{_clip(ab.get('reason'), 200)}" if isinstance(ab, dict) else \
         f"已結案（{cl.get('by')} @ {cl.get('at')}）" if isinstance(cl, dict) else "進行中"
-    out = [f"# {run.name} 摘要", "", f"- 狀態：{state}", f"- 事件：{data.get('event') or '—'}；目標：{data.get('target_repo') or data.get('target') or '—'}"]
+    out = [f"# {run.name} 摘要", "", "> 狀態、各段、核准、commit 取自 run.json；產物、驗證說明、過程中的問題是 agent 交件的原文，引用前請對照來源。", "",
+           f"- 狀態：{state}", f"- 事件：{data.get('event') or '—'}；目標：{data.get('target_repo') or data.get('target') or '—'}"]
     if data.get("requirement"):
         out.append(f"- 需求：{_clip(data.get('requirement'), 500)}")
     r = data.get("recipe") if has_recipe(data) else None

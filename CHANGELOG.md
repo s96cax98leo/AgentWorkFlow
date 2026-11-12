@@ -4,6 +4,46 @@
 
 ## [Unreleased]
 
+## [0.6.0]
+
+這一版讓過程留下來，並且能變成要交給客戶的文件。起因：另一個專案自己寫了交付文件腳本，而且每個 run 結束後的資料沒有人整理，之後也查不到。
+
+### 破壞性變更
+
+沒有。沒有交付設定（`.claude/teams/deliverables.json`，或 profile 的 `deliverables` 設 `enabled: true`）的專案，流程完全不變：不多派 agent、派工單不變、不產生也不檢查交付文件。
+
+### 新增
+
+- **結案摘要**：`save_run.py close` 與 `abandon` 寫 `<run_dir>/archive/結案摘要.md`（需求、recipe、各段結果與核准、產物、commit、驗證結果、過程中的問題、執行紀錄連結）。內容可重現，寫不出來只警告。`save_run.py archive <run_dir>` 可以重寫。
+- **知識層收錄過程**：runs_dir 底下有 run 時，`kb.py` 預設來源多了結案摘要，之後規劃時查得到。
+- **交付文件型錄**：八組、56 種文件，每種標來源類型（`auto` 從 SDLC 產物產生、`assisted` 人補內容、`external` 外部證據只檢查有沒有附），另有五個情境組合（黑客松、概念驗證、內部工具、委外專案、維運移交）。
+- **`deliverables.py`**：
+  - `configure`：從情境組合、repo 實況（有 migration 才建議資料庫設計文件等，每項附理由）或合約清單挑出要交的文件；只印提案，加 `--write --by <誰>` 才寫入。
+  - `init`、`status`（齊全、過期、缺原料、等人補）、`check`（檔頭、過期小節、禁用字、隱私字串、失效連結、總目錄）、`index`、`export`（有 pandoc 就轉 docx）。
+  - 每個小節記著原料來源；原料改了而內文沒動，那一節就是過期。人可以用 `--reviewed` 標成看過、不用改。
+  - **需求追溯矩陣**：每條驗收條件對到 Story、spec 小節、驗證指令、結果、證據、commit，缺一環就標出來。
+- **流程接上交付文件**（只在有交付設定時）：design 段要求 design.md 留下對應的小節；deliver 段多派一個 writer，只改這次受影響的小節，另寫 `交付摘要.md`；`awf.py done` 存完 deliver 段自動把交付摘要與核准紀錄併進功能開發紀錄、寫追溯矩陣、記錄來源。碰到新領域（例如第一次出現 migration）只提示，不自動加進設定。
+- `/agent-workflow:deliverables` skill；說明見 `docs/交付文件.md`。
+- profile 新增選填的 `deliverables`；兩份內建 profile 只放範例、不啟用（預設 profile 的範例是業務規則、功能規格、系統架構、資料庫、API、批次作業六份）。
+
+### 安全
+
+- team agent 不能寫 run 目錄的 `archive/`、`deliverables.json`、`deliverables.state.json`，只能跑 `deliverables.py status`／`check`／`affected`。
+- **修正既有的守門漏洞**：用 `bash -c`、`sh -c`、`eval`、`pwsh -Command` 包一層，或經 `xargs` 執行，就能跑 `save_run.py`（包括核准）、`pack.py`、`kb.py` 的寫入子指令；現在內層指令照同一套規則檢查。寫 `.claude//teams/` 這種連續斜線，或先 `cd .claude` 再寫 `teams/`，也會擋。
+- 交付文件與交付摘要掃隱私字串（電子郵件、本機路徑與暫存目錄、金鑰與 token、密碼的值、內部 agent 名稱、內網位址與主機、run 目錄名稱）。比對前先把全形轉半形、去掉零寬字元，也抓拆成兩行的情況。命中只印種類與行號，不印內容；`sync` 命中就不寫。
+- 追溯矩陣的證據與指令只留檔名；核准紀錄預設不寫核准者名字（`show_approvers: true` 才寫）。
+- 過期判定不能被繞過：小節的來源標記只能加、不能減；只改空白或標點不算改寫；流程自動同步只記這次受影響的小節，清單外的改動交人。
+
+### 沒做
+
+- 0.5.0 留下的三項實跑數字（定位 agent 的 token 佔比、續跑不重花 token、整條流程），以及這一版的整條流程實跑（帶 migration 與 public_api 的需求走到 deliver），改在實際專案量，量到後補進下一版。
+
+### 升級步驟
+
+1. `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins`。
+2. 在專案跑 `python3 <AgentWorkFlow>/init.py --target . --upgrade`：會補上 `deliverables.py`、型錄與 schema。
+3. 要用交付文件時，跑 `/agent-workflow:deliverables`（或 `deliverables.py configure`）挑文件，確認後 `--write --by <你>`，再 `deliverables.py init`。
+
 ## [0.5.0]
 
 這一版讓流程順一點。起因有兩個：主 session 每段要手動做五、六步；另一個專案回報一個需求跑了兩天，build 重跑 11 輪，多半是停下來問人的小事。

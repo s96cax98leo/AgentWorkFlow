@@ -517,6 +517,28 @@ def run_pack(stage: str, run_arg: str, a: dict, run: Path, project: Path) -> tup
         os.chdir(cwd)
 
 
+def deliverables_sync(project: Path, run: Path, data: dict, updated=None) -> str:
+    """deliver 段存檔後：把交付摘要併進功能開發紀錄、寫需求追溯矩陣、記錄交付文件各小節的來源（deliverables.py sync）。
+    updated＝workflow 回傳的受影響清單（[{id, sections}]）：只記錄這些小節的來源，清單外的改動列出來交人。
+    最後跑一次 check，把問題列出來。輔助功能：失敗只警告，不影響閘門。"""
+    try:
+        import deliverables as deliv_tool
+        repo_raw = str(data.get("target_repo") or "")
+        repo = (Path(repo_raw) if Path(repo_raw).is_absolute() else project / repo_raw) if repo_raw else None
+        only = None
+        if isinstance(updated, list):
+            only = {f"{u.get('id')}#{t}" for u in updated if isinstance(u, dict) for t in (u.get("sections") or []) if isinstance(t, str)}
+        code, notes = deliv_tool.sync(project, run, repo, (), only)
+        head = "交付文件已同步" if code == 0 else "交付文件沒有同步（要人處理）"
+        lines = [head + "："] + ["  " + n for n in notes][:20]
+        errs, _ = deliv_tool.check_all(project, repo)
+        if errs:
+            lines += [f"交付文件檢查有 {len(errs)} 個問題（結案或交付前要處理）："] + ["  [問題] " + e for e in errs[:12]]
+        return "\n".join(lines)
+    except Exception as e:  # noqa: BLE001  輔助功能不擋流程
+        return f"交付文件沒有同步（{type(e).__name__}：{e}）；可以之後手動跑 deliverables.py sync --run <run_dir>"
+
+
 # ------------------------------------------------------------------ 找 workflow 的回傳
 def transcripts_root(project: Path) -> Path:
     return Path(os.environ["AWF_TRANSCRIPTS_DIR"]) if os.environ.get("AWF_TRANSCRIPTS_DIR") else awf_cost.project_dir(str(project))
@@ -1016,6 +1038,8 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
                     st.pop("wf_run", None)
             (data.get("awf") or {}).pop("pending", None)
             sr.dump(run, data)
+            if stage == "deliver" and code == 0 and isinstance(result, dict) and isinstance(result.get("deliverables"), dict):
+                print(deliverables_sync(project, run, data, (result.get("deliverables") or {}).get("updated")))
             if "--no-next" not in argv:
                 try:
                     act = decide(run, run_arg, data, project, plugin, [])
@@ -1615,6 +1639,23 @@ def selftest() -> int:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
+    # C2：deliver 存檔後同步交付文件（輔助：沒有交付設定時只說明、出錯只警告）
+    with tempfile.TemporaryDirectory(prefix="awf-deliv.") as tmp:
+        proj = Path(tmp).resolve()
+        run = proj / "_tpm" / "runs" / "r1"
+        _write(run / "run.json", json.dumps({"stages": {}, "args": {"epic": "export"}}))
+        msg = deliverables_sync(proj, run, {})
+        check("交付文件同步：沒有交付設定時說明、不當掉", "沒有交付設定" in msg, msg)
+        cat = HERE.parent / "deliverables" / "catalog.json"
+        _write(proj / ".claude" / "teams" / "deliverables" / "catalog.json", cat.read_text(encoding="utf-8"))
+        _write(proj / ".claude" / "teams" / "deliverables.json", json.dumps({"documents": [{"id": "dev-record"}]}))
+        _write(run / "deliver" / "交付摘要.md", "# 交付摘要\n\n## 這次交付了什麼\n\n匯出 CSV。\n")
+        msg = deliverables_sync(proj, run, {})
+        rec = proj / "docs" / "deliverables" / "dev-record.md"
+        check("交付文件同步：交付摘要併進功能開發紀錄", "已同步" in msg and rec.is_file() and "匯出 CSV。" in rec.read_text(encoding="utf-8"), msg)
+        _write(proj / ".claude" / "teams" / "deliverables.json", "{壞掉")
+        msg = deliverables_sync(proj, run, {})
+        check("交付文件同步：設定壞掉時只說明、不當掉", "讀不懂" in msg, msg)
     print(f"awf selftest：{'全部通過' if ok else '有失敗'}（{n} 項）")
     return 0 if ok else 1
 

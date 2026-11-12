@@ -282,5 +282,6 @@
       "deliver_axes": ["spec", "history"]
     },
     "large": {"description": "範圍大：允許拆子計劃、調研四個角度全開", "research_angles": ["requirement", "specs-adr", "code-contracts", "upstream"], "split": true, "model_floors": {"dev-spec-author": "strong"}}
-  }
+  },
+  "deliverables": {"enabled": false, "dir": "docs/deliverables", "documents": [{"id": "biz-rules"}, {"id": "func-spec"}, {"id": "sys-arch"}, {"id": "db-design"}, {"id": "api-spec"}, {"id": "batch-design"}]}
 }
