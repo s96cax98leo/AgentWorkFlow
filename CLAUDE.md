@@ -132,11 +132,13 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### 狀態機與 workflow 範本（0.5）
 
-- **`tools/awf.py`**：主 session 每段只做 `next`（回一個動作：`run_workflow`、`gate`、`need_input`、`manual`、`halted`、`done`）與 `done`（找到 Workflow 的回傳、轉給 `save_run.py stage`）。`approve` 轉給 `save_run.py approve`、時間自動取。它只排順序、組參數（`stage_args`）、跑 `pack.py`、產生腳本，**不放寬任何閘門**，也不會自己核准。等待中的段記在 run.json 的 `awf.pending`，Workflow 的 run id 記在 `stages[段].wf_run`（同一個 session 重跑 halted 的段時輸出 `resume_from`）。
+- **`tools/awf.py`**：主 session 每段只做 `next`（回一個動作：`run_workflow`、`gate`、`need_input`、`manual`、`halted`、`done`）與 `done`（找到 Workflow 的回傳、轉給 `save_run.py stage`）。`approve` 轉給 `save_run.py approve`、時間自動取。它只排順序、組參數（`stage_args`）、跑 `pack.py`、產生腳本，**不放寬任何閘門**。recipe 的 `gate_mode`（`recipe.gate_mode()`，只有 Python 版，workflow 用不到）是 plan-only 時，`try_policy` 在非 plan 的閘門先試 `save_run.py approve --by policy`（條件完全由 save_run 判），不過就交人；政策核准的段與沒人看過的暫定做法（`awf.auto_approved`、`awf.unconfirmed`）由 `carry` 帶到下一次要人出面的動作。等待中的段記在 run.json 的 `awf.pending`，Workflow 的 run id 記在 `stages[段].wf_run`（同一個 session 重跑 halted 的段時輸出 `resume_from`）。
 - **產生腳本**：`render` 只內嵌 methodology（片段與 schema 已由 `build.py` 內嵌在範本裡），args 內嵌成 `Object.assign(<JSON>, args || {})`。缺佔位符值、擴充 agent 沒登記都拒絕。
 - **找 plugin**：`--plugin-dir` → `AWF_PLUGIN_DIR`／`CLAUDE_PLUGIN_ROOT` → 模版 repo 自己 → `~/.claude/plugins/installed_plugins.json`（別的專案的安裝不算）。
 - **覆寫檔**：專案 `.claude/workflows/<名>.js` 結尾有 `// awf-override: <版本>` 才採用（版本不同會警告）；沒有標記的同名檔是舊副本，不採用（只有找不到 plugin 時才退回用）。`init.py --with-workflows` 放覆寫檔。
 - **舊副本整理**：`plugin/workflow-templates/legacy.json` 記已發佈各版範本的分段指紋（`tests/gen_legacy_templates.py` 從 git 歷史產生，發佈新版後重跑）；`init.py --upgrade` 的 `tidy_old_workflows` 移除原樣的舊副本、保留改過的並說明，要在 `build.py` 之前做。
+- **拆工檢查**：`save_run.plan_check_issues`（design／plan 存檔時算、`approve --by policy` 重算；人工核准只警告）。
+- **接手摘要**：`awf.py handoff` 寫 `<run>/接手摘要.md`（`handoff_text`：只讀、沒有時間戳、可重現）。
 - **守門**：team agent 不能寫 `.claude/workflows/` 與 `.wf/`（`guard.team_config_path`、`TEAM_CONFIG_TARGET`），不能跑 `awf.py`（`--selftest` 除外）。
 - **測試**：`awf.py --selftest`、`smoke_init.py` 的 `check_with_workflows`（產生的腳本和 init＋build.py 內嵌的逐字相同）與升級四種情況、hook 測試的 B1 案例。
 
@@ -200,7 +202,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - 跑得起來但輸入壞掉（空、不是 JSON、缺欄位、shell 指令超過 128KB）：守門類擋（exit 2），交件類放行。128KB 上限是因為 guard 規則耗時隨指令長度約平方成長，拖到逾時就等於放行。
   - `guard.py` 或 `awf_config.py` 載入失敗：改用 `awf_hook.py` 內建的最小規則（擋 push、`gh pr merge`、`--approve`、GitHub API 寫入），其他放行。
   - 交件 hook（`envelope`）自己出錯時刻意放行，避免卡住所有 subagent；信封仍由 workflow 的 `schema` 與 `save_run.py stage` 驗證。
-- **`guard-paths` 的範圍**：Edit、Write、NotebookEdit、Read、Grep。Read、Grep 讀機敏檔（`.env`、金鑰、憑證）一律擋，主 session 也擋；`acceptance_test_dirs` 裡的檔案 dev-implementer 不能寫。
+- **`guard-paths` 的範圍**：Edit、Write、NotebookEdit、Read、Grep。`guard.config.json` 的 `linked_repos`（工作區以外的我方 repo，`guard.linked_rel`）讓 dev-* 可以改裡面的檔、tpm-writer 可以寫它的 specs，其餘規則照舊；模版角色可以寫這個 session 的 scratchpad（`guard.in_scratchpad`：系統暫存目錄底下的 `<session_id>/scratchpad/`）。Read、Grep 讀機敏檔（`.env`、金鑰、憑證）一律擋，主 session 也擋；`acceptance_test_dirs` 裡的檔案 dev-implementer 不能寫。
 - **`guard-shell` 擋什麼**：同時處理 Bash 與 PowerShell 工具。擋推送、寫上游、推受保護分支、越權寫入，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - **steward 合併什麼時候放行**：由 `guard.py` 的 `merge_exception` 判斷，以下全部成立才放行：
   - `auto_merge` 已啟用。

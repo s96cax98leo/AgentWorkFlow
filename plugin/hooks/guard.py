@@ -73,6 +73,49 @@ def rel_to_workspace(p: Path) -> str | None:
         return None
 
 
+def linked_rel(p: Path) -> str | None:
+    """路徑在 guard.config.json 的 linked_repos（工作區以外、也算我方 clone 的 repo）底下時，回它相對於那個 repo 的路徑。
+    設定寫錯（空字串、檔案系統根目錄、家目錄本身）的項目不算，避免一筆設定把整台機器都放行。"""
+    try:
+        target = Path(norm(str(p))).resolve()
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        return None
+    for e in CFG.get("linked_repos") or []:
+        e = str(e or "").strip()
+        if not e:
+            continue
+        try:
+            root = Path(os.path.expanduser(e))
+            root = (root if root.is_absolute() else WORKSPACE / root).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if len(root.parts) < 3 or root == home:
+            continue
+        try:
+            return target.relative_to(root).as_posix()
+        except ValueError:
+            continue
+    return None
+
+
+def in_scratchpad(p: Path, data: dict) -> bool:
+    """這個 session 自己的 scratchpad（系統暫存目錄底下的 …/<session_id>/scratchpad/…）：agent 放中間產物的地方，不在工作區裡。"""
+    sid = str(data.get("session_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{7,}", sid):
+        return False
+    try:
+        import tempfile
+        target = Path(norm(str(p))).resolve()
+        roots = {Path(r).resolve() for r in (tempfile.gettempdir(), "/tmp", "/private/tmp") if r and os.path.isdir(r)}
+    except (OSError, RuntimeError):
+        return False
+    if not any(r == target or r in target.parents for r in roots):
+        return False
+    parts = target.parts
+    return any(parts[k] == sid and parts[k + 1] == "scratchpad" for k in range(len(parts) - 2))
+
+
 def run_git(*a: str) -> subprocess.CompletedProcess | None:
     """跑 git 並回傳結果；找不到 git（PATH 上沒有、無法執行，OSError）回 None。
     hook 跑得起來但環境沒有 git 時不能因此鎖死所有工具：呼叫端一律當成「不在 repo／查不到」處理，
@@ -1451,6 +1494,9 @@ def spec_doc_pattern() -> re.Pattern:
     return re.compile(rf"^{repo}(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$")
 
 
+LINKED_SPEC_DOC = re.compile(r"^(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$")   # linked repo 裡的 specs/<epic>/*.md（相對於那個 repo）
+
+
 def writes_freeze(data: dict) -> bool:
     """freeze_writers 用 Write 寫入的內容是 {"frozen": true, …}（只能凍結，不能解凍；Edit／NotebookEdit 一律不算）。"""
     a = data.get("agent_type") or ""
@@ -1537,6 +1583,11 @@ def check_paths(data: dict) -> None:
                  or fold(path.name) == fold("執行紀錄索引.md")):
         block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md、決策記憶是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
               "都只由主 session 跑 save_run.py／pack.py 產生）")
+    if role and in_scratchpad(path, data):
+        # 這個 session 的 scratchpad：模版角色都可以寫（中間產物）。上面的規則（禁止路徑、守門設定、run.json、閘門資料檔名）已經判過
+        forward(git_toplevel(path.parent), "guard-paths", data)
+        return
+    lrel = linked_rel(path) if role else None
     if role in awf_config.RECORD_ONLY_ROLES:
         # 只寫執行紀錄的角色：只能寫 <runs_dir>/<run>/<段>/<檔名>.md（白名單，照原樣比對；至少兩層子目錄，上一層是段名）；
         # run.json、<段>.json、稽核紀錄、凍結檔已在上面擋；context.md、執行紀錄索引.md 是 save_run.py 產生的，也不能寫。
@@ -1552,7 +1603,8 @@ def check_paths(data: dict) -> None:
         # 凍結檔照 auto_merge.freeze_file 的實際設定（可能不在 writer_dirs 裡）；能不能寫已由上面的 writes_freeze 判定
         # 只認設定的那個路徑本身（同名的其他檔不算）
         is_freeze = prot == AM["freeze_file"] and path.resolve() == freeze_path().resolve() and writes_freeze(data)
-        ok = is_freeze or (rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None))
+        ok = is_freeze or (rel is not None and (rel.startswith(tuple(CFG["writer_dirs"])) or spec_doc_pattern().match(rel) is not None)) \
+            or (lrel is not None and LINKED_SPEC_DOC.match(lrel) is not None)
         if not ok:
             block(f"tpm-writer 只能寫 {'、'.join(CFG['writer_dirs'])} 與 repo 的 specs/<epic>/*.md（{rel or fp}）")
     elif role.startswith("tpm-"):
@@ -1561,10 +1613,13 @@ def check_paths(data: dict) -> None:
     elif role.startswith("dev-"):
         # .claude/ 是黑名單（不分大小寫：.CLAUDE/hooks 在 macOS／Windows 是同一個目錄）；repos_dir、runs_dir 是白名單，照原樣比對
         ok = rel is not None and ((rel.startswith(REPOS) if REPOS else not fold(rel).startswith(".claude/")) or (RUNS and rel.startswith(RUNS)))
-        if not ok:
+        linked = not ok and lrel is not None and not fold(lrel).startswith(".claude/")
+        if not ok and not linked:
             where = f"{REPOS}<repo>/" if REPOS else "工作區（.claude/ 除外）"
-            block(f"{agent} 只能改 {where} 與 {RUNS}（{rel or fp}）")
-        in_runs = bool(RUNS) and rel.startswith(RUNS)
+            block(f"{agent} 只能改 {where} 與 {RUNS}（{rel or fp}）；工作區以外的 repo 要先由人登記在 guard.config.json 的 linked_repos")
+        if linked:
+            rel = lrel          # 之後的規則（唯讀審查角色、驗收測試目錄）照相對於那個 repo 的路徑判
+        in_runs = not linked and bool(RUNS) and rel.startswith(RUNS)
         pat = REVIEW_REPORTS.get(role)
         if pat and not in_runs and not pat.fullmatch(path.name) and not (role != "dev-verifier" and "/evidence/" in "/" + rel):
             block(f"{agent} 是唯讀審查角色，只能寫自己的報告（{pat.pattern}）"

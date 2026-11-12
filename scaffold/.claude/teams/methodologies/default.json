@@ -200,6 +200,7 @@
     },
     "docs": {
       "description": "只改文件、設定說明、文案：build 只能有 doc 子任務",
+      "gate_mode": "plan-only",
       "stages": ["plan", "build", "deliver", "merge"],
       "plan_mode": "research",
       "research_angles": ["requirement"],
@@ -213,6 +214,7 @@
     },
     "test-only": {
       "description": "補測試、修 flaky：不能改產品程式",
+      "gate_mode": "plan-only",
       "stages": ["plan", "build", "test", "deliver", "merge"],
       "plan_mode": "research",
       "research_angles": ["code-contracts"],

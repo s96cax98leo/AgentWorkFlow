@@ -544,7 +544,7 @@ if (!design) {
 
 phase('Analyze')
 const LENS_DEFS = [
-  { key: 'coverage', ask: `intent 的每個期望結果都有 spec 驗收條件？驗收條件是否照 profile 的需求寫法（${STAGE.requirement_style || '目標 repo 既有寫法'}）、對到需求 ID、原文數值與錯誤碼？spec 有沒有超出 intent 的範圍？` },
+  { key: 'coverage', ask: `intent 的每個期望結果都有 spec 驗收條件？驗收條件是否照 profile 的需求寫法（${STAGE.requirement_style || '目標 repo 既有寫法'}）、對到需求 ID、原文數值與錯誤碼？spec 有沒有超出 intent 的範圍？驗收條件之間有沒有互相矛盾、怎麼實作都過不了或怎麼實作都會過的？驗收用的指令或樣板和 spec 內文有沒有衝突？` },
   { key: 'plan', ask: `plan 與子任務：每條驗收條件都有任務與測試？子任務的 owns 有沒有重疊、有沒有漏掉 spec 影響系統表外的檔案？depends_on 有沒有循環？引用的 contracts 端點是否真的存在（路徑:行號）？` },
 ]
 if (SD) LENS_DEFS.push({ key: 'system-design', ask: `照 profile 的系統設計方法（${SD.source}）檢查設計文件：每一步都有寫嗎？功能層／系統層的判斷對嗎（有新服務、新資料儲存、跨服務呼叫、流量／延遲／可用性要求卻只做功能層，算問題）？第 1 步的數字有出處或標成假設嗎？每個取捨有寫放棄了什麼嗎？另外找：單點故障、沒說明的一致性模型、沒有失敗／重試／冪等處理、快取沒有更新與失效策略、過長的同步呼叫鏈、沒有 back pressure 的佇列。系統層時逐項對照這些主題：${(SD.topics || []).join('、') || '（profile 沒列）'}。` })

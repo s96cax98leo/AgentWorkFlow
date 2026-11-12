@@ -66,11 +66,13 @@ _NO_DESIGN = ["plan", "build", "sync", "test", "deliver", "merge"]
 _SHORT = ["plan", "build", "test", "deliver", "merge"]
 
 
-def _r(desc, stages, mode, angles, lenses, test, axes, kinds, publishable=True, followup=False, split=False, small=None):
+def _r(desc, stages, mode, angles, lenses, test, axes, kinds, publishable=True, followup=False, split=False, small=None, gate=None):
     d = {"description": desc, "stages": stages, "plan_mode": mode, "research_angles": angles, "design_lenses": lenses,
          "test": test, "deliver_axes": axes, "build_kinds": kinds, "publishable": publishable, "followup": followup, "split": split}
     if small:
         d["small"] = small
+    if gate:
+        d["gate_mode"] = gate  # 閘門模式（見 gate_mode()）；沒寫＝strict
     return d
 
 
@@ -95,9 +97,9 @@ BUILTIN_RECIPES = {
                ["standards", "bugs"], list(CODE_KINDS)),
     "docs": _r("只改文件、設定說明、文案：build 只能有 doc 子任務",
                ["plan", "build", "deliver", "merge"], "research", ["requirement"], [], _T("never", "never", ()),
-               ["standards", "spec"], ["doc"]),
+               ["standards", "spec"], ["doc"], gate="plan-only"),
     "test-only": _r("補測試、修 flaky：不能改產品程式",
-                    _SHORT, "research", ["code-contracts"], [], _T("never", "auto"), ["standards", "bugs"], ["test"]),
+                    _SHORT, "research", ["code-contracts"], [], _T("never", "auto"), ["standards", "bugs"], ["test"], gate="plan-only"),
     "perf": _r("效能改善：先量基線，改完前後對照",
                list(SDLC), "baseline", ["requirement", "code-contracts"], ["coverage", "plan", "system-design"],
                _T(modes=("verify", "benchmark")), list(ALL_AXES), list(CODE_KINDS), split=True),
@@ -386,6 +388,28 @@ def diff_shortfalls(r: dict, paths) -> list[str]:
     return out
 
 
+GATE_MODES = ["plan-only", "strict"]
+
+
+def gate_mode(profile: dict | None, run_recipe: dict | None) -> dict:
+    """這個 run 的閘門模式：{mode, reason}。
+    strict＝每個閘門都等人核准（預設）；plan-only＝plan 由人核准，其餘閘門先試政策核准（結果乾淨才過），不過就交人。
+    只會往嚴的方向判：profile 沒寫、寫錯、認不得的 recipe、帶了任何 modifier（ui、security、migration…）一律 strict。
+    plan 段不受它影響，一律由人核准。"""
+    rr = run_recipe if isinstance(run_recipe, dict) else {}
+    name = str(rr.get("name") or "")
+    spec = ((profile or {}).get("recipes") or {}).get(name) if isinstance((profile or {}).get("recipes"), dict) else None
+    if not name or not isinstance(spec, dict):
+        return {"mode": "strict", "reason": "profile 沒有這個 recipe 的定義"}
+    mods = [m for m in (rr.get("modifiers") or []) if m]
+    if mods:
+        return {"mode": "strict", "reason": f"帶了 modifier（{'、'.join(map(str, mods))}），每段都由人核准"}
+    mode = spec.get("gate_mode")
+    if mode == "plan-only":
+        return {"mode": "plan-only", "reason": f"profile 的 recipes.{name}.gate_mode"}
+    return {"mode": "strict", "reason": "profile 沒設 gate_mode（預設 strict）" if mode in (None, "strict") else f"gate_mode 的值不認得：{mode}"}
+
+
 def recipe_of_run(run: dict) -> dict:
     """run.json 的 recipe；沒有（舊 run）就當成 feature 的完整流程。"""
     rec = run.get("recipe")
@@ -526,6 +550,11 @@ def selftest() -> int:
     check("size=small 只影響 feature 的調研角度", resolve(bi, "feature", size="small")["research_angles"] == ["requirement", "code-contracts"])
     docs = resolve(bi, "docs")
     check("docs 改程式 → 不符", diff_shortfalls(docs, ["src/a.py"]) != [] and diff_shortfalls(docs, ["docs/a.md", "README.md"]) == [])
+    gm = lambda prof, n, mods=(): gate_mode(prof, {"name": n, "modifiers": list(mods)})["mode"]  # noqa: E731
+    check("gate_mode：內建 profile 的 docs、test-only 是 plan-only，其餘 strict", gm(bi, "docs") == "plan-only" and gm(bi, "test-only") == "plan-only"
+          and all(gm(bi, n) == "strict" for n in bi["recipes"] if n not in ("docs", "test-only")))
+    check("gate_mode：帶任何 modifier 一律 strict；沒有 profile、認不得的 recipe、值寫錯都是 strict", gm(bi, "docs", ["security"]) == "strict" and gm(None, "docs") == "strict"
+          and gm(bi, "nope") == "strict" and gm({"recipes": {"docs": {"gate_mode": "none"}}}, "docs") == "strict" and gm({"recipes": {"docs": {}}}, "docs") == "strict")
     check("test-only 改產品程式 → 不符", diff_shortfalls(resolve(bi, "test-only"), ["src/a.py"]) != []
           and diff_shortfalls(resolve(bi, "test-only"), ["tests/test_a.py"]) == [])
     check("bugfix 碰 migration → 不符；加 migration modifier 相符",

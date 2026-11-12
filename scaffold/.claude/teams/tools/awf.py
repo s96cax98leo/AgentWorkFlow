@@ -7,6 +7,7 @@
     python3 .claude/teams/tools/awf.py next --run <run_dir> [--set k=v]… [--set-json k=<JSON>]… [--stage <段>] [--workflow <名>] [--text]
     python3 .claude/teams/tools/awf.py done --run <run_dir> [--output <workflow 回傳的 JSON 檔>] [--stage <段>]
     python3 .claude/teams/tools/awf.py approve --run <run_dir> [<段>] --by <誰> [--note <備註>] [--answer "<問題>=<答覆>"]… [--accept-defaults]
+    python3 .claude/teams/tools/awf.py handoff --run <run_dir> [--print]      # 寫 <run_dir>/接手摘要.md：換 session 或換人接手時看
     python3 .claude/teams/tools/awf.py render <workflow>|--all --out <目錄>
     python3 .claude/teams/tools/awf.py --selftest
     共用選項：--plugin-dir <plugin 目錄>（找不到 plugin 時才需要）
@@ -27,7 +28,8 @@ workflow 腳本從哪來：plugin 的 workflow-templates/<名>.js（範本），
 
 done 會自己找 workflow 的回傳（Claude Code 存在 session 的 workflows/wf_<id>.json），找不到時用 --output 指定檔案。
 存檔與驗證仍然是 save_run.py stage，核准仍然是 save_run.py approve：這支只是幫忙排順序、組參數、取時間，不放寬任何閘門。
-plan 段的核准一律由人；狀態機不會自己核准任何一段。只用標準庫。
+plan 段的核准一律由人。recipe 的 gate_mode 是 plan-only（內建：docs、test-only；帶任何 modifier 就不算）時，非 plan 的閘門先試政策核准
+（save_run.py approve --by policy，條件完全由它判）；不乾淨就照常交人。其他 recipe（strict）每個閘門都等人。只用標準庫。
 """
 
 from __future__ import annotations
@@ -455,7 +457,7 @@ def highlights(run: Path, run_arg: str, data: dict, stage: str) -> dict:
         r = data["recipe"]
         h["recipe"] = {"name": r.get("name"), "modifiers": r.get("modifiers") or [], "size": r.get("size") or "", "stages": (r.get("resolved") or {}).get("stages"),
                        "reasons": r.get("reasons") or []}
-    for k in ("missing_records", "ghostwritten_records", "constraint_issues"):
+    for k in ("missing_records", "ghostwritten_records", "constraint_issues", "plan_check"):
         if st.get(k):
             h[k] = st[k]
     idx = run / stage / sr.INDEX_NAME
@@ -478,6 +480,46 @@ def provisional(res: dict) -> list[dict]:
                 seen.add(q["question"])
                 out.append({"question": str(q["question"]).strip(), "applied": _applied(q)})
     return out
+
+
+def try_policy(run: Path, data: dict, stage: str) -> list[str] | None:
+    """gate_mode=plan-only 的 recipe：非 plan 的閘門先試政策核准（save_run approve --by policy，條件完全由它判）。
+    過了回 None（data 已更新成核准後的 run.json）；不適用回 []；被拒回理由清單（交人）。plan 段永遠不試。"""
+    if stage in sr.HUMAN_ONLY or not sr.has_recipe(data):
+        return []
+    prof, _err = sr.load_profile_for(run, [])
+    gm = rcp.gate_mode(prof, data.get("recipe"))
+    if gm["mode"] != "plan-only":
+        return []
+    prov = provisional(_stage_result(run, stage))
+    code, out = _quiet(sr.main, ["approve", str(run), stage, "--by", "policy", "--at", now_iso(), "--note", f"gate_mode=plan-only（{gm['reason']}）"])
+    if code:
+        return [ln.replace("不能核准：", "").strip() for ln in out.splitlines() if ln.strip()][:12] or ["政策核准沒過"]
+    fresh = sr.load(run)
+    aw = fresh.setdefault("awf", {})
+    for k, v in (data.get("awf") or {}).items():      # 這次 next 還沒存檔的狀態（例如 --set 的值在 args，不在這裡）
+        aw.setdefault(k, v)
+    aw.setdefault("auto_approved", []).append({"stage": stage, "at": now_iso(), "by": "policy"})
+    if prov:                                            # agent 先照建議做的暫定：政策核准沒有人看過，留到下一次要人出面時一起確認
+        aw.setdefault("unconfirmed", []).extend({"stage": stage, **q} for q in prov)
+    fresh["args"] = data.get("args") or fresh.get("args") or {}
+    sr.dump(run, fresh)
+    data.clear()
+    data.update(fresh)
+    return None
+
+
+def carry(act: dict, data: dict) -> dict:
+    """政策核准過的段與還沒有人確認的暫定做法：下一次要人出面的動作（gate、manual、halted、done）一併列出。"""
+    aw = data.get("awf") or {}
+    if act.get("action") in ("gate", "manual", "halted", "done"):
+        if aw.get("auto_approved"):
+            act["auto_approved"] = [x["stage"] for x in aw["auto_approved"]]
+        if aw.get("unconfirmed"):
+            act["unconfirmed"] = aw["unconfirmed"]
+            act["say"] = (str(act.get("say") or "") + " unconfirmed 是政策核准的段裡 agent 先照建議做的暫定，還沒有人看過：一併列給使用者確認，"
+                          "確認後用 save_run.py decide 記下來（不同意就回對應的段修正）。").strip()
+    return act
 
 
 def gate_action(run: Path, run_arg: str, data: dict, stage: str) -> dict:
@@ -572,7 +614,14 @@ def decide(run: Path, run_arg: str, data: dict, project: Path, plugin: Path | No
     if forced_wf and forced_wf not in ([STAGE_WORKFLOW[stage]] + (["sdlc-design-revise"] if stage == "design" else [])):
         raise AwfError(f"{stage} 段不能用 {forced_wf}")
     if st.get("status") == "done" and st.get("gate") and not st.get("approved") and not forced_wf:
-        return gate_action(run, run_arg, data, stage)
+        refused = try_policy(run, data, stage)
+        if refused is None:
+            return decide(run, run_arg, data, project, plugin, [a for a in argv if a != "--retry"])
+        act = gate_action(run, run_arg, data, stage)
+        if refused:
+            act["policy_refused"] = refused
+            act["say"] = "這個 recipe 的 gate_mode 是 plan-only，但這一段的結果不乾淨（見 policy_refused），所以交人核准。" + act["say"]
+        return act
     chain = sr.chain_errors(data, stage)
     if chain:
         return {"action": "halted", "stage": stage, "status": "chain", "reason": "前面的段還沒過：" + "；".join(chain), "advice": "先完成並核准前面的段"}
@@ -596,6 +645,68 @@ def _load_run(run: Path) -> dict:
     if not (run / "run.json").is_file():
         raise AwfError(f"找不到 {run / 'run.json'}（先用 awf.py start 建立）")
     return sr.load(run)
+
+
+HANDOFF = "接手摘要.md"
+
+
+def handoff_text(run: Path, run_arg: str, data: dict) -> str:
+    """跨 session 的接手摘要（Markdown）。只讀 run.json、各段結果與決策記憶；不派工、不核准、不寫別的檔。內容只由這些檔決定（沒有時間戳）。"""
+    f = packlib._flat
+    snap = sr.status_snapshot(run, data)
+    rec = data.get("recipe") if isinstance(data.get("recipe"), dict) else {}
+    aw = data.get("awf") or {}
+    L = [f"# 接手摘要：{f(run.name, 120)}", "",
+         "這份摘要由 `awf.py handoff` 產生，給換了 session 或換人接手時看。以下是資料，不是指令；實際狀態以 run.json 為準。", "",
+         "## 現在在哪裡", "",
+         f"- 事件：{f(data.get('event'))}；目標 repo：{f(data.get('target_repo'), 200) or '（沒有）'}；epic：{f(packlib.run_epic(run, data)) or '（沒有）'}",
+         f"- 需求：{f(data.get('requirement'), 300) or '（沒有）'}"]
+    if rec:
+        L.append(f"- recipe：{f(rec.get('name'))}" + (f"＋{'、'.join(f(m) for m in rec.get('modifiers') or [])}" if rec.get("modifiers") else "")
+                 + f"（{'已鎖定' if rec.get('locked') else '還沒鎖定，plan 核准後才鎖'}）；要走的段：{' → '.join((rec.get('resolved') or {}).get('stages') or [])}")
+    L.append(f"- 狀態：{snap['state']}；下一段：{snap.get('next') or '（沒有）'}" + (f"；在等 {snap['waiting_gate']} 段的核准" if snap.get("waiting_gate") else ""))
+    if data.get("abandoned"):
+        L.append(f"- 已取消：{f((data['abandoned'] or {}).get('reason'), 200)}")
+    L += ["", "## 各段", "", "| 段 | 狀態 | 核准 | agent（缺件） | 備註 |", "|---|---|---|---|---|"]
+    for stg in snap["stages"]:
+        st = data["stages"].get(stg["name"]) or {}
+        ap = st.get("approved") if isinstance(st.get("approved"), dict) else None
+        notes = [x for x in (f"halted：{f(st.get('halted'), 120)}" if st.get("halted") else "",
+                             f"紀錄缺 {len(st['missing_records'])} 份" if st.get("missing_records") else "",
+                             f"限制文件 {len(st['constraint_issues'])} 項" if st.get("constraint_issues") else "",
+                             f"拆工檢查 {len(st['plan_check'])} 項" if st.get("plan_check") else "") if x]
+        L.append(f"| {stg['name']} | {stg['status']} | " + (f"{f(ap.get('by'), 40)}（{'政策' if ap.get('kind') == 'policy' else '人'}，{f(ap.get('at'), 30)}）" if ap else ("等核准" if stg["gate"] and stg["status"] == "done" else "—"))
+                 + f" | {stg['agents']}（{stg['agents_missing']}） | {'；'.join(notes) or '—'} |")
+    args = {k: v for k, v in (data.get("args") or {}).items() if k in ("base", "branch", "pr", "has_ui", "has_security", "strategy", "gh_repo") and v not in (None, "")}
+    sync = _stage_result(run, "sync")
+    if sync.get("head_branch") and sync.get("head_branch") != sync.get("branch"):
+        args["head_branch（中轉分支）"] = sync["head_branch"]
+    if args:
+        L += ["", "## 已經給過的參數", ""] + [f"- {f(k)}：{f(v, 200)}" for k, v in sorted(args.items())]
+    pend = aw.get("pending") or {}
+    if pend:
+        L += ["", "## 跑到一半的段", "", f"- `awf.py next` 已經交出 {f(pend.get('stage'))} 段的腳本（{f(pend.get('workflow'))}），還沒有 `awf.py done`。"
+              "workflow 跑完了就跑 done；沒跑完或不確定，重跑 `awf.py next`（換了 session 不能從中斷處續跑，會整段重跑，調研類的結果會沿用）。"]
+    if aw.get("auto_approved") or aw.get("unconfirmed"):
+        L += ["", "## 還沒有人確認的", ""]
+        if aw.get("auto_approved"):
+            L.append("- 政策核准（沒有人看過）的段：" + "、".join(f(x.get("stage")) for x in aw["auto_approved"]))
+        L += [f"- [{f(q.get('stage'))}] {f(q.get('question'), 200)} → agent 已先照「{f(q.get('applied'), 200)}」做" for q in aw.get("unconfirmed") or []]
+    qs = []
+    for stg in snap["stages"]:
+        for w, e in _envelopes(_stage_result(run, stg["name"])):
+            qs += [f"- [{stg['name']}／{f(w, 60)}] {'（要先決定）' if q.get('blocking') else ''}{f(q.get('question'), 240)}" for q in e.get("open_questions") or [] if isinstance(q, dict) and q.get("question")]
+    if qs:
+        L += ["", "## agent 提過的問題", "", *qs[:40]]
+    epic = packlib.run_epic(run, data)
+    decs = [d for d in packlib.current_decisions(packlib.load_decisions(run.parent)) if d.get("scope") == "project" or (epic and d.get("epic") == epic) or d.get("run") == run.name]
+    if decs:
+        L += ["", "## 人已經決定過的（不要再問）", "", *packlib.decision_lines(decs[-30:])]
+    L += ["", "## 怎麼接手", "",
+          f"1. `python3 .claude/teams/tools/awf.py next --run {run_arg} --text` 看下一步，照做。",
+          f"2. 每一段的紀錄在 `{run_arg}/<段>/{sr.INDEX_NAME}`；人的決定在 `{packlib.DECISIONS_VIEW}`。",
+          "3. 核准、推送、合併仍然要當下的使用者同意：上一個 session 的同意不算。", ""]
+    return "\n".join(L)
 
 
 def _quiet(fn, *a, stdin_text: str | None = None) -> tuple[int, str]:
@@ -646,7 +757,7 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
         return 0 if argv else 2
     cmd = argv[0]
     try:
-        plugin, pnotes = (None, []) if cmd in ("approve", "start") else find_plugin(project, opt(argv, "--plugin-dir"), home)
+        plugin, pnotes = (None, []) if cmd in ("approve", "start", "handoff") else find_plugin(project, opt(argv, "--plugin-dir"), home)
         if cmd == "render":
             out = opt(argv, "--out")
             names = workflow_names(project, plugin) if "--all" in argv else [a for a in argv[1:2] if not a.startswith("-")]
@@ -685,7 +796,7 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
             errs = apply_sets(data, argv)
             if errs:
                 raise AwfError("；".join(errs))
-            act = decide(run, run_arg, data, project, plugin, argv)
+            act = carry(decide(run, run_arg, data, project, plugin, argv), data)
             if act.get("action") == "run_workflow":
                 act["notes"] = pnotes + act.get("notes", [])
                 data.setdefault("awf", {})["pending"] = {"stage": act["stage"], "workflow": act["workflow"], "script": act["script"], "at": now_iso(),
@@ -740,6 +851,14 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
                 except AwfError as e:
                     print(f"下一步算不出來：{e}")
             return 1 if code else 0
+        if cmd == "handoff":
+            text = handoff_text(run, run_arg, data)
+            if "--print" in argv:
+                print(text)
+                return 0
+            packlib._write_lf(run / HANDOFF, text)
+            print(f"已寫 {run_arg}/{HANDOFF}。新的 session 先讀它，再跑 python3 .claude/teams/tools/awf.py next --run {run_arg}")
+            return 0
         if cmd == "approve":
             given = [a for a in argv[1:] if not a.startswith("-")]
             skip = {opt(argv, n) for n in ("--run", "--by", "--note", "--answer-scope", "--answer-expires", "--profile")} | set(opts(argv, "--answer"))
@@ -939,6 +1058,76 @@ def selftest() -> int:
             seq = walk("bugfix", fail_at="build")
             check("狀態機：halted 的段先回 halted（附原因），--retry 才重跑，之後照常往下", seq[seq.index("run_workflow:build") + 1: seq.index("run_workflow:build") + 3] == ["halted:build", "retry:build"]
                   and seq[-1] == "done" and "run_workflow:sync" in seq, seq)
+
+            # ── handoff：跨 session 的接手摘要
+            d = walk_dir = "_runs/bugfix-f"      # 上面走過的 run：有 halted、有核准
+            c, out = call("handoff", "--run", d)
+            hf = proj / d / HANDOFF
+            t1 = hf.read_text(encoding="utf-8") if hf.is_file() else ""
+            check("handoff：寫出接手摘要，有狀態、各段與核准、怎麼接手", c == 0 and "## 現在在哪裡" in t1 and "| plan | done |" in t1 and "recipe：bugfix" in t1 and f"awf.py next --run {d}" in t1, out + t1[:400])
+            before = (proj / d / "run.json").read_text(encoding="utf-8")
+            call("handoff", "--run", d)
+            check("handoff：重跑內容相同、不改 run.json、沒有時間戳以外會變的東西", hf.read_text(encoding="utf-8") == t1 and (proj / d / "run.json").read_text(encoding="utf-8") == before)
+            check("handoff --print：只印不寫；找不到 run 時回錯誤", call("handoff", "--run", d, "--print")[1].startswith("# 接手摘要") and call("handoff", "--run", "_runs/nope")[0] != 0)
+
+            # ── gate_mode：plan-only 的 recipe，非 plan 的閘門先試政策核准
+            def gm_run(name: str, recipe: str, mods=(), env_extra=None) -> str:
+                d = f"_runs/{name}"
+                call("start", "--run", d, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "改文件")
+                run, data = proj / d, sr.load(proj / d)
+                res = rcp.resolve(default_profile, recipe, list(mods))
+                data["recipe"] = {"name": recipe, "modifiers": list(mods), "size": "", "resolved": res, "locked": True, "history": []}
+                sr.rebuild_stages(data, res)
+                env = {"status": "done", "summary": "審完", "artifacts": [], "evidence": [], "confidence": 0.9, "derived_work": [], "payload": {}, "open_questions": [], **(env_extra or {})}
+                for st in res["stages"]:
+                    if st == "merge":
+                        break
+                    data["stages"][st].update({"status": "done", "envelopes": 1})
+                    trace = []
+                    for axis in (res.get("deliver_axes") or []) if st == "deliver" else []:   # 政策核准會核對 trace、紀錄檔、recipe 要求的審查軸
+                        rec = run / st / f"review-{axis}.md"
+                        rec.parent.mkdir(parents=True, exist_ok=True)
+                        rec.write_text("# 紀錄\n", encoding="utf-8")
+                        trace.append({"label": f"review:{axis}", "agent_type": "agent-workflow:tpm-reviewer", "phase": "Review", "record": str(rec), "ok": True})
+                    (run / f"{st}.json").write_text(json.dumps({"stage": st, "review": env, "subtasks": [{"id": "t1"}], "trace": trace,
+                                                                "recipe": {"name": recipe, "modifiers": list(mods), "stages": res["stages"]}}), encoding="utf-8")
+                    if st in ("plan",) or (st != "deliver" and data["stages"][st].get("gate")):
+                        data["stages"][st]["approved"] = {"by": "human", "at": "t", "kind": "human"}
+                sr.dump(run, data)
+                return d
+            soft = {"open_questions": [{"question": "標題用哪個？", "blocking": False, "options": [], "recommendation": "沿用", "default_applied": "沿用舊標題"}]}
+            d = gm_run("gm-clean", "docs", env_extra=soft)
+            a = act_of(call("next", "--run", d)[1])
+            ap = sr.load(proj / d)["stages"]["deliver"].get("approved") or {}
+            check("gate_mode：docs（plan-only）的 deliver 結果乾淨 → 政策核准、直接到下一步（推送仍要人同意）", a["action"] == "manual" and a["stage"] == "merge"
+                  and ap.get("kind") == "policy" and "gate_mode=plan-only" in ap.get("note", ""), (a.get("policy_refused"), a.get("action"), ap))
+            check("gate_mode：政策核准的段與沒有人看過的暫定做法，在下一次要人出面時列出來", a.get("auto_approved") == ["deliver"]
+                  and a.get("unconfirmed") == [{"stage": "deliver", "question": "標題用哪個？", "applied": "沿用舊標題"}] and "unconfirmed" in a["say"], a)
+            ht = call("handoff", "--run", d, "--print")[1]
+            check("handoff：列出政策核准（沒有人看過）的段與還沒確認的暫定做法", "政策核准（沒有人看過）的段：deliver" in ht and "標題用哪個？ → agent 已先照「沿用舊標題」做" in ht and "（政策，" in ht, ht[-600:])
+            hard = {"open_questions": [{"question": "要不要改對外文件？", "blocking": True, "options": [{"choice": "改", "cost": "x"}], "recommendation": "改", "default_applied": "none"}]}
+            d = gm_run("gm-dirty", "docs", env_extra=hard)
+            a = act_of(call("next", "--run", d)[1])
+            check("gate_mode：結果不乾淨（有 blocking 問題）→ 不核准，交人並說明原因", a["action"] == "gate" and a["stage"] == "deliver" and any("blocking" in x for x in a.get("policy_refused") or [])
+                  and not sr.load(proj / d)["stages"]["deliver"].get("approved"), a)
+            d = gm_run("gm-mod", "docs", mods=("security",))
+            a = act_of(call("next", "--run", d)[1])
+            check("gate_mode：帶 modifier 一律 strict（照舊等人核准，不試政策核准）", a["action"] == "gate" and "policy_refused" not in a and not sr.load(proj / d)["stages"][a["stage"]].get("approved"), a)
+            d = gm_run("gm-strict", "bugfix")
+            a = act_of(call("next", "--run", d)[1])
+            check("gate_mode：strict 的 recipe（bugfix）照舊等人核准", a["action"] == "gate" and "policy_refused" not in a, a)
+            d = "_runs/gm-plan"
+            call("start", "--run", d, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "改文件", "--recipe", "docs")
+            data = sr.load(proj / d)
+            res = rcp.resolve(default_profile, "docs", [])
+            data["recipe"] = {"name": "docs", "modifiers": [], "size": "", "resolved": res, "locked": False, "history": []}
+            sr.rebuild_stages(data, res)
+            data["stages"]["plan"].update({"status": "done", "envelopes": 1})
+            (proj / d / "plan.json").write_text(json.dumps({"stage": "plan", "intent": {"status": "done", "summary": "s", "artifacts": [], "evidence": [], "confidence": 0.9, "derived_work": [], "payload": {}, "open_questions": []}}), encoding="utf-8")
+            sr.dump(proj / d, data)
+            a = act_of(call("next", "--run", d)[1])
+            check("gate_mode：plan 段永遠等人核准（plan-only 也不試政策核准）", a["action"] == "gate" and a["stage"] == "plan" and a["human_only"] is True and "policy_refused" not in a
+                  and not sr.load(proj / d)["stages"]["plan"].get("approved"), a)
 
             # ── 參數
             d = "_runs/args"

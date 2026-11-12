@@ -39,7 +39,7 @@ python3 .claude/teams/tools/awf.py next --run <run_dir>     # 回一個動作（
 
 ## 3. 不能省的
 
-- plan 段一律由人核准；「調整」「可以但…」不是核准，附帶的意見要先處理。狀態機不會自己核准。
+- plan 段一律由人核准；「調整」「可以但…」不是核准，附帶的意見要先處理。其他閘門預設也等人；只有 recipe 的 `gate_mode` 是 plan-only（內建：docs、test-only；帶任何 modifier 就不算）時，非 plan 的閘門會先試政策核准：條件由 `save_run.py approve --by policy` 判，結果不乾淨就照常交人（`reference/閘門.md`）。
 - 推 fork、開 PR、寫上游、合併，各自要使用者當下同意；上游一律唯讀。只有 `dev-merge-steward` 能合併，而且要 `merge_gate.py` 判 merge。
 - 缺件不等於沒有發現：`missing` 一定講明，問要不要重跑。
 - 需要決策者拍板時用 PushNotification 推到手機。`derived_work` 只列出來，不編號。
@@ -50,4 +50,5 @@ python3 .claude/teams/tools/awf.py next --run <run_dir>     # 回一個動作（
 - design 被退回、merge 回 `needs_sync`、test 失敗退回 build、需求取消（abandon）、升級 recipe（escalate）、hotfix 的後續 run：見 `reference/閘門.md` 與 `reference/recipe.md`。指定段或 workflow 用 `next --stage <段> [--workflow <名>]`。
 - 事件的回傳與轉 SDLC 的交接：`reference/事件.md`。
 - `awf.py` 用不了，或涉及授權判斷的敏感流程要改用 Agent 工具逐段派：`reference/手動執行.md`。
+- 換 session 或換人接手：`awf.py handoff --run <run_dir>` 寫 `接手摘要.md`；新的 session 先讀它再跑 `next`。
 - 要比較三個以上的方案：`team-debate` skill。

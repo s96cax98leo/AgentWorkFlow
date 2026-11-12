@@ -544,6 +544,83 @@ def constraint_rows(run: Path, stage: str) -> dict:
     return out
 
 
+AC_ID = re.compile(r"(?<![\w-])AC[-_][A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*")
+
+
+def _result_subtasks(result) -> list[dict]:
+    """這一段回傳裡的子任務清單（design.payload.subtasks、payload.subtasks 或頂層 subtasks）。"""
+    r = result if isinstance(result, dict) else {}
+    for c in ((r.get("design") or {}).get("payload") if isinstance(r.get("design"), dict) else None, r.get("payload"), r):
+        subs = c.get("subtasks") if isinstance(c, dict) else None
+        if isinstance(subs, list) and subs and all(isinstance(x, dict) for x in subs):
+            return subs
+    return []
+
+
+def plan_check_issues(result, spec: Path | None = None) -> list[str]:
+    """拆工的確定性檢查（plan_check）：在 design 閘門就抓出來，不要拖到 build 才爆。回傳問題清單（空＝沒問題）。
+    - 子任務 id 重複、相依指向不存在的子任務、相依有循環。
+    - 子任務沒有驗收條件（acceptance 是空的）；會改檔的子任務（code、test、doc）沒有 owns。
+    - 有 spec 檔而且 spec 與子任務都用「AC-…」編號時：spec 有、沒有任何子任務對應的驗收條件；子任務引用了 spec 沒有的驗收條件。
+      其中一邊沒用這種編號就不比（專案的寫法不同，工具判不了）。
+    回傳裡沒有子任務時不檢查（那一段沒拆工）。"""
+    subs = _result_subtasks(result)
+    if not subs:
+        return []
+    errs: list[str] = []
+    ids = [str(x.get("id") or "") for x in subs]
+    dup = sorted({i for i in ids if i and ids.count(i) > 1})
+    if dup:
+        errs.append("子任務 id 重複：" + "、".join(dup))
+    known = set(ids)
+    deps = {str(x.get("id") or ""): [str(d) for d in x.get("depends_on") or []] for x in subs}
+    for x in subs:          # 逐筆看（id 重複時 deps 這個表只留得住一筆）
+        lost = [str(d) for d in x.get("depends_on") or [] if str(d) not in known]
+        if lost:
+            errs.append(f"子任務 {x.get('id')} 相依指向不存在的子任務：" + "、".join(lost))
+    left = {i: {d for d in ds if d in known} for i, ds in deps.items()}
+    while True:
+        free = [i for i, ds in left.items() if not ds]
+        if not free:
+            break
+        for i in free:
+            left.pop(i)
+        for ds in left.values():
+            ds.difference_update(free)
+    if left:
+        errs.append("子任務相依有循環：" + "、".join(sorted(left)))
+    for x in subs:
+        i = str(x.get("id") or "?")
+        if not [a for a in x.get("acceptance") or [] if str(a).strip()]:
+            errs.append(f"子任務 {i} 沒有驗收條件（acceptance 是空的）")
+        if x.get("kind") in ("code", "test", "doc") and not [o for o in x.get("owns") or [] if str(o).strip()]:
+            errs.append(f"子任務 {i}（{x.get('kind')}）沒有 owns：不知道它可以改哪些檔")
+    if spec is not None and spec.is_file():
+        try:
+            in_spec = set(AC_ID.findall(spec.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            in_spec = set()
+        used = set()
+        for x in subs:
+            for t in [*(x.get("acceptance") or []), *(x.get("story_ids") or [])]:
+                used.update(AC_ID.findall(str(t)))
+        if in_spec and used:
+            orphan, ghost = sorted(in_spec - used), sorted(used - in_spec)
+            if orphan:
+                errs.append(f"spec 有 {len(orphan)} 條驗收條件沒有任何子任務對應：" + "、".join(orphan[:12]) + ("…" if len(orphan) > 12 else ""))
+            if ghost:
+                errs.append(f"子任務引用了 spec 沒有的驗收條件：" + "、".join(ghost[:12]) + ("…" if len(ghost) > 12 else ""))
+    return errs
+
+
+def _plan_check_for(run: Path, stage: str, result, data: dict) -> list[str]:
+    if stage not in ("plan", "design"):
+        return []
+    repo = Path(str(data.get("target_repo"))) if data.get("target_repo") else None
+    sd = packlib.spec_dir(repo, packlib.run_epic(run) or str((data.get("args") or {}).get("epic") or ""))
+    return plan_check_issues(result, sd / "spec.md" if sd is not None else None)
+
+
 def constraint_issues(run: Path, stage: str, profile: dict | None, repo: Path | None, run_checks: bool = True) -> tuple[list[str], list[dict]]:
     """這一段適用的限制文件有沒有被遵守的確定性檢查。回傳（不能政策核准的理由, 檢查指令的結果）。
     - 文件不存在：不行（限制讀不到，agent 等於沒有依據）。
@@ -942,6 +1019,13 @@ def main(argv: list[str]) -> int:
                 st["constraint_checks"] = c_checks
             else:
                 st.pop("constraint_checks", None)
+            pc = _plan_check_for(run, stage, result, data)
+            if pc:
+                st["plan_check"] = pc
+                for m in pc:
+                    print(f"拆工檢查：{m}（不能政策核准；人工核准前請先確認）", file=sys.stderr)
+            else:
+                st.pop("plan_check", None)
         if not has_trace and has_recipe(data) and stage in SDLC:
             miss = ["這個 run 有 recipe，回傳卻沒有 trace（無法核對每個 agent 的紀錄）"]
             st["missing_records"] = miss
@@ -1033,6 +1117,7 @@ def main(argv: list[str]) -> int:
                     errs.append(cperr)
                 crepo = Path(str(data.get("target_repo"))) if data.get("target_repo") else None
                 errs += [f"限制文件：{e}" for e in constraint_issues(run, stage, cprof, crepo)[0]]
+                errs += [f"拆工檢查：{e}" for e in _plan_check_for(run, stage, json.loads(f.read_text(encoding="utf-8")), data)]
             if stage in HUMAN_ONLY and not any("一律由人核准" in e for e in errs):
                 errs.append(f"{stage} 段一律由人核准，不能政策核准")
         errs += chain_errors(data, stage)
@@ -1056,6 +1141,8 @@ def main(argv: list[str]) -> int:
             print(f"警告：{stage} 有 {len(st['missing_records'])} 個執行紀錄缺件（人工核准照記，但請先確認）：" + "；".join(st["missing_records"][:5]), file=sys.stderr)
         if st.get("constraint_issues"):
             print(f"警告：{stage} 有 {len(st['constraint_issues'])} 項限制文件的問題（人工核准照記，但請先確認）：" + "；".join(st["constraint_issues"][:5]), file=sys.stderr)
+        if st.get("plan_check"):
+            print(f"警告：{stage} 的拆工檢查有 {len(st['plan_check'])} 項問題（人工核准照記，但請先確認）：" + "；".join(st["plan_check"][:5]), file=sys.stderr)
         return 0
     if cmd == "escalate":
         name, by, at, reason = opt(argv, "--recipe"), opt(argv, "--by"), opt(argv, "--at"), opt(argv, "--reason")
@@ -1587,6 +1674,27 @@ def selftest() -> int:
         PROJECT_PROFILE.write_text(keep_profile, encoding="utf-8")
         d, c, out = design_run(None)
         check("B7 限制文件：profile 沒有 constraints → 行為不變", c == 0 and "constraint_issues" not in stages(d)["design"], out)
+        # ── B5 plan_check：拆工的確定性檢查
+        T = lambda i, deps=(), acc=("AC-1 通過",), kind="code", owns=("src/a.py",): {"id": i, "title": i, "kind": kind, "owns": list(owns), "depends_on": list(deps), "acceptance": list(acc)}  # noqa: E731
+        wrap = lambda subs: {"stage": "design", "design": {"status": "done", "payload": {"epic": "demo", "subtasks": subs}}}  # noqa: E731
+        check("B5 plan_check：乾淨的拆工沒有問題；回傳沒有子任務時不檢查", plan_check_issues(wrap([T("t1"), T("t2", ["t1"], owns=("src/b.py",))])) == [] and plan_check_issues({"stage": "design"}) == [])
+        pc = plan_check_issues(wrap([T("t1", ["t9"]), T("t1"), T("t2", ["t3"]), T("t3", ["t2"])]))
+        check("B5 plan_check：id 重複、相依指向不存在、相依循環都列出", any("id 重複：t1" in m for m in pc) and any("不存在的子任務：t9" in m for m in pc) and any("循環：t2、t3" in m for m in pc), str(pc))
+        pc = plan_check_issues(wrap([T("t1", acc=()), T("t2", owns=()), T("t3", kind="research", owns=())]))
+        check("B5 plan_check：沒有驗收條件、會改檔卻沒有 owns 都列出；research 不要求 owns", any("t1 沒有驗收條件" in m for m in pc) and any("t2（code）沒有 owns" in m for m in pc) and not any("t3" in m for m in pc), str(pc))
+        spec_f = Path(d) / "spec-for-plan-check.md"
+        spec_f.write_text("# spec\n- AC-1 可以登入\n- AC-2 可以登出\n- AC-MUT-3 不可變\n", encoding="utf-8")
+        pc = plan_check_issues(wrap([T("t1", acc=("AC-1 通過", "AC-9 通過"))]), spec_f)
+        check("B5 plan_check：spec 有、沒人對應的驗收條件，與子任務引用了 spec 沒有的，都列出", any("沒有任何子任務對應：AC-2、AC-MUT-3" in m for m in pc) and any("spec 沒有的驗收條件：AC-9" in m for m in pc), str(pc))
+        check("B5 plan_check：子任務沒用 AC 編號（寫測試指令）時不比對；spec 檔不存在也不比對",
+              plan_check_issues(wrap([T("t1", acc=("pytest tests/test_a.py",))]), spec_f) == [] and plan_check_issues(wrap([T("t1")]), Path(d) / "nope.md") == [])
+        bad = wrap([T("t1", ["t9"])])
+        bad["design"].update({"summary": "s", "artifacts": [], "evidence": [], "confidence": 0.9, "open_questions": [], "derived_work": []})
+        dpc = new_run()
+        walk(dpc, "design")
+        c, out = call("stage", dpc, "design", stdin=bad)
+        c2, out2 = call("approve", dpc, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B5 plan_check：存檔時記進 run.json，政策核准被擋並說明", any("t9" in m for m in stages(dpc)["design"].get("plan_check") or []) and c2 != 0 and "拆工檢查" in out2, out + out2)
 
         # B9：有交件（digest 對得回信封）但沒寫紀錄檔 → 依信封代寫，不算缺件；agent 自己寫的不覆寫；回傳換掉後舊的代寫檔不沿用
         d = new_run()

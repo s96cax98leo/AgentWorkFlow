@@ -477,6 +477,43 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     def stop(agent: str) -> dict:
         return {"hook_event_name": "SubagentStop", "agent_type": agent, "last_assistant_message": "完成，沒有信封"}
 
+    # ------------------------------------------------------------ 0.5 B5：linked_repos（工作區以外的我方 repo）與 session 的 scratchpad
+    LINKED, OTHER = tmp / "linked-app", tmp / "not-linked"
+    for d_ in (LINKED / "src", LINKED / "e2e", LINKED / "specs" / "demo", LINKED / ".claude" / "teams", OTHER / "src"):
+        d_.mkdir(parents=True)
+    LWS = mkws("ws-linked", {"linked_repos": [str(LINKED), "", "/"], "acceptance_test_dirs": ["e2e"]})
+    IMPL, VER = "agent-workflow:dev-implementer", "agent-workflow:dev-verifier"
+    run(P, 0, "B5 linked_repos：implementer 可以改登記過的 repo", edit(LINKED / "src/a.py", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：沒登記的工作區外目錄照舊擋", edit(OTHER / "src/a.py", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：設定裡的「/」不會把整台機器放行", edit(tmp / "anywhere.py", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：linked repo 的 .claude/ 仍不能改", edit(LINKED / ".claude/settings.json", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：linked repo 的 .claude/teams 仍不能改", edit(LINKED / ".claude/teams/rules.md", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：implementer 仍不能改 linked repo 的驗收測試", edit(LINKED / "e2e/a.spec.ts", IMPL, LWS), LWS)
+    run(P, 2, "B5 linked_repos：verifier 在 linked repo 仍只能寫自己的報告", edit(LINKED / "src/a.py", VER, LWS), LWS)
+    run(P, 0, "B5 linked_repos：verifier 可以寫 linked repo 的 verifier.md", edit(LINKED / "specs/demo/verifier.md", VER, LWS), LWS)
+    run(P, 0, "B5 linked_repos：writer 可以寫 linked repo 的 specs/<epic>/*.md", edit(LINKED / "specs/demo/spec.md", "agent-workflow:tpm-writer", LWS), LWS)
+    run(P, 2, "B5 linked_repos：writer 不能改 linked repo 的程式", edit(LINKED / "src/a.py", "agent-workflow:tpm-writer", LWS), LWS)
+    run(P, 2, "B5 linked_repos：researcher 仍只能寫 run 目錄", edit(LINKED / "src/a.py", "agent-workflow:tpm-researcher", LWS), LWS)
+    run(P, 2, "B5 linked_repos：沒設定時工作區外一律擋", edit(LINKED / "src/a.py", IMPL, UWS_PRE := mkws("ws-nolink", {})), UWS_PRE)
+    both(2, "B5 linked_repos：agent 在 linked repo 用 shell 寫守門設定仍擋", LWS, f"echo x > {LINKED.as_posix()}/.claude/teams/guard.config.json", IMPL)
+    both(2, "B5 linked_repos：agent 在 linked repo 推送仍擋", LWS, f"git -C {LINKED.as_posix()} push origin feature/x", IMPL)
+    both(0, "B5 linked_repos：agent 在 linked repo 跑測試放行", LWS, f"git -C {LINKED.as_posix()} status", IMPL)
+    SID = "0f3c2a9e-1111-2222-3333-444455556666"
+    SCR = tmp / "claude-501" / "-proj" / SID / "scratchpad"
+    (SCR / ".claude" / "teams").mkdir(parents=True)
+    (tmp / "claude-501" / "-proj" / "other-session-9999" / "scratchpad").mkdir(parents=True)
+
+    def scr(path: Path, agent: str, sid: str = SID) -> dict:
+        return {**edit(path, agent, LWS), "session_id": sid}
+    run(P, 0, "B5 scratchpad：researcher 可以寫這個 session 的 scratchpad", scr(SCR / "notes.md", "agent-workflow:tpm-researcher"), LWS)
+    run(P, 0, "B5 scratchpad：唯讀角色（skeptic）也可以", scr(SCR / "tmp/out.json", "agent-workflow:tpm-skeptic"), LWS)
+    run(P, 0, "B5 scratchpad：implementer 可以", scr(SCR / "probe.py", IMPL), LWS)
+    run(P, 2, "B5 scratchpad：別的 session 的 scratchpad 不行", scr(tmp / "claude-501" / "-proj" / "other-session-9999" / "scratchpad" / "a.md", "agent-workflow:tpm-researcher"), LWS)
+    run(P, 2, "B5 scratchpad：沒有 session_id 時照舊擋", edit(SCR / "notes.md", "agent-workflow:tpm-researcher", LWS), LWS)
+    run(P, 2, "B5 scratchpad：暫存目錄的其他位置照舊擋", scr(tmp / "claude-501" / "x.md", "agent-workflow:tpm-researcher"), LWS)
+    run(P, 2, "B5 scratchpad：裡面的 .claude/teams、guard.config.json 這類路徑仍擋", scr(SCR / ".claude/teams/guard.config.json", IMPL), LWS)
+    run(P, 2, "B5 scratchpad：run 目錄不是 scratchpad，run.json 照舊擋", scr(LWS / "_tpm/runs/x/run.json", IMPL), LWS)
+
     UWS = mkws("ws-user", {})
     both(0, "使用者 agent dev-helper push 功能分支", UWS, "git push origin feature/x", "dev-helper")
     both(0, "使用者 agent tpm-notes 開 PR（帶 --repo）", UWS, "gh pr create --repo acme-fork/app --title t --body b", "tpm-notes")
