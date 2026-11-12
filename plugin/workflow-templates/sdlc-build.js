@@ -144,6 +144,9 @@ const BUILD = /*@schema:build-result*/ {"type":"object","required":["status","su
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 const STAGE = ((MP.stages || {}).build) || {}
+// profile 的 design 產出文件沒列 progress.md 時，不要求看它、更新它（沒有 profile 或沒寫 artifacts 時照舊）
+const DESIGN_ARTS = ((MP.stages || {}).design || {}).artifacts
+const HAS_PROGRESS = !Array.isArray(DESIGN_ARTS) || DESIGN_ARTS.includes('progress.md')
 const CONV = MP.conventions || {}
 const METH_NOTE = METHODOLOGY
   ? `開發規範 profile：${MP.name}（.claude/teams/methodology.json；各段做法與慣例以它為準）。文件格式：${(CONV.doc_format || {}).format || '依目標 repo'}。`
@@ -335,7 +338,7 @@ const SPEC = `${EPIC_DIR}/specs/${A.epic}`
 // 整合分支：sdlc-sync 走過中轉分支後 epic worktree 停在中轉分支，merge 退回 build 時要用 args.branch 帶進來，
 // 子任務分支從它開、integrator 合回它；否則會合回舊的 epic 分支、弄丟中轉分支解好的衝突
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}）\n${HAS_DESIGN ? `spec：${SPEC}/spec.md、plan.md、progress.md` : `需求與驗收條件：${SPEC}/intent.md（這個 recipe 沒有 design 段，沒有 spec.md）`}\nrecipe：${RECIPE.summary}\nrun 目錄：${A.run_dir}\n不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}）\n${HAS_DESIGN ? `spec：${SPEC}/spec.md、plan.md${HAS_PROGRESS ? '、progress.md' : ''}` : `需求與驗收條件：${SPEC}/intent.md（這個 recipe 沒有 design 段，沒有 spec.md）`}\nrecipe：${RECIPE.summary}\nrun 目錄：${A.run_dir}\n不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 const MAX_RETRY = 2
 
@@ -417,11 +420,19 @@ function runTask(s, role, phaseName, extra) {
   })()
 }
 
+// 預期內的紅（子任務的 expected_red）：負責修好它的子任務還沒合進來之前，那幾項檢查紅了不算這次整合失敗。
+// 那個子任務合進來之後就不再列出，還紅就照常回報。
+function pendingReds(batch) {
+  const after = new Set([...PRIOR, ...integrated, ...batch.map((r) => idOf.get(r))])
+  return [...tests, ...work].filter((s) => !after.has(s.id))
+    .flatMap((s) => (Array.isArray(s.expected_red) ? s.expected_red : []).filter((c) => typeof c === 'string' && c.trim()).map((c) => `- ${c.trim()}（等子任務 ${s.id}）`))
+}
 async function integrate(batch, label) {
+  const reds = pendingReds(batch)
   return tryAgent(
     `${CTX}\n\n## 派工單（整合：${label}）\n依序把這些分支 git merge --no-ff 進 ${BRANCH}（在 ${EPIC_DIR} 操作，先確認目前分支是 ${BRANCH}）：\n` +
     batch.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
-    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\n${RUN_BRIEF}\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
+    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\n${reds.length ? `下列檢查預期要等後面的子任務才會綠，現在紅了不算失敗、不要為它回 needs_decision（在執行紀錄列出實際紅了哪幾項）；其他的紅照常回報：\n${reds.join('\n')}\n` : ''}${RUN_BRIEF}\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
     { label: `integrate:${label}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
 }
@@ -503,7 +514,7 @@ for (let i = 0; i < layers.length; i++) {
   const layer = layers[i]
   const res = await parallel(layer.map((s) => () => runTask(s, NS + 'dev-implementer', 'Implement', IS_REVERT ? REVERT_BRIEF :
     `${TEST_FIRST ? '讓已合進整合分支的驗收測試轉綠，不得修改驗收測試' : `依 ${HAS_DESIGN ? 'spec' : 'intent.md'} 的驗收條件實作（驗證測試在實作後由 dev-acceptance-tester 補）`}；` +
-    `單元測試：${STAGE.unit_tests || '依目標 repo 慣例'}；只改擁有的檔案；本子任務範圍的 verify 指令全綠才 commit（${commitFor('feat', A.epic)}）；更新 progress.md 對應項。`)))
+    `單元測試：${STAGE.unit_tests || '依目標 repo 慣例'}；只改擁有的檔案；本子任務範圍的 verify 指令全綠才 commit（${commitFor('feat', A.epic)}）${HAS_PROGRESS ? '；更新 progress.md 對應項' : ''}。`)))
   results.layers.push(res)
   const ok = settle(layer, res, `layer${i + 1}`)
   phase('Integrate')

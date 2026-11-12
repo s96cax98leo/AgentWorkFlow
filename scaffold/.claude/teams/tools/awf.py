@@ -6,7 +6,7 @@
         [--requirement <需求原文或路徑>] [--base <base>] [--recipe <名>] [--modifiers a,b] [--size s] [--set k=v]… [--set-json k=<JSON>]…
     python3 .claude/teams/tools/awf.py next --run <run_dir> [--set k=v]… [--set-json k=<JSON>]… [--stage <段>] [--workflow <名>] [--text]
     python3 .claude/teams/tools/awf.py done --run <run_dir> [--output <workflow 回傳的 JSON 檔>] [--stage <段>]
-    python3 .claude/teams/tools/awf.py approve --run <run_dir> [<段>] --by <誰> [--note <備註>] [--answer "<問題>=<答覆>"]…
+    python3 .claude/teams/tools/awf.py approve --run <run_dir> [<段>] --by <誰> [--note <備註>] [--answer "<問題>=<答覆>"]… [--accept-defaults]
     python3 .claude/teams/tools/awf.py render <workflow>|--all --out <目錄>
     python3 .claude/teams/tools/awf.py --selftest
     共用選項：--plugin-dir <plugin 目錄>（找不到 plugin 時才需要）
@@ -439,9 +439,13 @@ def highlights(run: Path, run_arg: str, data: dict, stage: str) -> dict:
     envs = _envelopes(res)
     h: dict = {"agents": [{"where": w, "status": e.get("status"), "summary": str(e.get("summary") or "")[:200]} for w, e in envs][:40]}
     qs = [{"from": w, "question": q.get("question"), "blocking": bool(q.get("blocking")), "options": [o.get("choice") for o in q.get("options") or [] if isinstance(o, dict)],
-           "recommendation": q.get("recommendation")} for w, e in envs for q in e.get("open_questions") or [] if isinstance(q, dict)]
+           "recommendation": q.get("recommendation"), "default_applied": _applied(q)} for w, e in envs for q in e.get("open_questions") or [] if isinstance(q, dict)]
     if qs:
-        h["open_questions"] = qs[:30]
+        # 要先決定的排前面；agent 已照建議先做的（default_applied）另外列成 provisional，讓人一次確認
+        h["open_questions"] = sorted(qs, key=lambda q: not q["blocking"])[:30]
+        prov = provisional(res)
+        if prov:
+            h["provisional"] = prov[:30]
     for k in ("missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans"):
         if res.get(k) not in (None, [], {}, ""):
             h[k] = res[k]
@@ -460,10 +464,27 @@ def highlights(run: Path, run_arg: str, data: dict, stage: str) -> dict:
     return h
 
 
+def _applied(q: dict) -> str:
+    v = str(q.get("default_applied") or "").strip()
+    return "" if v.lower() in ("", "none", "無", "n/a") else v
+
+
+def provisional(res: dict) -> list[dict]:
+    """不是 blocking、agent 已先照預設做了的問題：[{question, applied}]（同一題只留一筆）。"""
+    out, seen = [], set()
+    for _w, e in _envelopes(res):
+        for q in e.get("open_questions") or []:
+            if isinstance(q, dict) and not q.get("blocking") and _applied(q) and str(q.get("question") or "").strip() and q["question"] not in seen:
+                seen.add(q["question"])
+                out.append({"question": str(q["question"]).strip(), "applied": _applied(q)})
+    return out
+
+
 def gate_action(run: Path, run_arg: str, data: dict, stage: str) -> dict:
     return {"action": "gate", "stage": stage, "human_only": stage in sr.HUMAN_ONLY, "highlights": highlights(run, run_arg, data, stage),
-            "say": "把 highlights 在對話裡列給使用者看（open_questions 逐一問；blocking 的用選項問）。使用者明確核准才跑 approve；「調整」「可以但…」不是核准。",
-            "approve": f'python3 .claude/teams/tools/awf.py approve --run {run_arg} {stage} --by <誰核准的> [--answer "<問題>=<答覆>"]…',
+            "say": "把 highlights 在對話裡列給使用者看。blocking 的問題合成一次、用選項問；provisional 是 agent 已照建議先做的暫定，一次列出來請使用者確認"
+                   "（都同意就在 approve 加 --accept-defaults，記進決策記憶；不同意的那幾題用 --answer 記使用者的答覆）。使用者明確核准才跑 approve；「調整」「可以但…」不是核准。",
+            "approve": f'python3 .claude/teams/tools/awf.py approve --run {run_arg} {stage} --by <誰核准的> [--answer "<問題>=<答覆>"]… [--accept-defaults]',
             "cost": f"python3 .claude/teams/tools/awf_cost.py --project . --run-dir {run_arg}"}
 
 
@@ -603,6 +624,8 @@ def text_of(act: dict) -> str:
     h = act.get("highlights") or {}
     for q in h.get("open_questions") or []:
         L.append(f"- {'[要先決定] ' if q.get('blocking') else ''}{q.get('question')}")
+    for q in h.get("provisional") or []:
+        L.append(f"- [暫定，請確認] {q['question']} → 已先照「{q['applied']}」做")
     for k in ("missing", "missing_records", "constraint_issues"):
         if h.get(k):
             L.append(f"- {k}：{h[k]}")
@@ -732,6 +755,12 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
                     passthru += [n, opt(argv, n)]
             for a in opts(argv, "--answer"):
                 passthru += ["--answer", a]
+            if "--accept-defaults" in argv:
+                # 人確認了暫定的做法：沒有另外用 --answer 答的那幾題，照 agent 已套用的預設記進決策記憶
+                answered = {a.split("=", 1)[0].strip() for a in opts(argv, "--answer")}
+                for q in provisional(_stage_result(run, stage)):
+                    if q["question"] not in answered and "=" not in q["question"]:
+                        passthru += ["--answer", f'{q["question"]}={q["applied"]}']
             code = sr.main(["approve", str(run), stage, "--at", now_iso(), *passthru])
             if not code:
                 print(f"下一步：python3 .claude/teams/tools/awf.py next --run {run_arg}")
@@ -961,7 +990,9 @@ def selftest() -> int:
             data["stages"]["plan"].update({"status": "done", "envelopes": 1, "missing_records": ["research:x"]})
             sr.dump(run, data)
             env = {"status": "done", "summary": "調研完成", "artifacts": [], "evidence": [], "confidence": 0.9, "derived_work": [], "payload": {},
-                   "open_questions": [{"question": "編碼用什麼？", "blocking": True, "options": [{"choice": "UTF-8", "cost": "無"}], "recommendation": "UTF-8", "default_applied": ""}]}
+                   "open_questions": [{"question": "編碼用什麼？", "blocking": True, "options": [{"choice": "UTF-8", "cost": "無"}], "recommendation": "UTF-8", "default_applied": ""},
+                                      {"question": "欄位順序？", "blocking": False, "options": [{"choice": "照原型", "cost": "無"}], "recommendation": "照原型", "default_applied": "照原型"},
+                                      {"question": "要不要加註解？", "blocking": False, "options": [], "recommendation": "不加", "default_applied": "none"}]}
             (run / "plan.json").write_text(json.dumps({"stage": "plan", "missing": ["research:y"], "research": [env], "reused": ["specs-adr"], "trace": [{"label": "x"}]}), encoding="utf-8")
             a = act_of(call("next", "--run", d)[1])
             h = a.get("highlights") or {}
@@ -969,10 +1000,15 @@ def selftest() -> int:
                   and h["agents"][0]["summary"] == "調研完成" and h["open_questions"][0]["blocking"] is True and h["open_questions"][0]["options"] == ["UTF-8"]
                   and h["missing"] == ["research:y"] and h["reused"] == ["specs-adr"] and h["missing_records"] == ["research:x"], a)
             check("閘門：--text 給人看的摘要有動作、核准指令與要先決定的問題", "動作：gate（plan 段）" in call("next", "--run", d, "--text")[1] and "[要先決定] 編碼用什麼？" in call("next", "--run", d, "--text")[1])
-            c, out = call("approve", "--run", d, "--by", "human", "--answer", "編碼用什麼？=UTF-8")
+            check("閘門：agent 已照建議先做的問題列成 provisional（default_applied 是 none 的不算），要先決定的排最前面",
+                  h.get("provisional") == [{"question": "欄位順序？", "applied": "照原型"}] and h["open_questions"][0]["blocking"] is True
+                  and "[暫定，請確認] 欄位順序？" in call("next", "--run", d, "--text")[1], h)
+            c, out = call("approve", "--run", d, "--by", "human", "--answer", "編碼用什麼？=UTF-8", "--accept-defaults")
+            dec = {x["question"]: x["answer"] for x in packlib.load_decisions(run.parent)}
+            check("approve --accept-defaults：暫定的做法記進決策記憶；另外用 --answer 答的照人的答覆", c == 0 and dec.get("欄位順序？") == "照原型" and dec.get("編碼用什麼？") == "UTF-8" and "要不要加註解？" not in dec, (out, dec))
             st = sr.load(run)["stages"]["plan"]
             check("approve：不指定段時核准正在等的那一段、時間自動取、--answer 記進決策記憶", c == 0 and st.get("approved", {}).get("by") == "human"
-                  and re.match(r"^\d{4}-\d\d-\d\dT", st["approved"]["at"]) and packlib.load_decisions(run.parent)[-1]["answer"] == "UTF-8", out)
+                  and re.match(r"^\d{4}-\d\d-\d\dT", st["approved"]["at"]) and dec.get("編碼用什麼？") == "UTF-8", out)
             data = sr.load(run)
             data["stages"]["design"].update({"status": "done", "envelopes": 0})
             sr.dump(run, data)

@@ -20,6 +20,7 @@
           "acceptance": {"type": "array", "items": {"type": "string"}, "description": "可機械判定的完成條件；對應 spec 驗收條件時寫測試 ID"},
           "story_ids": {"type": "array", "items": {"type": "string"}},
           "spec_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "選填：這個子任務對應 spec 的哪些小節，寫「檔#標題」（檔相對於 specs/<epic>/，省略就是 spec.md），標題要和文件裡的完全相同；pack.py 用它產生子任務資料包，對不到會停下"},
+          "expected_red": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "選填：這個子任務完成前預期會失敗的檢查（測試名或指令）。它合進整合分支之前，這幾項紅了不算整合失敗；合進來之後還紅照常擋"},
           "sub_plan": {"type": "string", "description": "屬於哪個子計劃（plan-outline 的 sub_plans[].id）；沒拆子計劃時省略"},
           "complexity": {"type": "string", "enum": ["light", "standard", "strong"], "description": "選填：這個子任務要用的模型等級（改一兩個檔的機械式修改＝light；一般實作＝standard；跨模組或有並行、安全風險＝strong）"},
           "complexity_reason": {"type": "string", "description": "選填：為什麼是這個等級"}

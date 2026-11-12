@@ -71,6 +71,33 @@ export default [
     },
   },
   {
+    // 預期內的紅：負責的子任務還沒合進來時，整合派工單列出來（不當成失敗）；合進來的那一層之後不再列
+    name: '預期內的紅：等後面的子任務的檢查不算整合失敗，合進來之後照常擋',
+    args: { subtasks: [
+      { id: 't1', title: '後端', kind: 'code', owns: ['services/a.py'], depends_on: [], acceptance: ['pytest a'] },
+      { id: 't2', title: '換截圖', kind: 'code', owns: ['apps/web/a.tsx'], depends_on: ['t1'], acceptance: ['vitest a'], expected_red: ['截圖比對 shell.png'] },
+    ] },
+    expect: (r) => {
+      const errs = []
+      const l1 = r.prompts['integrate:layer1'] || ''
+      const l2 = r.prompts['integrate:layer2'] || ''
+      if (!/截圖比對 shell\.png（等子任務 t2）/.test(l1) || !/不算失敗/.test(l1)) errs.push('t2 還沒合進來時，layer1 的整合派工單要列出預期內的紅')
+      if (/截圖比對 shell\.png/.test(l2)) errs.push('t2 合進來的那一層不能再把它當成預期內的紅')
+      if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
+      return errs
+    },
+  },
+  {
+    // profile 的 design 產出文件沒列 progress.md：build 不要求看它、更新它
+    name: 'progress.md：profile 的產出文件沒列就不要求',
+    // 只換 design 的產出文件，其餘照專案的 profile（不動 test_first：smoke_init 用乾跑經過的 phases 檢查它）
+    profile: (p) => ({ stages: { ...(p.stages || {}), design: { ...((p.stages || {}).design || {}), artifacts: ['design.md', 'spec.md', 'plan.md'] } } }),
+    expect: (r) => {
+      const hit = Object.entries(r.prompts).filter(([, v]) => /progress\.md/.test(v || '')).map(([k]) => k)
+      return hit.length ? [`這些派工單還在提 progress.md：${hit.join('、')}`] : []
+    },
+  },
+  {
     name: '缺件：實作子任務沒交件',
     fakes: { 'Implement:t2': NONE },
     expect: (r) => {

@@ -1,0 +1,58 @@
+{
+  "payload": "subtasks",
+  "data": {
+    "status": "done",
+    "summary": "範例",
+    "artifacts": [
+      "_tpm/runs/x/a.md"
+    ],
+    "evidence": [
+      {
+        "claim": "c",
+        "source": "a.md:1",
+        "result": "ok"
+      }
+    ],
+    "confidence": 0.9,
+    "open_questions": [],
+    "derived_work": [
+      "補文件"
+    ],
+    "payload": {
+      "epic": "demo-200-x",
+      "subtasks": [
+        {
+          "id": "ui-t1",
+          "title": "a",
+          "kind": "code",
+          "owns": [
+            "src/a.ts"
+          ],
+          "depends_on": [
+            "@api"
+          ],
+          "acceptance": [
+            "vitest a"
+          ],
+          "sub_plan": "ui",
+          "expected_red": "截圖比對"
+        },
+        {
+          "id": "ui-t2",
+          "title": "b",
+          "kind": "test",
+          "owns": [
+            "e2e/b.spec.ts"
+          ],
+          "depends_on": [
+            "ui-t1"
+          ],
+          "acceptance": [
+            "e2e b"
+          ],
+          "sub_plan": "ui"
+        }
+      ]
+    }
+  }
+}

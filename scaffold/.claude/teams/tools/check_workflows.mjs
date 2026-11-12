@@ -24,8 +24,8 @@ const role = (t) => String(t || '').split(':').pop()
 const projectAgents = join(claude, 'agents')
 const METH_RE = /\/\*@methodology\*\/ ([\s\S]*?) \/\*@end\*\//
 const embedded = (src) => { const m = src.match(METH_RE); try { return m ? JSON.parse(m[1]) : null } catch { return null } }
-// 情境可以覆寫內嵌的 profile（例如加 extensions），測擴充 agent 的分支
-const withProfile = (src, patch) => patch ? src.replace(METH_RE, () => `/*@methodology*/ ${JSON.stringify({ ...(embedded(src) || {}), ...patch })} /*@end*/`) : src
+// 情境可以覆寫內嵌的 profile（例如加 extensions），測擴充 agent 的分支；profile 給函式時拿到內嵌的 profile、回傳要覆寫的鍵（只改深層的一個值時用）
+const withProfile = (src, patch) => patch ? src.replace(METH_RE, () => `/*@methodology*/ ${JSON.stringify({ ...(embedded(src) || {}), ...(typeof patch === 'function' ? patch(embedded(src) || {}) : patch) })} /*@end*/`) : src
 
 const SAMPLE_ARGS = {
   repo: '/tmp/repo', epic: 'demo-999-sample', requirement: '範例需求', base: 'origin/main', run_dir: '/tmp/run',

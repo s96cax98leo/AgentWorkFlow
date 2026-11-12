@@ -364,14 +364,15 @@ const verifyAll = (round) => tryAgent(
   `${CTX}\n\n## 派工單（驗證，第 ${round} 輪）\n在 ${EPIC_DIR} 的目前 HEAD 驗證 ${CRIT_SRC}。${HOW}${MODES_TEXT}\n${RUN_BRIEF}\n不論 profile 怎麼寫，都要對 diff 做反作弊檢查，照範本寫 ${SPEC}/verifier.md（repo 有 verifier 檢查腳本就跑）。payload 用 criteria。`,
   { label: `verify#${round}`, phase: 'Verify', agentType: NS + 'dev-verifier', schema: CRITERIA },
 )
-const verifyShard = (sh, round) => tryAgent(
-  `${CTX}\n\n## 派工單（分片驗證：${sh.id}，第 ${round} 輪）\n其他分片由別的 dev-verifier 同時驗證，你只負責這一片。\n` +
+const verifyShard = (sh, round, again) => tryAgent(
+  `${CTX}\n\n## 派工單（分片驗證：${sh.id}，第 ${round} 輪${again ? '，重驗' : ''}）\n其他分片由別的 dev-verifier 同時驗證，你只負責這一片。\n` +
+  (again ? '上一次各分片驗到的 HEAD 不一樣（驗證途中分支多了 commit），這次全部重驗：開工先記下 HEAD，驗完再確認 HEAD 沒變。\n' : '') +
   `在 ${EPIC_DIR} 的目前 HEAD 驗證 ${sh.spec} 的驗收條件（條目 id 照原文，不要改名）。${HOW}${MODES_TEXT}\n${RUN_BRIEF}\n` +
   (sh.owns
     ? `反作弊檢查只看這個子計劃範圍內的 diff（git diff ${A.base || 'origin/main'}...HEAD -- ${sh.owns.join(' ')}）。\n`
     : `這是整合分片：驗證跨子計劃的整合驗收條件，反作弊檢查看整條 diff（git diff ${A.base || 'origin/main'}...HEAD）。\n`) +
   `報告寫到 ${sh.report}（只寫這個檔）。payload 用 criteria，commit 填驗證當下的 HEAD。`,
-  { label: `verify:${sh.id}#${round}`, phase: 'Verify', agentType: NS + 'dev-verifier', schema: CRITERIA },
+  { label: `verify:${sh.id}#${round}${again ? 'r' : ''}`, phase: 'Verify', agentType: NS + 'dev-verifier', schema: CRITERIA },
 )
 
 // 分片結果的確定性彙整：條目不能遺失、結果不能被改、各分片要驗同一個 HEAD、彙整的 commit 要等於那個 HEAD
@@ -428,11 +429,19 @@ async function verify(round) {
     const v = await verifyAll(round)
     return { combined: v, problem: v ? null : `verify#${round} 缺件：驗證沒有回傳結果`, missing: v ? [] : [`verify#${round}`] }
   }
-  const res = await parallel(SHARDS.map((sh) => () => verifyShard(sh, round)))
-  shardRuns.push({ round, shards: res })
-  const lost = SHARDS.filter((sh, i) => !res[i])
-  if (lost.length) return { combined: null, problem: `分片 ${lost.map((s) => s.id).join('、')} 沒有回傳驗證結果（缺件：${lost.map((s) => `verify:${s.id}#${round}`).join('、')}）`, missing: lost.map((s) => `verify:${s.id}#${round}`) }
-  const c = combine(res)
+  // 各分片驗到不同的 HEAD（驗證途中分支多了 commit，例如只改了文件）：全部分片自動重驗一次，不直接停下交人。
+  // 不放寬「同一個 HEAD 才合判」：重驗後還不一致，照舊由 consolidationProblems 判 halted。
+  let c = null
+  for (const again of [false, true]) {
+    const sfx = again ? 'r' : ''
+    const res = await parallel(SHARDS.map((sh) => () => verifyShard(sh, round, again)))
+    shardRuns.push({ round, shards: res, ...(again ? { reverify: true } : {}) })
+    const lost = SHARDS.filter((sh, i) => !res[i])
+    if (lost.length) return { combined: null, problem: `分片 ${lost.map((s) => s.id).join('、')} 沒有回傳驗證結果（缺件：${lost.map((s) => `verify:${s.id}#${round}${sfx}`).join('、')}）`, missing: lost.map((s) => `verify:${s.id}#${round}${sfx}`) }
+    c = combine(res)
+    if (c.commits.length <= 1) break
+    if (!again) log(`各分片驗的 HEAD 不一致（${c.commits.join('、')}），全部分片重驗一次`)
+  }
   phase('Consolidate')
   const merged = await tryAgent(
     `${CTX}\n\n## 派工單（彙整分片驗證，第 ${round} 輪）\n${SHARDS.length} 個分片已平行驗證完成，報告：${SHARDS.map((s) => s.report).join('、')}。\n` +
