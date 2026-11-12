@@ -663,8 +663,9 @@ STAGE_JSON_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:" + "|".join(re.escape(s) for 
 # context.md（runs_dir 底下，所有 agent 共用的背景，能寫等於持久注入指令）與執行紀錄索引.md（任何位置）只由主 session 跑 save_run.py 產生
 # pack.md（各段的資料包，agent 開工先讀）同樣只由主 session 跑 pack.py 產生
 # decisions.jsonl 與 決策記憶.md（決策記憶：人在閘門上的答覆，資料包會帶給之後的 agent）只由主 session 跑 save_run.py 寫
-SHARED_CONTEXT_NAMES = ("context.md", "pack.md", "decisions.jsonl", "決策記憶.md")
-CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\bdecisions\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md", re.I)
+# 結案摘要.md（<run>/archive/，close／abandon 時 save_run.py 寫；會進知識層，之後的 agent 查得到）同樣只由主 session 寫
+SHARED_CONTEXT_NAMES = ("context.md", "pack.md", "decisions.jsonl", "決策記憶.md", "結案摘要.md")
+CONTEXT_FRAGMENT = re.compile(r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\bdecisions\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md|結案摘要\W{0,16}\.md|[/\\]archive[/\\]", re.I)
 RUN_INDEX_FRAGMENT = re.compile(r"執行紀錄索引")
 
 
@@ -912,7 +913,7 @@ def shell_writes_team_config(seg: str, cwd: Path | None = None) -> bool:
     """shell 寫入 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json、guard.config.json（盡力而為）。
     python3 .claude/teams/tools/<工具>.py 這種「執行工具」不算提到路徑（工具本身的寫入由各自的規則管）。
     cwd 是這一段指令實際作用的目錄：先 cd 進這些目錄再寫（指令裡看不到路徑）也算。"""
-    probe = TEAM_TOOL_CALL.sub(" ", norm(seg))
+    probe = TEAM_TOOL_CALL.sub(" ", re.sub(r"(?<![:/])[/\\\\]{2,}", "/", norm(seg)))      # .claude//teams 這類連續斜線
     inside = False
     if cwd is not None:
         try:
@@ -920,6 +921,8 @@ def shell_writes_team_config(seg: str, cwd: Path | None = None) -> bool:
         except OSError:
             here = "/" + fold(norm(str(cwd))).strip("/") + "/"
         inside = "/.claude/teams/" in here or "/.claude/workflows/" in here or "/.wf/" in here
+        if not inside and here.endswith("/.claude/") and re.search(r"(?:^|[\s\"'=])\.?[/\\\\]?(?:teams|workflows)(?:[/\\\\]|\s|$)", probe):
+            inside = True       # cd .claude && echo > teams/x
     if not inside and not TEAM_CONFIG_TARGET.search(probe):
         return False
     probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", probe, flags=re.I)
@@ -1315,20 +1318,47 @@ SAVE_RUN_READONLY = {"status", "--selftest"}
 SAVE_RUN_LAUNCHERS = re.compile(r"python[\d.]*|py|pypy[\d.]*|uv|run|pipx|poetry|pdm|rye|hatch")
 
 
-def save_run_write(seg: str, tool: str = "save_run", readonly=None) -> str | None:
+# 把後面的參數當成指令執行的程式：save_run.py 出現在它們後面時，子指令可能來自檔案或標準輸入，看不到就當寫入
+EXEC_FORWARDERS = {"xargs", "parallel", "watch", "find", "fd", "entr", "flock", "chronic", "unbuffer", "script", "su", "doas", "runuser", "setsid"}
+
+
+def save_run_write(seg: str, tool: str = "save_run", readonly=None, depth: int = 0) -> str | None:
     """team agent 執行 save_run.py 的寫入子指令時回傳子指令名（stage、approve、abandon、escalate、followup、close、init…）；
     唯讀的 status、--selftest、沒有參數（印說明）回 None。用內嵌程式 import／runpy 呼叫 save_run 一律當寫入。
-    只是讀 save_run.py 的內容（cat、grep）不算執行。"""
+    只是讀 save_run.py 的內容（cat、grep）不算執行。bash -c、sh -c、eval、pwsh -Command 的內層指令照同一套規則；
+    經 xargs 這類轉呼叫程式執行時，子指令看不到就當寫入。"""
     readonly = SAVE_RUN_READONLY if readonly is None else readonly
     toks = shlex_tokens(seg)
+    if depth < 4 and toks:
+        head = [x for x in toks if not re.match(r"^[A-Za-z_]\w*=", x)]
+        while head and _cmd_name(head[0]) in CMD_WRAPPERS:
+            head = head[1:]
+            while head and head[0].startswith("-"):
+                head = head[1:]
+        name = _cmd_name(head[0]) if head else ""
+        args = head[1:]
+        inner_cmds: list[str] = []
+        if name in SHELL_NAMES:
+            inner_cmds = [args[k + 1] for k, t in enumerate(args) if re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", t) and k + 1 < len(args)][:1]
+        elif name in PS_NESTED_SHELLS or name == "cmd":
+            inner_cmds = [" ".join(args[k + 1:]) for k, t in enumerate(args) if t.lower() in ("-c", "-command", "/c", "/k") and k + 1 < len(args)][:1]
+        elif name in ("eval", "invoke-expression", "iex"):
+            inner_cmds = [" ".join(args)]
+        for ic in inner_cmds:
+            for inner in (ps_segments(ic) if name in PS_NESTED_SHELLS or name == "cmd" else segments(ic)):
+                got = save_run_write(inner, tool, readonly, depth + 1)
+                if got:
+                    return got
     for k, t in enumerate(toks):
         if re.split(r"[\\/]", t)[-1].lower() != f"{tool}.py":
             continue
         before = [_cmd_name(x) for x in toks[:k] if not re.match(r"^[A-Za-z_]\w*=", x)]
         before = [b for b in before if b not in CMD_WRAPPERS and not b.startswith("-")]
+        sub = toks[k + 1] if k + 1 < len(toks) else ""
+        if any(b in EXEC_FORWARDERS for b in before):
+            return None if sub in readonly else (sub or "（經轉呼叫程式執行，看不到子指令）")
         if before and not all(SAVE_RUN_LAUNCHERS.fullmatch(b) for b in before):
             continue  # cat／grep／less save_run.py 之類，不是執行
-        sub = toks[k + 1] if k + 1 < len(toks) else ""
         return None if sub in readonly or sub == "" else sub
     m = re.escape(tool)
     if INTERP.search(seg) and re.search(rf"\bimport\s+{m}\b|\bfrom\s+{m}\b|import_module\b.*{m}|\brunpy\b|-m\s+{m}\b"
@@ -1426,6 +1456,10 @@ def _check_shell_rules(data: dict) -> None:
         pk = save_run_write(seg, "pack", {"--selftest"}) if team else None
         if pk:
             block(f"{agent} 不能跑 pack.py（資料包與調研重用的紀錄只由主 session 產生，agent 只讀 pack.md）")
+        dlv = save_run_write(seg, "deliverables", {"status", "check", "affected", "--selftest", "-h", "--help"}) if team else None
+        if dlv:
+            block(f"{agent} 只能跑 deliverables.py status／check／affected（交付設定、來源紀錄、追溯矩陣與開發紀錄只由主 session 寫；"
+                  "agent 只改派工單指定的文件小節）")
         kbw = save_run_write(seg, "kb", {"query", "lint", "--selftest", "-h", "--help"}) if team else None
         if kbw:
             block(f"{agent} 只能跑 kb.py query／lint（build 會改寫共用的索引與卡片，只由主 session 或 pack.py 執行）")
@@ -1540,7 +1574,7 @@ REVIEW_REPORTS = {
 }
 
 
-RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "pack.md", "執行紀錄索引.md", "run.json", "決策記憶.md"))
+RECORD_RESERVED_NAMES = frozenset(fold(n) for n in ("context.md", "pack.md", "執行紀錄索引.md", "run.json", "決策記憶.md", "結案摘要.md"))
 
 
 def check_read(data: dict) -> None:
@@ -1597,8 +1631,10 @@ def check_paths(data: dict) -> None:
         block(f"{agent} 不能寫 {path.name}（{RUNS} 底下的 run.json、<段>.json 是 save_run.py 寫的閘門資料，publish.py 與政策核准會重讀）")
     if role and ((RUNS and fold(rel or "").startswith(fold(RUNS)) and fold(path.name) in SHARED_CONTEXT_NAMES)
                  or fold(path.name) == fold("執行紀錄索引.md")):
-        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md、決策記憶是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
+        block(f"{agent} 不能寫 {path.name}（runs_dir 底下的 context.md、pack.md、決策記憶、結案摘要是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，"
               "都只由主 session 跑 save_run.py／pack.py 產生）")
+    if role and RUNS and fold(rel or "").startswith(fold(RUNS)) and "/archive/" in "/" + fold(rel or "").replace("\\", "/"):
+        block(f"{agent} 不能寫 run 目錄的 archive/（結案摘要只由主 session 跑 save_run.py 產生，會收進知識層）")
     if role and in_scratchpad(path, data):
         # 這個 session 的 scratchpad：模版角色都可以寫（中間產物）。上面的規則（禁止路徑、守門設定、run.json、閘門資料檔名）已經判過
         forward(git_toplevel(path.parent), "guard-paths", data)

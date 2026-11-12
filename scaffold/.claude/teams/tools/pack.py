@@ -780,6 +780,18 @@ def run_pack(argv: list[str], root: Path = PROJECT) -> int:
             notes += tnotes
         except Exception as e:  # noqa: BLE001  輔助功能不擋流程
             notes.append(f"子任務資料包產生失敗，照舊用派工單（{type(e).__name__}：{e}）")
+    if stage in ("design", "deliver"):
+        # 交付文件（deliverables.py）：design 段要留哪些小節、deliver 段要更新哪些文件的哪些小節。沒有交付設定時什麼都不帶
+        try:
+            import deliverables as deliv_tool
+            pf = _opt(argv, "--paths-file")
+            paths = [x for x in Path(pf).read_text(encoding="utf-8", errors="replace").splitlines() if x.strip()] if pf else None
+            extra, dnotes = deliv_tool.pack_args(stage, run, root, repo, data, paths)
+            if extra:
+                out_args["deliverables"] = extra
+            notes += dnotes
+        except Exception as e:  # noqa: BLE001  輔助功能不擋流程
+            notes.append(f"交付文件的資訊算不出來，這一段照常跑（{type(e).__name__}：{e}）")
     hits, kb_note = ([], "已用 --no-kb 關閉") if "--no-kb" in argv else kb_hits(root, requirement_text(requirement, root))
     decs: list[dict] = []
     try:
@@ -1071,6 +1083,23 @@ def selftest() -> int:
         check("路徑比對和 challenge 片段一致", path_overlap("lib/*.py", "lib/a.py") and not path_overlap("lib/*.py", "src/a.py") and path_overlap("**/*.tsx", "a/b/C.tsx")
               and not path_overlap("**/*.tsx", "a/b/c.py") and path_overlap("services/api/**", "services/") and not path_overlap("web/**", "docs/readme.md"))
         check("CLI：缺 --run 回 2", run_pack(["plan"], root) == 2)
+        # C2 交付文件：有交付設定時 design 帶 design.md 要留的小節、deliver 帶受影響的文件；沒有設定時不帶
+        run_pack(["design", "--run", str(run), "--no-kb"], root)
+        check("交付文件：沒有交付設定時 pack-args 沒有 deliverables", "deliverables" not in (load_json(run / "design" / ARGS) or {}))
+        teams = root / ".claude" / "teams"
+        (teams / "deliverables").mkdir(parents=True, exist_ok=True)
+        (teams / "deliverables" / "catalog.json").write_text((Path(__file__).resolve().parent.parent / "deliverables" / "catalog.json").read_text(encoding="utf-8"), encoding="utf-8")
+        (teams / "deliverables.json").write_text(json.dumps({"documents": [{"id": "db-design"}, {"id": "api-spec"}]}), encoding="utf-8")
+        run_pack(["design", "--run", str(run), "--no-kb"], root)
+        got = (load_json(run / "design" / ARGS) or {}).get("deliverables") or {}
+        check("交付文件：design 帶 design.md 要留的小節", [d["id"] for d in got.get("design_sections") or []] == ["db-design", "api-spec"], str(got))
+        pf = root / "paths.txt"
+        pf.write_text("db/migrations/001.sql\n", encoding="utf-8")
+        run_pack(["deliver", "--run", str(run), "--no-kb", "--paths-file", str(pf)], root)
+        got = (load_json(run / "deliver" / ARGS) or {}).get("deliverables") or {}
+        check("交付文件：deliver 只帶受影響的文件（migration → 資料庫設計文件）", [a["id"] for a in got.get("affected") or []] == ["db-design"] and got.get("summary", "").endswith("交付摘要.md"), str(got)[:300])
+        (teams / "deliverables.json").write_text("{壞掉", encoding="utf-8")
+        check("交付文件：設定壞掉時資料包照常產生", run_pack(["deliver", "--run", str(run), "--no-kb", "--paths-file", str(pf)], root) == 0 and "deliverables" not in (load_json(run / "deliver" / ARGS) or {}))
     print(f"pack selftest：{'全部通過' if ok else '有失敗'}（{n} 項）")
     return 0 if ok else 1
 

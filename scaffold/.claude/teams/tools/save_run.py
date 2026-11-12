@@ -55,6 +55,7 @@ run.json 的 recipe（stage plan 時寫入；沒有 recipe 的舊 run 一律當�
     python3 save_run.py close <run_dir> --by <誰> --at <ISO 時間>
         結案：recipe 要求後續 run（followup=true，例如 hotfix）時，沒有 followup_run 就拒絕。run.json 記 closed {by, at}。
     python3 save_run.py abandon <run_dir> --reason <為什麼取消> --by <誰> --at <ISO 時間>
+    python3 save_run.py archive <run_dir>          # 重寫 <run_dir>/archive/結案摘要.md（close、abandon 會自動寫）
         需求取消：run.json 記 abandoned {by, at, reason}；之後任何一段都不能核准，publish.py 也拒絕推送。
     python3 save_run.py status <run_dir> [--json]      # --json：給外部程式讀的快照（schemas/run-status.schema.json）
     python3 save_run.py --selftest       # 在暫存目錄跑，不碰 repo
@@ -881,6 +882,88 @@ def next_stage(data: dict) -> str | None:
                  and (st["status"] != "done" or (st.get("gate") and not st.get("approved")))), None)
 
 
+# ------------------------------------------------------------------ 結案摘要（過程保存）
+ARCHIVE_DIR = "archive"
+ARCHIVE_NAME = "結案摘要.md"
+
+
+def _clip(s, n: int = 300) -> str:
+    s = " ".join(str(s or "").split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def archive_text(run: Path, data: dict) -> str:
+    """結案或取消時的摘要：需求、recipe、各段核准、產物、驗證結果、未決問題、執行紀錄、後續。
+    只整理 run.json 與各段存下來的結果；沒有現在時間、不讀 transcript，同一個 run 重跑結果相同。"""
+    ab, cl = data.get("abandoned"), data.get("closed")
+    state = f"已取消（{ab.get('by')} @ {ab.get('at')}）：{_clip(ab.get('reason'), 200)}" if isinstance(ab, dict) else \
+        f"已結案（{cl.get('by')} @ {cl.get('at')}）" if isinstance(cl, dict) else "進行中"
+    out = [f"# {run.name} 摘要", "", "> 狀態、各段、核准、commit 取自 run.json；產物、驗證說明、過程中的問題是 agent 交件的原文，引用前請對照來源。", "",
+           f"- 狀態：{state}", f"- 事件：{data.get('event') or '—'}；目標：{data.get('target_repo') or data.get('target') or '—'}"]
+    if data.get("requirement"):
+        out.append(f"- 需求：{_clip(data.get('requirement'), 500)}")
+    r = data.get("recipe") if has_recipe(data) else None
+    if r:
+        stages = (r.get("resolved") or {}).get("stages") or []
+        out.append(f"- recipe：{r.get('name')}" + (f"＋{'、'.join(r.get('modifiers') or [])}" if r.get("modifiers") else "") + (f"；段：{' → '.join(stages)}" if stages else ""))
+    results: dict = {}
+    for name in data.get("stages") or {}:
+        try:
+            v = json.loads((run / f"{name}.json").read_text(encoding="utf-8"))
+            results[name] = v if isinstance(v, dict) else {}
+        except (OSError, ValueError):
+            results[name] = {}
+    out += ["", "## 各段", "", "| 段 | 狀態 | 核准 | 派工 | 缺件 |", "|---|---|---|---|---|"]
+    for name, st in (data.get("stages") or {}).items():
+        if st.get("status") == "skipped":
+            continue
+        ap = st.get("approved")
+        apt = f"{ap.get('by')} @ {ap.get('at')}" + (f"（{_clip(ap.get('note'), 80)}）" if ap.get("note") else "") if isinstance(ap, dict) else ("—" if not st.get("gate") else "未核准")
+        tr = results[name].get("trace") if isinstance(results[name].get("trace"), list) else []
+        lost = [str(x.get("label")) for x in tr if isinstance(x, dict) and x.get("ok") is not True and not x.get("superseded")]
+        out.append(f"| {name} | {st.get('status')} | {_md_cell(apt)} | {len(tr) or '—'} | {_md_cell('、'.join(lost[:8]) or '—')} |")
+    arts: list[str] = []
+    for name, res in results.items():
+        for env in envelopes(res):
+            for x in env.get("artifacts") or []:
+                if isinstance(x, str) and x and x not in arts:
+                    arts.append(x)
+    if arts:
+        out += ["", "## 產物", ""] + [f"- {_norm(x)}" for x in arts[:60]] + ([f"- …另有 {len(arts) - 60} 個"] if len(arts) > 60 else [])
+    heads = [(n, res.get(k)) for n, res in results.items() for k in ("head", "head_sha", "reviewed_sha", "commit") if isinstance(res.get(k), str) and res.get(k)]
+    if heads:
+        out += ["", "## commit", ""] + [f"- {n}：{v}" for n, v in dict(heads).items()]
+    crit = [c for env in envelopes(results.get("test") or {}) for c in ((env.get("payload") or {}).get("criteria") or []) if isinstance(c, dict)]
+    if crit:
+        count: dict = {}
+        for c in crit:
+            count[str(c.get("result"))] = count.get(str(c.get("result")), 0) + 1
+        out += ["", "## 驗證結果", "", "- " + "、".join(f"{k} {v} 條" for k, v in sorted(count.items()))]
+        out += [f"- 沒通過：{c.get('id')}（{c.get('result')}）{_clip(c.get('note') or c.get('evidence') or '', 120)}" for c in crit if c.get("result") != "pass"][:20]
+    qs = [(n, q) for n, res in results.items() for env in envelopes(res) for q in (env.get("open_questions") or []) if isinstance(q, dict) and q.get("question")]
+    if qs:
+        out += ["", "## 過程中提出的問題", ""] + [f"- （{n}）{_clip(q.get('question'), 200)}" + ("（blocking）" if q.get("blocking") else "") for n, q in qs[:30]]
+    idx = [f"{name}/{INDEX_NAME}" for name in data.get("stages") or {} if (run / name / INDEX_NAME).is_file()]
+    if idx:
+        out += ["", "## 執行紀錄", ""] + [f"- [{x}](../{x})" for x in idx]
+    out += ["", "## 成本", "", f"- 這份摘要不記 token（workflow 紀錄可能已經不在）。要看請跑：`python3 .claude/teams/tools/awf_cost.py --project . --run-dir <這個 run 的目錄>`"]
+    fr = data.get("followup_run")
+    if isinstance(fr, dict) and fr.get("run"):
+        out += ["", "## 後續", "", f"- 後續 run：{_norm(fr.get('run'))}" + (f"（{_clip(fr.get('note'), 120)}）" if fr.get("note") else "")]
+    return "\n".join(out) + "\n"
+
+
+def write_archive(run: Path, data: dict) -> str:
+    """寫 <run>/archive/結案摘要.md。這是輔助：寫不成只回警告文字（空字串＝成功），不影響結案或取消。"""
+    try:
+        d = run / ARCHIVE_DIR
+        d.mkdir(parents=True, exist_ok=True)
+        packlib._write_lf(d / ARCHIVE_NAME, archive_text(run, data))
+        return ""
+    except Exception as e:      # noqa: BLE001
+        return f"結案摘要沒寫成（{type(e).__name__}：{e}）；不影響結案，之後可以用 save_run.py archive <run_dir> 重寫"
+
+
 def status_snapshot(run: Path, data: dict) -> dict:
     """給外部程式讀的狀態快照（schemas/run-status.schema.json）。只整理 run.json 與各段結果的 trace，不做任何判定。"""
     stages = []
@@ -1256,6 +1339,8 @@ def main(argv: list[str]) -> int:
         data["closed"] = {"by": by, "at": at}
         dump(run, data)
         print(f"已結案：{by} @ {at}")
+        warn = write_archive(run, data)
+        print(f"注意：{warn}" if warn else f"摘要：{run.name}/{ARCHIVE_DIR}/{ARCHIVE_NAME}（知識庫下次 build 會收進去）", file=sys.stderr if warn else sys.stdout)
         return 0
     if cmd == "abandon":
         reason, by, at = opt(argv, "--reason"), opt(argv, "--by"), opt(argv, "--at")
@@ -1268,7 +1353,13 @@ def main(argv: list[str]) -> int:
         data["abandoned"] = {"by": by, "at": at, "reason": reason}
         dump(run, data)
         print(f"已取消：{by} @ {at}：{reason}；之後不能核准、不能推送")
+        warn = write_archive(run, data)
+        print(f"注意：{warn}" if warn else f"摘要：{run.name}/{ARCHIVE_DIR}/{ARCHIVE_NAME}", file=sys.stderr if warn else sys.stdout)
         return 0
+    if cmd == "archive":      # 重寫摘要（結案或取消之後內容有補，或當時沒寫成）；只讀 run.json 與各段結果
+        warn = write_archive(run, data)
+        print(f"注意：{warn}" if warn else f"已寫 {run.name}/{ARCHIVE_DIR}/{ARCHIVE_NAME}", file=sys.stderr if warn else sys.stdout)
+        return 1 if warn else 0
     if cmd == "status":
         if "--json" in argv:
             print(json.dumps(status_snapshot(run, data), ensure_ascii=False, indent=1))
@@ -1835,6 +1926,29 @@ def selftest() -> int:
         call("abandon", d_ab, "--by", "human", "--at", "t", "--reason", "不做了")
         j4, e4 = snap(d_ab)
         check("status --json：取消的 run 是 abandoned、沒有下一步", not e4 and j4["state"] == "abandoned" and j4["next"] is None, str(e4) + str(j4))
+        # C1：結案與取消都寫摘要（過程保存）
+        ar_feat, ar_ab = Path(d_feat) / ARCHIVE_DIR / ARCHIVE_NAME, Path(d_ab) / ARCHIVE_DIR / ARCHIVE_NAME
+        tx = ar_feat.read_text(encoding="utf-8") if ar_feat.is_file() else ""
+        check("摘要：close 寫 <run>/archive/結案摘要.md（狀態、recipe、各段與核准、成本的查法）",
+              "已結案（human @ t）" in tx and "recipe：feature" in tx and "| plan | done |" in tx and "| 段 | 狀態 | 核准 |" in tx and "awf_cost.py" in tx, tx[:600])
+        tx_ab = ar_ab.read_text(encoding="utf-8") if ar_ab.is_file() else ""
+        check("摘要：abandon 也寫，並記取消原因", "已取消（human @ t）：不做了" in tx_ab, tx_ab[:300])
+        check("摘要：可重現（重寫的內容逐字相同、沒有現在時間）", call("archive", d_feat)[0] == 0 and ar_feat.read_text(encoding="utf-8") == tx and archive_text(Path(d_feat), load(Path(d_feat))) == tx)
+        blocker = Path(d_wait) / ARCHIVE_DIR
+        blocker.write_text("佔住這個名字", encoding="utf-8")      # archive 是檔案不是目錄：寫不成
+        w_ar = write_archive(Path(d_wait), load(Path(d_wait)))
+        check("摘要：寫不成只回警告，不丟例外（輔助功能不擋結案）", "沒寫成" in w_ar, w_ar)
+        blocker.unlink()
+        rich = Path(new_run({"name": "docs"}, intent=with_root))
+        (rich / "test.json").write_text(json.dumps({"verifier": {"status": "done", "summary": "s", "artifacts": ["specs/demo/verifier.md"], "open_questions": [{"question": "要不要補英文版", "blocking": False}],
+                                                                 "payload": {"criteria": [{"id": "AC1", "result": "pass"}, {"id": "AC2", "result": "fail", "note": "匯出少一欄"}]}},
+                                                    "head": "abc1234", "trace": [{"label": "verify", "ok": True}, {"label": "review:bugs", "ok": False}]}), encoding="utf-8")
+        dr = load(rich)
+        dr["stages"].setdefault("test", {"status": "done", "gate": True})
+        dr["stages"]["test"].update({"status": "done"})
+        tr = archive_text(rich, dr)
+        check("摘要：帶出產物、commit、驗證結果（幾條通過、哪幾條沒過）、過程中的問題、缺件的派工",
+              "specs/demo/verifier.md" in tr and "test：abc1234" in tr and "fail 1 條" in tr and "pass 1 條" in tr and "AC2（fail）匯出少一欄" in tr and "要不要補英文版" in tr and "review:bugs" in tr, tr)
         call("stage", d_wait, j2["next"], stdin={"halted": True, "halt_reason": "x"})
         j5, e5 = snap(d_wait)
         check("status --json：halted 的段是 blocked", not e5 and j5["state"] == "blocked", str(e5) + str(j5))

@@ -543,5 +543,32 @@ const docs = await awfAgent(
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
 )
 
-// writer 不是審查類：缺件列進 missing（PR 說明與執行紀錄沒寫），閘門照常但要補寫
-return { stage: 'deliver', halted: false, missing: docs ? [] : ['write'], gate: '推 fork／開 PR 由使用者當下決定；寫入上游另需再次同意；agent 不核准、不合併', findings: kept, dropped, docs, recipe: RECIPE, next: NEXT_OF('deliver') ? `推送、開 PR 由使用者決定；PR 開好、使用者同意後跑 sdlc-${NEXT_OF('deliver')}` : '推送、開 PR 由使用者決定', trace: awfTrace() }
+// 交付文件（deliverables.py；資料包工具放進 args.deliverables）：只更新這次受影響的小節，另寫交付摘要。沒有交付設定時 args 沒有這個鍵，不多派
+const dStr = (v, n) => typeof v === 'string' ? v.replace(/[\r\n`]+/g, ' ').trim().slice(0, n) : ''
+const dRel = (v) => { const t = dStr(v, 200).replace(/\\/g, '/'); return t && !t.startsWith('/') && !/^[A-Za-z]:/.test(t) && !t.split('/').includes('..') ? t : '' }
+const DELIV_IN = A.deliverables && typeof A.deliverables === 'object' ? A.deliverables : {}
+const DELIV_DOCS = (Array.isArray(DELIV_IN.affected) ? DELIV_IN.affected : []).slice(0, 12)
+  .map((d) => ({ id: dStr(d && d.id, 64), title: dStr(d && d.title, 60), file: dRel(d && d.file), depth: d && d.depth === 'summary' ? 'summary' : 'full', why: dStr(d && d.why, 80),
+    sections: (Array.isArray(d && d.sections) ? d.sections : []).map((x) => dStr(x, 60)).filter(Boolean).slice(0, 12),
+    sources: (Array.isArray(d && d.sources) ? d.sources : []).map(dRel).filter(Boolean).slice(0, 12) }))
+  .filter((d) => d.title && d.file && d.sections.length)
+const DELIV_SUMMARY = dStr(DELIV_IN.summary, 300)
+let delivDocs = null
+if (DELIV_SUMMARY || DELIV_DOCS.length) {
+  const list = DELIV_DOCS.map((d) => `- ${d.title}（${d.file}；${d.depth === 'summary' ? '寫摘要' : '寫完整'}${d.why ? `；${d.why}` : ''}）：小節〈${d.sections.join('〉〈')}〉${d.sources.length ? `；原料 ${d.sources.join('、')}` : ''}`).join('\n')
+  delivDocs = await awfAgent(
+    `${CTX}\n\n## 派工單（交付文件）\n交付文件是給客戶看的正式文件，路徑相對於專案根目錄。` +
+    (DELIV_DOCS.length ? `這次的改動影響下列文件，只改列出的小節，其他小節與其他文件不動：\n${list}\n` : '這次沒有受影響的文件小節，只寫交付摘要。\n') +
+    `規則：\n1. 內容依原料寫（specs/${A.epic}/ 的 intent、design、spec、verifier，以及 git diff ${BASE}...HEAD 的實際改動）；找不到依據的寫「待確認」，不要編。\n` +
+    `2. 小節標題下一行的來源標記（awf:source 開頭的註解）要保留；用到標記以外的檔時，把它的路徑加進標記（分號分隔，相對 repo 根目錄）。不要改檔頭。\n` +
+    `3. 不寫內部編號、run 目錄、agent 名稱、個人信箱、本機路徑、內部網址與任何金鑰；用客戶讀得懂的話。\n` +
+    (DELIV_SUMMARY ? `4. 另寫交付摘要到 ${DELIV_SUMMARY}：三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」，同樣遵守第 3 點。\n` : '') +
+    `${DELIV_SUMMARY ? 5 : 4}. 寫完跑 python3 .claude/teams/tools/deliverables.py check --run ${A.run_dir}，隱私字串、禁用字、失效連結修到沒有；「還沒記錄來源」是正常的（之後由主 session 記錄），不用處理。payload 用 docs。`,
+    { label: 'deliverables', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
+  )
+}
+const DELIV_OUT = (DELIV_SUMMARY || DELIV_DOCS.length) ? { deliverables: { docs: delivDocs, updated: DELIV_DOCS.map((d) => ({ id: d.id, file: d.file, sections: d.sections })), summary: DELIV_SUMMARY || null } } : {}
+const WRITE_MISSING = [...(docs ? [] : ['write']), ...((DELIV_SUMMARY || DELIV_DOCS.length) && !delivDocs ? ['deliverables'] : [])]
+
+// writer 不是審查類：缺件列進 missing（PR 說明、執行紀錄或交付文件沒寫），閘門照常但要補寫
+return { stage: 'deliver', halted: false, missing: WRITE_MISSING, ...DELIV_OUT, gate: '推 fork／開 PR 由使用者當下決定；寫入上游另需再次同意；agent 不核准、不合併', findings: kept, dropped, docs, recipe: RECIPE, next: NEXT_OF('deliver') ? `推送、開 PR 由使用者決定；PR 開好、使用者同意後跑 sdlc-${NEXT_OF('deliver')}` : '推送、開 PR 由使用者決定', trace: awfTrace() }

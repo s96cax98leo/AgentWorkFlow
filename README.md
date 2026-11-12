@@ -8,7 +8,7 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 - **其他事件**（簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看）各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
 
-所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python 標準庫，在 macOS、Linux、Windows（PowerShell）上都能執行。目前版本 **0.5.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
+所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python 標準庫，在 macOS、Linux、Windows（PowerShell）上都能執行。目前版本 **0.6.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 做法
 
@@ -286,6 +286,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | `/agent-workflow:cost`、花了多少 token | `cost` skill | run 目錄（可省略） |
 | `/agent-workflow:kb`、文件裡哪裡有寫 | `kb` skill | 要查的問題 |
 | `/agent-workflow:doctor`、檢查安裝 | `doctor` skill | — |
+| `/agent-workflow:deliverables`、要交哪些文件、結案前盤點 | `deliverables` skill | configure、status、check 或要做的事 |
 | 比較方案、A 還是 B | `team-debate` skill | — |
 | 分析某個網站 | `site-report` skill | 網址 |
 

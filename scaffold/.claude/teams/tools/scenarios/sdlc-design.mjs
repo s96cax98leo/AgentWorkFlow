@@ -11,6 +11,20 @@ export default [
       expect: (r) => (r.labels.includes('analyze:system-design') ? [] : [`沒有派出 system-design lens：${r.labels.join(',')}`]),
     },
     {
+      // C2：有交付設定時，design 的派工單要求 design.md 留下交付文件需要的小節
+      name: '交付文件：design 的派工單依型錄要求小節',
+      args: { deliverables: { design_sections: [{ id: 'db-design', title: '資料庫設計文件', sections: ['資料設計'] }, { id: 'api-spec', title: 'API 規格書', sections: ['API 設計'] }] } },
+      expect: (r) => {
+        const all = Object.entries(r.prompts).filter(([k, v]) => v && !k.startsWith('ext:'))
+        const bad = all.filter(([, v]) => !/交付文件：這個專案要交下列文件.*資料庫設計文件 →〈資料設計〉；API 規格書 →〈API 設計〉/.test(v)).map(([k]) => k)
+        return [...(all.length ? [] : ['沒有任何派工']), ...(bad.length ? [`派工單沒帶出交付文件要的小節：${bad.join(',')}`] : [])]
+      },
+    },
+    {
+      name: '交付文件：沒有交付設定時派工單不變',
+      expect: (r) => Object.values(r.prompts).some((v) => v && /交付文件：這個專案要交/.test(v)) ? ['沒有交付設定不該出現交付文件的要求'] : [],
+    },
+    {
       name: '限制文件：design 段的派工單帶出對得上的限制與對照表格式',
       profile: { constraints: [
         { id: 'arch', file: 'ARCHITECTURE.md', note: '分層與模組邊界', stages: ['design'], trace: 'table' },

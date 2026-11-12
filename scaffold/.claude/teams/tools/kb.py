@@ -174,17 +174,39 @@ def default_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def repos_dir(root_p: Path) -> str:
-    """guard.config.json 的 repos_dir（相對路徑、不含 ..）；沒有設定檔、讀不懂或值不合理都回空字串。"""
+def guard_dir(root_p: Path, key: str, default: str = "") -> str:
+    """guard.config.json 的目錄設定（相對路徑、不含 ..）；沒有設定檔或沒寫回 default，讀不懂或值不合理回空字串。"""
     try:
         data = json.loads((root_p / ".claude" / "teams" / "guard.config.json").read_text(encoding="utf-8", errors="replace"))
-        raw = to_posix(str(data.get("repos_dir") or "")) if isinstance(data, dict) else ""
-    except (OSError, ValueError):
+    except OSError:
+        return default
+    except ValueError:
         return ""
-    rd = raw.rstrip("/")
+    if not isinstance(data, dict):
+        return ""
+    if key not in data:
+        return default
+    rd = to_posix(str(data.get(key) or "")).rstrip("/")
     if not rd or rd.startswith(("{" * 2, "/")) or os.path.isabs(rd) or re.match(r"^[A-Za-z]:", rd) or any(seg in ("..", ".", "") or any(c in seg for c in "*?") for seg in rd.split("/")):
         return ""
     return rd
+
+
+def repos_dir(root_p: Path) -> str:
+    """guard.config.json 的 repos_dir；沒有設定檔、讀不懂或值不合理都回空字串。"""
+    return guard_dir(root_p, "repos_dir")
+
+
+# 過程保存：結案摘要（save_run.py close／abandon 寫的，team agent 寫不到）。只在 runs_dir 底下真的有 run 時才加，
+# 沒跑過流程的專案來源不變。調研的執行紀錄不收：那是 agent 寫的、還沒經過 skeptic，結論已經濃縮進結案摘要。
+RUN_SOURCES = ("*/archive/結案摘要.md",)
+
+
+def run_sources(root_p: Path) -> list:
+    rd = guard_dir(root_p, "runs_dir", "_tpm/runs")
+    if not rd or not (root_p / rd).is_dir():
+        return []
+    return ["%s/%s" % (rd, g) for g in RUN_SOURCES]
 
 
 def load_config(root=None, profile=None, sources=None, exclude=None, kb_dir=None) -> dict:
@@ -216,6 +238,7 @@ def load_config(root=None, profile=None, sources=None, exclude=None, kb_dir=None
         rd = repos_dir(root_p)
         if rd:
             src += [x for x in ("%s/*/%s" % (rd, s0) for s0 in list(src)) if x not in src]
+        src += [x for x in run_sources(root_p) if x not in src]
     exc = str_list(exclude if exclude else know.get("exclude"), [])
     d = kb_dir or know.get("dir") or DEFAULT_DIR
     d_p = Path(d) if not isinstance(d, str) else Path(d.replace("\\", "/") if not os.path.isabs(d) else d)
@@ -1345,6 +1368,25 @@ def _selftest() -> int:
         write(root / ".claude/teams/guard.config.json", "{壞掉")
         check("repos_dir：設定檔讀不懂時照預設", load_config(str(root))["sources"] == DEFAULT_SOURCES)
         (root / ".claude/teams/guard.config.json").unlink()
+
+        # 過程保存：runs_dir 底下的結案摘要與調研結論也進索引（有 run 才加）
+        check("過程保存：沒有 runs_dir 時來源不變", load_config(str(root))["sources"] == DEFAULT_SOURCES)
+        write(root / "_tpm/runs/r1/archive/結案摘要.md", "# 結案摘要\n\n## 需求\n\n匯出的獨特詞 okapinumbat。\n")
+        write(root / "_tpm/runs/r1/plan/research-code.md", "# 調研\n\n結論的獨特詞 tapirwombat。\n")
+        write(root / "_tpm/runs/r1/plan/pack.md", "# 資料包\n\nokapinumbat tapirwombat\n")
+        cfg = load_config(str(root))
+        write(root / "_tpm/runs/r1/archive/notes.md", "# 筆記\n\nokapinumbat 假的摘要。\n")
+        check("過程保存：預設來源只加結案摘要（調研紀錄、archive 裡的其他檔不收）", "_tpm/runs/*/archive/結案摘要.md" in cfg["sources"] and not any("research" in x or x.endswith("archive/*.md") for x in cfg["sources"]), str(cfg["sources"]))
+        build(str(root))
+        check("過程保存：查得到結案摘要，archive 裡的其他檔不進索引", [r["path"] for r in query(str(root), "okapinumbat")] == ["_tpm/runs/r1/archive/結案摘要.md"])
+        check("過程保存：調研紀錄與資料包不進索引", query(str(root), "tapirwombat") == [])
+        write(root / ".claude/teams/guard.config.json", json.dumps({"runs_dir": "work/runs"}))
+        check("過程保存：runs_dir 取自 guard.config（那裡沒有 run 就不加）", load_config(str(root))["sources"] == DEFAULT_SOURCES)
+        check("過程保存：呼叫端自己給 sources 時不加", load_config(str(root), sources=["a.md"])["sources"] == ["a.md"])
+        (root / ".claude/teams/guard.config.json").unlink()
+        import shutil as _sh
+        _sh.rmtree(str(root / "_tpm/runs"))
+        build(str(root))
         shutil.rmtree(str(root / "repos"))
         build(str(root))
         code, out = cli(["build", "--root", str(root), "--sources", "README.md,docs/**/*.md", "docs/*.txt", "--dir", str(Path(td) / "kb3")])

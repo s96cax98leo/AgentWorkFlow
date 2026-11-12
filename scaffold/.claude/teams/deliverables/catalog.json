@@ -1,0 +1,1452 @@
+{
+ "version": 1,
+ "_說明": "交付文件型錄。專案要交哪些由 .claude/teams/deliverables.json 決定（deliverables.py configure 協助產生）；這裡沒列的文件可以在交付設定裡自訂。source：auto＝可以從 SDLC 產物產生；assisted＝工具給範本與原料、人補內容；external＝外部證據，只收錄與檢查有沒有附。on＝哪類改動會影響它（改動分類、mod:<modifier>、path:<glob>、stage:<段>、recipe:<名>、event:<事件>）。",
+ "groups": [
+  {
+   "id": "pm",
+   "title": "專案管理"
+  },
+  {
+   "id": "req",
+   "title": "需求"
+  },
+  {
+   "id": "design",
+   "title": "分析設計"
+  },
+  {
+   "id": "dev",
+   "title": "開發"
+  },
+  {
+   "id": "test",
+   "title": "測試"
+  },
+  {
+   "id": "release",
+   "title": "上線"
+  },
+  {
+   "id": "ops",
+   "title": "維運與移交"
+  },
+  {
+   "id": "compliance",
+   "title": "合規"
+  }
+ ],
+ "documents": [
+  {
+   "id": "project-plan",
+   "title": "專案計畫書",
+   "group": "pm",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "專案目標與範圍",
+    "里程碑與時程",
+    "組織與分工",
+    "溝通與會議機制",
+    "風險與對策"
+   ],
+   "sources": [
+    "specs/**/intent.md"
+   ],
+   "aliases": [
+    "專案管理計畫",
+    "工作計畫書"
+   ]
+  },
+  {
+   "id": "wbs",
+   "title": "工作分解與時程表",
+   "group": "pm",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "工作項目",
+    "時程",
+    "相依關係"
+   ],
+   "sources": [
+    "specs/**/plan.md"
+   ],
+   "aliases": [
+    "WBS",
+    "時程表"
+   ]
+  },
+  {
+   "id": "weekly-report",
+   "title": "進度週報",
+   "group": "pm",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "本期完成",
+    "進行中",
+    "風險與待決事項",
+    "下期計畫"
+   ],
+   "sources": [
+    "specs/**/progress.md"
+   ],
+   "on": [
+    "stage:deliver"
+   ],
+   "aliases": [
+    "週報",
+    "進度報告"
+   ]
+  },
+  {
+   "id": "meeting-minutes",
+   "title": "會議紀錄",
+   "group": "pm",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "決議",
+    "討論摘要",
+    "交辦事項"
+   ],
+   "on": [
+    "event:meeting"
+   ],
+   "aliases": [
+    "會議記錄"
+   ]
+  },
+  {
+   "id": "risk-register",
+   "title": "風險與議題清單",
+   "group": "pm",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "風險",
+    "議題",
+    "對策與負責人"
+   ],
+   "sources": [
+    "specs/**/intent.md"
+   ],
+   "aliases": [
+    "風險登錄表"
+   ]
+  },
+  {
+   "id": "change-log",
+   "title": "變更紀錄",
+   "group": "pm",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "變更項目",
+    "原因與影響",
+    "核准紀錄"
+   ],
+   "sources": [
+    "specs/**/intent.md"
+   ],
+   "on": [
+    "recipe:change",
+    "event:reqs-change"
+   ],
+   "aliases": [
+    "變更管理紀錄",
+    "需求變更單"
+   ]
+  },
+  {
+   "id": "closure-report",
+   "title": "結案報告",
+   "group": "pm",
+   "source": "assisted",
+   "when": "close",
+   "sections": [
+    "交付成果",
+    "範圍與時程回顧",
+    "驗收結果",
+    "未完成事項與後續建議"
+   ],
+   "aliases": [
+    "專案結案報告"
+   ]
+  },
+  {
+   "id": "requirements-spec",
+   "title": "需求規格書",
+   "group": "req",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "背景與目標",
+    "功能需求",
+    "非功能需求",
+    "不做的範圍"
+   ],
+   "sources": [
+    "specs/**/intent.md"
+   ],
+   "on": [
+    "stage:plan"
+   ],
+   "aliases": [
+    "SRS",
+    "需求說明書"
+   ]
+  },
+  {
+   "id": "biz-rules",
+   "title": "業務規則文件",
+   "group": "req",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "業務規則",
+    "驗收條件",
+    "例外與邊界情況",
+    "決策紀錄"
+   ],
+   "sources": [
+    "specs/**/intent.md",
+    "specs/**/spec.md"
+   ],
+   "on": [
+    "stage:plan"
+   ],
+   "aliases": [
+    "商業規則",
+    "Business Rules"
+   ]
+  },
+  {
+   "id": "user-stories",
+   "title": "使用者故事清單",
+   "group": "req",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "角色",
+    "故事與驗收條件"
+   ],
+   "sources": [
+    "specs/**/intent.md",
+    "specs/**/spec.md"
+   ],
+   "on": [
+    "stage:plan"
+   ],
+   "aliases": [
+    "User Story",
+    "Story 清單"
+   ]
+  },
+  {
+   "id": "rtm",
+   "title": "需求追溯矩陣",
+   "group": "req",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "追溯矩陣"
+   ],
+   "sources": [
+    "specs/**/spec.md",
+    "specs/**/verifier*.md"
+   ],
+   "on": [
+    "stage:test"
+   ],
+   "aliases": [
+    "RTM",
+    "需求追蹤表",
+    "需求追溯表"
+   ]
+  },
+  {
+   "id": "use-cases",
+   "title": "使用案例說明",
+   "group": "req",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "參與者",
+    "主要流程",
+    "替代與例外流程"
+   ],
+   "sources": [
+    "specs/**/intent.md",
+    "specs/**/spec.md"
+   ],
+   "aliases": [
+    "Use Case"
+   ]
+  },
+  {
+   "id": "glossary",
+   "title": "名詞對照表",
+   "group": "req",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "名詞與定義"
+   ],
+   "sources": [
+    "specs/**/intent.md",
+    "specs/**/spec.md"
+   ],
+   "aliases": [
+    "術語表",
+    "詞彙表"
+   ]
+  },
+  {
+   "id": "func-spec",
+   "title": "功能規格書",
+   "group": "design",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "功能清單",
+    "各功能說明",
+    "畫面與操作流程",
+    "驗收條件對照"
+   ],
+   "sources": [
+    "specs/**/spec.md",
+    "specs/**/design.md"
+   ],
+   "on": [
+    "stage:design"
+   ],
+   "design_sections": [
+    "功能說明"
+   ],
+   "aliases": [
+    "功能設計書",
+    "FSD"
+   ]
+  },
+  {
+   "id": "sys-arch",
+   "title": "系統架構設計書",
+   "group": "design",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "系統脈絡",
+    "元件與責任",
+    "資料流",
+    "非功能設計",
+    "架構決策"
+   ],
+   "sources": [
+    "specs/**/design.md",
+    "docs/adr/**/*.md",
+    "docs/**/adr-*.md"
+   ],
+   "on": [
+    "mod:large",
+    "path:docs/adr/**",
+    "path:docs/**/adr-*.md"
+   ],
+   "design_sections": [
+    "系統設計"
+   ],
+   "suggest": {
+    "always": true,
+    "reason": "多數專案都要交一份系統架構說明"
+   },
+   "aliases": [
+    "系統設計書",
+    "架構設計",
+    "SA"
+   ]
+  },
+  {
+   "id": "db-design",
+   "title": "資料庫設計文件",
+   "group": "design",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "資料表與欄位",
+    "關聯與索引",
+    "資料遷移",
+    "資料保存與清理"
+   ],
+   "sources": [
+    "specs/**/design.md",
+    "**/migrations/**",
+    "**/migration/**",
+    "**/*.sql",
+    "**/schema.prisma"
+   ],
+   "on": [
+    "migration",
+    "mod:migration"
+   ],
+   "section_on": {
+    "資料表與欄位": [
+     "migration",
+     "mod:migration"
+    ],
+    "關聯與索引": [
+     "migration",
+     "mod:migration"
+    ],
+    "資料遷移": [
+     "migration",
+     "mod:migration"
+    ]
+   },
+   "design_sections": [
+    "資料設計"
+   ],
+   "suggest": {
+    "paths": [
+     "**/migrations/**",
+     "**/migration/**",
+     "**/*.sql",
+     "**/schema.prisma"
+    ],
+    "modifiers": [
+     "migration"
+    ],
+    "reason": "repo 有資料庫遷移或 schema 檔"
+   },
+   "aliases": [
+    "資料庫規格",
+    "DB Schema",
+    "ERD"
+   ]
+  },
+  {
+   "id": "api-spec",
+   "title": "API 規格書",
+   "group": "design",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "端點清單",
+    "請求與回應",
+    "錯誤碼",
+    "認證與權限",
+    "版本與相容性"
+   ],
+   "sources": [
+    "specs/**/design.md",
+    "**/openapi*.y*ml",
+    "**/openapi*.json",
+    "**/swagger*.y*ml",
+    "**/swagger*.json",
+    "**/*.proto",
+    "**/routes/**",
+    "**/controllers/**"
+   ],
+   "on": [
+    "mod:public_api",
+    "path:**/openapi*.y*ml",
+    "path:**/openapi*.json",
+    "path:**/swagger*.y*ml",
+    "path:**/swagger*.json",
+    "path:**/*.proto",
+    "path:**/routes/**",
+    "path:**/controllers/**"
+   ],
+   "design_sections": [
+    "API 設計"
+   ],
+   "suggest": {
+    "paths": [
+     "**/openapi*.y*ml",
+     "**/openapi*.json",
+     "**/swagger*.y*ml",
+     "**/swagger*.json",
+     "**/*.proto"
+    ],
+    "modifiers": [
+     "public_api"
+    ],
+    "reason": "repo 有 API 定義檔，或用過 public_api"
+   },
+   "aliases": [
+    "介面規格",
+    "API 文件",
+    "OpenAPI"
+   ]
+  },
+  {
+   "id": "batch-design",
+   "title": "批次作業設計文件",
+   "group": "design",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "作業清單",
+    "排程與觸發",
+    "輸入輸出",
+    "失敗處理與重跑"
+   ],
+   "sources": [
+    "specs/**/design.md",
+    "**/jobs/**",
+    "**/cron/**",
+    "**/schedulers/**",
+    "**/batch/**",
+    "**/*crontab*",
+    "**/workers/**"
+   ],
+   "on": [
+    "path:**/jobs/**",
+    "path:**/cron/**",
+    "path:**/schedulers/**",
+    "path:**/batch/**",
+    "path:**/*crontab*",
+    "path:**/workers/**"
+   ],
+   "design_sections": [
+    "批次作業設計"
+   ],
+   "suggest": {
+    "paths": [
+     "**/jobs/**",
+     "**/cron/**",
+     "**/schedulers/**",
+     "**/batch/**",
+     "**/*crontab*",
+     "**/workers/**"
+    ],
+    "reason": "repo 有排程或 job 定義"
+   },
+   "aliases": [
+    "排程設計",
+    "Job 設計"
+   ]
+  },
+  {
+   "id": "ui-spec",
+   "title": "畫面規格與 UI 規範",
+   "group": "design",
+   "source": "assisted",
+   "when": "run",
+   "sections": [
+    "畫面清單",
+    "版面與元件",
+    "互動與狀態",
+    "無障礙"
+   ],
+   "sources": [
+    "specs/**/design.md",
+    "specs/**/design-review.md"
+   ],
+   "on": [
+    "mod:ui"
+   ],
+   "design_sections": [
+    "畫面設計"
+   ],
+   "suggest": {
+    "paths": [
+     "**/*.tsx",
+     "**/*.vue",
+     "**/*.svelte"
+    ],
+    "modifiers": [
+     "ui"
+    ],
+    "reason": "repo 有畫面元件，或用過 ui"
+   },
+   "aliases": [
+    "UI 設計",
+    "畫面設計書",
+    "Wireframe"
+   ]
+  },
+  {
+   "id": "integration-spec",
+   "title": "外部系統整合規格",
+   "group": "design",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "整合對象",
+    "介面與資料格式",
+    "錯誤處理與重試",
+    "測試方式"
+   ],
+   "sources": [
+    "specs/**/design.md"
+   ],
+   "on": [
+    "mod:public_api"
+   ],
+   "aliases": [
+    "介接規格",
+    "系統介接"
+   ]
+  },
+  {
+   "id": "security-design",
+   "title": "安全設計說明",
+   "group": "design",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "威脅模型",
+    "認證與授權",
+    "資料保護",
+    "稽核與紀錄"
+   ],
+   "sources": [
+    "specs/**/design.md",
+    "specs/**/security-review.md"
+   ],
+   "on": [
+    "mod:security"
+   ],
+   "design_sections": [
+    "安全設計"
+   ],
+   "suggest": {
+    "modifiers": [
+     "security"
+    ],
+    "reason": "用過 security"
+   },
+   "aliases": [
+    "資安設計"
+   ]
+  },
+  {
+   "id": "adr-index",
+   "title": "架構決策紀錄索引",
+   "group": "design",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "決策清單"
+   ],
+   "sources": [
+    "docs/adr/**/*.md",
+    "docs/**/adr-*.md"
+   ],
+   "on": [
+    "path:docs/adr/**",
+    "path:docs/**/adr-*.md"
+   ],
+   "suggest": {
+    "paths": [
+     "docs/adr/**/*.md",
+     "docs/**/adr-*.md"
+    ],
+    "reason": "repo 有 ADR"
+   },
+   "aliases": [
+    "ADR"
+   ]
+  },
+  {
+   "id": "dev-guide",
+   "title": "開發環境與建置說明",
+   "group": "dev",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "環境需求",
+    "安裝與啟動",
+    "建置與測試指令",
+    "常見問題"
+   ],
+   "sources": [
+    "README.md",
+    "CONTRIBUTING.md"
+   ],
+   "on": [
+    "manifest"
+   ],
+   "aliases": [
+    "開發手冊",
+    "建置手冊"
+   ]
+  },
+  {
+   "id": "coding-standards",
+   "title": "程式撰寫規範",
+   "group": "dev",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "命名與風格",
+    "分支與提交",
+    "審查規則"
+   ],
+   "sources": [
+    "CONTRIBUTING.md"
+   ],
+   "aliases": [
+    "Coding Standard",
+    "開發規範"
+   ]
+  },
+  {
+   "id": "source-structure",
+   "title": "程式結構說明",
+   "group": "dev",
+   "source": "auto",
+   "when": "milestone",
+   "sections": [
+    "目錄結構",
+    "主要模組",
+    "相依關係"
+   ],
+   "sources": [
+    "specs/**/design.md"
+   ],
+   "on": [
+    "mod:large"
+   ],
+   "aliases": [
+    "原始碼說明",
+    "程式架構"
+   ]
+  },
+  {
+   "id": "third-party",
+   "title": "第三方元件與授權清單",
+   "group": "dev",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "元件清單",
+    "版本與授權"
+   ],
+   "sources": [
+    "package.json",
+    "requirements*.txt",
+    "pyproject.toml",
+    "go.mod",
+    "pom.xml",
+    "Cargo.toml",
+    "Gemfile"
+   ],
+   "on": [
+    "manifest"
+   ],
+   "suggest": {
+    "paths": [
+     "package.json",
+     "requirements*.txt",
+     "pyproject.toml",
+     "go.mod",
+     "pom.xml",
+     "Cargo.toml",
+     "Gemfile"
+    ],
+    "reason": "repo 有相依套件清單"
+   },
+   "aliases": [
+    "開源授權清單",
+    "SBOM",
+    "套件清單"
+   ]
+  },
+  {
+   "id": "dev-record",
+   "title": "功能開發紀錄",
+   "group": "dev",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "開發紀錄"
+   ],
+   "on": [
+    "stage:deliver"
+   ],
+   "aliases": [
+    "開發日誌"
+   ]
+  },
+  {
+   "id": "code-review-record",
+   "title": "程式碼審查紀錄",
+   "group": "dev",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "審查範圍",
+    "發現與處理"
+   ],
+   "on": [
+    "stage:deliver"
+   ],
+   "aliases": [
+    "Code Review 紀錄"
+   ]
+  },
+  {
+   "id": "test-plan",
+   "title": "測試計畫",
+   "group": "test",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "測試範圍",
+    "測試策略",
+    "環境與資料",
+    "進入與結束條件"
+   ],
+   "sources": [
+    "specs/**/spec.md"
+   ],
+   "aliases": [
+    "測試計畫書"
+   ]
+  },
+  {
+   "id": "test-cases",
+   "title": "測試案例",
+   "group": "test",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "案例清單",
+    "步驟與預期結果"
+   ],
+   "sources": [
+    "specs/**/spec.md",
+    "specs/**/verifier*.md"
+   ],
+   "on": [
+    "test",
+    "stage:test"
+   ],
+   "aliases": [
+    "測試個案",
+    "Test Case"
+   ]
+  },
+  {
+   "id": "test-report",
+   "title": "測試報告",
+   "group": "test",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "測試範圍",
+    "結果摘要",
+    "未通過與未驗證項目",
+    "證據"
+   ],
+   "sources": [
+    "specs/**/verifier*.md"
+   ],
+   "on": [
+    "stage:test"
+   ],
+   "aliases": [
+    "測試結果報告",
+    "驗證報告"
+   ]
+  },
+  {
+   "id": "uat-record",
+   "title": "使用者驗收紀錄",
+   "group": "test",
+   "source": "external",
+   "when": "milestone",
+   "sections": [
+    "驗收項目",
+    "結果與簽核"
+   ],
+   "aliases": [
+    "UAT",
+    "驗收測試紀錄",
+    "驗收單"
+   ]
+  },
+  {
+   "id": "perf-test-report",
+   "title": "效能測試報告",
+   "group": "test",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "測試情境",
+    "量測結果",
+    "瓶頸與建議"
+   ],
+   "on": [
+    "recipe:perf"
+   ],
+   "aliases": [
+    "壓力測試報告",
+    "負載測試報告"
+   ]
+  },
+  {
+   "id": "defect-list",
+   "title": "缺失與修正清單",
+   "group": "test",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "缺失",
+    "修正與複測結果"
+   ],
+   "sources": [
+    "specs/**/verifier*.md"
+   ],
+   "on": [
+    "recipe:bugfix",
+    "recipe:hotfix"
+   ],
+   "aliases": [
+    "Bug 清單",
+    "問題追蹤表"
+   ]
+  },
+  {
+   "id": "release-notes",
+   "title": "版本說明",
+   "group": "release",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "新增與變更",
+    "修正",
+    "已知問題",
+    "升級注意事項"
+   ],
+   "sources": [
+    "CHANGELOG.md"
+   ],
+   "on": [
+    "stage:deliver"
+   ],
+   "aliases": [
+    "Release Notes",
+    "版本發行說明"
+   ]
+  },
+  {
+   "id": "delivery-summary",
+   "title": "交付摘要",
+   "group": "release",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "這次交付了什麼",
+    "怎麼驗證",
+    "需要客戶配合的事"
+   ],
+   "on": [
+    "stage:deliver"
+   ],
+   "aliases": [
+    "交付說明"
+   ]
+  },
+  {
+   "id": "deploy-guide",
+   "title": "部署手冊",
+   "group": "release",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "環境與前置條件",
+    "部署步驟",
+    "驗證方式",
+    "設定項目"
+   ],
+   "sources": [
+    ".github/workflows/**",
+    "**/Dockerfile",
+    "**/docker-compose*.y*ml",
+    "**/k8s/**",
+    "**/helm/**",
+    "**/*.tf"
+   ],
+   "on": [
+    "path:.github/workflows/**",
+    "path:**/Dockerfile",
+    "path:**/docker-compose*.y*ml",
+    "path:**/k8s/**",
+    "path:**/helm/**",
+    "path:**/*.tf"
+   ],
+   "suggest": {
+    "paths": [
+     ".github/workflows/**",
+     "**/Dockerfile",
+     "**/docker-compose*.y*ml",
+     "**/k8s/**",
+     "**/helm/**",
+     "**/*.tf"
+    ],
+    "reason": "repo 有部署或 CI 設定"
+   },
+   "aliases": [
+    "安裝手冊",
+    "上線手冊",
+    "部署文件"
+   ]
+  },
+  {
+   "id": "rollback-plan",
+   "title": "還原計畫",
+   "group": "release",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "觸發條件",
+    "還原步驟",
+    "資料還原",
+    "驗證方式"
+   ],
+   "on": [
+    "migration",
+    "mod:migration"
+   ],
+   "aliases": [
+    "Rollback 計畫",
+    "回復計畫"
+   ]
+  },
+  {
+   "id": "cutover-plan",
+   "title": "上線切換計畫",
+   "group": "release",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "切換時程",
+    "步驟與負責人",
+    "資料轉換",
+    "應變方案"
+   ],
+   "aliases": [
+    "上線計畫",
+    "轉換計畫"
+   ]
+  },
+  {
+   "id": "data-migration-report",
+   "title": "資料轉換報告",
+   "group": "release",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "轉換範圍",
+    "筆數核對",
+    "例外資料處理"
+   ],
+   "sources": [
+    "**/migrations/**",
+    "**/migration/**",
+    "**/*.sql",
+    "**/schema.prisma"
+   ],
+   "on": [
+    "migration",
+    "mod:migration"
+   ],
+   "aliases": [
+    "資料移轉報告"
+   ]
+  },
+  {
+   "id": "release-checklist",
+   "title": "上線檢查表",
+   "group": "release",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "上線前",
+    "上線中",
+    "上線後"
+   ],
+   "aliases": [
+    "上線查核表"
+   ]
+  },
+  {
+   "id": "ops-manual",
+   "title": "維運手冊",
+   "group": "ops",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "系統概觀",
+    "日常作業",
+    "監控與告警",
+    "故障排除",
+    "聯絡窗口"
+   ],
+   "sources": [
+    "specs/**/design.md",
+    ".github/workflows/**",
+    "**/Dockerfile",
+    "**/docker-compose*.y*ml",
+    "**/k8s/**",
+    "**/helm/**",
+    "**/*.tf"
+   ],
+   "aliases": [
+    "維運作業手冊",
+    "操作維護手冊"
+   ]
+  },
+  {
+   "id": "user-manual",
+   "title": "使用者操作手冊",
+   "group": "ops",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "功能導覽",
+    "操作步驟",
+    "常見問題"
+   ],
+   "sources": [
+    "specs/**/spec.md"
+   ],
+   "on": [
+    "mod:ui"
+   ],
+   "aliases": [
+    "使用手冊",
+    "操作手冊"
+   ]
+  },
+  {
+   "id": "admin-manual",
+   "title": "系統管理者手冊",
+   "group": "ops",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "帳號與權限",
+    "系統設定",
+    "資料維護"
+   ],
+   "sources": [
+    "specs/**/spec.md"
+   ],
+   "aliases": [
+    "管理者手冊"
+   ]
+  },
+  {
+   "id": "training-material",
+   "title": "教育訓練教材",
+   "group": "ops",
+   "source": "assisted",
+   "when": "close",
+   "sections": [
+    "課程大綱",
+    "教材內容",
+    "練習"
+   ],
+   "sources": [
+    "specs/**/spec.md"
+   ],
+   "aliases": [
+    "訓練教材",
+    "教育訓練簡報"
+   ]
+  },
+  {
+   "id": "handover-doc",
+   "title": "移交文件",
+   "group": "ops",
+   "source": "assisted",
+   "when": "close",
+   "sections": [
+    "移交項目清單",
+    "帳號與存取",
+    "未結事項",
+    "後續建議"
+   ],
+   "aliases": [
+    "交接文件",
+    "移交清單"
+   ]
+  },
+  {
+   "id": "backup-dr",
+   "title": "備份與災難復原計畫",
+   "group": "ops",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "備份範圍與頻率",
+    "復原程序",
+    "演練紀錄"
+   ],
+   "aliases": [
+    "DR 計畫",
+    "備援計畫"
+   ]
+  },
+  {
+   "id": "monitoring-spec",
+   "title": "監控與告警說明",
+   "group": "ops",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "監控項目",
+    "門檻與通知",
+    "處理流程"
+   ],
+   "sources": [
+    ".github/workflows/**",
+    "**/Dockerfile",
+    "**/docker-compose*.y*ml",
+    "**/k8s/**",
+    "**/helm/**",
+    "**/*.tf"
+   ],
+   "aliases": [
+    "監控文件"
+   ]
+  },
+  {
+   "id": "incident-report",
+   "title": "事件報告",
+   "group": "ops",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "事件經過",
+    "影響範圍",
+    "原因",
+    "處置與預防"
+   ],
+   "on": [
+    "event:post-merge",
+    "recipe:hotfix",
+    "recipe:revert"
+   ],
+   "aliases": [
+    "事故報告",
+    "異常報告"
+   ]
+  },
+  {
+   "id": "vuln-scan-report",
+   "title": "弱點掃描報告",
+   "group": "compliance",
+   "source": "external",
+   "when": "milestone",
+   "sections": [
+    "掃描範圍",
+    "結果與修補"
+   ],
+   "aliases": [
+    "弱掃報告",
+    "弱點掃描"
+   ]
+  },
+  {
+   "id": "pentest-report",
+   "title": "滲透測試報告",
+   "group": "compliance",
+   "source": "external",
+   "when": "milestone",
+   "sections": [
+    "測試範圍",
+    "發現與修補"
+   ],
+   "aliases": [
+    "滲透測試"
+   ]
+  },
+  {
+   "id": "source-scan-report",
+   "title": "原始碼檢測報告",
+   "group": "compliance",
+   "source": "external",
+   "when": "milestone",
+   "sections": [
+    "檢測範圍",
+    "結果與修補"
+   ],
+   "aliases": [
+    "源碼檢測",
+    "原始碼掃描報告"
+   ]
+  },
+  {
+   "id": "privacy-assessment",
+   "title": "個資與隱私評估",
+   "group": "compliance",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "蒐集的個人資料",
+    "用途與保存",
+    "保護措施"
+   ],
+   "sources": [
+    "specs/**/design.md"
+   ],
+   "on": [
+    "mod:security"
+   ],
+   "aliases": [
+    "個資衝擊評估",
+    "PIA"
+   ]
+  },
+  {
+   "id": "security-review-record",
+   "title": "安全審查紀錄",
+   "group": "compliance",
+   "source": "auto",
+   "when": "run",
+   "sections": [
+    "審查範圍",
+    "發現與處理"
+   ],
+   "sources": [
+    "specs/**/security-review.md"
+   ],
+   "on": [
+    "mod:security"
+   ],
+   "suggest": {
+    "modifiers": [
+     "security"
+    ],
+    "reason": "用過 security"
+   },
+   "aliases": [
+    "資安審查紀錄"
+   ]
+  },
+  {
+   "id": "accessibility-report",
+   "title": "無障礙檢測報告",
+   "group": "compliance",
+   "source": "assisted",
+   "when": "milestone",
+   "sections": [
+    "檢測範圍",
+    "結果與改善"
+   ],
+   "sources": [
+    "specs/**/design-review.md"
+   ],
+   "on": [
+    "mod:ui"
+   ],
+   "aliases": [
+    "無障礙報告"
+   ]
+  },
+  {
+   "id": "license-compliance",
+   "title": "授權合規聲明",
+   "group": "compliance",
+   "source": "assisted",
+   "when": "close",
+   "sections": [
+    "使用的授權",
+    "義務與處理方式"
+   ],
+   "aliases": [
+    "授權聲明"
+   ]
+  }
+ ],
+ "presets": [
+  {
+   "id": "hackathon",
+   "title": "黑客松",
+   "note": "只交能說明產品的最少文件",
+   "documents": [
+    "delivery-summary",
+    "sys-arch",
+    "release-notes"
+   ]
+  },
+  {
+   "id": "poc",
+   "title": "概念驗證",
+   "note": "說明驗證了什麼、怎麼做的",
+   "documents": [
+    "requirements-spec",
+    "sys-arch",
+    "test-report",
+    "delivery-summary"
+   ]
+  },
+  {
+   "id": "internal-tool",
+   "title": "內部工具",
+   "note": "團隊自己用與接手需要的文件",
+   "documents": [
+    "requirements-spec",
+    "func-spec",
+    "sys-arch",
+    "dev-guide",
+    "release-notes",
+    "ops-manual"
+   ]
+  },
+  {
+   "id": "outsourced",
+   "title": "委外專案（完整）",
+   "note": "一般委外合約會要求的整套文件；請依合約增刪",
+   "documents": [
+    "project-plan",
+    "weekly-report",
+    "meeting-minutes",
+    "change-log",
+    "closure-report",
+    "requirements-spec",
+    "biz-rules",
+    "rtm",
+    "func-spec",
+    "sys-arch",
+    "db-design",
+    "api-spec",
+    "batch-design",
+    "test-plan",
+    "test-cases",
+    "test-report",
+    "uat-record",
+    "release-notes",
+    "deploy-guide",
+    "rollback-plan",
+    "ops-manual",
+    "user-manual",
+    "training-material",
+    "handover-doc",
+    "vuln-scan-report",
+    "source-scan-report"
+   ]
+  },
+  {
+   "id": "ops-handover",
+   "title": "維運移交",
+   "note": "系統交給維運單位時需要的文件",
+   "documents": [
+    "sys-arch",
+    "db-design",
+    "api-spec",
+    "batch-design",
+    "deploy-guide",
+    "ops-manual",
+    "admin-manual",
+    "backup-dr",
+    "monitoring-spec",
+    "handover-doc"
+   ]
+  }
+ ]
+}

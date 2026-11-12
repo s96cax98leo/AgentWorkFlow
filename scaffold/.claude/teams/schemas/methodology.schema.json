@@ -152,6 +152,129 @@
       }
     },
     "events": {"type": "object", "description": "選填：自訂事件類型（共用 event.js：多個角度平行處理 → skeptic 反駁 → writer 寫文件）。鍵是事件名；和內建類型（meeting、decision、demo-check、reqs-change、upstream）同名時整筆取代。用法見 docs/事件處理.md", "additionalProperties": {"type": "object", "required": ["context", "gather", "challenge", "write"], "additionalProperties": false, "properties": {"title": {"type": "string", "minLength": 1, "description": "這個事件類型做什麼（給人看）"}, "args": {"type": "array", "maxItems": 8, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "description": "必要參數名；缺了 awf.py next 會回 need_input"}, "optional": {"type": "array", "maxItems": 8, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "description": "選填參數名；文字裡用 {名稱|沒給時的字} 引用"}, "context": {"type": "string", "minLength": 1, "description": "每張派工單開頭的背景；{參數名} 會換成 args 的值，{run_dir} 是 run 目錄"}, "payload": {"enum": ["items", "findings"], "description": "各角度交 items（預設）還是 findings"}, "before": {"type": "array", "maxItems": 3, "items": {"type": "object", "required": ["name", "label", "ask"], "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1, "description": "結果的名字（回傳的鍵，也可以給 data 的 from 引用）", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "label": {"type": "string", "minLength": 1, "description": "派工 label（執行紀錄檔名）", "pattern": "^[a-z][a-z0-9:-]{0,47}$"}, "ask": {"type": "string", "minLength": 1, "description": "派工單內容；{參數名} 會換成 args 的值"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，預設「派工單」"}, "halt": {"type": "string", "minLength": 1, "description": "這一步缺件時回報的 stage 名，預設同 label"}, "payload": {"enum": ["items", "findings"], "description": "交件用哪種 payload，預設同事件的 payload"}, "keep": {"enum": ["list", "envelope"], "description": "回傳只留清單（預設）還是整個信封"}, "stop_if_empty": {"type": "string", "minLength": 1, "description": "清單是空的就正常結束，回傳的 note 用這句話"}}}, "description": "前置步驟：依序、各派一個 tpm-researcher"}, "gather": {"type": "object", "required": ["angles"], "additionalProperties": false, "description": "各角度平行（各派一個 tpm-researcher）", "properties": {"label": {"type": "string", "minLength": 1, "description": "派工 label 的前綴（<label>:<角度 key>），預設 gather", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，可用 {key}；預設「派工單（{key}）」"}, "body": {"type": "string", "minLength": 1, "description": "派工單內容，可用 {ask}、{key} 與參數名；預設就是角度的 ask"}, "tail": {"type": "string", "minLength": 1, "description": "接在資料後面的最後一行"}, "data": {"type": "array", "maxItems": 6, "description": "附在派工單後面的資料（每筆一行「標籤：JSON」）", "items": {"type": "object", "required": ["label", "from"], "additionalProperties": false, "properties": {"label": {"type": "string", "minLength": 1, "description": "這份資料在派工單裡的標籤"}, "from": {"type": "string", "minLength": 1, "description": "資料來源：all（全部事項）、kept（skeptic 沒推翻的）、doubted（被推翻或沒被驗證的）、doubted_ids（同上，只有 id）、或 before／after 步驟的 name"}}}}, "angles": {"type": "array", "minItems": 1, "maxItems": 8, "description": "角度清單（最多 8 個）", "items": {"type": "object", "required": ["key", "ask"], "additionalProperties": false, "properties": {"key": {"type": "string", "minLength": 1, "description": "角度代號（事項 id 的前綴）", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "ask": {"type": "string", "minLength": 1, "description": "這個角度要找什麼"}, "type": {"type": "string", "minLength": 1, "description": "可以在 body 用 {type} 引用"}}}}}}, "challenge": {"type": "object", "required": ["ask"], "additionalProperties": false, "description": "tpm-skeptic 的派工單；事項清單會接在後面", "properties": {"ask": {"type": "string", "minLength": 1, "description": "要 skeptic 怎麼反駁"}, "only_status": {"type": "string", "minLength": 1, "description": "只反駁這個 status 的事項（例如 green）"}}}, "after": {"type": "array", "maxItems": 3, "items": {"type": "object", "required": ["name", "label", "ask"], "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1, "description": "結果的名字（回傳的鍵，也可以給 data 的 from 引用）", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "label": {"type": "string", "minLength": 1, "description": "派工 label（執行紀錄檔名）", "pattern": "^[a-z][a-z0-9:-]{0,47}$"}, "ask": {"type": "string", "minLength": 1, "description": "派工單內容；{參數名} 會換成 args 的值"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，預設「派工單」"}, "halt": {"type": "string", "minLength": 1, "description": "這一步缺件時回報的 stage 名，預設同 label"}, "payload": {"enum": ["items", "findings"], "description": "交件用哪種 payload，預設同事件的 payload"}, "keep": {"enum": ["list", "envelope"], "description": "回傳只留清單（預設）還是整個信封"}, "stop_if_empty": {"type": "string", "minLength": 1, "description": "清單是空的就正常結束，回傳的 note 用這句話"}}}, "description": "收尾步驟：寫文件之前依序執行"}, "write": {"type": "object", "required": ["ask"], "additionalProperties": false, "description": "tpm-writer 的派工單", "properties": {"ask": {"type": "string", "minLength": 1, "description": "要寫哪些文件、寫到哪裡"}, "data": {"type": "array", "maxItems": 6, "description": "附在派工單後面的資料（每筆一行「標籤：JSON」）", "items": {"type": "object", "required": ["label", "from"], "additionalProperties": false, "properties": {"label": {"type": "string", "minLength": 1, "description": "這份資料在派工單裡的標籤"}, "from": {"type": "string", "minLength": 1, "description": "資料來源：all（全部事項）、kept（skeptic 沒推翻的）、doubted（被推翻或沒被驗證的）、doubted_ids（同上，只有 id）、或 before／after 步驟的 name"}}}}, "owner_check": {"type": "boolean", "description": "true＝writer 要交出給決策者版並回報 check_rules.py 通過，否則停下交人"}}}, "returns": {"type": "object", "additionalProperties": false, "description": "回傳的鍵名", "properties": {"all": {"type": "string", "minLength": 1, "description": "全部事項的鍵名，預設 items", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "doubted": {"type": "string", "minLength": 1, "description": "被推翻或沒被驗證的 id 的鍵名，預設 refuted", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "challenge": {"type": "boolean", "description": "true＝回傳附上 skeptic 的信封"}}}}}},
+    "deliverables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documents"
+      ],
+      "description": "選填：交付文件（tools/deliverables.py）。enabled 是 true 才啟用；專案有 .claude/teams/deliverables.json 時以那一份為準。沒啟用時流程不產生也不檢查交付文件。用法見 docs/交付文件.md",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "交付文件放哪（相對專案根目錄）；預設 docs/deliverables"
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "選填：原料 glob 的基準（相對專案根目錄）；不寫就用 run 的目標 repo 或專案根目錄"
+        },
+        "banned_terms_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "選填：禁用字清單（一行一個正規式），交付文件出現就檢查不過"
+        },
+        "show_approvers": {"type": "boolean", "description": "選填：功能開發紀錄的核准紀錄要不要寫核准者名字；預設 false（只寫「人工核准」或「依政策自動核准」）"},
+        "privacy_allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "選填：可以出現在交付文件的字串（正規式），例如對外的客服信箱"
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "型錄（.claude/teams/deliverables/catalog.json）的文件 id；型錄沒有的就是自訂文件"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "group": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "assisted",
+                  "external"
+                ],
+                "description": "auto＝可以從 SDLC 產物產生；assisted＝工具給範本與原料、人補內容；external＝外部證據，只檢查有沒有附"
+              },
+              "depth": {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "summary"
+                ]
+              },
+              "when": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "milestone",
+                  "close"
+                ],
+                "description": "run＝每次交付都更新受影響的小節；milestone、close＝只在里程碑或結案時更新"
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "原料：相對目標 repo 的 glob"
+              },
+              "on": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "哪類改動會影響它：改動分類（code、test、doc、migration、manifest）、mod:<modifier>、path:<glob>、stage:<段>、recipe:<名>、event:<事件>"
+              },
+              "section_on": {
+                "type": "object",
+                "description": "選填：某個小節只在特定改動時更新。鍵是小節標題，值同 on"
+              },
+              "design_sections": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "design.md 要先留的小節"
+              }
+            }
+          }
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "預設 false：列在這裡只是範例，要交哪些由使用者決定"
+        }
+      }
+    },
     "constraints": {
       "type": "array",
       "description": "選填：限制文件。使用者指定哪份文件（架構、設計、前後端規範、審查規範…）套用到哪些段、哪些路徑；workflow 只帶給對得上的 agent，閘門可以要求逐條對照或跑檢查指令",

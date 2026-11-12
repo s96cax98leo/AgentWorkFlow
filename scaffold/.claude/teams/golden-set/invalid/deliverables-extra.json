@@ -1,0 +1,11 @@
+{
+ "schema": "deliverables",
+ "data": {
+  "documents": [
+   {
+    "id": "db-design",
+    "magic": 1
+   }
+  ]
+ }
+}

@@ -148,6 +148,7 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `pack.py <段> --run <run_dir>` | 每段開跑前備資料包（`pack.md`）與要併進 args 的 `pack-args.json`；plan 段另算可沿用的調研角度；build 段另寫每個子任務的資料包（`build/<子任務 id>/pack.md`）；每份資料包帶上相關的既有決定（`decisions.jsonl`）。只由主 session 執行 |
 | `locate.py --repo <repo> --requirement <需求>` | 工具先定位：用需求的用詞對程式與文件做排序，找出要讀的行段。由 `pack.py plan` 呼叫，結果放進 `pack-args.json` 的 `located`；文件角度命中夠就不派定位 agent |
 | `kb.py build｜query｜lint` | 知識層：把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行 |
+| `deliverables.py configure｜init｜status｜check｜sync` | 交付文件：挑出要交哪些（人確認才寫入）、逐節記錄來源與過期、需求追溯矩陣；沒有 `deliverables.json` 時什麼都不做。說明見模版的 `docs/交付文件.md` |
 | `awf_cost.py` | 讀 workflow transcript，依角色與模型加總 token、時間、平均 context（只做估算，不參與閘門） |
 | `awf_watch.py` | 給外部程式看進度：`awf.py watch` 把 run 的變化寫成 `<run_dir>/progress.jsonl`，`awf.py statusline` 印一行狀態；唯讀、不參與閘門 |
 | `awf_script.py` | 自訂腳本的靜態檢查與組裝：`awf.py next --script <檔>` 用它檢查腳本、接上執行核心與 pattern 庫（只開放 design、build、deliver；不能政策核准） |
@@ -164,6 +165,7 @@ python3 .claude/teams/tools/publish.py --selftest
 python3 .claude/teams/tools/sync_branch.py --selftest
 python3 .claude/teams/tools/pack.py --selftest
 python3 .claude/teams/tools/kb.py --selftest
+python3 .claude/teams/tools/deliverables.py --selftest
 python3 .claude/teams/tools/locate.py --selftest
 python3 .claude/teams/tools/awf_cost.py --selftest
 python3 .claude/teams/tools/awf_watch.py --selftest

@@ -1,0 +1,13 @@
+{
+ "schema": "deliverables",
+ "semantic": true,
+ "expect": "dir 要是專案內的相對路徑",
+ "data": {
+  "dir": "../outside",
+  "documents": [
+   {
+    "id": "db-design"
+   }
+  ]
+ }
+}

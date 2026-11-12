@@ -1,0 +1,42 @@
+{
+ "schema": "deliverables",
+ "data": {
+  "dir": "docs/交付",
+  "banned_terms_file": "docs/禁用字.txt",
+  "privacy_allow": [
+   "support@example\\.com"
+  ],
+  "documents": [
+   {
+    "id": "db-design",
+    "depth": "summary",
+    "when": "milestone"
+   },
+   {
+    "id": "api-spec",
+    "section_on": {
+     "端點清單": [
+      "mod:public_api"
+     ]
+    }
+   },
+   {
+    "id": "acme-sla",
+    "title": "示範客戶 ACME 的服務水準說明",
+    "source": "assisted",
+    "group": "ops",
+    "sections": [
+     "服務時段",
+     "回應時間"
+    ],
+    "sources": [
+     "docs/sla/**"
+    ],
+    "on": [
+     "path:docs/sla/**"
+    ]
+   }
+  ],
+  "confirmed_by": "示範客戶 ACME 的 PM"
+ }
+}

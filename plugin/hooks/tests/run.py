@@ -1008,6 +1008,52 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     tool(0, "B13 主 session Write decisions.jsonl 放行", "Write", {"file_path": str(H1W / "_tpm/runs/decisions.jsonl")})
     pair(0, "B13 主 session 跑 save_run.py decide 放行", "python3 .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t",
          "python .claude/teams/tools/save_run.py decide _tpm/runs/x --question q --answer a --by human --at t")
+    # C1 結案摘要：<run>/archive/結案摘要.md 只由主 session 跑 save_run.py（close、abandon、archive）寫，會進知識層
+    for who in (WRT, IMP):
+        short = who.rsplit(":", 1)[-1]
+        tool(2, f"C1 {short} Write 結案摘要.md", "Write", {"file_path": str(H1W / "_tpm/runs/x/archive/結案摘要.md")}, who)
+        pair(2, f"C1 {short} 用 shell 寫結案摘要.md", "echo x >> _tpm/runs/x/archive/結案摘要.md",
+             "Add-Content -Path _tpm/runs/x/archive/結案摘要.md -Value x", agent=who)
+        tool(2, f"C9 {short} Write archive/ 底下的其他檔", "Write", {"file_path": str(H1W / "_tpm/runs/old/archive/notes.md")}, who)
+        pair(2, f"C9 {short} 用 shell 寫 archive/ 底下的其他檔", "echo x > _tpm/runs/old/archive/notes.md",
+             "Set-Content -Path _tpm/runs/old/archive/notes.md -Value x", agent=who)
+        pair(0, f"C1 {short} 讀結案摘要.md 放行", "cat _tpm/runs/x/archive/結案摘要.md", "Get-Content _tpm/runs/x/archive/結案摘要.md", agent=who)
+    # C2 交付文件：設定、來源紀錄只由主 session 寫；team agent 只能跑唯讀的子指令
+    for who in (WRT, IMP):
+        short = who.rsplit(":", 1)[-1]
+        pair(2, f"C2 {short} 跑 deliverables.py sync", "python3 .claude/teams/tools/deliverables.py sync --run _tpm/runs/x --reviewed db-design#資料表",
+             "python .claude/teams/tools/deliverables.py sync --run _tpm/runs/x --reviewed db-design#資料表", agent=who)
+        pair(2, f"C2 {short} 跑 deliverables.py configure --write", "python3 .claude/teams/tools/deliverables.py configure --add rtm --write --by me",
+             "python .claude/teams/tools/deliverables.py configure --add rtm --write --by me", agent=who)
+        pair(0, f"C2 {short} 跑 deliverables.py status／check 放行", "python3 .claude/teams/tools/deliverables.py status",
+             "python .claude/teams/tools/deliverables.py check", agent=who)
+        tool(2, f"C2 {short} Write deliverables.state.json", "Write", {"file_path": str(H1W / ".claude/teams/deliverables.state.json")}, who)
+        tool(2, f"C2 {short} Write deliverables.json", "Write", {"file_path": str(H1W / ".claude/teams/deliverables.json")}, who)
+    # C9.3 審查：包一層 shell、eval、xargs 不能繞過工具的寫入子指令檢查（save_run 的核准也一樣）
+    for who in (WRT, IMP):
+        short = who.rsplit(":", 1)[-1]
+        pair(2, f"C9 {short} bash -c 包 deliverables.py sync", 'bash -c "python3 .claude/teams/tools/deliverables.py sync --run x"',
+             'pwsh -Command "python .claude/teams/tools/deliverables.py sync --run x"', agent=who)
+        pair(2, f"C9 {short} sh -c 包 save_run.py approve", "sh -c 'python3 .claude/teams/tools/save_run.py approve _tpm/runs/x plan --by me --at t'",
+             'powershell -c "python .claude/teams/tools/save_run.py approve _tpm/runs/x plan --by me --at t"', agent=who)
+        pair(2, f"C9 {short} eval 包 pack.py", "eval 'python3 .claude/teams/tools/pack.py plan --run x'",
+             'Invoke-Expression "python .claude/teams/tools/pack.py plan --run x"', agent=who)
+        pair(2, f"C9 {short} xargs 執行 deliverables.py（子指令來自檔案）", "xargs python3 .claude/teams/tools/deliverables.py < docs/args.txt",
+             "cmd /c python .claude/teams/tools/deliverables.py sync --run x", agent=who)
+        pair(0, f"C9 {short} bash -c 包 deliverables.py status 放行", 'bash -c "python3 .claude/teams/tools/deliverables.py status"',
+             'pwsh -Command "python .claude/teams/tools/deliverables.py check"', agent=who)
+        pair(0, f"C9 {short} grep 文件裡的 save_run.py approve 放行", 'grep -n "save_run.py approve" docs/x.md',
+             'Select-String -Pattern "save_run.py approve" -Path docs/x.md', agent=who)
+        pair(2, f"C9 {short} 連續斜線寫 deliverables.state.json", "echo {} > ./.claude//teams/deliverables.state.json",
+             "Set-Content -Path ./.claude//teams/deliverables.state.json -Value x", agent=who)
+        pair(2, f"C9 {short} 先 cd .claude 再寫 teams/", "cd .claude && echo {} > teams/deliverables.state.json",
+             "Set-Location .claude; Set-Content -Path teams/deliverables.state.json -Value x", agent=who)
+    pair(0, "C2 主 session 跑 deliverables.py sync 放行", "python3 .claude/teams/tools/deliverables.py sync --run _tpm/runs/x",
+         "python .claude/teams/tools/deliverables.py sync --run _tpm/runs/x")
+    tool(0, "C2 tpm-writer 寫 docs/deliverables/db-design.md 放行", "Write", {"file_path": str(H1W / "docs/deliverables/db-design.md")}, WRT)
+    tool(0, "C2 tpm-writer 寫 <run>/deliver/交付摘要.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/deliver/交付摘要.md")}, WRT)
+    tool(0, "C1 主 session Write 結案摘要.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/archive/結案摘要.md")})
+    tool(0, "C1 tpm-writer 寫 <run>/meeting/摘要.md 放行（事件產出，不是結案摘要）", "Write", {"file_path": str(H1W / "_tpm/runs/x/meeting/摘要.md")}, WRT)
     tool(0, "B13 tpm-writer 寫 <run>/decision/決策紀錄.md 放行（事件產出，不是決策記憶檔）", "Write", {"file_path": str(H1W / "_tpm/runs/x/decision/決策紀錄.md")}, WRT)
     tool(0, "I7 tpm-writer 寫 runs_dir/<run>/deliver/x.md 放行", "Write", {"file_path": str(H1W / "_tpm/runs/x/deliver/x.md")}, WRT)
     tool(0, "I7 dev-implementer 寫 repo 的 context.md 放行（不在 runs_dir）", "Write", {"file_path": str(H1R / "docs/context.md")}, IMP)
