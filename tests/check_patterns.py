@@ -247,6 +247,43 @@ def custom_end_to_end(node: str) -> list[str]:
             else:
                 if len(calls) != 2 or not any(x.get("capped") for x in trace) or "派工數到上限" not in str(out.get("halt_reason")):
                     errs.append(f"上限 2：只該派 2 個、其餘記 capped 並停下：{calls}、{out.get('halt_reason')}")
+    # 靜態檢查被繞過之後（這裡直接改組裝好的腳本來模擬）：包裝仍然擋得住
+    with tempfile.TemporaryDirectory(prefix="awf-cs.") as tmp:
+        proj = Path(tmp)
+        teams = proj / ".claude" / "teams"
+        teams.mkdir(parents=True)
+        (teams / "workflow.config").write_text('AGENT_NS=agent-workflow:\nOUTPUT_LANGUAGE="繁體中文"\n', encoding="utf-8")
+        (teams / "methodology.json").write_text(json.dumps(default, ensure_ascii=False), encoding="utf-8")
+        src = proj / "waves.js"
+        src.write_text(awf_script.GOOD.replace("'acme:a11y'", "NS + 'tpm-reviewer'"), encoding="utf-8")
+        text, _ = awf.render_custom(src, "build", proj, {"run_dir": "_runs/r1", "epic": "demo", "recipe": "feature", "modifiers": []})
+
+        def go(name: str, edited: str) -> dict:
+            if edited == text:
+                errs.append(f"{name}：測試沒有改到腳本")
+            f = proj / f"{name}.js"
+            f.write_text(edited, encoding="utf-8")
+            r = subprocess.run([node, "-e", RUN_JS, str(f)], capture_output=True, text=True, encoding="utf-8")
+            try:
+                return json.loads(r.stdout.strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                return {"error": (r.stdout + r.stderr)[:400]}
+
+        for name, inject in (("direct-agent", "const sneaky = await agent('p', { label: 'sneak', agentType: 'agent-workflow:dev-merge-steward' })"),
+                             ("direct-tryagent", "const sneaky = await tryAgent('p', { label: 'sneak', agentType: 'agent-workflow:dev-merge-steward' })"),
+                             ("fake-trace", "awfState().trace.push({ label: 'fake', ok: true })"),
+                             ("reinit", "awfKernelInit({ max_agents: 0 })")):
+            res = go(name, text.replace("const waves = [['t1'], ['t2', 't3']]", "const waves = [['t1'], ['t2', 't3']]\n" + inject))
+            if not res.get("error") or "sneak" in json.dumps(res):
+                errs.append(f"包裝沒擋住 {name}：{json.dumps(res, ensure_ascii=False)[:300]}")
+        res = go("forged", text.replace("  trace: awfTrace(),\n}", "  trace: [{ label: 'review:bugs', ok: true }], stage: 'deliver', recipe: { name: 'docs' },\n}"))
+        out = res.get("out") or {}
+        if res.get("error") or out.get("stage") != "build" or (out.get("recipe") or {}).get("name") != "feature" or len(out.get("trace") or []) != 4 or any(x.get("label") == "review:bugs" for x in out.get("trace") or []):
+            errs.append(f"腳本自己給的 stage、recipe、trace 要被外層覆寫：{json.dumps(res, ensure_ascii=False)[:400]}")
+        res = go("no-object", text.replace("return {\n  stage: 'build', halted: false, results: done, first: pick(done), ext,", "return 1\nreturn {\n  stage: 'build', halted: false, results: done, first: pick(done), ext,"))
+        out = res.get("out") or {}
+        if not out.get("halted") or "沒有回傳物件" not in str(out.get("halt_reason")) or not isinstance(out.get("trace"), list):
+            errs.append(f"腳本沒有回傳物件要 halted：{json.dumps(res, ensure_ascii=False)[:300]}")
     return errs
 
 

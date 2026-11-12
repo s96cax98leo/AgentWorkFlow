@@ -319,7 +319,7 @@ def render_custom(src: Path, stage: str, project: Path, args: dict) -> tuple[str
             "const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages, summary: recipeSummary(R) }",
             "awfInit({ run_dir: A.run_dir, stage: " + S + ", lang: " + js(cfg.get("OUTPUT_LANGUAGE", "")) + ", rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, " + S + ") })",
             "awfKernelInit({ profile: METHODOLOGY, stage: " + S + ", modifiers: [].concat(A.modifiers || []), max_agents: " + str(cap) + ", roles: " + js(roles) + " })"]
-    out = awf_script.assemble(text, "\n".join(pre))
+    out = awf_script.assemble(text, "\n".join(pre), stage)
     out = buildlib.MARK.sub(lambda m: f"/*@schema:{m.group(1)}*/ {js(buildlib.schemalib.compose(None if m.group(1) == 'envelope' else m.group(1)))} /*@end*/", out)
     import hashlib
     return out, {"source": _posix(src.name), "sha1": hashlib.sha1(text.encode("utf-8")).hexdigest()}
@@ -448,7 +448,9 @@ def stage_args(run: Path, run_arg: str, data: dict, stage: str, workflow: str, p
         head = _stage_result(run, "sync").get("head_branch")
         default = read_config(project).get("BRANCH_PREFIX", "") + str(a.get("epic") or "")
         if isinstance(head, str) and head and head != default and stage in ("build", "test", "deliver", "sync"):
-            a.setdefault("branch", head)
+            if a.get("branch") not in (None, "", head):
+                notes.append(f"忽略 --set 的 branch={a['branch']}：sync 走過中轉分支，以它回報的 {head} 為準")
+            a["branch"] = head
             notes.append(f"sync 走過中轉分支：這一段帶 branch={a['branch']}")
     if workflow == "sdlc-merge":
         a.pop("branch", None)     # merge 用 PR 號，不帶 branch
@@ -458,14 +460,20 @@ def stage_args(run: Path, run_arg: str, data: dict, stage: str, workflow: str, p
             a["subtasks"] = prev["remaining_subtasks"]
             a["integrated"] = prev.get("integrated") or []
             notes.append(f"續跑 build：只做還沒合進整合分支的 {len(a['subtasks'])} 個子任務")
-        elif "subtasks" not in a:
-            a["subtasks"] = _subtasks(run)
+        else:
+            derived = _subtasks(run)
+            if derived:      # 有已存檔的拆工就以它為準（--set 改不了：build 做的要是核准過的那一份）
+                if "subtasks" in a and a["subtasks"] != derived:
+                    notes.append("忽略 --set 的 subtasks：以 design（沒有 design 段時是 plan）存下來的子任務為準")
+                a["subtasks"] = derived
         if not a.get("subtasks"):
             a.pop("subtasks", None)
     if workflow in ("sdlc-test", "sdlc-design-revise"):
         sp = _stage_result(run, "design").get("sub_plans")
         if isinstance(sp, list) and sp:
-            a.setdefault("sub_plans", sp)
+            if "sub_plans" in a and a["sub_plans"] != sp:
+                notes.append("忽略 --set 的 sub_plans：以 design 存下來的子計劃為準")
+            a["sub_plans"] = sp
     required = list(REQUIRED.get(workflow, ["run_dir"]))
     if workflow == "event":
         a["event"] = stage      # 事件類型就是段名（執行紀錄寫在 <run_dir>/<類型>/）
@@ -515,16 +523,18 @@ def transcripts_root(project: Path) -> Path:
 
 
 def find_wf_meta(project: Path, script: str, since: float = 0.0) -> tuple[dict | None, Path | None]:
-    """最近一次用這支腳本跑的 workflow 紀錄（<session>/workflows/wf_<id>.json；格式沒承諾穩定）。"""
+    """最近一次用這支腳本跑的 workflow 紀錄（<session>/workflows/wf_<id>.json；格式沒承諾穩定）。
+    只採用可信的：修改時間不在未來；這次 next 之後用同一支腳本跑的只有一筆。有兩筆以上時分不出哪一筆是真的，丟 AwfError 交人。"""
     want = Path(script).resolve() if script else None
-    best: tuple[float, dict, Path] | None = None
+    hits: list[tuple[float, dict, Path]] = []
     root = transcripts_root(project)
+    now = datetime.datetime.now().timestamp()
     for f in root.glob("*/workflows/wf_*.json") if root.is_dir() else []:
         try:
             mt = f.stat().st_mtime
         except OSError:
             continue
-        if mt + 1 < since or (best and mt <= best[0]):
+        if mt + 1 < since or mt > now + 120:      # 修改時間在未來的不採用（正常寫出來的檔不會這樣）
             continue
         meta = load_json(f)
         sp = meta.get("scriptPath") if isinstance(meta, dict) else None
@@ -535,8 +545,14 @@ def find_wf_meta(project: Path, script: str, since: float = 0.0) -> tuple[dict |
         except OSError:
             same = False
         if same:
-            best = (mt, meta, f)
-    return (best[1], best[2]) if best else (None, None)
+            hits.append((mt, meta, f))
+    if not hits:
+        return None, None
+    hits.sort(key=lambda h: h[0])
+    if since and len(hits) > 1:
+        raise AwfError("這次 next 之後，用同一支腳本跑的 workflow 紀錄有 " + str(len(hits)) + " 筆（" + "、".join(h[2].stem for h in hits[-4:])
+                       + "），分不出哪一筆才是這一段的結果。確認之後把正確的回傳存成 JSON 檔，用 --output <檔> 指定（這樣存的段不能政策核准，要由人核准）")
+    return hits[-1][1], hits[-1][2]
 
 
 def current_session(project: Path) -> str:
@@ -578,7 +594,7 @@ def highlights(run: Path, run_arg: str, data: dict, stage: str) -> dict:
         prov = provisional(res)
         if prov:
             h["provisional"] = prov[:30]
-    for k in ("missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans", "custom_script"):
+    for k in ("missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans", "custom_script", "override_script", "manual_output", "waves"):
         if res.get(k) not in (None, [], {}, ""):
             h[k] = res[k]
     if isinstance(res.get("angles"), dict) and res["angles"].get("skipped"):
@@ -670,6 +686,7 @@ def workflow_action(run: Path, run_arg: str, data: dict, stage: str, workflow: s
         a.update(extra)
         notes += pnotes
     text, rnotes = render(workflow, project, plugin, a)
+    source = find_template(workflow, project, plugin)[1]
     script = run / ".wf" / f"{workflow}.js"
     if prepare:
         _write(script, text)
@@ -677,6 +694,9 @@ def workflow_action(run: Path, run_arg: str, data: dict, stage: str, workflow: s
     act = {"action": "run_workflow", "stage": stage, "workflow": workflow, "script": f"{run_arg}/.wf/{workflow}.js",
            "how": "用 Workflow 工具執行：scriptPath 給 script，不用傳 args（已經內嵌在腳本裡）。", "args_summary": {k: (v if isinstance(v, (str, int, bool)) else f"<{type(v).__name__}，{len(v)} 項>") for k, v in a.items()},
            "then": f"python3 .claude/teams/tools/awf.py done --run {run_arg}", "notes": notes + rnotes}
+    if source in ("override", "legacy"):     # 不是 plugin 的範本：這一段的結果不能政策核准，一律交人
+        act["override"] = {"workflow": workflow, "source": source}
+        act["notes"].append(f"這一段用的是專案自己的 {workflow}.js（不是 plugin 的範本）：結果不能政策核准，一律由人核准")
     prev = (data["stages"].get(stage) or {}).get("wf_run")
     if isinstance(prev, dict) and prev.get("id") and (data["stages"].get(stage) or {}).get("status") in ("blocked", "needs_decision", "invalid"):
         if prev.get("session") and prev.get("session") == current_session(project):
@@ -725,7 +745,9 @@ def decide(run: Path, run_arg: str, data: dict, project: Path, plugin: Path | No
             return {"action": "done", "state": "done", "highlights": highlights(run, run_arg, data, stage), "say": ("把結果整理給使用者。" + tip).strip()}
         if st.get("status") in ("blocked", "invalid", "needs_decision") and not retry:
             return halted_action(run, run_arg, data, stage, workflow, project, plugin)
-        return workflow_action(run, run_arg, data, stage, forced_wf or workflow, project, plugin)
+        if forced_wf and forced_wf != workflow:
+            raise AwfError(f"事件 {event} 只能用 {workflow}，不能用 {forced_wf}（要跑別的事件請另外 start 一個 run）")
+        return workflow_action(run, run_arg, data, stage, workflow, project, plugin)
     stage = opt(argv, "--stage") or sr.next_stage(data)
     if stage is None:
         rec = rcp.recipe_of_run(data)
@@ -937,7 +959,11 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
             if act.get("action") == "run_workflow":
                 act["notes"] = pnotes + act.get("notes", [])
                 data.setdefault("awf", {})["pending"] = {"stage": act["stage"], "workflow": act["workflow"], "script": act["script"], "at": now_iso(),
-                                                         "since": datetime.datetime.now().timestamp(), **({"custom": act["custom"]} if act.get("custom") else {})}
+                                                         "since": datetime.datetime.now().timestamp(), **({"custom": act["custom"]} if act.get("custom") else {}),
+                                                         **({"override": act["override"]} if act.get("override") else {})}
+                mark = {k: act[k] for k in ("custom", "override") if act.get(k)}
+                if mark:      # 記在 run.json：之後就算重跑 next 蓋掉 pending，這一段用過非標準腳本的事實也還在
+                    data["awf"].setdefault("nonstandard", {})[act["stage"]] = mark
             sr.dump(run, data)
             emit(act, argv)
             return 0
@@ -964,8 +990,21 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
                         pass
                 if not isinstance(result, (dict, list)):
                     raise AwfError(f"workflow 沒有回傳物件（status={meta.get('status')}）：{mf}。它可能還在跑，或中途失敗；失敗就重跑這一段")
-            if pend.get("custom") and pend.get("stage") == stage:      # 自訂腳本跑的段：記在結果裡，save_run 看到就不給政策核准
-                result = {**result, "custom_script": pend["custom"]} if isinstance(result, dict) else {"halted": True, "halt_reason": "自訂腳本沒有回傳物件", "custom_script": pend["custom"], "returned": result}
+            # 不是「標準腳本、而且回傳是 awf 自己從 transcript 找到的」，就在結果裡留標記；save_run 看到標記不給政策核准
+            sticky = ((data.get("awf") or {}).get("nonstandard") or {}).get(stage) or {}
+            mine = pend if pend.get("stage") == stage else {}
+            marks: dict = {}
+            if mine.get("custom") or (meta is None and sticky.get("custom")):
+                marks["custom_script"] = mine.get("custom") or sticky["custom"]
+            if mine.get("override") or (meta is None and sticky.get("override")):
+                marks["override_script"] = mine.get("override") or sticky["override"]
+            if meta is None:
+                marks["manual_output"] = True
+            if marks:
+                result = {**result, **marks} if isinstance(result, dict) else {"halted": True, "halt_reason": "workflow 沒有回傳物件", "returned": result, **marks}
+            if meta is not None and not mine.get("custom") and not mine.get("override") and sticky:
+                (data.get("awf") or {}).get("nonstandard", {}).pop(stage, None)      # 這次是標準腳本、回傳取自 transcript：解除標記
+                sr.dump(run, data)
             code, out = _quiet(sr.main, ["stage", str(run), stage], stdin_text=json.dumps(result, ensure_ascii=False))
             print(out.rstrip())
             data = sr.load(run)
@@ -1460,8 +1499,60 @@ def selftest() -> int:
             call("start", "--run", d2, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "需求")
             _quiet(sr.main, ["stage", str(proj / d2), "plan"], stdin_text=json.dumps(result))
             manual = (proj / d2 / "plan.json").read_text(encoding="utf-8")
-            check("done：存下來的內容和手動跑 save_run.py stage 的一樣；--output 指定檔案也可以", (run / "plan.json").read_text(encoding="utf-8") == manual
-                  and call("done", "--run", d, "--output", str(out_file), "--stage", "plan")[0] in (0, 1) and (run / "plan.json").read_text(encoding="utf-8") == manual)
+            same_auto = (run / "plan.json").read_text(encoding="utf-8") == manual
+            rc_out = call("done", "--run", d, "--output", str(out_file), "--stage", "plan")[0]
+            by_out = load_json(run / "plan.json") or {}
+            check("done：從 workflow 紀錄取得的結果和手動跑 save_run.py stage 的一樣；--output 給的結果多一個 manual_output 標記、其餘相同",
+                  same_auto and rc_out in (0, 1) and by_out.get("manual_output") is True and {k: v for k, v in by_out.items() if k != "manual_output"} == json.loads(manual), by_out)
+            check("審查 6：--output 手動給的結果不能政策核准", any("--output" in e for e in sr.policy_violations("design", by_out, None)))
+            # 審查 3：假的 workflow 紀錄
+            d5 = "_runs/done5"
+            call("start", "--run", d5, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "需求")
+            call("next", "--run", d5)
+            sp5 = str(proj / d5 / ".wf" / "sdlc-plan.js")
+            real = {"stage": "plan", "halted": True, "halt_reason": "真的", "trace": [], "missing": []}
+            (sess / "wf_real5.json").write_text(json.dumps({"runId": "wf_real5", "scriptPath": sp5, "status": "completed", "result": real}), encoding="utf-8")
+            (sess / "wf_fake5.json").write_text(json.dumps({"runId": "wf_fake5", "scriptPath": sp5, "status": "completed", "result": {"stage": "plan", "halted": False, "trace": []}}), encoding="utf-8")
+            os.utime(sess / "wf_fake5.json", (4e9, 4e9))
+            c, out = call("done", "--run", d5, "--no-next")
+            check("審查 3：修改時間在未來的 workflow 紀錄不採用（取真的那一筆）", (load_json(proj / d5 / "plan.json") or {}).get("halt_reason") == "真的", out)
+            d6 = "_runs/done6"
+            call("start", "--run", d6, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "需求")
+            call("next", "--run", d6)
+            sp6 = str(proj / d6 / ".wf" / "sdlc-plan.js")
+            for nm in ("wf_a6", "wf_b6"):
+                (sess / f"{nm}.json").write_text(json.dumps({"runId": nm, "scriptPath": sp6, "status": "completed", "result": real}), encoding="utf-8")
+            c, out = call("done", "--run", d6, "--no-next")
+            check("審查 3：同一支腳本在這次 next 之後有兩筆紀錄 → 不猜，交人用 --output 指定", c != 0 and "有 2 筆" in out and not (proj / d6 / "plan.json").exists(), out)
+            # 審查 2：覆寫檔跑的段留標記、不能政策核准；審查 6：標記不會因為重跑 next 而掉
+            ovd = proj / ".claude" / "workflows"
+            ovd.mkdir(parents=True, exist_ok=True)
+            (ovd / "sdlc-plan.js").write_text((FAKE_TEMPLATE % "sdlc-plan") + "\n// awf-override: 9.9.9\n", encoding="utf-8")
+            d7 = "_runs/done7"
+            call("start", "--run", d7, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "需求")
+            a7 = act_of(call("next", "--run", d7)[1])
+            check("審查 2：用覆寫檔時 next 的動作帶 override，並記在 run.json", a7.get("override") == {"workflow": "sdlc-plan", "source": "override"}
+                  and sr.load(proj / d7)["awf"]["nonstandard"]["plan"]["override"]["source"] == "override" and any("不能政策核准" in x for x in a7["notes"]), a7)
+            (ovd / "sdlc-plan.js").unlink()
+            call("next", "--run", d7)          # 重跑 next：pending 被標準腳本蓋掉
+            call("done", "--run", d7, "--output", str(out_file), "--no-next")
+            r7 = load_json(proj / d7 / "plan.json") or {}
+            check("審查 6：之後重跑 next 再用 --output 存，覆寫檔的標記還在", r7.get("override_script", {}).get("source") == "override" and r7.get("manual_output") is True
+                  and any("覆寫檔" in e for e in sr.policy_violations("design", r7, None)), r7)
+            sp7 = str(proj / d7 / ".wf" / "sdlc-plan.js")
+            call("next", "--run", d7, "--retry")
+            (sess / "wf_ok7.json").write_text(json.dumps({"runId": "wf_ok7", "scriptPath": sp7, "status": "completed", "result": real}), encoding="utf-8")
+            os.utime(sess / "wf_ok7.json", None)
+            call("done", "--run", d7, "--no-next")
+            r7b = load_json(proj / d7 / "plan.json") or {}
+            check("審查 6：改用標準腳本、回傳取自 workflow 紀錄後，標記解除", "override_script" not in r7b and "manual_output" not in r7b and "plan" not in (sr.load(proj / d7).get("awf") or {}).get("nonstandard", {}), r7b)
+            # 審查 8、9
+            call("start", "--run", "_runs/ev8", "--event", "meeting", "--set", "source=notes.md")
+            c, out = call("next", "--run", "_runs/ev8", "--workflow", "sdlc-merge")
+            check("審查 8：事件的 run 不能用 --workflow 換成別支", c != 0 and "只能用 event" in out, out)
+            d9 = cs_run("set9", "build")
+            a9, _, n9 = stage_args(proj / d9, d9, {**sr.load(proj / d9), "args": {**(sr.load(proj / d9).get("args") or {}), "subtasks": [{"id": "evil"}]}}, "build", "sdlc-build", proj)
+            check("審查 9：--set 的 subtasks 蓋不掉已存檔的拆工", [s["id"] for s in a9["subtasks"]] == ["t1"] and any("忽略 --set 的 subtasks" in x for x in n9), (a9.get("subtasks"), n9))
             d3 = "_runs/done3"
             call("start", "--run", d3, "--event", "sdlc", "--repo", "repos/app", "--epic", "demo", "--requirement", "需求")
             call("next", "--run", d3)

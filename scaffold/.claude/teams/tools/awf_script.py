@@ -20,10 +20,13 @@
   3. 迴圈要有上限：只准 `for (… of …)`、`for (… in …)` 與有條件、有遞增的 `for (;;)`；`while`、`do` 不准（改用 awfLoop）。
   4. 每個流程層級的 return 都要帶 `trace: awfTrace()`。
   5. 不能重新定義或碰核心的內部（awfState、awfKernel、awfInit、awfKernelInit…），不能用 eval、Function、import、require、globalThis。
+  6. 不能用正規式字面值、字串外的反斜線、constructor／__proto__／prototype（遮罩器看不懂或可以拿來繞過）。
 
-這是事前檢查，幫忙早點發現寫錯；它擋不住所有寫法。真正的把關在兩個地方：
-執行核心在執行時再擋一次（角色白名單、派工數上限），閘門驗的是產出（save_run.py stage 的條件和標準腳本完全一樣，
-而且自訂腳本跑的段不能政策核准，一律交人）。
+這是事前檢查，幫忙早點發現寫錯；它擋不住所有寫法。真正的把關在三個地方：
+  - 組裝時把腳本內容包成函式（assemble）：agent、tryAgent、awfState 等名字被參數遮蔽，內容裡拿不到；
+    回傳的 stage、recipe、trace 由外層覆寫，trace 一律取自執行核心。
+  - 執行核心在執行時再擋一次（角色白名單、派工數上限）。
+  - 閘門驗的是產出：save_run.py stage 的條件和標準腳本完全一樣，而且自訂腳本跑的段不能政策核准，一律交人。
 
 只用標準庫。`python3 awf_script.py --selftest`。
 """
@@ -124,6 +127,18 @@ def mask(text: str) -> str:
         elif c == "`":
             stack.append("T")
             i = template(i + 1)
+        elif c == "/":
+            # 除號前面一定是值（識別字、數字、右括號）；其他位置的 / 是正規式字面值，裡面的引號與 /* 會騙過遮罩，所以不准
+            j = i - 1
+            while j >= 0 and text[j] in " \t":
+                j -= 1
+            prev = text[j] if j >= 0 else "\n"
+            word = re.search(r"[\w$]+$", text[:j + 1])
+            if not (re.match(r"[\w$)\]]", prev)) or (word and word.group(0) in ("return", "typeof", "case", "in", "of", "void", "delete", "do", "else", "yield", "await")):
+                raise ScriptError(f"第 {text.count(chr(10), 0, i) + 1} 行有正規式字面值：自訂腳本不能用 /…/ 的寫法（改用字串方法，或 new RegExp('…')）")
+            i += 1
+        elif c == "\\":
+            raise ScriptError(f"第 {text.count(chr(10), 0, i) + 1} 行在字串外面有反斜線（例如用 \\u 跳脫拼出識別字），不准")
         elif c == "{":
             depth += 1
             i += 1
@@ -241,11 +256,13 @@ def check(text: str, allowed_types: set[str], ns: str, reserved: set[str]) -> li
         errs.append("除了開頭的 meta，不能再有 export")
     # 1、5：禁用的識別字
     for name, why in FORBIDDEN.items():
-        for mm in re.finditer(r"(?<![\w$.])" + re.escape(name) + r"(?![\w$])(?!\s*:)", body):
+        for mm in re.finditer(r"(?<![\w$.])" + re.escape(name) + r"(?![\w$])", body):
             errs.append(f"{at(mm.start())}：{why}")
             break
-    if re.search(r"\.\s*constructor\b", body):
-        errs.append("不能用 .constructor（可以拿來建構函式、繞過檢查）")
+    if re.search(r"constructor|__proto__|prototype", text[start:]):
+        errs.append("不能出現 constructor、__proto__、prototype（字串裡也不行：可以拿來建構函式、繞過檢查）")
+    if re.search(r"(?<![\w$.])(?:get|set)\s+['\"\[\w$]+\s*\(", body) or re.search(r"['\"`]agentType['\"`]", text[start:]):
+        errs.append("agentType 不能寫成加引號的鍵、計算出來的鍵或 getter（要是 agentType: NS + '<角色>'）")
     # 5：不能重新定義 awf.py 接上的名字
     names = sorted(reserved | set(PREAMBLE_NAMES))
     for mm in re.finditer(r"(?<![\w$.])(?:function\s*\*?\s*|(?:const|let|var)\s+)([\w$]+)", body):
@@ -330,10 +347,28 @@ def defined_names(snippets: dict) -> set[str]:
     return out
 
 
-def assemble(text: str, preamble: str) -> str:
-    """把 preamble 接在 meta 後面。"""
+SHADOWED = ("agent", "tryAgent", "workflow", "awfState", "awfKernel", "awfInit", "awfKernelInit", "awfSetModifiers", "awfSetModelPlan", "awfDispatch")
+
+
+def assemble(text: str, preamble: str, stage: str = "") -> str:
+    """把 preamble 接在 meta 後面，再把腳本內容包成一個函式執行。
+
+    包起來有兩個作用（這才是擋，靜態檢查只是提早發現）：
+      - 函式的參數遮蔽 agent、tryAgent、awfState 等名字：內容裡拿到的是 undefined，直接派工或改核心狀態會出錯。
+      - 回傳值的 stage、recipe、trace 由外層覆寫：trace 一律取自執行核心，腳本自己給的不採用。
+    """
     end = meta_end(text, mask(text))
-    return text[:end].rstrip() + "\n\n" + preamble.rstrip("\n") + "\n\n// ── 自訂腳本的內容 ──" + ("" if text[end:].startswith("\n") else "\n") + text[end:]
+    body = text[end:]
+    stage_js = '"' + stage.replace('"', "") + '"'
+    wrap_open = "const __awfBody = async (" + ", ".join(SHADOWED) + ") => {"
+    wrap_close = "\n".join([
+        "}",
+        "const __awfOut = await __awfBody()",
+        "if (!__awfOut || typeof __awfOut !== 'object' || Array.isArray(__awfOut)) return { stage: " + stage_js + ", halted: true, halt_reason: '自訂腳本沒有回傳物件', missing: [], recipe: RECIPE, trace: awfTrace() }",
+        "return { ...__awfOut, stage: " + stage_js + ", recipe: RECIPE, trace: awfTrace() }",
+    ])
+    return (text[:end].rstrip() + "\n\n" + preamble.rstrip("\n") + "\n\n// ── 自訂腳本的內容（包成函式：遮蔽 agent 等名字；回傳的 trace 由外層取自執行核心）──\n"
+            + wrap_open + ("" if body.startswith("\n") else "\n") + body.rstrip("\n") + "\n" + wrap_close + "\n")
 
 
 # ------------------------------------------------------------------ selftest
@@ -402,13 +437,25 @@ def selftest() -> int:
     bad("碰核心內部狀態被擋", lambda t: t.replace("const done = []", "const done = []\nawfState().trace.push({})"), r"awfState")
     bad("自己呼叫 awfKernelInit 被擋", lambda t: t.replace("const done = []", "const done = []\nawfKernelInit({ max_agents: 0 })"), r"不要自己呼叫 awfKernelInit")
     bad("eval 被擋", lambda t: t.replace("const done = []", "const done = [eval('1')]"), r"不能用 eval")
-    bad(".constructor 被擋", lambda t: t.replace("const done = []", "const done = [(() => 1).constructor('return 1')]"), r"\.constructor")
+    bad(".constructor 被擋", lambda t: t.replace("const done = []", "const done = [(() => 1).constructor('return 1')]"), r"constructor")
+    bad("三元運算式取出 agent 被擋", lambda t: t.replace("const done = []", "const done = []\nconst go = 1 ? agent : 0"), r"不能直接用 agent\(\)")
+    bad("\\u 跳脫拼出識別字被擋", lambda t: t.replace("const done = []", "const done = [await \\u0061gent('p', {})]"), r"反斜線")
+    bad("正規式字面值被擋（裡面的引號會騙過遮罩）", lambda t: t.replace("const done = []", "const q = /'/, done = [await agent('p', {})], q2 = /'/"), r"正規式字面值")
+    bad("正規式字面值假裝成區塊註解被擋", lambda t: t.replace("const done = []", "const q = /[/*]/\nconst done = [await agent('p', {})]\nconst q2 = /[*/]/"), r"正規式字面值")
+    bad("三元運算式取出 awfState 被擋", lambda t: t.replace("const done = []", "const done = []\nconst st = 1 ? awfState : 0"), r"awfState")
+    bad("三元運算式取出 awfKernelInit 被擋", lambda t: t.replace("const done = []", "const done = []\nconst ki = 1 ? awfKernelInit : 0"), r"awfKernelInit")
+    bad("agentType 寫成 getter 被擋", lambda t: t.replace("agentType: 'acme:a11y'", "get 'agentType'() { return 'acme:a11y' }"), r"getter")
+    bad("['constructor'] 被擋", lambda t: t.replace("const done = []", "const done = [(() => 1)['constructor']('return 1')]"), r"constructor")
+    expect("除號不會被當成正規式", run(GOOD.replace("for (let i = 0; i < 2; i++)", "for (let i = 0; i < 4 / 2; i++)")) == [], run(GOOD.replace("for (let i = 0; i < 2; i++)", "for (let i = 0; i < 4 / 2; i++)")))
     bad("自己放片段標記被擋", lambda t: t.replace("const done = []", "/*@snippet:kernel*/ null /*@end*/\nconst done = []"), r"不能自己放片段")
     bad("開頭不是 meta 被擋", lambda t: "const x = 1\n" + t, r"要以 export const meta")
     bad("字串沒收尾：讀不懂就擋", lambda t: t.replace("'看一下'", "'看一下"), r"讀不懂這支腳本")
     expect("函式裡的 return 不用帶 trace（只管流程層級的）", not any("return" in e for e in run(GOOD)))
-    out = assemble(GOOD, "const NS = 'x:'\n")
+    out = assemble(GOOD, "const NS = 'x:'\n", "build")
     expect("組裝：preamble 接在 meta 後面、內容之前，meta 仍在最前面", out.startswith("export const meta = {") and out.index("const NS = 'x:'") < out.index("const SUBTASKS") and out.count("export const meta") == 1, out[:300])
+    expect("組裝：內容包成函式並遮蔽 agent、tryAgent、awfState、awfKernelInit；回傳的 stage、recipe、trace 由外層覆寫",
+           "const __awfBody = async (agent, tryAgent, workflow, awfState, awfKernel, awfInit, awfKernelInit," in out
+           and out.rstrip().endswith('return { ...__awfOut, stage: "build", recipe: RECIPE, trace: awfTrace() }') and out.index("const __awfBody") < out.index("const SUBTASKS"), out[-400:])
     expect("片段定義的名字", defined_names({"a": "function f1() {}\nasync function f2() {}\nconst C1 = 1\n  function inner() {}"}) == {"f1", "f2", "C1"})
     print("awf_script selftest：" + ("全部通過" if ok else "有失敗"))
     return 0 if ok else 1

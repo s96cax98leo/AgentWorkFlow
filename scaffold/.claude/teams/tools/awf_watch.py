@@ -45,6 +45,7 @@ NOTIFY_FIELDS = ("v", "seq", "at", "type", "run", "stage", "status", "state", "b
                  "idle_seconds", "workflow", "wf_run")
 SECRETISH = re.compile(r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}"
                        r"|-----BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.|(?i:password|passwd|secret|token|api[_-]?key)\s*[=:]\s*\S{6,}")
+SAFE_TEXT = re.compile(r"[\w:.#@+\- \u4e00-\u9fff]{0,80}")      # 送給外部指令的文字欄位：不含路徑分隔、引號、換行
 PROGRESS_STEP = 50_000      # 同一個 agent 每多這麼多 token 才再記一筆 agent_progress
 FINISHED = ("completed", "failed", "cancelled", "canceled", "error", "stopped", "killed")
 
@@ -244,6 +245,14 @@ def notify_config(profile: dict | None) -> dict | None:
 def notify_payload(event: dict) -> dict | None:
     """要送出去的內容：只留白名單欄位；任何欄位看起來像機敏值就整筆不送（回 None）。"""
     out = {k: event[k] for k in NOTIFY_FIELDS if k in event}
+    if SECRETISH.search(json.dumps(out, ensure_ascii=False)):      # 先看原始內容：像機敏值就整筆不送
+        return None
+    # 自由文字不送：watch_note 的 status 是例外訊息（可能帶路徑）；label 是 agent 取的名字，只留單純的字元
+    if out.get("type") == "watch_note":
+        out.pop("status", None)
+    for k in ("label", "status", "stage", "workflow", "role", "model", "by", "kind", "state"):
+        if k in out and not (isinstance(out[k], str) and SAFE_TEXT.fullmatch(out[k])):
+            out[k] = "(略)"
     return None if SECRETISH.search(json.dumps(out, ensure_ascii=False)) else out
 
 
@@ -270,8 +279,16 @@ def tick(run: Path, tr: Transcripts | None, stall_seconds: int, cfg: dict | None
         return None, [], [f"讀不到 {run / 'run.json'}"]
     mem = load_json(run / STATE)
     mem = mem if isinstance(mem, dict) and mem.get("v") == 1 else {"v": 1, "seq": 0, "mem": {}}
-    events, new_mem = diff_events(mem.get("mem") or {}, snap, stall_seconds)
     warns: list[str] = []
+    if not isinstance(mem.get("seq"), int) or isinstance(mem.get("seq"), bool) or mem["seq"] < 0 or not isinstance(mem.get("mem") or {}, dict):
+        warns.append(f"{STATE} 的內容不對，重新開始記（事件序號從 1 起）")
+        mem = {"v": 1, "seq": 0, "mem": {}}
+    try:
+        events, new_mem = diff_events(mem.get("mem") or {}, snap, stall_seconds)
+    except Exception as e:      # 記憶檔被改壞（任何人都寫得到）：重置後重算，不讓 watcher 中斷
+        warns.append(f"{STATE} 讀不懂（{type(e).__name__}），重新開始記")
+        mem = {"v": 1, "seq": 0, "mem": {}}
+        events, new_mem = diff_events({}, snap, stall_seconds)
     stamp = at or now_iso()
     lines = []
     for e in events:
@@ -506,6 +523,25 @@ def selftest() -> int:
         n0 = len(sent)
         w = notify(cfg, {"type": "waiting_gate", "v": 1, "seq": 1, "at": "t", "run": "r", "stage": "plan", "label": "token=ghp_" + "a" * 30}, fake)
         check("notify：內容像機敏值就整筆不送，並回警告", len(sent) == n0 and "沒有送出" in w, w)
+        pl = notify_payload({"type": "watch_note", "v": 1, "seq": 2, "at": "t", "run": "r", "status": "OSError: /srv/demo/repo/x.json"})
+        pl2 = notify_payload({"type": "record_written", "v": 1, "seq": 3, "at": "t", "run": "r", "stage": "plan", "label": "../../etc/passwd"})
+        pl3 = notify_payload({"type": "record_written", "v": 1, "seq": 4, "at": "t", "run": "r", "stage": "plan", "label": "research:code#2"})
+        check("notify：watch_note 的訊息不送；label 含路徑字元就不送原文；正常的 label 照送", "status" not in pl and pl2["label"] == "(略)" and pl3["label"] == "research:code#2", (pl, pl2, pl3))
+        bad_run = root / "bad-state"
+        bad_run.mkdir()
+        (bad_run / "run.json").write_text((run / "run.json").read_text(encoding="utf-8"), encoding="utf-8")
+        (bad_run / STATE).write_text('{"v":1,"seq":"x","mem":{"stages":[]}}', encoding="utf-8")
+        try:
+            _s, _e, w_bad = tick(bad_run, None, 900)
+            crashed = False
+        except Exception as e:      # noqa: BLE001
+            crashed, w_bad = True, [repr(e)]
+        (bad_run / STATE).write_text('{"v":1,"seq":3,"mem":{"stages":[]}}', encoding="utf-8")
+        try:
+            _s, _e, w_bad2 = tick(bad_run, None, 900)
+        except Exception as e:      # noqa: BLE001
+            crashed, w_bad2 = True, [repr(e)]
+        check("記憶檔被改壞：不中斷，重新開始記並警告", not crashed and any("重新開始記" in x for x in w_bad) and any("重新開始記" in x for x in w_bad2), (w_bad, w_bad2))
 
         def boom(*a, **kw):
             raise OSError("no such command")

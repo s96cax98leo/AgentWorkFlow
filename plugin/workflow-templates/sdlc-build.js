@@ -389,7 +389,9 @@ function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ 
 // valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
-  const o = opts || {}
+  // 先把 opts 複製成普通物件：agentType 等欄位只讀一次（getter 不能第一次回白名單裡的角色、第二次回別的）
+  const o = { ...(opts || {}) }
+  if (typeof o.agentType !== 'string') o.agentType = ''
   if (k.roles && !k.roles.includes(o.agentType)) throw new Error(`不能派 ${o.agentType || '（沒給 agentType）'}：這支腳本只能派登記過的角色`)
   // label 要唯一（trace、紀錄檔、失敗升級都靠它對）：同一支 workflow 重複用同一個 label 時，第二次起自動加序號
   k.seen = k.seen || {}

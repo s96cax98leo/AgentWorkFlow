@@ -4,6 +4,79 @@
 
 ## [Unreleased]
 
+## [0.5.0]
+
+這一版讓流程順一點。起因有兩個：主 session 每段要手動做五、六步；另一個專案回報一個需求跑了兩天，build 重跑 11 輪，多半是停下來問人的小事。
+
+### 破壞性變更
+
+- **workflow 範本搬進 plugin，init 不再複製 workflow 到專案。**
+  - 範本在 plugin 的 `workflow-templates/`。每段由 `awf.py next` 用範本、`workflow.config` 與 `methodology.json` 產生 `<run_dir>/.wf/<名>.js`。
+  - 專案的 `.claude/workflows/<名>.js` 只有結尾帶 `// awf-override: <版本>` 才採用。沒有標記的同名檔是舊副本，不採用。
+  - `init.py --upgrade` 會移除沒改過的舊副本；改過的保留，並列出來。
+- **五支事件 workflow 併成 `event.js`**：`event-meeting`、`event-decision`、`event-demo-check`、`event-reqs-change`、`event-upstream`。事件類型變成資料，可以在 profile 的 `events` 加自己的類型。這五支的舊覆寫檔不再生效，`awf.py` 會報錯並說明。workflow 從 16 支變 12 支。
+- **所有 workflow 的派工都走執行核心。** profile 有 `models` 時：
+  - design 之後各段的模版角色改由模型分級決定模型（預設 `standard`），不再沿用主對話的模型。要維持原樣設 `models.mode: inherit`。
+  - `save_run.py stage` 對每一段都檢查模型等級：trace 沒有 `tier`、或模型低於下限判 invalid。自己改過 workflow 的專案要改用 `awfAgent` 派工。
+- **每支 workflow 有派工數上限**：`limits.max_agents`（沒寫用 40；design、build、test 依子計劃數與子任務數另加額度）。到上限停下交人。
+- **`docs`、`test-only` 兩個 recipe 預設 `gate_mode: plan-only`**：plan 仍由人核准，之後的段結果乾淨就政策核准，不乾淨才交人。要每段都人核准，把 recipe 的 `gate_mode` 設成 `strict`。
+- **多一個 SessionStart hook**：plugin 版本和專案的 `.claude/teams/VERSION` 不一致時印一行提示。只提示，不擋。
+- **team agent 多三件不能做的事**：寫 `.claude/workflows/` 與 run 目錄的 `.wf/`、執行 `awf.py`（`--selftest` 除外）、寫決策記憶檔。
+- `dev-integrator`、`dev-merge-steward` 失敗時不再自動升級重派，交人判斷。
+
+### 新增
+
+- **狀態機 `awf.py`**：主 session 每段只做 `next`（回一個動作）與 `done`（存結果）。跨段的參數（中轉分支、剩餘子任務、PR 號）由它帶。另有 `approve`、`handoff`（接手摘要）、`render`。
+- **少停下來問人**：
+  - 問題分級。不是 blocking 的問題，agent 照建議先做並記成暫定，下一次要人出面時一次確認。
+  - 子任務可以宣告預期內的紅（`expected_red`），整合時不擋。
+  - test 的分片驗到不同 HEAD 時，差異只在文件就自動重驗，不停下。
+  - 決策記憶：閘門上答過的問題記在 `decisions.jsonl`，之後的資料包會帶出相關的決定，不再重問。
+- **限制文件**（profile 的 `constraints`）：指定哪份文件套用到哪些段與路徑，可以要求對照表或跑檢查指令。
+- **工具先定位**（`locate.py`）：文件類的調研角度命中夠就不派定位 agent。
+- **子任務資料包**：實作的 agent 只拿到 spec 對應的小節、對得上的限制文件、相依子任務的介面。
+- **build 分波**：子任務可標 `wave`；`parallelism.wave_pause` 開啟時每波做完停下交人。
+- **pattern 庫與自訂腳本**：六個 pattern（fan-out、classify、adversarial、generate & filter、tournament、loop），都要給上限。`awf.py next --script <檔>` 讓 design、build、deliver 段改用自己寫的腳本；先做靜態檢查，存檔的檢查和標準腳本相同，而且不能政策核准。
+- **watcher**：`awf.py watch` 把進度寫成 `<run_dir>/progress.jsonl`，`awf.py statusline` 給狀態列用，`progress.notify` 可以接自己的通知指令（預設不設）。這些都不參與閘門。
+- **doctor**：`awf.py doctor` 檢查環境、版本、安裝來源衝突、hook、設定，每項附修法。
+- **閘門**：`gate_mode`、design 存檔時的拆工檢查、`linked_repos`（工作區以外的我方 repo）、模版角色可以寫本 session 的 scratchpad。
+- **續跑**：同一個 session 裡 halted 的段重跑時帶 `resume_from`，已完成的 agent 不重跑。
+- 執行紀錄：agent 漏寫紀錄檔時由工具依信封代寫，索引會標出哪些是代寫的。
+- 四個薄殼 skill：`/agent-workflow:status`、`cost`、`kb`、`doctor`。
+- 專案還沒 init 時，`/sdlc` 會提議用預設值套用。
+
+### 修正
+
+- `sdlc-sync` 策略是 none（已跟上 base）時，回傳沒帶 plan agent 的信封，存檔被判缺件。
+- 派工單裡的 run 目錄與資料包改給絕對路徑，agent 不會把紀錄寫到別的 repo。
+- 0.4 的三個已知限制：Grep 的 content 模式計入讀取額度、調研重用會看目錄有沒有新增或刪除檔案、派工 label 重複時自動加序號。
+
+### 安全（發佈前獨立審查的修正）
+
+- team agent 先 `cd` 進 `.claude/workflows/`、`.wf/`、`.claude/teams/` 再寫檔會被擋（原本只看指令文字）。
+- 覆寫檔或舊副本跑的段、`awf.py done --output` 手動給的結果，都不能政策核准，一律由人核准。
+- `awf.py done` 不採用修改時間在未來的 workflow 紀錄；同一支腳本有兩筆以上紀錄時不猜，交人指定。
+- 自訂腳本的內容包成函式執行，拿不到 `agent` 與核心的內部狀態；回傳的 trace 一律取自執行核心。
+- 執行紀錄的路徑只認 run 目錄底下的檔。
+- `--set` 蓋不掉由前段結果推導的 `subtasks`、`sub_plans`、`branch`；事件的 run 不能用 `--workflow` 換成別支。
+- 自訂事件類型的 `<類型>.json` 和內建的一樣不准 team agent 寫。
+- watcher 的記憶檔被改壞時重置並警告，不中斷；通知不送例外訊息與含路徑字元的名稱。
+
+### 沒做
+
+- CI 依改動範圍決定跑多少、每段開始先檢查主機負載：這兩項是專案的開發規範，不由模版決定。
+- 內建的 12 支範本沒有改用 pattern 庫的函式（各自的流程已經寫好而且有情境測試）；pattern 庫目前給自訂腳本用。
+- 工具（`.claude/teams/tools/`）仍留在專案，只有 workflow 範本搬進 plugin：agent 檔、hook 訊息、派工單都引用固定路徑。
+
+### 升級步驟
+
+1. 更新 plugin：`claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins`。
+2. 在專案跑 `python3 <AgentWorkFlow>/init.py --target . --upgrade`。它會更新工具、移除沒改過的舊 workflow 副本、補 `guard.config.json` 的新鍵。要 profile 的新欄位（`limits`、`models` 等）加 `--adopt-new-fields`。
+3. 跑 `python3 .claude/teams/tools/awf.py doctor`，照它列的修法處理。
+4. 自己改過 workflow 的專案：對照 plugin 現在的範本重做一份覆寫檔，結尾加 `// awf-override: 0.5.0`；改過那五支事件 workflow 的，改成在 profile 的 `events` 定義。
+5. 進行中的 run 可以繼續：`python3 .claude/teams/tools/awf.py next --run <run_dir>`。
+6. 不想讓 design 之後的段改用 `standard` 模型：在 `methodology.json` 設 `"models": {"mode": "inherit"}`。
+
 ## [0.4.1]
 
 ### 變更

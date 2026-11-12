@@ -648,6 +648,11 @@ RUN_STAGES = frozenset({
     "plan", "design", "design-revise", "build", "sync", "test", "deliver", "merge",
     "brief", "meeting", "demo-check", "decision", "post-merge", "upstream", "pr-review", "reqs-change", "run",
 })
+# profile 的 events 裡自訂的事件類型也是段名：它的 <類型>.json 一樣不准寫、<類型>/<label>.md 一樣可以當執行紀錄。讀不到就只用內建的
+try:
+    RUN_STAGES = RUN_STAGES | frozenset(awf_config.custom_event_stages())
+except Exception:
+    pass
 # runs_dir 底下只由 save_run.py（主 session）寫的閘門資料：run.json、<段>.json；所有 team agent 都不能寫（Write／Edit 與 shell）。
 # 稽核紀錄（AUDIT_FILES）與凍結檔另由 protected_target() 在任何位置都擋。
 # 資料包工具（pack.py）寫的 reuse.json（調研重用的來源 hash 與結論，save_run 的閘門核對會讀）與 pack-args.json 也算。
@@ -900,14 +905,25 @@ def team_config_path(p: str) -> bool:
     return False
 
 
-def shell_writes_team_config(seg: str) -> bool:
-    """shell 寫入 .claude/teams/、methodology.json、guard.config.json（盡力而為）。
-    python3 .claude/teams/tools/<工具>.py 這種「執行工具」不算提到路徑（工具本身的寫入由各自的規則管）。"""
+TEAM_CONFIG_MKDIR = re.compile(r"(?:^|[\s;&|(`])(?:mkdir|md|rmdir)(?:\.exe)?(?=\s|$)", re.I)
+
+
+def shell_writes_team_config(seg: str, cwd: Path | None = None) -> bool:
+    """shell 寫入 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json、guard.config.json（盡力而為）。
+    python3 .claude/teams/tools/<工具>.py 這種「執行工具」不算提到路徑（工具本身的寫入由各自的規則管）。
+    cwd 是這一段指令實際作用的目錄：先 cd 進這些目錄再寫（指令裡看不到路徑）也算。"""
     probe = TEAM_TOOL_CALL.sub(" ", norm(seg))
-    if not TEAM_CONFIG_TARGET.search(probe):
+    inside = False
+    if cwd is not None:
+        try:
+            here = "/" + fold(Path(cwd).resolve().as_posix()).strip("/") + "/"
+        except OSError:
+            here = "/" + fold(norm(str(cwd))).strip("/") + "/"
+        inside = "/.claude/teams/" in here or "/.claude/workflows/" in here or "/.wf/" in here
+    if not inside and not TEAM_CONFIG_TARGET.search(probe):
         return False
     probe = re.sub(r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", " ", probe, flags=re.I)
-    return bool(SHELL_WRITE.search(probe) or (INTERP.search(probe) and INTERP_WRITE.search(probe)))
+    return bool(SHELL_WRITE.search(probe) or TEAM_CONFIG_MKDIR.search(probe) or (INTERP.search(probe) and INTERP_WRITE.search(probe)))
 
 
 PUSH_RE = re.compile(r"\bgit\b.*\b(?:push|send-pack)\b")
@@ -1427,7 +1443,7 @@ def _check_shell_rules(data: dict) -> None:
                       f"（{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 run_brief.py --log {RUNS}<run>/<段>/logs/<label>.log -- <指令>")
         if team and agent_writes_state(seg, d):
             block(f"{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")
-        if team and shell_writes_team_config(seg):
+        if team and shell_writes_team_config(seg, d):
             block(f"{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json"
                   "（守門設定、profile 與 workflow 腳本只由人或主 session 改）")
         for tool in ("publish.py", "merge_gate.py"):

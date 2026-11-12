@@ -201,7 +201,14 @@ def record_candidates(run: Path, stage: str, record: str) -> list[Path]:
     if not record:
         return []
     p = Path(record)
-    return [p if p.is_absolute() else Path.cwd() / p, run / stage / p.name]
+    given = p if p.is_absolute() else Path.cwd() / p
+    out = [run / stage / p.name]
+    try:      # trace 給的路徑只在 run 目錄底下才採用：拿 run 以外隨便一個存在的檔當紀錄不算
+        given.resolve().relative_to(Path(run).resolve())
+        out.insert(0, given)
+    except (ValueError, OSError):
+        pass
+    return out
 
 
 def _envelope_of(entry: dict, stage: str, envs: list[dict]) -> dict | None:
@@ -397,7 +404,7 @@ def policy_violations(stage: str, result, run: Path | None = None) -> list[str]:
     - plan 段一律由人核准（rules.md 規則 16），政策核准一律不行。
     - 一份信封都沒有、或回傳裡有 null（agent 缺件）不行：缺件不是「沒有發現」（rules.md 規則 26）。
     - 回傳標了 halted（流程中斷）不行。
-    - 回傳帶 custom_script（這一段用自訂腳本跑）不行：一律由人核准。
+    - 回傳帶 custom_script（自訂腳本）、override_script（覆寫檔或舊副本）、manual_output（done --output 手動給的結果）不行：一律由人核准。
     - 任何信封的 open_questions 有 blocking=true 不行。
     - 任何 findings payload 有 blocker／important 等級的發現不行。
     - 任何 verdicts payload 有 refuted=true（skeptic 推翻了該段的產出）不行。
@@ -411,6 +418,10 @@ def policy_violations(stage: str, result, run: Path | None = None) -> list[str]:
         errs.append(f"回傳標了 halted：{result.get('halt_reason') or result.get('halted')}")
     if isinstance(result, dict) and result.get("custom_script"):
         errs.append("這一段是用自訂腳本跑的（awf.py next --script）：流程沒有經過標準腳本的核對，要由人核准")
+    if isinstance(result, dict) and result.get("override_script"):
+        errs.append("這一段用的是專案自己的 workflow 腳本（覆寫檔或舊副本），不是 plugin 的範本：要由人核准")
+    if isinstance(result, dict) and result.get("manual_output"):
+        errs.append("這一段的結果是用 awf.py done --output 手動給的（不是 awf 從 workflow 紀錄取得的）：要由人核准")
     envs = list(envelopes(result))
     if not envs:
         errs.append(NO_ENVELOPE)
@@ -1883,6 +1894,14 @@ def selftest() -> int:
         cap_run = Path(k_run())
         _has, rows, miss = process_trace(cap_run, "build", {"trace": [{"label": "Implement:t9", "agent_type": "agent-workflow:dev-implementer", "phase": "Implement",
                                                                      "record": str(cap_run / "build/Implement-t9.md"), "ok": False, "capped": True, "max_agents": 40}]}, False)
+        out_file = Path(d) / "outside.md"
+        out_file.write_text("# 不是紀錄\n", encoding="utf-8")
+        rc_run = Path(k_run())
+        (rc_run / "build").mkdir(parents=True, exist_ok=True)
+        (rc_run / "build" / "real.md").write_text("# 紀錄\n", encoding="utf-8")
+        check("紀錄檔路徑：trace 指到 run 目錄以外的檔不算紀錄；run 目錄底下的照舊",
+              not any(c.is_file() for c in record_candidates(rc_run, "build", str(out_file))) and any(c.is_file() for c in record_candidates(rc_run, "build", str(rc_run / "build" / "real.md"))),
+              record_candidates(rc_run, "build", str(out_file)))
         check("派工數上限：到上限沒派出的列成缺件，並說明是上限（不是 agent 失敗）", len(miss) == 1 and "派工數到上限（40" in miss[0] and rows[0]["status"] == "沒有派出（派工數到上限）", miss)
         PROJECT_PROFILE.write_text(json.dumps({**with_models, "models": {**with_models["models"], "mode": "inherit"}}, ensure_ascii=False), encoding="utf-8")
         check("模型分級：mode=inherit 不檢查", k_stage(d, [k_entry(d, "intent", SPEC, "", "inherit")])[0] == 0)

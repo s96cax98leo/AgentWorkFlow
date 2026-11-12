@@ -93,6 +93,15 @@ def methodology_path() -> Path:
     return workspace() / ".claude" / "teams" / "methodology.json"
 
 
+def custom_event_stages() -> list:
+    """profile 的 events 裡自訂的事件類型名（段名）。讀不到、格式不對一律回空清單。"""
+    try:
+        ev = json.loads(methodology_path().read_text(encoding="utf-8")).get("events")
+        return [k for k in ev if isinstance(k, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,39}", k)] if isinstance(ev, dict) else []
+    except Exception:
+        return []
+
+
 LIMIT_MODES = ("enforce", "warn", "off")
 
 

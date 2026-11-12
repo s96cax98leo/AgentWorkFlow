@@ -687,6 +687,15 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     pair(2, "B1 agent 用重新導向寫覆寫檔", "echo 'x' > .claude/workflows/sdlc-plan.js", agent=WRT)
     pair(2, "B1 agent 用 cp 蓋掉產生的腳本", "cp /tmp/evil.js _tpm/runs/x/.wf/sdlc-design.js", agent=WRT)
     pair(0, "B1 agent 讀產生的腳本放行", "cat _tpm/runs/x/.wf/sdlc-design.js", agent=WRT)
+    # 審查發現：先 cd 進去再寫，指令裡看不到路徑，也要擋（看這一段實際作用的目錄）
+    IMP = "agent-workflow:dev-implementer"
+    pair(2, "B1 agent 先 cd 進覆寫檔目錄再重新導向", "cd .claude/workflows && echo x > sdlc-deliver.js", agent=IMP)
+    pair(2, "B1 agent 先 cd 進 .wf 再 cp", "cd _tpm/runs/x/.wf && cp /tmp/e.js sdlc-test.js", agent=IMP)
+    pair(2, "B1 agent 先 cd 進工具目錄再改工具", "cd .claude/teams/tools && echo x >> recipe.py", agent=IMP)
+    pair(2, "B1 agent 建覆寫檔目錄", "mkdir -p .claude/workflows", agent=IMP)
+    pair(0, "B1 agent 在覆寫檔目錄裡只讀放行", "cd .claude/workflows && ls", agent=IMP)
+    pair(0, "B1 agent 在工具目錄跑 selftest 放行", "cd .claude/teams/tools && python3 recipe.py --selftest", agent=IMP)
+    pair(0, "B1 主 session 先 cd 再寫覆寫檔放行", "cd .claude/workflows && echo x > sdlc-plan.js")
     pair(0, "B1 主 session 寫覆寫檔放行", "cp a.js .claude/workflows/sdlc-plan.js")
     run(P, 2, "B1 agent 用 Write 寫覆寫檔", edit(WS / ".claude/workflows/sdlc-plan.js", WRT))
     run(P, 2, "B1 agent 用 Write 寫產生的腳本", edit(WS / "_tpm/runs/x/.wf/sdlc-design.js", "agent-workflow:dev-implementer"))
@@ -925,6 +934,18 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
              {"file_path": str(H1W / "_tpm/runs/.claude/teams/methodology.json"), "content": "{}"}, who)
     tool(2, "B2 dev-implementer 寫 repo 裡的 .claude/teams/rules.md", "Write", {"file_path": str(H1R / ".claude/teams/rules.md")}, IMP)
     tool(2, "B2 tpm-writer 寫 docs/methodology.json", "Write", {"file_path": str(H1W / "docs/methodology.json"), "content": "{}"}, WRT)
+    # 審查發現：profile 的 events 裡自訂的事件類型也是段名（<類型>.json 不准寫、<類型>/<label>.md 可以當執行紀錄）
+    mfile = H1W / ".claude/teams/methodology.json"
+    had = mfile.read_text(encoding="utf-8") if mfile.is_file() else None
+    mfile.parent.mkdir(parents=True, exist_ok=True)
+    mfile.write_text(json.dumps({"events": {"retro": {"title": "回顧"}, "壞 名字": {}}}, ensure_ascii=False), encoding="utf-8")
+    tool(2, "自訂事件類型：tpm-researcher 不能寫 runs_dir 的 retro.json", "Write", {"file_path": str(H1W / "_tpm/runs/x/retro.json"), "content": "{}"}, "agent-workflow:tpm-researcher")
+    tool(0, "自訂事件類型：tpm-skeptic 可以寫 retro/ 底下的執行紀錄", "Write", {"file_path": str(H1W / "_tpm/runs/x/retro/challenge.md"), "content": "# x"}, "agent-workflow:tpm-skeptic")
+    tool(2, "自訂事件類型：沒登記的段名仍然不能當執行紀錄的目錄", "Write", {"file_path": str(H1W / "_tpm/runs/x/nope/challenge.md"), "content": "# x"}, "agent-workflow:tpm-skeptic")
+    if had is None:
+        mfile.unlink()
+    else:
+        mfile.write_text(had, encoding="utf-8")
     tool(2, "B2 tpm-researcher 用 Edit 改 runs_dir 下的 guard.config.json", "Edit", {"file_path": str(H1W / "_tpm/runs/x/guard.config.json")}, RSR)
     tool(2, "B2 dev-implementer 用 NotebookEdit 寫 .Claude/Teams/ 底下（大小寫不同）", "NotebookEdit",
          {"notebook_path": str(H1R / ".Claude/Teams/x.ipynb")}, IMP)
