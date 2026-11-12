@@ -304,6 +304,22 @@ def methodology_errors(doc: dict) -> list[str]:
             re.compile(rx)
         except re.error as e:
             errs.append(f"conventions.commit.check_regex 不是合法的正規式：{e}")
+    cons = [c for c in doc.get("constraints") or [] if isinstance(c, dict)]
+    ids = [c.get("id") for c in cons]
+    for n in sorted({x for x in ids if isinstance(x, str) and ids.count(x) > 1}):
+        errs.append(f"constraints 的 id「{n}」重複")
+    for c in cons:
+        f = c.get("file")
+        if isinstance(f, str) and f:
+            norm = f.replace("\\", "/")
+            if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
+                errs.append(f"constraints[{c.get('id')}].file 要是相對路徑，不能是絕對路徑或含 ..（收到 {f}）")
+            base = norm.rsplit("/", 1)[-1].lower()
+            if base.startswith(".env") or base.endswith((".pem", ".key", ".p12", ".pfx")):
+                errs.append(f"constraints[{c.get('id')}].file 不能是機敏檔（{f}）")
+        for g in c.get("paths") or []:
+            if isinstance(g, str) and (g.replace("\\", "/").startswith("/") or ".." in g.replace("\\", "/").split("/")):
+                errs.append(f"constraints[{c.get('id')}].paths 的 glob 要相對目標 repo，不能是絕對路徑或含 ..（收到 {g}）")
     names = [e.get("name") for e in doc.get("extensions") or [] if isinstance(e, dict)]
     for n in sorted({x for x in names if names.count(x) > 1}, key=str):
         errs.append(f"extensions：name {n} 重複")

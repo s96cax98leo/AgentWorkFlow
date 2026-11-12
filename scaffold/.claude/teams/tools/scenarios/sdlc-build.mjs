@@ -23,6 +23,29 @@ export default [
     },
   },
   {
+    // 限制文件（profile 的 constraints）：有 paths 的只給擁有的路徑對得上的子任務；沒有 paths 的整段都帶（共同前綴）
+    name: '限制文件：前端規範只發給前端子任務，整段適用的每張派工單都有',
+    profile: { constraints: [
+      { id: 'arch', file: 'ARCHITECTURE.md', note: '分層', stages: ['design', 'build'], trace: 'table' },
+      { id: 'frontend', file: 'docs/fe.md', stages: ['build'], paths: ['apps/**'] },
+      { id: 'backend', file: 'docs/be.md', stages: ['build'], paths: ['services/**'] },
+      { id: 'review', file: 'REVIEW.md', stages: ['deliver'] },
+    ] },
+    expect: (r) => {
+      const errs = []
+      const be = r.prompts['Implement:t1'] || ''
+      const fe = r.prompts['Implement:t2'] || ''
+      if (!/\[backend\] docs\/be\.md/.test(be) || /\[frontend\]/.test(be)) errs.push('後端子任務要收到後端規範、不能收到前端規範')
+      if (!/\[frontend\] docs\/fe\.md/.test(fe) || /\[backend\]/.test(fe)) errs.push('前端子任務要收到前端規範、不能收到後端規範')
+      const all = Object.entries(r.prompts).filter(([, v]) => v)
+      const noArch = all.filter(([, v]) => !/\[arch\] ARCHITECTURE\.md：分層（要對照）/.test(v)).map(([k]) => k)
+      if (noArch.length) errs.push(`整段適用的限制每張派工單都要有：${noArch.join(',')}`)
+      if (all.some(([, v]) => /\[review\]/.test(v))) errs.push('只套用到 deliver 的限制不該出現在 build')
+      if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
+      return errs
+    },
+  },
+  {
     name: '缺件：實作子任務沒交件',
     fakes: { 'Implement:t2': NONE },
     expect: (r) => {

@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -449,6 +450,87 @@ def has_recipe(data: dict) -> bool:
 
 PROJECT_PROFILE = Path(__file__).resolve().parent.parent / "methodology.json"
 
+# ------------------------------------------------------------------ 限制文件（profile 的 constraints）
+CONSTRAINT_VERDICTS = ("符合", "偏離", "不適用")
+CONSTRAINT_CHECK_TIMEOUT = 300
+
+
+def project_root() -> Path:
+    """專案根目錄：methodology.json 在 <專案>/.claude/teams/ 底下。"""
+    return PROJECT_PROFILE.parent.parent.parent
+
+
+def constraint_file(c: dict, repo: Path | None) -> Path | None:
+    """限制文件的實際位置：先找專案根目錄，再找目標 repo；都沒有回 None。"""
+    f = str(c.get("file") or "")
+    for base in (project_root(), repo):
+        if base is not None and f and (base / f).is_file():
+            return base / f
+    return None
+
+
+def constraint_rows(run: Path, stage: str) -> dict:
+    """這一段的執行紀錄（<run>/<stage>/*.md）裡的〈限制對照〉列：{id: [(判定, 紀錄檔名)]}。"""
+    out: dict = {}
+    d = run / stage
+    if not d.is_dir():
+        return out
+    row = re.compile(r"^\s*\|\s*`?\[?([a-z0-9][a-z0-9-]{0,39})\]?`?\s*\|\s*(" + "|".join(CONSTRAINT_VERDICTS) + r")\s*\|")
+    for f in sorted(d.glob("*.md")):
+        if f.name == INDEX_NAME:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if text.startswith("# 執行紀錄：") and GHOSTWRITTEN in text.split("\n", 1)[0]:
+            continue  # 代寫的紀錄只來自信封，不算 agent 做過對照
+        for line in text.splitlines():
+            m = row.match(line)
+            if m:
+                out.setdefault(m.group(1), []).append((m.group(2), f.name))
+    return out
+
+
+def constraint_issues(run: Path, stage: str, profile: dict | None, repo: Path | None, run_checks: bool = True) -> tuple[list[str], list[dict]]:
+    """這一段適用的限制文件有沒有被遵守的確定性檢查。回傳（不能政策核准的理由, 檢查指令的結果）。
+    - 文件不存在：不行（限制讀不到，agent 等於沒有依據）。
+    - trace=table：這一段的執行紀錄要有該限制的對照列；沒有不行，有「偏離」不行（偏離要由人決定）。
+      build 段有 paths 的限制只發給對得上的子任務，不在這裡要求對照（test、deliver 有套用時在那裡要求）。
+    - check：在目標 repo（沒有就專案根目錄）執行，exit 非 0 或逾時不行。"""
+    cons = [c for c in (profile or {}).get("constraints") or [] if isinstance(c, dict) and stage in (c.get("stages") or [])]
+    if not cons:
+        return [], []
+    issues: list[str] = []
+    checks: list[dict] = []
+    rows = constraint_rows(run, stage)
+    for c in cons:
+        cid, f = str(c.get("id") or ""), str(c.get("file") or "")
+        if constraint_file(c, repo) is None:
+            issues.append(f"限制文件 [{cid}] {f} 不存在（專案根目錄與目標 repo 都找不到）")
+        if c.get("trace") == "table" and not (stage == "build" and c.get("paths")):
+            got = rows.get(cid) or []
+            if not got:
+                issues.append(f"限制 [{cid}] 要逐條對照，這一段的執行紀錄卻沒有它的〈限制對照〉列")
+            for verdict, name in got:
+                if verdict == "偏離":
+                    issues.append(f"限制 [{cid}] 有偏離（{name}），要由人決定")
+        cmd = c.get("check")
+        if isinstance(cmd, str) and cmd.strip() and run_checks:
+            cwd = repo if repo is not None and repo.is_dir() else project_root()
+            try:
+                q = subprocess.run(cmd, shell=True, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   timeout=CONSTRAINT_CHECK_TIMEOUT)
+                code, tail = q.returncode, (q.stdout + q.stderr).strip()[-300:]
+            except subprocess.TimeoutExpired:
+                code, tail = -1, f"逾時（{CONSTRAINT_CHECK_TIMEOUT} 秒）"
+            except OSError as e:
+                code, tail = -1, f"跑不起來：{e}"
+            checks.append({"id": cid, "command": cmd, "exit": code, "output": tail})
+            if code != 0:
+                issues.append(f"限制 [{cid}] 的檢查指令沒過（exit {code}）：{cmd}")
+    return issues, checks
+
 
 def load_profile_for(run: Path, argv: list[str]) -> tuple[dict | None, str]:
     """開發規範 profile：--profile，否則只認和這支工具同一個專案的 <專案>/.claude/teams/methodology.json
@@ -795,6 +877,19 @@ def main(argv: list[str]) -> int:
         else:
             st.pop("halted", None)
         has_trace, rows, miss = process_trace(run, stage, result, write=True)
+        if stage in SDLC:
+            cprof, _ = load_profile_for(run, argv)
+            c_issues, c_checks = constraint_issues(run, stage, cprof, target)
+            if c_issues:
+                st["constraint_issues"] = c_issues
+                for m in c_issues:
+                    print(f"限制文件：{m}（不能政策核准）", file=sys.stderr)
+            else:
+                st.pop("constraint_issues", None)
+            if c_checks:
+                st["constraint_checks"] = c_checks
+            else:
+                st.pop("constraint_checks", None)
         if not has_trace and has_recipe(data) and stage in SDLC:
             miss = ["這個 run 有 recipe，回傳卻沒有 trace（無法核對每個 agent 的紀錄）"]
             st["missing_records"] = miss
@@ -861,6 +956,11 @@ def main(argv: list[str]) -> int:
                 errs.append(f"找不到 {f.name}，政策核准要讀該段的實際結果")
             else:
                 errs += [f"政策判定：{e}" for e in policy_violations(stage, json.loads(f.read_text(encoding="utf-8")), run)]
+                cprof, cperr = load_profile_for(run, argv)
+                if cperr:
+                    errs.append(cperr)
+                crepo = Path(str(data.get("target_repo"))) if data.get("target_repo") else None
+                errs += [f"限制文件：{e}" for e in constraint_issues(run, stage, cprof, crepo)[0]]
             if stage in HUMAN_ONLY and not any("一律由人核准" in e for e in errs):
                 errs.append(f"{stage} 段一律由人核准，不能政策核准")
         errs += chain_errors(data, stage)
@@ -877,6 +977,8 @@ def main(argv: list[str]) -> int:
             print(f"recipe 已鎖定：{recipe_summary(data['recipe'])}；之後要改只能 save_run.py escalate（只能加嚴）")
         if st.get("missing_records"):
             print(f"警告：{stage} 有 {len(st['missing_records'])} 個執行紀錄缺件（人工核准照記，但請先確認）：" + "；".join(st["missing_records"][:5]), file=sys.stderr)
+        if st.get("constraint_issues"):
+            print(f"警告：{stage} 有 {len(st['constraint_issues'])} 項限制文件的問題（人工核准照記，但請先確認）：" + "；".join(st["constraint_issues"][:5]), file=sys.stderr)
         return 0
     if cmd == "escalate":
         name, by, at, reason = opt(argv, "--recipe"), opt(argv, "--by"), opt(argv, "--at"), opt(argv, "--reason")
@@ -1002,6 +1104,8 @@ def main(argv: list[str]) -> int:
             print(f"{name:8} {st['status']:15} {gate} {ok}")
             if st.get("missing_records"):
                 print(f"         警告：執行紀錄缺件 {len(st['missing_records'])} 個（不能政策核准）：" + "；".join(st["missing_records"][:3]))
+            if st.get("constraint_issues"):
+                print(f"         警告：限制文件 {len(st['constraint_issues'])} 項（不能政策核准）：" + "；".join(st["constraint_issues"][:3]))
         if data.get("followup_run"):
             print(f"後續 run：{data['followup_run'].get('run')}")
         if data.get("closed"):
@@ -1321,6 +1425,60 @@ def selftest() -> int:
               c == 0 and "| label | 角色 | phase | 紀錄檔 | 成果檔 | 狀態 |" in idx and idx.count("| outline |") == 1
               and "| challenge |" in idx and "specs/e/design.md" in idx and "missing_records" not in stages(d)["design"] and c2 == 0,
               out + idx + out2)
+        # B7 限制文件：文件不存在、缺對照列、有偏離、檢查指令沒過 → 不能政策核准；都符合才行；沒有 constraints 的 profile 行為不變
+        keep_profile = PROJECT_PROFILE.read_text(encoding="utf-8")
+        cbase = json.loads(keep_profile)
+        ok_cmd = f'"{sys.executable}" -c "import sys; sys.exit(0)"'
+        bad_cmd = f'"{sys.executable}" -c "import sys; sys.exit(3)"'
+
+        def with_constraints(cons: list) -> None:
+            PROJECT_PROFILE.write_text(json.dumps({**cbase, "constraints": cons}, ensure_ascii=False), encoding="utf-8")
+
+        def design_run(table: str | None) -> tuple[str, int, str]:
+            d_ = new_run()
+            walk(d_, "design")
+            g = Path(d_) / "design"
+            g.mkdir(exist_ok=True)
+            (g / "outline.md").write_text("# 紀錄\n" + (f"\n## 限制對照\n\n| 限制 | 判定 | 依據 |\n|---|---|---|\n{table}\n" if table else ""), encoding="utf-8")
+            (g / "challenge.md").write_text("# 紀錄\n", encoding="utf-8")
+            tr = [{"label": "outline", "agent_type": "agent-workflow:dev-spec-author", "phase": "Outline", "record": str(g / "outline.md"), "ok": True},
+                  {"label": "challenge", "agent_type": "agent-workflow:tpm-skeptic", "phase": "Challenge", "record": str(g / "challenge.md"), "ok": True}]
+            c_, o_ = call("stage", d_, "design", stdin={"design": des, "challenge": ver, "trace": tr})
+            return d_, c_, o_
+        (proj / "ARCHITECTURE.md").write_text("# 架構\n\n分層：api → service → repository。\n", encoding="utf-8")
+        arch = {"id": "arch", "file": "ARCHITECTURE.md", "stages": ["design"], "trace": "table"}
+        with_constraints([arch])
+        d, c, out = design_run("| arch | 符合 | design.md:12 |")
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：文件在、對照列是「符合」→ 可以政策核准", c == 0 and "constraint_issues" not in stages(d)["design"] and c2 == 0, out + out2)
+        d, c, out = design_run(None)
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        c3, out3 = call("approve", d, "design", "--by", "human", "--at", "t")
+        check("B7 限制文件：沒有對照列 → 記 constraint_issues、政策核准被擋；人工核准照記並警告",
+              any("沒有它的〈限制對照〉列" in m for m in stages(d)["design"].get("constraint_issues") or []) and c2 != 0 and "限制文件" in out2
+              and c3 == 0 and "限制文件" in out3, out + out2 + out3)
+        d, c, out = design_run("| arch | 偏離 | 這次要讓 api 直接讀 repository，理由見 design.md:40 |")
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：對照列是「偏離」→ 政策核准被擋（要由人決定）", c2 != 0 and "偏離" in out2, out + out2)
+        with_constraints([{**arch, "file": "docs/NOPE.md"}])
+        d, c, out = design_run("| arch | 符合 | x |")
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：文件不存在 → 政策核准被擋", c2 != 0 and "不存在" in out2, out + out2)
+        with_constraints([{"id": "lint", "file": "ARCHITECTURE.md", "stages": ["design"], "check": bad_cmd}])
+        d, c, out = design_run(None)
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        chk = stages(d)["design"].get("constraint_checks") or []
+        check("B7 限制文件：檢查指令 exit 非 0 → 記結果、政策核准被擋", c2 != 0 and "檢查指令沒過" in out2 and chk and chk[0]["exit"] == 3, out + out2 + str(chk))
+        with_constraints([{"id": "lint", "file": "ARCHITECTURE.md", "stages": ["design"], "check": ok_cmd}, {"id": "rev", "file": "docs/NOPE.md", "stages": ["deliver"], "trace": "table"}])
+        d, c, out = design_run(None)
+        c2, out2 = call("approve", d, "design", "--by", "policy", "--at", "t", "--note", "p")
+        check("B7 限制文件：檢查指令通過、trace 沒設、別段的限制不算 → 可以政策核准", c2 == 0 and "constraint_issues" not in stages(d)["design"], out + out2)
+        ci, _ = constraint_issues(Path(d), "build", {"constraints": [{"id": "fe", "file": "ARCHITECTURE.md", "stages": ["build"], "paths": ["web/**"], "trace": "table"}]}, None)
+        check("B7 限制文件：build 段有 paths 的限制不在這裡要求對照（只發給對得上的子任務）", ci == [], str(ci))
+        PROJECT_PROFILE.write_text(keep_profile, encoding="utf-8")
+        d, c, out = design_run(None)
+        check("B7 限制文件：profile 沒有 constraints → 行為不變", c == 0 and "constraint_issues" not in stages(d)["design"], out)
+
         # B9：有交件（digest 對得回信封）但沒寫紀錄檔 → 依信封代寫，不算缺件；agent 自己寫的不覆寫；回傳換掉後舊的代寫檔不沿用
         d = new_run()
         walk(d, "design")

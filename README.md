@@ -128,6 +128,8 @@ workflow 放在 `scaffold/` 而不放在 plugin 裡，因為 Workflow 工具只�
 
 你可以把自己的 agent 加進 plan、design、test、deliver 任一段（`/agent-workflow:add-agent`），也可以整份換掉開發規範 profile；見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)。
 
+**加入自己的限制**：把要 agent 遵守的文件（架構 `ARCHITECTURE.md`、設計 `DESIGN.md`、前後端規範、審查 `REVIEW.md`…）登記在 profile 的 `constraints`，指定套用到哪些段、哪些路徑。工作流程只把它帶給對得上的 agent（前端規範不會發給只改後端的子任務），閘門可以要求逐條對照或跑你指定的檢查指令。
+
 ## 需求
 
 - Claude Code

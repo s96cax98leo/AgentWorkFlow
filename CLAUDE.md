@@ -126,6 +126,13 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **量成本**：`tools/awf_cost.py` 讀 Claude Code 的 workflow transcript（格式沒承諾穩定，解析集中在 `read_agent`、`read_wf_meta`）。基準實跑在 `tests/bench/`（`make_fixture.py` 產生虛構專案、`run_plan.py` 真的呼叫 claude，會花 token，不在 run_all 裡）。
 - 這些都是輔助：失敗只警告、不擋流程；gate 判定不看它們的輸出（調研重用例外：`verify_reuse` 不符會判 invalid，只會更嚴）。
 
+### 限制文件（0.5）
+
+- profile 的 `constraints[]`（`id`、`file`、`stages`、`paths`、`trace`、`check`、`note`）：使用者指定哪份文件套用到哪些段、哪些路徑。語意規則在 `schemalib.methodology_errors`（id 不重複、file 與 paths 不能是絕對路徑或含 `..`、不能是機敏檔）。
+- **派工端**在 challenge 片段：`awfConstraints(profile, stage[, owns])`、`awfConstraintLines`、`awfConstraintRule`。八支 sdlc workflow 的 `awfInit` 都帶 `constraints: awfConstraints(MP, '<段>')`，由共同前綴列出；`sdlc-build` 的 `taskConstraints` 把有 `paths` 的限制只給擁有的路徑對得上的子任務。
+- **閘門端**在 `save_run.py`：`constraint_issues`（文件不存在、`trace: table` 缺〈限制對照〉列或有「偏離」、`check` 指令沒過）。`stage` 存檔時算並記 `constraint_issues`／`constraint_checks`；`approve --by policy` 重算（不採信 run.json）；人工核准只警告。代寫的紀錄不算有對照。
+- 測試：`tests/check_kernel.py`（片段）、`tools/scenarios/sdlc-build.mjs` 與 `sdlc-design.mjs` 的「限制文件」情境、`save_run.py --selftest` 的 B7 案例、golden 的 `methodology-constraints*`。
+
 ### 平行處理
 
 - **`sdlc-design`**：先由 dev-spec-author 出大綱（`plan-outline`）。預估子任務超過 `parallelism.split_threshold`，或有多個可以各自規劃的區塊時，拆成最多 `max_sub_plans` 個子計劃。每個子計劃由一個 dev-spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，不 commit；最後由一個 dev-spec-author 彙整並 commit。跨子計劃的相依寫成 `@<子計劃 id>`，由 workflow 展開；指向不存在、沒有子任務或自己的子計劃時 halted。

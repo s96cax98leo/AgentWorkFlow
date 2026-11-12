@@ -249,6 +249,7 @@ ANSWERS = {
     "pr_size": {"max_lines": 400, "max_files": None},
     "doc_format": "Markdown",
     "read_limits": {"mode": "warn", "whole_file_lines": 300, "read_budget": 500000},
+    "constraints": ["ARCHITECTURE.md", "docs/frontend.md=build+deliver", {"id": "review", "file": "REVIEW.md", "stages": ["deliver"], "trace": "table"}],
     "main_session_push_merge": True,
 }
 
@@ -261,6 +262,12 @@ def check_answers_methodology(target: Path) -> None:
         bad(f"methodology.json 讀不到：{e}")
         return
     conv = prof.get("conventions", {})
+    cons = prof.get("constraints") or []
+    ok("答案檔的 constraints 寫進 profile（簡寫展開成 id、file、stages；物件原樣保留）") if (
+        [c.get("id") for c in cons] == ["architecture", "frontend", "review"] and cons[0]["stages"] == ["design", "deliver"]
+        and cons[1]["stages"] == ["build", "deliver"] and cons[2].get("trace") == "table") else bad(f"constraints 沒寫對：{cons}")
+    wf = (target / ".claude/workflows/sdlc-deliver.js").read_text(encoding="utf-8")
+    ok("限制文件內嵌進 workflow（sdlc-deliver.js 的 profile 有 REVIEW.md）") if "REVIEW.md" in wf and "awfConstraints(MP, 'deliver')" in wf else bad("sdlc-deliver.js 沒有內嵌限制文件")
     lim = prof.get("limits", {})
     ok("答案檔的 read_limits 寫進 limits（mode、行數、預設額度；沒回答的角色額度沿用 profile）") if (
         lim.get("mode") == "warn" and lim.get("whole_file_lines") == 300 and lim.get("read_budget", {}).get("default") == 500000

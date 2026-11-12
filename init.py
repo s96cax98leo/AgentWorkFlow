@@ -176,6 +176,38 @@ def _int_or_none(v, what: str):
     return n if n > 0 else None
 
 
+# 限制文件（methodology constraints）：使用者指定哪份文件套用到哪些段。答案可以是完整的物件清單，或簡寫字串清單
+CONSTRAINT_STAGES = ("plan", "design", "build", "sync", "test", "deliver", "merge")
+CONSTRAINT_DEFAULT_STAGES = ["design", "deliver"]
+
+
+def parse_constraints(raw) -> list:
+    """答案 constraints：清單，每項是物件（照 schema），或簡寫字串「路徑」「路徑=段+段」（id 取自檔名）。
+    字串也可以用逗號串起多項。格式由存檔前的 schema 與語意檢查把關，這裡只做簡寫展開。"""
+    items = [x.strip() for x in raw.split(",")] if isinstance(raw, str) else list(raw or [])
+    out, used = [], set()
+    for it in items:
+        if isinstance(it, dict):
+            out.append(it)
+            used.add(str(it.get("id")))
+            continue
+        text = str(it).strip()
+        if not text or text == "-":
+            continue
+        path, _, st = text.partition("=")
+        stages = [x.strip() for x in re.split(r"[+、 ]+", st) if x.strip()] or list(CONSTRAINT_DEFAULT_STAGES)
+        bad = [x for x in stages if x not in CONSTRAINT_STAGES]
+        if bad:
+            die(f"限制文件 {path.strip()} 的段「{'、'.join(bad)}」不認得（可用：{'、'.join(CONSTRAINT_STAGES)}）")
+        base = re.sub(r"[^a-z0-9]+", "-", Path(path.strip()).stem.lower()).strip("-") or "doc"
+        cid, n = base[:40], 2
+        while cid in used:
+            cid, n = f"{base[:36]}-{n}", n + 1
+        used.add(cid)
+        out.append({"id": cid, "file": path.strip().replace("\\", "/"), "stages": stages})
+    return out
+
+
 # 讀取上限（methodology limits）：要不要啟用、門檻多少由使用者決定；內建 profile 只給建議門檻、不預設 mode
 LIMIT_MODES = ("off", "warn", "enforce")
 
@@ -257,6 +289,8 @@ def apply_answers(profile: dict, ans: dict) -> dict:
         prof["requirements"] = ans["requirements"]
     if "read_limits" in ans:
         apply_read_limits(prof, ans["read_limits"])
+    if "constraints" in ans:
+        prof["constraints"] = parse_constraints(ans["constraints"])
     if isinstance(ans.get("overrides"), dict):
         prof = deep_merge(prof, ans["overrides"])
     return prof
@@ -299,6 +333,10 @@ def ask_methodology(default_name: str, branch_prefix: str) -> tuple[str, dict]:
     df = ask("文件格式", conv.get("doc_format", {}).get("format", "Markdown"))
     if df != conv.get("doc_format", {}).get("format"):
         ans["doc_format"] = df
+    print("  限制文件（可以不設）：你要 agent 遵守的文件，例如 ARCHITECTURE.md、DESIGN.md、REVIEW.md。寫法：路徑，或 路徑=段+段（段：plan、design、build、test、deliver…；沒寫＝design+deliver）。")
+    cs_in = ask("限制文件（逗號分隔；- ＝沒有）", "-")
+    if cs_in and cs_in != "-":
+        ans["constraints"] = cs_in
     lim = prof.get("limits", {})
     print("  讀取上限（省 token 用，可以不開）：限制模版 agent 整檔讀大檔與每個 agent 的讀取量；不限制 agent 的輸出。")
     lm = ask("要不要啟用讀取上限（off＝不啟用；warn＝只提醒不擋；enforce＝擋）", str(lim.get("mode") or "off"))
