@@ -125,12 +125,13 @@ function judgeVerdicts(list, challenge, opts = {}) {
 }
 
 // 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
-// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept,
+//      run（派工函式，預設 tryAgent；用了執行核心的 workflow 傳 awfAgent，模型分級與上限才會套到 skeptic） }
 // skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
 async function challengeList(list, o) {
   const label = o.label || 'challenge'
   if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
-  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  const challenge = await (o.run || tryAgent)(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
   if (!challenge || !challenge.payload) {
     if (o.missing) o.missing.push(label)
     return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
@@ -505,7 +506,7 @@ const SRC = A.source ? `（來源：${A.source}）` : ''
 const MODE_HOW = {
   feature: '新功能：寫問題空間與期望結果，不寫解法。',
   diagnose: '診斷：先寫現象與重現步驟（指令或操作，附環境），再寫根因（附 檔案:行號 與證據，例如 git log -L 找到的改動）；計畫要先寫一支會失敗的重現測試，修正後轉綠，並當回歸測試留下。',
-  impact: `影響盤點：讀相關 event run 目錄的 impact.md${SRC}（event-reqs-change 產出；沒有就自己盤點），把既有 spec 的驗收條件逐條標「改／留／刪」並附理由，新增的另列。`,
+  impact: `影響盤點：讀相關 event run 目錄的 impact.md${SRC}（需求變動事件產出；沒有就自己盤點），把既有 spec 的驗收條件逐條標「改／留／刪」並附理由，新增的另列。`,
   invariants: '不改行為的重構：列出不能改變的行為（對外介面、輸出、錯誤碼、效能上限），每條附現行出處，計畫要先寫 characterization test 鎖住它們。',
   changelog: '依賴升級：讀要升級套件的 changelog／release notes，列出上游變更與破壞性變更、受影響的呼叫點（路徑:行號）與遷移步驟。',
   baseline: '效能：先量基線（量測指令、環境、數值），寫明目標數值與前後對照的量法；數字沒量過的標成假設。',

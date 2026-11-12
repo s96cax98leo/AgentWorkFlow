@@ -11,7 +11,8 @@
 | plugin 的 2 個舊名薄殼 | 舊名 dev-pr-reviewer 已併入 tpm-reviewer、舊名 tpm-upstream-analyst 已併入 tpm-researcher；相容一版，下一版移除。專案還在用舊名時跑 `init.py --upgrade` |
 | plugin `hooks/` | 單一入口 `awf_hook.py`，有三個模式：`guard-shell`（Bash 與 PowerShell）、`guard-paths`（Edit、Write、NotebookEdit、Read、Grep；轉呼叫目標 repo 的 guard）、`envelope`。附測試 |
 | plugin 的 `workflow-templates/sdlc-*.js`（8 支） | AI-native SDLC：plan、design、design-revise、build、sync、test、deliver、merge。不複製進專案：`awf.py next` 每段用範本加本專案的設定產生 `<run_dir>/.wf/<名>.js` |
-| plugin 的 `workflow-templates/event-*.js`（8 支） | 簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看 |
+| plugin 的 `workflow-templates/event.js` | 形狀相同的事件共用一支：會議、決策落地、Demo 前檢查、需求變動、上游變動，以及 `methodology.json` 的 `events` 自訂的類型 |
+| plugin 的 `workflow-templates/event-*.js`（3 支） | 簡報、PR 審查、合併後監看 |
 | `.claude/teams/rules.md` | 硬規則：通用規則＋專案規則 |
 | `.claude/teams/VERSION`、`.claude/teams/workflow.config` | init 寫下的模版版本與佔位符值；`init.py --upgrade` 讀它們，不要手改 |
 | `.claude/teams/guard.config.json` | 守門設定，包括：<br>・目錄：run、repo<br>・repo：上游、fork、禁止路徑<br>・規範：允許的分支前綴、受保護分支、任務編號前綴、署名行<br>・開關：主 session 開關、`auto_merge` |
@@ -152,7 +153,7 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `awf_doctor.py` | 檢查安裝：`awf.py doctor` 逐項檢查環境、plugin 與專案版本、安裝來源衝突、hook、設定，每項附修法；只讀 |
 
 ```bash
-python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 16 支腳本
+python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 12 支腳本
 uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py
 node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir <plugin>/agents
 python3 .claude/teams/tools/check_agents.py --plugin-dir <plugin>
@@ -170,6 +171,7 @@ python3 .claude/teams/tools/awf.py --selftest
 ```
 
 ## 新增一種事件
+0. 形狀是「幾個角度平行找 → skeptic 反駁 → writer 寫文件」的事件不用寫程式：在 `methodology.json` 的 `events` 加一筆（欄位見模版的 `docs/事件處理.md`），`awf.py start --event <名>` 就能用。下面幾步是形狀不同、要自己寫 workflow 時才需要。
 1. 照 plugin 的 `workflow-templates/event-*.js` 的骨架，在專案的 `.claude/workflows/` 寫 workflow：拆工或固定角度 → 平行處理 → skeptic → writer。schema 用 `/*@schema:<payload>*/ null /*@end*/` 標記，agentType 寫 `NS + 'tpm-…'`。
 2. 跑 `build.py`（內嵌 schema）和 `check_workflows.mjs --wf-dir .claude/workflows`；乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
 3. 在 `tpm-team` skill 的事件對照表加一列。

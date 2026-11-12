@@ -270,14 +270,15 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 |---|---|---|
 | `/sdlc <需求>`、開發、修 bug、改需求 | `sdlc-plan` → `sdlc-design` → `sdlc-build` → `sdlc-sync` → `sdlc-test` → `sdlc-deliver` → `sdlc-merge`（實際走哪幾段依 recipe） | repo、epic、requirement、base、run_dir |
 | `/brief <簡報>`、照任務單做 | `event-brief`（程式子任務轉進 SDLC） | brief、run_dir |
-| 上游有新 PR、main 前進、CI 紅了 | `event-upstream` | what、repo、run_dir |
-| 整理會議、逐字稿 | `event-meeting` | source、run_dir |
+| 上游有新 PR、main 前進、CI 紅了 | `event`（類型 `upstream`） | what、repo、run_dir |
+| 整理會議、逐字稿 | `event`（類型 `meeting`） | source、run_dir |
 | 審 PR、審分支 | `event-pr-review` | target、repo、run_dir |
-| 需求更新了 | `event-reqs-change` | change、run_dir |
-| 某某決定了、定案 | `event-decision` | decision、run_dir |
-| `/demo-check`、demo 前、彩排 | `event-demo-check` | target、run_dir |
+| 需求更新了 | `event`（類型 `reqs-change`） | change、run_dir |
+| 某某決定了、定案 | `event`（類型 `decision`） | decision、run_dir |
+| `/demo-check`、demo 前、彩排 | `event`（類型 `demo-check`） | target、run_dir |
 | 分支落後 main、PR 有衝突 | `sdlc-sync` | repo、epic、run_dir |
 | 合併這個 PR | `sdlc-merge` | repo、pr、run_dir |
+| 自己定義的事件（例如事故回顧） | `event`（類型寫在 `methodology.json` 的 `events`） | 該類型的 `args`、run_dir |
 | 合併後 main 紅了 | `event-post-merge` | repo、run_dir |
 | `/agent-workflow:add-agent`、加我自己的 agent | `add-agent` skill | — |
 | `/agent-workflow:correct`、把這個錯誤變成做不到 | `correct` skill | 錯誤描述或出處 |
@@ -414,7 +415,7 @@ AgentWorkFlow/
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
 │   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
-│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、event 8 支）與 legacy.json（舊副本指紋）；awf.py next 逐段產生腳本
+│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge）與 legacy.json（舊副本指紋）；awf.py next 逐段產生腳本
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）、read_budget.py
 ├── scaffold/                         # init.py 複製進目標專案的內容
 │   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、locate.py、awf_cost.py、awf.py）、golden-set/

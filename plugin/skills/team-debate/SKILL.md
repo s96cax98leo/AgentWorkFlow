@@ -44,4 +44,4 @@ argument-hint: <要決定的問題與候選方案>
 `tpm-writer` 寫 `{{RUNS_DIR}}/<run>/comparison.md`，給決策者的版本另寫到 `docs/`（或 guard.config.json 的 `writer_dirs` 內其他目錄），並跑 `check_rules.py --audience owner`：
 - 表格：方案、做法、代價、前提、需要決策者配合、什麼情況下才對。
 - 被成功挑戰的論點，列在「存疑」。
-- 決策者拍板後，走 `event-decision` 落地（見 `tpm-team` skill）。
+- 決策者拍板後，走決策落地事件（`event` 的 decision 類型）落地（見 `tpm-team` skill）。

@@ -44,7 +44,7 @@ python3 init.py --target <專案> [--hooks plugin|project] [--answers <答案.js
 
 ```bash
 python3 .claude/teams/tools/awf.py --selftest                                              # 狀態機（start／next／done／approve／render）
-python3 .claude/teams/tools/awf.py render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 16 支 workflow 腳本
+python3 .claude/teams/tools/awf.py render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 12 支 workflow 腳本
 node .claude/teams/tools/check_workflows.mjs --agents-dir <AgentWorkFlow>/plugin/agents --wf-dir <目錄>   # 乾跑所有 workflow（含 tools/scenarios/*.mjs 的情境）
 python3 .claude/teams/tools/build.py [--check]   # 只處理專案的覆寫檔（.claude/workflows/*.js）；在模版 repo 裡處理 plugin/workflow-templates/
 python3 .claude/teams/tools/check_agents.py --plugin-dir <AgentWorkFlow>/plugin           # 檢查 tpm-*／dev-* agent 格式（16 個：14 個核心角色＋2 個舊名薄殼）
@@ -75,7 +75,7 @@ python3 .claude/teams/tools/awf_doctor.py --selftest                            
   - `dev-merge-steward`：可信任的合併 agent。逐條對照需求與驗證證據（綁 head SHA），一致而且 `merge_gate.py` 通過才合併；不一致就產出 followup 新需求並退回 PR（request-changes、轉 draft）。沒有 Edit／Write，永遠不 approve。
   - `dev-release-watcher`：合併後監看，歸因失敗，產出 revert 提案與凍結建議，只讀。
   - `sdlc-sync`（dev-integrator 執行）：build 之後、test 之前，以及 merge 因 PR 落後或衝突判 hold（`needs_sync`）之後跑。由 `sync_branch.py` 決定策略（profile 的 `conventions.sync`，預設 auto：已跟上不動、沒推送且沒衝突 rebase、已推送且沒衝突 merge base、有衝突走中轉分支）。中轉分支從 base 開（命名依 `conventions.sync.transit_naming`）、把分支 merge 進來解衝突，`check-transit` 擋殘留衝突標記與夾帶改動，workflow 核對回報的衝突檔與預測一致；之後用 `publish.py --supersedes` 開 PR 取代原 PR。head 變了一律重跑 `sdlc-test`，後續各段用 `branch` arg 帶中轉分支名。
-- **`tpm-*`（5 個）**：planner、researcher、reviewer、skeptic、writer。事件處理，對應 `event-*.js`（包括 `event-post-merge.js`）；`tpm-reviewer` 另有 deliver 模式（`sdlc-deliver` 的四軸審查），`tpm-researcher` 另有上游模式（`event-upstream`）。
+- **`tpm-*`（5 個）**：planner、researcher、reviewer、skeptic、writer。事件處理，對應 `event.js`（會議、決策落地、demo 前檢查、需求變動、上游變動與 profile 自訂的類型共用）與 `event-brief.js`、`event-pr-review.js`、`event-post-merge.js`；`tpm-reviewer` 另有 deliver 模式（`sdlc-deliver` 的四軸審查），`tpm-researcher` 另有上游模式（`event.js` 的 upstream 類型）。
 - **2 個舊名薄殼**：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`、舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。相容一版、下一版移除；`awf_config.py` 的 `ROLE_ALIASES` 讓舊名照新角色套規則。新 workflow 一律派新名。
 - **網站分析組（6 個）**：tech-architect、infra-analyst、biz-analyst、perf-auditor、competitor-scout、lead-synthesizer。由 skills 驅動，**不交信封**，也不受角色寫入範圍限制。
 
@@ -146,6 +146,14 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **接手摘要**：`awf.py handoff` 寫 `<run>/接手摘要.md`（`handoff_text`：只讀、沒有時間戳、可重現）。
 - **守門**：team agent 不能寫 `.claude/workflows/` 與 `.wf/`（`guard.team_config_path`、`TEAM_CONFIG_TARGET`），不能跑 `awf.py`（`--selftest` 除外）。
 - **測試**：`awf.py --selftest`、`smoke_init.py` 的 `check_with_workflows`（產生的腳本和 init＋build.py 內嵌的逐字相同）與升級四種情況、hook 測試的 B1 案例。
+
+### 事件 workflow（0.5）
+
+- **`event.js`**：形狀相同的五種事件（meeting、decision、demo-check、reqs-change、upstream）共用一支。事件類型是資料：範本裡的 `BUILTIN_EVENTS`，加上 profile 的 `events`（同名時整筆取代）。一筆定義＝`args`、`context`、`before`（前置步驟）、`gather`（各角度平行）、`challenge`、`after`、`write`、`returns`；文字裡的 `{參數名}`、`{參數名|預設}` 由 `fill` 換掉。角色固定是 tpm-researcher → tpm-skeptic → tpm-writer，派工都走 `awfAgent`。角度最多 8 個、前後步驟各 3 步，超過就拒絕執行。
+- **狀態機**：`awf.py` 的 `EVENT_TYPES`（內建類型的必要參數，要和 `BUILTIN_EVENTS` 一致，selftest 對照）、`event_route`、`event_required`、`profile_events`。事件類型就是段名，`stage_args` 自動帶 `event=<類型>`。自訂類型不能蓋掉 brief、pr-review、post-merge、merge（`schemalib.EVENT_RESERVED`）。
+- **schema 與語意規則**：`methodology.schema.json` 的 `events`；`schemalib.methodology_errors`（保留名、角度 key 與步驟 label 重複、`data.from` 指不到、回傳鍵撞名）。
+- **情境**：`tools/scenarios/event.mjs` 合併 `_event-<類型>.mjs`（底線開頭的檔不會被當成某支 workflow 的情境檔）並補 `args.event`；「類型：<名>」情境給 `check_budget.py` 量（基準的鍵是 `event.js#<類型>`）。情境可以用 `throws: /正規式/` 宣告「這組參數應該被拒絕執行」。
+- **舊副本**：plugin 找得到但已經沒有同名範本時（例如併掉的五支），`find_template` 不退回用沒有標記的舊副本，直接報錯並說明改用 `event.js`。
 
 ### 限制文件（0.5）
 
@@ -245,6 +253,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - 合併或改名角色時，舊名留在 `ALIASES`、`ROLE_ALIASES` 與 `RESERVED_ROLES` 相容一版，並留薄殼 agent 檔。
   - 更新 README、本檔、`scaffold/.claude/teams/README.md` 的角色數與名單，`tests/check_docs.py` 會核對。
 - **新增或刪除 command**：`tests/check_docs.py` 會核對 README 等文件的 command 名單；不要和 skill 同名。
+- **新增事件類型**：形狀是「多角度 → skeptic → writer」的，在 `event.js` 的 `BUILTIN_EVENTS` 加一筆（使用者則在 profile 的 `events` 加），並改 `awf.py` 的 `EVENT_TYPES`、`reference/事件.md`、`docs/事件處理.md`，在 `tools/scenarios/` 加 `_event-<類型>.mjs` 並登記到 `event.mjs`；形狀不同才另寫一支。
 - **新增 workflow**：範本放 `plugin/workflow-templates/`；在 `tpm-team` skill 的 `reference/事件.md` 對照表加一列，加進 `tests/smoke_init.py` 的清單與 `awf.py` 的 `EVENTS`／`REQUIRED`；重跑 `tests/gen_legacy_templates.py` 不需要（它只記已發佈的舊版）。
 - **改分支流程（scenarios）**：乾跑走不到的分支，在 `scaffold/.claude/teams/tools/scenarios/<workflow>.mjs` 補情境（`check_workflows.mjs` 自動載入，共用的 helper 在 `scenarios/_helpers.mjs`）。
 - **改 snippet**：改了 `scaffold/.claude/teams/tools/snippets/*.js`（workflow 共用片段）要重跑 `build.py`（`--check` 會抓漂移），不要手改內嵌進 workflow 的內容；並確認 `tools/scenarios/*.mjs` 用到的 agent label 沒變（情境靠 label 覆寫假回傳，label 一變情境就默默失效）。

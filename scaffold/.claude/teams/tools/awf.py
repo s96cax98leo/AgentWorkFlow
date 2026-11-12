@@ -62,19 +62,20 @@ OVERRIDE = re.compile(r"^// awf-override: *(\S+)\s*$", re.M)
 PH = re.compile(r"\{\{([A-Z_]+)\}\}")
 ARGS_LINE = "const A = args || {}"
 # 事件 → （workflow, 段名）。段名是 workflow 的 awfInit stage，執行紀錄寫在 <run_dir>/<段名>/
+# event.js 內建的事件類型與各自的必要參數（要和範本的 BUILTIN_EVENTS 一致，selftest 會對照）。
+# 這五種形狀相同（多角度 → skeptic → writer），共用一支 event.js；使用者在 profile 的 events 加一筆就多一種。
+EVENT_TYPES = {"meeting": ["source"], "decision": ["decision"], "demo-check": ["target"], "reqs-change": ["change"], "upstream": ["what", "repo"]}
 EVENTS = {
-    "brief": ("event-brief", "brief"), "upstream": ("event-upstream", "upstream"), "meeting": ("event-meeting", "meeting"),
-    "pr-review": ("event-pr-review", "pr-review"), "reqs-change": ("event-reqs-change", "reqs-change"),
-    "decision": ("event-decision", "decision"), "demo-check": ("event-demo-check", "demo-check"),
+    "brief": ("event-brief", "brief"), "pr-review": ("event-pr-review", "pr-review"),
     "post-merge": ("event-post-merge", "post-merge"), "merge": ("sdlc-merge", "merge"),
+    **{t: ("event", t) for t in EVENT_TYPES},
 }
 REQUIRED = {
     "sdlc-plan": ["repo", "epic", "requirement", "run_dir"], "sdlc-design": ["repo", "epic", "run_dir"],
     "sdlc-design-revise": ["repo", "epic", "run_dir", "decisions", "issues"], "sdlc-build": ["repo", "epic", "run_dir", "subtasks"],
     "sdlc-sync": ["repo", "epic", "run_dir"], "sdlc-test": ["repo", "epic", "run_dir"], "sdlc-deliver": ["repo", "epic", "run_dir"],
-    "sdlc-merge": ["repo", "run_dir", "pr"], "event-brief": ["brief", "run_dir"], "event-meeting": ["source", "run_dir"],
-    "event-decision": ["decision", "run_dir"], "event-demo-check": ["target", "run_dir"], "event-post-merge": ["repo", "run_dir"],
-    "event-upstream": ["what", "repo", "run_dir"], "event-reqs-change": ["change", "run_dir"], "event-pr-review": ["target", "repo", "run_dir"],
+    "sdlc-merge": ["repo", "run_dir", "pr"], "event-brief": ["brief", "run_dir"], "event-post-merge": ["repo", "run_dir"],
+    "event-pr-review": ["target", "repo", "run_dir"], "event": ["event", "run_dir"],     # event.js 另外要該事件類型的參數（event_required）
 }
 HINTS = {
     "repo": "目標 repo（我方的本機 clone）", "epic": "這個需求的短名（specs/<epic>/、分支名都用它）", "requirement": "需求原文或檔案路徑",
@@ -86,10 +87,35 @@ HINTS = {
     "what": "上游發生了什麼（例如 PR 編號、main 前進、CI 失敗）", "change": "需求改了什麼",
 }
 STAGE_WORKFLOW = {s: f"sdlc-{s}" for s in sr.SDLC}
+MERGED_HINT = "0.5 起會議、決策落地、demo 前檢查、需求變動、上游變動共用 event.js（事件類型由 awf.py start --event <類型> 決定）。"
 
 
 class AwfError(Exception):
     pass
+
+
+def profile_events(project: Path) -> dict:
+    """profile（methodology.json）的 events：使用者自訂的事件類型。讀不懂就當沒有。"""
+    m = load_json(project / ".claude" / "teams" / "methodology.json")
+    ev = m.get("events") if isinstance(m, dict) else None
+    return {k: v for k, v in ev.items() if isinstance(v, dict)} if isinstance(ev, dict) else {}
+
+
+def event_route(project: Path, event: str) -> tuple[str, str] | None:
+    """事件 →（workflow, 段名）。固定的事件與內建類型查表；其餘看 profile 的 events（走 event.js）。"""
+    if event in EVENTS and event not in profile_events(project):
+        return EVENTS[event]
+    if event in profile_events(project) and (event in EVENT_TYPES or event not in EVENTS):   # 自訂類型不能蓋掉 brief、merge 這些不是 event.js 的事件
+        return ("event", event)
+    return EVENTS.get(event)
+
+
+def event_required(project: Path, event: str) -> list[str]:
+    """event.js 這個事件類型的必要參數：profile 有定義就照它的 args，否則用內建的。"""
+    d = profile_events(project).get(event)
+    if d is not None:
+        return [str(x) for x in d.get("args") or [] if isinstance(x, str)]
+    return list(EVENT_TYPES.get(event, []))
 
 
 def _utf8() -> None:
@@ -197,12 +223,15 @@ def find_template(name: str, project: Path, plugin: Path | None) -> tuple[str, s
             else:
                 notes.append(f"用的是專案的覆寫檔 .claude/workflows/{name}.js")
             return text, "override", notes
-        if tpl is None or not tpl.is_file():
+        if tpl is None:
             notes.append(f"找不到 plugin 的範本，改用專案裡的 .claude/workflows/{name}.js（舊副本）；請確認 plugin 已安裝，或用 --plugin-dir 指定")
             return text, "legacy", notes
+        if not tpl.is_file():     # plugin 在、但這版已經沒有這支（例如 0.5 併進 event.js 的五支）：舊副本不採用，免得跑到舊流程
+            raise AwfError(f"plugin 這一版沒有 {name}.js；專案裡的 .claude/workflows/{name}.js 是沒有 awf-override 標記的舊副本，不採用。"
+                           + MERGED_HINT + "要用自己的版本，請依現在的範本改寫並在結尾加上 awf-override 標記")
         notes.append(f".claude/workflows/{name}.js 沒有 awf-override 標記（舊版 init 複製的副本），不採用，改用 plugin 的範本；確認沒在用就可以刪掉")
     if tpl is None or not tpl.is_file():
-        raise AwfError(f"找不到 workflow 範本 {name}.js：" + ("plugin 沒有這支" if plugin else "找不到 agent-workflow plugin（先安裝 plugin，或用 --plugin-dir 指定）"))
+        raise AwfError(f"找不到 workflow 範本 {name}.js：" + ("plugin 沒有這支。" + MERGED_HINT if plugin else "找不到 agent-workflow plugin（先安裝 plugin，或用 --plugin-dir 指定）"))
     return tpl.read_text(encoding="utf-8").replace("\r\n", "\n"), "plugin", notes
 
 
@@ -343,7 +372,11 @@ def stage_args(run: Path, run_arg: str, data: dict, stage: str, workflow: str, p
         sp = _stage_result(run, "design").get("sub_plans")
         if isinstance(sp, list) and sp:
             a.setdefault("sub_plans", sp)
-    need = [k for k in REQUIRED.get(workflow, ["run_dir"]) if a.get(k) in (None, "", [])]
+    required = list(REQUIRED.get(workflow, ["run_dir"]))
+    if workflow == "event":
+        a["event"] = stage      # 事件類型就是段名（執行紀錄寫在 <run_dir>/<類型>/）
+        required += [k for k in event_required(project, stage) if k not in required]
+    need = [k for k in required if a.get(k) in (None, "", [])]
     if workflow == "sdlc-test":
         mods = set(a.get("modifiers") or [])
         for k, m in (("has_ui", "ui"), ("has_security", "security")):
@@ -588,9 +621,10 @@ def decide(run: Path, run_arg: str, data: dict, project: Path, plugin: Path | No
     retry = "--retry" in argv
     forced_wf = opt(argv, "--workflow")
     if event != "sdlc":
-        if event not in EVENTS:
-            return {"action": "manual", "say": f"事件 {event or '（未指定）'} 沒有對應的 workflow（方案辯論用 team-debate skill）；做完用 save_run.py stage 存結果。"}
-        workflow, stage = EVENTS[event]
+        route = event_route(project, event)
+        if route is None:
+            return {"action": "manual", "say": f"事件 {event or '（未指定）'} 沒有對應的 workflow（方案辯論用 team-debate skill；自訂的事件類型寫在 methodology.json 的 events）；做完用 save_run.py stage 存結果。"}
+        workflow, stage = route
         st = data["stages"].get(stage) or {}
         if st.get("status") == "done":
             tip = "合併後跑 event-post-merge 監看。" if event == "merge" and _stage_result(run, stage).get("merged") else ""
@@ -1256,8 +1290,26 @@ def selftest() -> int:
             d = "_runs/ev"
             call("start", "--run", d, "--event", "meeting", "--set", "source=meetings/a.md")
             a = act_of(call("next", "--run", d)[1])
-            check("事件：meeting 用 event-meeting，帶 source 與 run_dir；缺參數時回 need_input", a["action"] == "run_workflow" and a["workflow"] == "event-meeting" and a["stage"] == "meeting"
-                  and json.loads((proj / d / ".wf" / "event-meeting.args.json").read_text(encoding="utf-8")) == {"source": "meetings/a.md", "run_dir": (proj / d).resolve().as_posix()}, a)
+            check("事件：meeting 用 event（共用的事件 workflow），帶 event、source 與 run_dir", a["action"] == "run_workflow" and a["workflow"] == "event" and a["stage"] == "meeting"
+                  and json.loads((proj / d / ".wf" / "event.args.json").read_text(encoding="utf-8")) == {"source": "meetings/a.md", "run_dir": (proj / d).resolve().as_posix(), "event": "meeting"}, a)
+            call("start", "--run", "_runs/ev-brief", "--event", "brief", "--set", "brief=briefs/a.md")
+            check("事件：形狀不同的事件（brief）仍用自己的 workflow", act_of(call("next", "--run", "_runs/ev-brief")[1])["workflow"] == "event-brief")
+            meth_file = teams / "methodology.json"
+            meth_saved = meth_file.read_text(encoding="utf-8") if meth_file.is_file() else None
+            custom = {"args": ["incident"], "context": "事故：{incident}", "gather": {"angles": [{"key": "cause", "ask": "找原因"}]}, "challenge": {"ask": "反駁"}, "write": {"ask": "寫回顧"}}
+            meth_file.write_text(json.dumps({**(json.loads(meth_saved) if meth_saved else {}), "events": {"incident": custom, "merge": custom, "upstream": {**custom, "args": ["what"]}}}, ensure_ascii=False), encoding="utf-8")
+            call("start", "--run", "_runs/ev-inc", "--event", "incident")
+            a = act_of(call("next", "--run", "_runs/ev-inc")[1])
+            check("自訂事件：profile 的 events 加一筆就有這個事件；缺它要的參數回 need_input", a["action"] == "need_input" and set(a["need"]) == {"incident"}, a)
+            a = act_of(call("next", "--run", "_runs/ev-inc", "--set", "incident=INC-1")[1])
+            check("自訂事件：參數齊了就跑 event，args 帶 event=<類型>", a["action"] == "run_workflow" and a["workflow"] == "event" and a["stage"] == "incident"
+                  and json.loads((proj / "_runs/ev-inc" / ".wf" / "event.args.json").read_text(encoding="utf-8")).get("event") == "incident", a)
+            check("自訂事件：可以取代內建類型（必要參數照 profile）；不能蓋掉 merge 這種不是 event.js 的事件",
+                  event_required(proj, "upstream") == ["what"] and event_route(proj, "upstream") == ("event", "upstream") and event_route(proj, "merge") == ("sdlc-merge", "merge"))
+            if meth_saved is None:
+                meth_file.unlink()
+            else:
+                meth_file.write_text(meth_saved, encoding="utf-8")
             call("start", "--run", "_runs/ev2", "--event", "upstream")
             a = act_of(call("next", "--run", "_runs/ev2")[1])
             check("事件：缺必要參數回 need_input 並說明怎麼補", a["action"] == "need_input" and set(a["need"]) == {"what", "repo"} and "--set what=" in a["how"], a)
@@ -1279,6 +1331,9 @@ def selftest() -> int:
                 miss = [w for w in names if w not in REQUIRED] + [w for w in REQUIRED if w not in names]
                 bad = [w for w in names if (real / TEMPLATES / f"{w}.js").read_text(encoding="utf-8").count("\n" + ARGS_LINE + "\n") != 1]
                 check("真的範本：每一支都在 REQUIRED 裡、都有唯一的一行可以內嵌 args", not miss and not bad, (miss, bad))
+                ev_src = (real / TEMPLATES / "event.js").read_text(encoding="utf-8")
+                found = {m.group(1): [x.strip(" '") for x in m.group(2).split(",") if x.strip()] for m in re.finditer(r"^  '?([a-z][a-z-]*)'?: \{\n    title: [^\n]*\n    args: \[([^\]]*)\]", ev_src, re.M)}
+                check("真的範本：event.js 內建的事件類型與必要參數和 EVENT_TYPES 一致", found == EVENT_TYPES, found)
         finally:
             sr.PROJECT_PROFILE = saved_profile
             for k, v in saved_env.items():

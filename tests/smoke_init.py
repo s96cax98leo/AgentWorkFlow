@@ -34,7 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
 WORKFLOWS = ("sdlc-plan", "sdlc-design", "sdlc-design-revise", "sdlc-build", "sdlc-sync", "sdlc-test", "sdlc-deliver", "sdlc-merge",
-             "event-brief", "event-upstream", "event-meeting", "event-pr-review", "event-reqs-change", "event-decision", "event-demo-check", "event-post-merge")
+             "event", "event-brief", "event-pr-review", "event-post-merge")
 REQUIRED = [
     "CLAUDE.md",
     ".claude/settings.json",
@@ -621,9 +621,14 @@ def check_upgrade(work: Path, config: Path, env: dict) -> None:
     ok("升級：原樣的舊 workflow 副本移除") if not (wfd / "event-meeting.js").exists() and "event-meeting.js" in out else bad("升級：原樣的舊 workflow 副本沒有移除", out)
     ok("升級：改過的舊 workflow 保留並說明 awf.py 不會採用") if (wfd / "event-reqs-change.js").is_file() and "對不上" in out and "event-reqs-change.js" in out else bad("升級：改過的 workflow 沒保留或沒說明", out)
     ok("升級：有 awf-override 標記的覆寫檔、使用者自己的 workflow 都保留") if "awf-override: 0.1.0" in (wfd / "sdlc-plan.js").read_text(encoding="utf-8") and (wfd / "my-own.js").is_file() else bad("升級：覆寫檔或使用者的 workflow 被動到了")
+    # 0.5 把這支併進 event.js：plugin 已經沒有同名範本，沒有標記的舊副本不能被拿來跑
     r = run([PY, ".claude/teams/tools/awf.py", "render", "event-reqs-change", "--out", str(t / "_tpm/x"), "--plugin-dir", str(ROOT / "plugin")], cwd=t)
-    got = (t / "_tpm/x/event-reqs-change.js").read_text(encoding="utf-8") if (t / "_tpm/x/event-reqs-change.js").is_file() else ""
-    ok("升級：沒有標記的舊副本 awf.py 不採用（用 plugin 的範本）並提醒") if "我改過" not in got and got and "不採用" in r.stderr else bad("升級：awf.py 用了沒有標記的舊副本", r.stdout + r.stderr)
+    ok("升級：plugin 已經沒有的 workflow，沒有標記的舊副本 awf.py 不採用並說明改用 event.js") if r.returncode != 0 and not (t / "_tpm/x/event-reqs-change.js").exists() and "不採用" in r.stdout + r.stderr and "event.js" in r.stdout + r.stderr else bad("升級：awf.py 用了沒有標記的舊副本", r.stdout + r.stderr)
+    (wfd / "sdlc-design.js").write_text("// 沒有標記的舊副本 我改過\n", encoding="utf-8")
+    r = run([PY, ".claude/teams/tools/awf.py", "render", "sdlc-design", "--out", str(t / "_tpm/x"), "--plugin-dir", str(ROOT / "plugin")], cwd=t)
+    got = (t / "_tpm/x/sdlc-design.js").read_text(encoding="utf-8") if (t / "_tpm/x/sdlc-design.js").is_file() else ""
+    ok("升級：plugin 還有的 workflow，沒有標記的舊副本不採用（用 plugin 的範本）並提醒") if "我改過" not in got and got and "不採用" in r.stderr else bad("升級：awf.py 用了沒有標記的舊副本", r.stdout + r.stderr)
+    (wfd / "sdlc-design.js").unlink()
     (wfd / "sdlc-plan.js").unlink()   # 這支假的覆寫檔不是完整的 workflow，後面的檢查不用它
     ok("升級：列出這版已不提供的舊檔（old_tool.py，不刪）") if "old_tool.py" in out and (teams / "tools/old_tool.py").is_file() else bad("升級：沒列出舊版殘留的工具檔", out)
 
@@ -709,7 +714,7 @@ def check_with_workflows(work: Path, config: Path, env: dict) -> None:
     ok(f"--with-workflows：{len(files)} 支覆寫檔，結尾都有 awf-override 標記") if files == sorted(WORKFLOWS) and all(
         (wfd / f"{w}.js").read_text(encoding="utf-8").endswith(stamp) for w in WORKFLOWS) else bad(f"--with-workflows 的產出不對：{files}")
     r = run([PY, ".claude/teams/tools/build.py", "--check"], cwd=t)
-    ok("--with-workflows：build.py --check 通過（覆寫檔可以用 build.py 重新內嵌）") if r.returncode == 0 and "16 支" in r.stdout else bad("--with-workflows：build.py --check 失敗", r.stdout + r.stderr)
+    ok("--with-workflows：build.py --check 通過（覆寫檔可以用 build.py 重新內嵌）") if r.returncode == 0 and f"{len(WORKFLOWS)} 支" in r.stdout else bad("--with-workflows：build.py --check 失敗", r.stdout + r.stderr)
     # 覆寫檔拿掉標記那一行，應該和「沒有覆寫檔時 awf.py 依 plugin 範本產生的」逐字相同（同一套佔位符與 profile）
     plain = work / "project-with-wf-plain"
     shutil.copytree(t, plain)
@@ -723,7 +728,7 @@ def check_with_workflows(work: Path, config: Path, env: dict) -> None:
     r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--upgrade", "--with-workflows"], cwd=t.parent, env=env)
     ok("--upgrade --with-workflows：不覆蓋已經有標記的覆寫檔") if r.returncode == 0 and "我改過這支" in mine.read_text(encoding="utf-8") else bad("--upgrade 把覆寫檔蓋掉了", r.stdout + r.stderr)
     r = run([PY, str(ROOT / "init.py"), "--target", str(t), "--upgrade"], cwd=t.parent, env=env)
-    ok("--upgrade（沒有 --with-workflows）：覆寫檔全部保留並列出") if r.returncode == 0 and len(list(wfd.glob("*.js"))) == 16 and "覆寫檔" in r.stdout else bad("--upgrade 動到了覆寫檔", r.stdout + r.stderr)
+    ok("--upgrade（沒有 --with-workflows）：覆寫檔全部保留並列出") if r.returncode == 0 and len(list(wfd.glob("*.js"))) == len(WORKFLOWS) and "覆寫檔" in r.stdout else bad("--upgrade 動到了覆寫檔", r.stdout + r.stderr)
 
 
 def main(argv: list[str]) -> int:

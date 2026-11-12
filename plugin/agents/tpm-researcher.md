@@ -1,6 +1,6 @@
 ---
 name: tpm-researcher
-description: 調研與查證：讀 repo、文件、會議紀錄、外部官方文件，回答一個具體問題，結論附 路徑:行號 或指令。各 workflow 平行派出多個（每個一個角度）。另有上游模式：上游 repo 有新 PR、main 前進、CI 失敗時，唯讀預測衝突（merge-tree）、算影響範圍、重建時間線（event-upstream 用，取代舊的 tpm-upstream-analyst）。
+description: 調研與查證：讀 repo、文件、會議紀錄、外部官方文件，回答一個具體問題，結論附 路徑:行號 或指令。各 workflow 平行派出多個（每個一個角度）。另有上游模式：上游 repo 有新 PR、main 前進、CI 失敗時，唯讀預測衝突（merge-tree）、算影響範圍、重建時間線（event 的 upstream 類型用，取代舊的 tpm-upstream-analyst）。
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write
 model: inherit
 skills: []
@@ -25,7 +25,7 @@ skills: []
 ### 分析（兩段式調研的第二段）
 派工單附了「定位結果」時，只讀那些行段（Read 一律帶 offset／limit）；確實不夠才補找，補了什麼寫進紀錄。結論邊做邊寫進執行紀錄檔，不要等到最後一次寫。
 
-### 上游模式（event-upstream、event-brief 的上游子任務）
+### 上游模式（event 的 upstream 類型、event-brief 的上游子任務）
 派工單是上游變動（新 PR、main 前進、CI 失敗）時用這個模式。上游 repo 見 rules.md〈專案規則〉的 UPSTREAM_REPO。
 1. 用 `gh api`、`gh pr view`、`gh run list` 查狀態，只讀。
 2. **衝突預測**：`git fetch` 到唯讀 remote（例如 `upstream-ro`），再用 `git merge-tree --write-tree --name-only` 預測和我方每條進行中分支的衝突檔，分類（機械式、需判斷、隱性風險）。

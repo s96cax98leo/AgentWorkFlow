@@ -34,6 +34,7 @@ MIN_PY = (3, 9)
 OK, WARN, ERR, INFO = "ok", "warn", "error", "info"
 MARK = {OK: "通過", WARN: "注意", ERR: "問題", INFO: "說明"}
 LB = "{" * 2    # 佔位符的開頭；不直接寫出來，init.py 會把工具原始碼裡的佔位符換掉
+MERGED = ("event-meeting", "event-decision", "event-demo-check", "event-reqs-change", "event-upstream")   # 0.5 併進 event.js 的五支
 UPDATE_FIX = "claude plugin update {key}，再在 Claude Code 裡 /reload-plugins（只跑 marketplace update 不會更新 plugin）"
 
 
@@ -241,6 +242,10 @@ def check_overrides(project: Path, plugin: Path | None) -> list[dict]:
     out, old = [], []
     for f in sorted(d.glob("*.js")):
         m = awf.OVERRIDE.search(f.read_text(encoding="utf-8", errors="replace"))
+        gone = plugin is not None and not (plugin / awf.TEMPLATES / f.name).is_file() and f.stem in MERGED
+        if m and gone:
+            out.append(item("override-merged", WARN, f"覆寫檔 {f.name} 用不到了：" + awf.MERGED_HINT, "要保留自己的做法：把內容改寫成 methodology.json 的 events 裡的一筆（見模版的 docs/事件處理.md），或依現在的 event.js 另寫覆寫檔"))
+            continue
         if not m:
             old.append(f.name)
         elif pv and m.group(1) != pv:
@@ -466,6 +471,10 @@ def selftest() -> int:
         w(proj / ".claude/workflows/sdlc-plan.js", "// 我的版本\n// awf-override: 0.4.1\n")
         w(proj / ".claude/workflows/sdlc-test.js", "// 現行\n// awf-override: 0.5.0\n")
         w(proj / ".claude/workflows/sdlc-build.js", "// 舊副本，沒有標記\n")
+        w(proj / ".claude/workflows/event-meeting.js", "// 我的會議流程\n// awf-override: 0.4.1\n")
+        r = doctor()
+        check("覆寫檔：0.5 併進 event.js 的 workflow 的覆寫檔 → 注意（用不到了），修法提到 events", "override-merged" in ids(r, WARN) and "events" in next(i["fix"] for i in r if i["id"] == "override-merged"), r)
+        (proj / ".claude/workflows/event-meeting.js").unlink()
         r = doctor()
         check("覆寫檔：依舊版範本的覆寫檔 → 注意；版本相同的只說明；沒標記的舊副本列出來並說明不會被採用",
               [i["id"] for i in r if i["id"].startswith("override")] == ["override", "override", "override-old"] and ids([i for i in r if i["id"] == "override"], WARN) == ["override"]

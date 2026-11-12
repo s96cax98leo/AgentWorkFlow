@@ -124,12 +124,13 @@ function judgeVerdicts(list, challenge, opts = {}) {
 }
 
 // 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
-// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept,
+//      run（派工函式，預設 tryAgent；用了執行核心的 workflow 傳 awfAgent，模型分級與上限才會套到 skeptic） }
 // skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
 async function challengeList(list, o) {
   const label = o.label || 'challenge'
   if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
-  const challenge = await tryAgent(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  const challenge = await (o.run || tryAgent)(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
   if (!challenge || !challenge.payload) {
     if (o.missing) o.missing.push(label)
     return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
@@ -478,5 +479,5 @@ return {
     ? '已合併。之後跑 event-post-merge 監看 main 的 CI。'
     : queued
     ? `已進 merge queue，還沒合進去。不要重派合併；之後用 gh pr view ${N} --repo ${GH} --json state 確認，合進去後再跑 event-post-merge。`
-    : `未合併，PR 已退回並轉回 draft。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走 event-reqs-change；實作要補的回到 SDLC 對應段落（通常是 ${R.stages.filter((x) => ['build', 'test', 'deliver'].includes(x)).map((x) => `sdlc-${x}`).join(' → ')}；之前走過中轉分支的，這幾段都帶 branch=中轉分支），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,
+    : `未合併，PR 已退回並轉回 draft。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走需求變動事件（event 的 reqs-change 類型）；實作要補的回到 SDLC 對應段落（通常是 ${R.stages.filter((x) => ['build', 'test', 'deliver'].includes(x)).map((x) => `sdlc-${x}`).join(' → ')}；之前走過中轉分支的，這幾段都帶 branch=中轉分支），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,
 }

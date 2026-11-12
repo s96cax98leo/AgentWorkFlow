@@ -89,7 +89,7 @@ init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 sc
 
 ## 6. 驗證
 - 產出的檔案裡不應再有未替換的 `{{…}}`：`grep -rn '{{[A-Z_]*}}' <目標專案>/.claude <目標專案>/CLAUDE.md`。
-- `.claude/teams/methodology.json` 的內容跟使用者確認的習慣一致；`python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check` 能產生 16 支腳本。
+- `.claude/teams/methodology.json` 的內容跟使用者確認的習慣一致；`python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check` 能產生 12 支腳本。
 - `.claude/teams/rules.md` 有〈專案規則〉段、`.claude/teams/guard.config.json` 是合法 JSON。
 - 跑 golden-set、`check_workflows.mjs`、`check_agents.py`（指令見 init.py 最後印出的「下一步」）。
 

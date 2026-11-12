@@ -37,7 +37,7 @@ const SAMPLE_ARGS = {
   ],
   has_ui: true, has_security: true,
   decisions: ['同意只新增的測試修改'], issues: [{ target_id: 'spec §2', reason: '缺驗收條件' }],
-  brief: 'briefs/sample_x.md', what: 'PR #999', source: 'meetings/x.md', target: 'PR 1', change: 'x', decision: 'x', script: 'x', date: '2026-10-12', pr: 1,
+  event: 'meeting', brief: 'briefs/sample_x.md', what: 'PR #999', source: 'meetings/x.md', target: 'PR 1', change: 'x', decision: 'x', script: 'x', date: '2026-10-12', pr: 1,
 }
 
 // 派工單的固定要求（I3：rules.md 與輸出語言；I6：最後一行是執行紀錄檔）
@@ -167,6 +167,11 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
   const scenarios = [{ name: '', args: {}, fakes: {} }, ...(SCENARIOS[f] || [])]
   for (const sc of scenarios) {
     const r = await dryRun(withProfile(src, sc.profile), titles, { ...SAMPLE_ARGS, ...sc.args }, sc.fakes || {}, sc.virtualAgents)
+    // 情境可以宣告「這組參數應該被拒絕執行」（throws：比對錯誤訊息的正規式）：有丟出相符的錯誤才算過
+    if (sc.throws) {
+      const hit = r.errs.filter((e) => e.startsWith('乾跑失敗：') && sc.throws.test(e))
+      r.errs = hit.length ? r.errs.filter((e) => !hit.includes(e)) : [...r.errs, `應該拒絕執行（${sc.throws}），實際沒有`]
+    }
     agents += r.agents
     r.visited.forEach((t) => { if (!visited.includes(t)) visited.push(t) })
     errs.push(...r.errs.map((e) => (sc.name ? `[情境：${sc.name}] ${e}` : e)))

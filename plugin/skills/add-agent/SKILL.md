@@ -104,7 +104,7 @@ model: inherit
 
 ## 6. 驗證
 ```bash
-python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 16 支腳本
+python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 12 支腳本
 node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir <AgentWorkFlow>/plugin/agents   # 確認擴充 agent 會被派出、定義檔存在
 uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py              # methodology.json 合法
 ```

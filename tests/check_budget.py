@@ -61,6 +61,12 @@ def measure() -> dict:
         ps = list(sc["prompts"].values())
         prefix = len(os.path.commonprefix(ps)) if len(ps) > 1 else 0
         out["workflows"][wf] = {"agents": len(sc["labels"]), "prompt_chars": sum(len(x) for x in ps), "shared_prefix_chars": prefix}
+        # 一支腳本處理多種類型時（event.js），名字是「類型：<名>」的情境各量一次，記成 <檔名>#<類型>
+        for x in v["scenarios"]:
+            if x["name"].startswith("類型："):
+                ps = list(x["prompts"].values())
+                out["workflows"][f"{wf}#{x['name'][3:]}"] = {"agents": len(x["labels"]), "prompt_chars": sum(len(p) for p in ps),
+                                                            "shared_prefix_chars": len(os.path.commonprefix(ps)) if len(ps) > 1 else 0}
     bi = {"recipes": recipe.BUILTIN_RECIPES, "modifiers": recipe.BUILTIN_MODIFIERS}
     for name in recipe.BUILTIN_RECIPES:
         total = 0
