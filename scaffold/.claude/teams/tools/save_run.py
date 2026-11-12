@@ -268,8 +268,8 @@ def _retried_ok(trace: list, i: int) -> bool:
                for x in trace[i + 1:])
 
 
-# 已經改用執行核心（kernel 片段）的段：profile 有設 models 時，trace 每筆都要有 model 與 tier
-KERNEL_STAGES = {"plan"}
+# 已經改用執行核心（kernel 片段）的段：profile 有設 models 時，trace 每筆都要有 model 與 tier。0.5 起 SDLC 每一段都是
+KERNEL_STAGES = {"plan", "design", "build", "sync", "test", "deliver", "merge"}
 
 
 def model_errors(stage: str, result, profile: dict | None, modifiers) -> list[str]:
@@ -360,6 +360,9 @@ def process_trace(run: Path, stage: str, result, write: bool) -> tuple[bool, lis
         elif okv is False and _retried_ok(trace, i):
             # 執行核心的失敗升級：這一筆沒交件，後面同一個 label、同一個角色的重派有交件，不算缺件
             status = f"沒有交件，已升一級重派（{t.get('tier') or '?'} → 見下一筆）"
+        elif okv is False and t.get("capped") is True:
+            status = "沒有派出（派工數到上限）"
+            missing.append(f"{label} 沒有派出：派工數到上限（{t.get('max_agents') or '?'}；profile 的 limits.max_agents），要人決定是調高上限還是拆小")
         elif okv is False:
             status = "agent 沒有交件（失敗或交件無效）"
             missing.append(f"{label} 沒有交件（失敗或交件無效）")
@@ -1866,6 +1869,18 @@ def selftest() -> int:
         check("模型分級：profile 有 models，plan 的 trace 沒有 tier → invalid", c == 1 and "沒有 model／tier" in out, out)
         c, out = k_stage(d, [k_entry(d, "intent", SPEC, "ultra", "opus")])
         check("模型分級：不認得的等級 → invalid", c == 1 and "不認得" in out, out)
+        # 0.5：SDLC 每一段都經過執行核心
+        impl = lambda **kw: {"label": "Implement:t1", "agent_type": "agent-workflow:dev-implementer", "phase": "Implement", "record": "x.md", "ok": True, **kw}  # noqa: E731
+        check("模型分級（0.5）：build、test、deliver 等段的 trace 沒有 tier → 判錯（都要經過執行核心）",
+              all(any("沒有 model／tier" in e for e in model_errors(s, {"trace": [impl()]}, with_models, [])) for s in ("design", "build", "sync", "test", "deliver", "merge")))
+        check("模型分級（0.5）：build 段的 implementer 用 standard、model 對得上 → 通過；擴充 agent 沒有 tier 不檢查",
+              not model_errors("build", {"trace": [impl(tier="standard", model="sonnet"), {"label": "ext", "agent_type": "my:agent", "ok": True}]}, with_models, []))
+        check("模型分級（0.5）：merge 段的 steward 用 standard（低於下限 strong）→ 判錯",
+              any("低於下限 strong" in e for e in model_errors("merge", {"trace": [{"label": "execute", "agent_type": "agent-workflow:dev-merge-steward", "ok": True, "tier": "standard", "model": "sonnet"}]}, with_models, [])))
+        cap_run = Path(k_run())
+        _has, rows, miss = process_trace(cap_run, "build", {"trace": [{"label": "Implement:t9", "agent_type": "agent-workflow:dev-implementer", "phase": "Implement",
+                                                                     "record": str(cap_run / "build/Implement-t9.md"), "ok": False, "capped": True, "max_agents": 40}]}, False)
+        check("派工數上限：到上限沒派出的列成缺件，並說明是上限（不是 agent 失敗）", len(miss) == 1 and "派工數到上限（40" in miss[0] and rows[0]["status"] == "沒有派出（派工數到上限）", miss)
         PROJECT_PROFILE.write_text(json.dumps({**with_models, "models": {**with_models["models"], "mode": "inherit"}}, ensure_ascii=False), encoding="utf-8")
         check("模型分級：mode=inherit 不檢查", k_stage(d, [k_entry(d, "intent", SPEC, "", "inherit")])[0] == 0)
         PROJECT_PROFILE.write_text(base_profile, encoding="utf-8")

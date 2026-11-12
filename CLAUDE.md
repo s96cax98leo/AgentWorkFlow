@@ -121,7 +121,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### 執行核心、模型分級與省 context（0.4）
 
-- **執行核心**：`tools/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限（`limits.max_agents`，到上限 workflow 回 halted）。**目前只有 `sdlc-plan` 用它**（`save_run.KERNEL_STAGES`），其餘 workflow 下一版改；新寫的派工一律用 `awfAgent`。
+- **執行核心**：`tools/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限。**12 支 workflow 的派工都走它**（`save_run.KERNEL_STAGES` 是全部七段）；片段裡的派工（`challengeList`、`verifyFindings`）用 challenge 片段的 `awfDispatch`，啟用核心後也經過核心。上限＝`limits.max_agents`（沒寫用 40），design 另加 `3×max_sub_plans`、build 另加 `4×子任務數`、test 另加 `4×子計劃數`；到上限不再派、trace 記一筆 `capped: true`，`save_run.process_trace` 列成缺件並說明。`AWF_NO_RETRY`（dev-integrator、dev-merge-steward：有副作用）與 `retry: false` 的派工不自動重派。新寫的派工一律用 `awfAgent`。
 - **模型分級**：profile 的 `models`。解析在 `recipe.py` 的 `resolve_model` 與 `recipe.js` 的 `resolveModel`，兩邊必須一致（golden 的 `model_cases`）。結果＝max(AI 建議或預設, floor, modifier 的 `model_floors`)；內建 floor（`BUILTIN_MODEL_FLOORS`）profile 蓋不掉。`save_run.model_errors` 用 profile 重算，trace 的模型低於 floor 判 invalid。agent 檔的 frontmatter 仍然是 `model: inherit`，模型由派工時指定。
 - **兩段式調研**：`locate:<角度>`（light，payload `locations`）→ `research:<角度>`（只讀定位到的行段）。定位缺件時該角度列 missing、不派分析。triage 的 `angles` 只能從 recipe 自己的角度挑，modifier 帶進來的不能省。
 - **資料包與重用**：`tools/pack.py` 寫 `<run>/<段>/pack.md` 與 `pack-args.json`（無時間戳、可重現）；plan 段的 `reuse.json` 記各角度來源檔的 sha1，`save_run.py stage plan` 用 `verify_reuse` 重新核對、存檔後 `record_reuse`。這三個檔與 `pack.py` 只有主 session 能寫、能跑（`guard.py` 的 `PACK_STATE`、`SHARED_CONTEXT_NAMES`）。

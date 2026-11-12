@@ -10,7 +10,7 @@
 //   3. 把每次派工記進 trace（label、agentType、phase、紀錄檔、ok），workflow 的回傳一律帶 trace: awfTrace()。
 // save_run.py stage 依 trace 產生「執行紀錄索引.md」並核對紀錄檔存在，缺了算缺件。
 function awfState() { return awfState.s || (awfState.s = { cfg: null, trace: [] }) }
-function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; return s.cfg }
+function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; s.dispatch = null; return s.cfg }
 function awfTrace() { return awfState().trace.map((t) => ({ ...t })) }
 function awfSlug(label) { return String(label || 'agent').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'agent' }
 function awfRecordPath(label) { const c = awfState().cfg || {}; return `${c.run_dir}/${c.stage}/${awfSlug(label)}.md` }
@@ -84,6 +84,9 @@ function tryAgent(prompt, opts, meta) {
   }
 }
 
+// 片段裡要派 agent 時走這個：workflow 啟用了執行核心（kernel 片段的 awfKernelInit）就經過它（模型分級、失敗升級、派工數上限），否則直接 tryAgent
+function awfDispatch(prompt, opts) { const d = awfState().dispatch; return typeof d === 'function' ? d(prompt, opts) : tryAgent(prompt, opts) }
+
 // 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
 function haltMissing(base, stage, missing, extra = {}) {
   return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
@@ -107,13 +110,12 @@ function judgeVerdicts(list, challenge, opts = {}) {
 }
 
 // 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
-// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept,
-//      run（派工函式，預設 tryAgent；用了執行核心的 workflow 傳 awfAgent，模型分級與上限才會套到 skeptic） }
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
 // skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
 async function challengeList(list, o) {
   const label = o.label || 'challenge'
   if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
-  const challenge = await (o.run || tryAgent)(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  const challenge = await awfDispatch(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
   if (!challenge || !challenge.payload) {
     if (o.missing) o.missing.push(label)
     return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }

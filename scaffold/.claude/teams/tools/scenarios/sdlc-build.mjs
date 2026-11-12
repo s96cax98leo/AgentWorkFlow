@@ -8,6 +8,22 @@ const out = (r) => r.out || {}
 
 export default [
   {
+    // 執行核心（0.5）：子任務的 complexity 是建議的模型等級，trace 每筆都有 model 與 tier
+    name: '執行核心：子任務標 complexity=strong 時 implementer 用 strong，其他照預設；trace 都有 tier',
+    profile: { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'opus' }, defaults: { '*': 'standard' }, floors: {} } },
+    args: { subtasks: SAMPLE_SUBTASKS().map((s) => (s.id === 't1' ? { ...s, complexity: 'strong', complexity_reason: '跨模組' } : s)) },
+    expect: (r) => {
+      const errs = []
+      const tr = out(r).trace || []
+      const of = (label) => tr.find((t) => t.label === label) || {}
+      if (of('Implement:t1').tier !== 'strong' || of('Implement:t1').model !== 'opus') errs.push(`t1 應該用 strong／opus：${JSON.stringify(of('Implement:t1'))}`)
+      if (of('Implement:t2').tier !== 'standard' || of('Implement:t2').model !== 'sonnet') errs.push(`t2 應該用 standard／sonnet：${JSON.stringify(of('Implement:t2'))}`)
+      if (tr.some((t) => !t.tier)) errs.push(`trace 有沒有 tier 的項目：${tr.filter((t) => !t.tier).map((t) => t.label).join('、')}`)
+      if (!r.calls.some((c) => c.label === 'Implement:t1' && c.model === 'opus')) errs.push('派 t1 的時候沒有帶 model=opus')
+      return errs
+    },
+  },
+  {
     // 走過中轉分支後 merge 退回 build：子任務分支要從中轉分支開、integrator 要合回中轉分支
     name: 'branch：args.branch 帶中轉分支',
     args: { branch: 'merge/demo-transit' },

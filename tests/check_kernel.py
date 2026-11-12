@@ -5,7 +5,9 @@
   1. label 重複時第二次起自動加序號（trace、紀錄檔、失敗升級都靠 label 對，不能撞）。
   2. label 重複又碰到失敗升級時，標 superseded 的是自己那一筆，不是另一個同名的派工。
   3. 交件的 status 與 summary 記進 trace 的 digest（save_run 靠它把信封對回派工）。
-  4. 派工數到上限就不再派，label 記進 capped。
+  4. 派工數到上限就不再派，label 記進 capped，trace 記一筆 capped=true。
+  6. 片段裡的派工（challengeList）在啟用核心後也經過它；沒啟用時照舊。
+  7. dev-integrator、dev-merge-steward 與 retry:false 的派工失敗不自動重派。
   5. 限制文件（challenge 片段的 awfConstraints）：依段與路徑挑、build 只給對得上的子任務、共同前綴帶出規則。
 只用標準庫；沒有 node 時判失敗（不略過）。run_all.py 會自動發現並執行。
 """
@@ -23,7 +25,7 @@ SNIP = ROOT / "scaffold" / ".claude" / "teams" / "tools" / "snippets"
 JS = r"""
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -58,7 +60,35 @@ const need = (c, m) => { if (!c) errs.push(m) }
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' }); k.awfKernelInit({ profile: PROFILE, stage: 'plan', modifiers: [], max_agents: 1 })
   await k.awfAgent('a', { label: 'one', agentType: 'agent-workflow:tpm-researcher' })
   const over = await k.awfAgent('b', { label: 'two', agentType: 'agent-workflow:tpm-researcher' })
-  need(over === null && JSON.stringify(k.awfCapped()) === JSON.stringify(['two']) && k.awfTrace().length === 1, `上限沒擋住：${JSON.stringify(k.awfCapped())}`)
+  t = k.awfTrace()
+  need(over === null && JSON.stringify(k.awfCapped()) === JSON.stringify(['two']) && t.length === 2, `上限沒擋住：${JSON.stringify(k.awfCapped())}`)
+  need(t[1].label === 'two' && t[1].ok === false && t[1].capped === true && t[1].max_agents === 1 && /two\.md$/.test(t[1].record), `到上限沒派的要記一筆 capped 的 trace：${JSON.stringify(t[1])}`)
+
+  // 6：片段裡的派工（challengeList）在啟用核心後也經過它：帶模型、算進上限；沒啟用核心時照舊直接派
+  let seen = []
+  k = make(async (p, o) => { seen.push(o); return { status: 'done', summary: 's', payload: { verdicts: [{ target_id: 'a', refuted: false, reason: 'ok' }] } } }, () => {})
+  k.awfInit({ run_dir: '_runs/r1', stage: 'meeting', lang: 'zh-TW' }); k.awfKernelInit({ profile: PROFILE, stage: 'meeting', modifiers: [], max_agents: 5 })
+  let j = await k.challengeList([{ id: 'a' }], { prompt: 'p', agentType: 'agent-workflow:tpm-skeptic', schema: {} })
+  t = k.awfTrace()
+  need(!j.lacking && j.kept.length === 1 && seen[0].model === 'sonnet' && t[0].tier === 'standard' && t[0].model === 'sonnet', `challengeList 沒有經過核心：${JSON.stringify([seen[0], t[0]])}`)
+  k.awfKernelInit({ profile: PROFILE, stage: 'meeting', modifiers: [], max_agents: 1 })
+  await k.awfAgent('a', { label: 'one', agentType: 'agent-workflow:tpm-researcher' })
+  const missing = []
+  j = await k.challengeList([{ id: 'a' }], { prompt: 'p', agentType: 'agent-workflow:tpm-skeptic', schema: {}, missing })
+  need(j.lacking && missing.join() === 'challenge' && k.awfCapped().join() === 'challenge', `skeptic 也要算進派工數上限：${JSON.stringify([j.lacking, missing, k.awfCapped()])}`)
+  seen = []
+  k.awfInit({ run_dir: '_runs/r1', stage: 'meeting', lang: 'zh-TW' })     // 重新 init 而且沒有啟用核心
+  await k.challengeList([{ id: 'a' }], { prompt: 'p', agentType: 'agent-workflow:tpm-skeptic', schema: {} })
+  need(seen.length === 1 && seen[0].model === undefined && k.awfTrace()[0].tier === undefined, `沒啟用核心時不該指定模型：${JSON.stringify(seen[0])}`)
+
+  // 7：會動到共用分支的角色（integrator、steward）與 retry:false 的派工，失敗不自動升級重派
+  for (const [role, opt, want] of [['dev-integrator', {}, 1], ['dev-merge-steward', {}, 1], ['dev-implementer', { retry: false }, 1], ['dev-implementer', {}, 2]]) {
+    let n = 0
+    k = make(async () => { n++; return null }, () => {})
+    k.awfInit({ run_dir: '_runs/r1', stage: 'build', lang: 'zh-TW' }); k.awfKernelInit({ profile: PROFILE, stage: 'build', modifiers: [], max_agents: 9 })
+    const r = await k.awfAgent('x', { label: 'w', agentType: 'agent-workflow:' + role, ...opt })
+    need(r === null && n === want && k.awfTrace().length === want && k.awfTrace().every((x) => x.ok === false), `${role} ${JSON.stringify(opt)}：應該派 ${want} 次，實際 ${n}`)
+  }
 
   // 5：限制文件。整段適用／build 只給路徑對得上的子任務／格式不對的略過／前綴帶出規則與對照表格式
   const CP = { constraints: [

@@ -128,7 +128,7 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
     // I6：每個 return（含 halted、提早結束）都帶 trace，筆數＝實際派出數（缺件也列，ok=false）
     else if (out && typeof out === 'object') {
       if (!Array.isArray(out.trace)) errs.push('回傳沒有 trace（每個 return 都要帶 trace: awfTrace()）')
-      else if (out.trace.length !== agents) errs.push(`trace ${out.trace.length} 筆，實際派出 ${agents} 個 agent`)
+      else if (out.trace.filter((t) => !t.capped).length !== agents) errs.push(`trace ${out.trace.filter((t) => !t.capped).length} 筆（不含到上限沒派的），實際派出 ${agents} 個 agent`)
       else if (out.trace.some((t) => !t.record)) errs.push('trace 有沒有執行紀錄檔路徑的項目')
     }
   } catch (e) { errs.push(`乾跑失敗：${e.message}`) }

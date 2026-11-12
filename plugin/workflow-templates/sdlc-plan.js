@@ -28,7 +28,7 @@ const NS = '{{AGENT_NS}}'
 //   3. 把每次派工記進 trace（label、agentType、phase、紀錄檔、ok），workflow 的回傳一律帶 trace: awfTrace()。
 // save_run.py stage 依 trace 產生「執行紀錄索引.md」並核對紀錄檔存在，缺了算缺件。
 function awfState() { return awfState.s || (awfState.s = { cfg: null, trace: [] }) }
-function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; return s.cfg }
+function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; s.dispatch = null; return s.cfg }
 function awfTrace() { return awfState().trace.map((t) => ({ ...t })) }
 function awfSlug(label) { return String(label || 'agent').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'agent' }
 function awfRecordPath(label) { const c = awfState().cfg || {}; return `${c.run_dir}/${c.stage}/${awfSlug(label)}.md` }
@@ -102,6 +102,9 @@ function tryAgent(prompt, opts, meta) {
   }
 }
 
+// 片段裡要派 agent 時走這個：workflow 啟用了執行核心（kernel 片段的 awfKernelInit）就經過它（模型分級、失敗升級、派工數上限），否則直接 tryAgent
+function awfDispatch(prompt, opts) { const d = awfState().dispatch; return typeof d === 'function' ? d(prompt, opts) : tryAgent(prompt, opts) }
+
 // 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
 function haltMissing(base, stage, missing, extra = {}) {
   return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
@@ -125,13 +128,12 @@ function judgeVerdicts(list, challenge, opts = {}) {
 }
 
 // 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
-// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept,
-//      run（派工函式，預設 tryAgent；用了執行核心的 workflow 傳 awfAgent，模型分級與上限才會套到 skeptic） }
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
 // skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
 async function challengeList(list, o) {
   const label = o.label || 'challenge'
   if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
-  const challenge = await (o.run || tryAgent)(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  const challenge = await awfDispatch(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
   if (!challenge || !challenge.payload) {
     if (o.missing) o.missing.push(label)
     return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
@@ -312,14 +314,17 @@ function resolveModel(profile, role, stage, suggested, modifiers) {
 //      trace 每筆記 model、tier、reason。profile 沒有 models 或 mode=inherit 時不指定模型（沿用主對話模型）。
 //   2. 失敗升級：mode=auto 時，較低等級沒有交件（null、throw、交件無效）就用高一級重派一次，最多一次；
 //      第一次那筆 trace 標 superseded，重派那筆記 attempt=2 與 escalated_from。再失敗就是缺件，由呼叫端 halted。
-//   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped），呼叫端要 halted 交人，不靜默截斷。
+//      dev-integrator、dev-merge-steward（會動到共用分支）與帶 retry:false 的派工不重派。
+//   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped，trace 記一筆 capped=true），呼叫端照缺件 halted 交人，不靜默截斷。
 // workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents })。
+const AWF_NO_RETRY = ['dev-integrator', 'dev-merge-steward']
 function awfKernel() { return awfKernel.s || (awfKernel.s = { profile: null, stage: '', modifiers: [], plan: {}, max: 0, count: 0, capped: [], used: {} }) }
 function awfKernelInit(o) {
   const k = awfKernel()
   const c = o || {}
   k.profile = c.profile || null; k.stage = c.stage || ''; k.modifiers = [...(c.modifiers || [])]
   k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}; k.seen = {}
+  awfState().dispatch = awfAgent     // 片段裡的派工（challengeList、verifyFindings）也經過核心
   return k
 }
 function awfSetModifiers(mods) { awfKernel().modifiers = [...(mods || [])] }
@@ -350,7 +355,7 @@ function awfCapped() { return [...awfKernel().capped] }
 function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ ...x })) }
 
 // 派一個 agent。opts 同 tryAgent，另可帶 tier（workflow 建議的等級）、planKey（對 model_plan 的鍵，預設角色名）、stage、
-// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）。回傳交件或 null（缺件）。
+// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   const o = opts || {}
@@ -361,7 +366,12 @@ async function awfAgent(prompt, opts) {
   const label = nth > 1 ? `${raw}#${nth}` : raw
   const valid = typeof o.valid === 'function' ? o.valid : (r) => !!r && typeof r === 'object' && r.payload !== undefined && r.payload !== null
   const base = { label, phase: o.phase, agentType: o.agentType, schema: o.schema }
-  const over = () => { k.capped.push(label); log(`派工數到上限 ${k.max}，不再派 ${label}`); return null }
+  // 到上限沒派出去的也記一筆 trace（capped=true、ok=false）：workflow 不用每個 return 都自己處理，save_run 看得到、會列成缺件並說明原因
+  const over = () => {
+    k.capped.push(label); log(`派工數到上限 ${k.max}，不再派 ${label}`)
+    awfState().trace.push({ label, agent_type: o.agentType || '', phase: o.phase || '', record: awfState().cfg ? awfRecordPath(label) : '', ok: false, capped: true, max_agents: k.max })
+    return null
+  }
   if (k.max && k.count >= k.max) return over()
   k.count++
   const m = awfModelFor(o)
@@ -371,7 +381,8 @@ async function awfAgent(prompt, opts) {
   const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...meta })
   const first = await run(m, { attempt: 1 })
   if (valid(first)) return first
-  const up = m.mode === 'auto' ? modelUp(m.tier) : ''
+  // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷
+  const up = m.mode === 'auto' && o.retry !== false && !AWF_NO_RETRY.includes(awfRole(o.agentType)) ? modelUp(m.tier) : ''
   const mine = () => awfState().trace.filter((t) => t.label === label)
   if (!up) { const t = mine().pop(); if (t) t.ok = false; return null }
   if (k.max && k.count >= k.max) { const t = mine().pop(); if (t) t.ok = false; return over() }

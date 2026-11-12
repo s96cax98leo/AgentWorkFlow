@@ -27,7 +27,7 @@ const NS = '{{AGENT_NS}}'
 //   3. 把每次派工記進 trace（label、agentType、phase、紀錄檔、ok），workflow 的回傳一律帶 trace: awfTrace()。
 // save_run.py stage 依 trace 產生「執行紀錄索引.md」並核對紀錄檔存在，缺了算缺件。
 function awfState() { return awfState.s || (awfState.s = { cfg: null, trace: [] }) }
-function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; return s.cfg }
+function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; s.dispatch = null; return s.cfg }
 function awfTrace() { return awfState().trace.map((t) => ({ ...t })) }
 function awfSlug(label) { return String(label || 'agent').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'agent' }
 function awfRecordPath(label) { const c = awfState().cfg || {}; return `${c.run_dir}/${c.stage}/${awfSlug(label)}.md` }
@@ -101,6 +101,9 @@ function tryAgent(prompt, opts, meta) {
   }
 }
 
+// 片段裡要派 agent 時走這個：workflow 啟用了執行核心（kernel 片段的 awfKernelInit）就經過它（模型分級、失敗升級、派工數上限），否則直接 tryAgent
+function awfDispatch(prompt, opts) { const d = awfState().dispatch; return typeof d === 'function' ? d(prompt, opts) : tryAgent(prompt, opts) }
+
 // 缺件時的回傳：{ ...base, halted: true, stage, halt_reason: '缺件：<label>、…', missing, ...extra }
 function haltMissing(base, stage, missing, extra = {}) {
   return { ...base, halted: true, stage, halt_reason: `缺件：${missing.join('、')}`, missing: [...missing], ...extra }
@@ -124,13 +127,12 @@ function judgeVerdicts(list, challenge, opts = {}) {
 }
 
 // 派一個 skeptic 反駁整批事項，再用 judgeVerdicts 判定。list 是空的就不派（challenge=null、lacking=false）。
-// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept,
-//      run（派工函式，預設 tryAgent；用了執行核心的 workflow 傳 awfAgent，模型分級與上限才會套到 skeptic） }
+// o：{ prompt, label='challenge', phase='Challenge', agentType, schema, missing（缺件 label 記進這個陣列）, unansweredKept }
 // skeptic 缺件（回 null、交件無效或 throw）：label 記進 o.missing，回 lacking=true（kept 為空、全部列 doubted），呼叫端要 halted。
 async function challengeList(list, o) {
   const label = o.label || 'challenge'
   if (!list.length) return { challenge: null, lacking: false, ...judgeVerdicts(list, null, o) }
-  const challenge = await (o.run || tryAgent)(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
+  const challenge = await awfDispatch(o.prompt, { label, phase: o.phase || 'Challenge', agentType: o.agentType, schema: o.schema })
   if (!challenge || !challenge.payload) {
     if (o.missing) o.missing.push(label)
     return { challenge: null, lacking: true, kept: [], doubted: list.slice(), unanswered: list.map((i) => i.id) }
@@ -332,7 +334,102 @@ const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, s
 const NEXT_OF = (st) => recipeNext(R, st) || recipeSdlc().slice(recipeSdlc().indexOf(st) + 1).find((x) => R.stages.includes(x)) || null
 const HAS_DESIGN = R.stages.includes('design')
 // 執行紀錄與派工固定前綴（challenge 片段）：每張派工單都帶 rules.md、輸出語言，最後一行指定執行紀錄檔；回傳一律帶 trace
+/*@snippet:kernel*/
+// ── 片段 kernel（.claude/teams/tools/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
+// @requires: challenge, recipe
+// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// awfAgent 在 tryAgent（challenge 片段：共同前綴、執行紀錄檔、trace、失敗當缺件）之上再做三件事：
+//   1. 模型分級（I7）：用 recipe 片段的 resolveModel 決定這次派工的模型。AI 的建議（awfSetModelPlan）只會被往上修正到下限；
+//      trace 每筆記 model、tier、reason。profile 沒有 models 或 mode=inherit 時不指定模型（沿用主對話模型）。
+//   2. 失敗升級：mode=auto 時，較低等級沒有交件（null、throw、交件無效）就用高一級重派一次，最多一次；
+//      第一次那筆 trace 標 superseded，重派那筆記 attempt=2 與 escalated_from。再失敗就是缺件，由呼叫端 halted。
+//      dev-integrator、dev-merge-steward（會動到共用分支）與帶 retry:false 的派工不重派。
+//   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped，trace 記一筆 capped=true），呼叫端照缺件 halted 交人，不靜默截斷。
+// workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents })。
+const AWF_NO_RETRY = ['dev-integrator', 'dev-merge-steward']
+function awfKernel() { return awfKernel.s || (awfKernel.s = { profile: null, stage: '', modifiers: [], plan: {}, max: 0, count: 0, capped: [], used: {} }) }
+function awfKernelInit(o) {
+  const k = awfKernel()
+  const c = o || {}
+  k.profile = c.profile || null; k.stage = c.stage || ''; k.modifiers = [...(c.modifiers || [])]
+  k.plan = {}; k.max = c.max_agents > 0 ? c.max_agents : 0; k.count = 0; k.capped = []; k.used = {}; k.seen = {}
+  awfState().dispatch = awfAgent     // 片段裡的派工（challengeList、verifyFindings）也經過核心
+  return k
+}
+function awfSetModifiers(mods) { awfKernel().modifiers = [...(mods || [])] }
+function awfRole(agentType) { return String(agentType || '').split(':').pop() }
+// AI 建議的模型等級（triage 的 model_plan：[{ role, tier, reason }]）；role 可帶命名空間，只取最後一段。格式不對的項目略過
+function awfSetModelPlan(list) {
+  const k = awfKernel()
+  k.plan = {}
+  for (const x of Array.isArray(list) ? list : []) {
+    if (x && typeof x === 'object' && typeof x.role === 'string' && typeof x.tier === 'string') k.plan[awfRole(x.role)] = { tier: x.tier, reason: String(x.reason || '') }
+  }
+}
+// 這次派工要用的模型。o：{ agentType, stage?, planKey?, tier? }。
+// 建議的來源依序：AI 的 model_plan（鍵是 planKey 或角色名）、workflow 給的 tier（例如定位用 light）。下限一律由 resolveModel 守。
+function awfModelFor(o) {
+  const k = awfKernel()
+  const role = awfRole(o.agentType)
+  // 使用者自己的 agent（擴充 agent，不是 tpm-／dev- 模版角色）不指定模型：尊重它 frontmatter 自己的設定
+  if (!/^(tpm|dev)-/.test(role)) return { mode: 'inherit', tier: '', model: '', floor: '', reason: '使用者自己的 agent：不指定模型' }
+  const own = (key) => (Object.prototype.hasOwnProperty.call(k.plan, key) ? k.plan[key] : undefined)
+  const ai = own(o.planKey || role)
+  const m = resolveModel(k.profile, role, o.stage || k.stage, (ai && ai.tier) || o.tier || undefined, k.modifiers)
+  if (ai && ai.reason && m.mode === 'auto') m.reason = `${m.reason}（${ai.reason}）`
+  return m
+}
+function awfCapped() { return [...awfKernel().capped] }
+// 這次 workflow 實際用到的模型（閘門重點用）：[{ key, role, tier, model, reason }]
+function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ ...x })) }
+
+// 派一個 agent。opts 同 tryAgent，另可帶 tier（workflow 建議的等級）、planKey（對 model_plan 的鍵，預設角色名）、stage、
+// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
+async function awfAgent(prompt, opts) {
+  const k = awfKernel()
+  const o = opts || {}
+  // label 要唯一（trace、紀錄檔、失敗升級都靠它對）：同一支 workflow 重複用同一個 label 時，第二次起自動加序號
+  k.seen = k.seen || {}
+  const raw = o.label || ''
+  const nth = (k.seen[raw] = (k.seen[raw] || 0) + 1)
+  const label = nth > 1 ? `${raw}#${nth}` : raw
+  const valid = typeof o.valid === 'function' ? o.valid : (r) => !!r && typeof r === 'object' && r.payload !== undefined && r.payload !== null
+  const base = { label, phase: o.phase, agentType: o.agentType, schema: o.schema }
+  // 到上限沒派出去的也記一筆 trace（capped=true、ok=false）：workflow 不用每個 return 都自己處理，save_run 看得到、會列成缺件並說明原因
+  const over = () => {
+    k.capped.push(label); log(`派工數到上限 ${k.max}，不再派 ${label}`)
+    awfState().trace.push({ label, agent_type: o.agentType || '', phase: o.phase || '', record: awfState().cfg ? awfRecordPath(label) : '', ok: false, capped: true, max_agents: k.max })
+    return null
+  }
+  if (k.max && k.count >= k.max) return over()
+  k.count++
+  const m = awfModelFor(o)
+  const key = o.planKey || awfRole(o.agentType)
+  const note = (x) => { k.used[key] = { key, role: awfRole(o.agentType), tier: x.tier, model: x.model || 'inherit', reason: x.reason } }
+  note(m)
+  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...meta })
+  const first = await run(m, { attempt: 1 })
+  if (valid(first)) return first
+  // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷
+  const up = m.mode === 'auto' && o.retry !== false && !AWF_NO_RETRY.includes(awfRole(o.agentType)) ? modelUp(m.tier) : ''
+  const mine = () => awfState().trace.filter((t) => t.label === label)
+  if (!up) { const t = mine().pop(); if (t) t.ok = false; return null }
+  if (k.max && k.count >= k.max) { const t = mine().pop(); if (t) t.ok = false; return over() }
+  k.count++
+  const prev = mine().pop()
+  if (prev) { prev.ok = false; prev.superseded = true }
+  const m2 = { ...m, tier: up, model: tierModel(k.profile, up), reason: `${m.tier} 沒有交件或交件無效，升一級重派（${m.reason}）` }
+  note(m2)
+  const second = await run(m2, { attempt: 2, escalated_from: m.tier })
+  if (valid(second)) return second
+  const t = mine().pop(); if (t) t.ok = false
+  return null
+}
+/*@end*/
 awfInit({ run_dir: A.run_dir, stage: 'merge', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, 'merge') })
+// 執行核心：模型分級、失敗升級、派工數上限（I8）。上限＝profile 的 limits.max_agents（沒設用 40）；merge 正常不超過 10
+const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40)
+awfKernelInit({ profile: METHODOLOGY, stage: 'merge', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
 const RUN_BRIEF = '跑測試與 verify 指令一律用 python3 .claude/teams/tools/run_brief.py -- <指令>，執行紀錄附它印出的完整 log 路徑。'
 // pr 也接受 target（和 event-pr-review 一樣，例如「PR 12」或 PR 網址），取其中的編號
 const PR = String(A.pr || A.target || '').match(/(\d+)\s*$/)
@@ -361,7 +458,7 @@ const REQ_NOTE = HAS_DESIGN
   ? `驗收條件以 specs/${A.epic || '<epic>'}/ 的 spec 為準（和需求來源一起對照）。`
   : `這個 recipe（${R.name}）沒有 design 段：驗收條件對照 specs/${A.epic || '<epic>'}/intent.md 的驗收條件（和需求來源一起對照）。`
 if (R.errors.length) return { stage: 'merge', halted: true, halt_reason: `recipe 解析有錯：${R.errors.join('；')}`, missing: [], merged: false, queued: false, recipe: RECIPE, next: '修正 args.recipe／modifiers 後重跑 sdlc-merge', trace: awfTrace() }
-const analysis = await tryAgent(
+const analysis = await awfAgent(
   `${CTX}\n\n## 派工單（分析模式）\n${REQ_NOTE}\n1. 取得需求清單，逐條對照驗證證據、測試與程式位置，判 match／mismatch／missing。\n2. 讀 git diff ${BASE}...<head>，列出對不到任何需求的改動（out_of_scope）。\n3. 每條不一致、缺證據與範圍外改動都寫一則 followups（新需求：requirement_id、expected、actual、adjustment）。\n4. head_sha 填 gh pr view ${N} --repo ${GH} --json headRefOid 的值。gate_reasons 先填空陣列。\n5. 讀 gh pr view ${N} --repo ${GH} --json mergeable,mergeStateStatus：mergeStateStatus 是 BEHIND（落後 base，而 base 要求先跟上）或 DIRTY、mergeable 是 CONFLICTING（有衝突）時，needs_sync 填 true、decision 填 hold，另寫一則 followups（requirement_id=sync，adjustment 寫「跑 sdlc-sync 跟上 base 後重跑 sdlc-test」）。你不同步分支。\n只分析，不執行任何 gh 寫入（review、ready、merge、comment）。payload 用 merge-decision。`,
   { label: 'analyze', phase: 'Analyze', agentType: NS + 'dev-merge-steward', schema: DECISION },
 )
@@ -381,7 +478,7 @@ const targets = [
   ...matched.map((r) => ({ id: r.requirement_id, claim: `需求一致：${r.requirement}`, evidence: r.evidence })),
   ...(dec.out_of_scope.length ? [] : [{ id: 'out_of_scope', claim: `git diff ${BASE}...${dec.head_sha} 沒有對不到需求的改動` }]),
 ]
-const challenge = targets.length ? await tryAgent(
+const challenge = targets.length ? await awfAgent(
   `${CTX}\n\n## 派工單（合併模式）\nhead SHA：${dec.head_sha}。逐則試著找出 dev-merge-steward 漏掉的不一致（打開證據、重跑能重跑的唯讀指令、讀 diff）。\nrefuted=true 代表「其實不一致、缺證據，或有範圍外改動」；不確定就判 refuted=true（hold）。\n只處理下列 target，不得推翻 steward 判的 mismatch／missing 或審查的 blocker／important：\n${JSON.stringify(targets)}\npayload 用 verdicts，target_id 照抄 id。`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
 ) : null
@@ -423,7 +520,7 @@ const RETURN = `gh pr review ${N} --repo ${GH} --request-changes --body "<新需
 
 // (c)／(d) 執行模式
 phase('Execute')
-const exec = await tryAgent(
+const exec = await awfAgent(
   inconsistent
     ? `${CTX}\n\n## 派工單（執行模式：退回）\n對照或挑戰判出不一致，這個 PR 不合併。\n1. 確認 head 仍是 ${dec.head_sha}。\n2. ${COMMENT('下面這份最終 merge-decision')}\n3. 用同一份 merge-decision 跑 gate 留下紀錄：${GATE}。不論 gate 判什麼都不合併。\n4. 退回 PR：${RETURN}。\n最終 merge-decision（decision 以 gate 與本派工單較嚴者為準，gate_reasons 照抄 gate 輸出）：\n${JSON.stringify(finalDecision)}\npayload 用 merge-decision。`
     : `${CTX}\n\n## 派工單（執行模式：合併）\n對照與挑戰都判一致。\n1. 確認 head 仍是 ${dec.head_sha}。變了的話：guard.config.json 的 auto_merge.carry_verdict_on_rebase 不是 true 就停下判 hold，不做任何 gh 寫入；是 true 就照樣往下，由 gate 用 patch-id 判斷能不能沿用（之後的 --head-sha、--match-head-commit 都用目前 head）。{{RUNS_DIR}}/auto-merge.freeze.json 存在且 frozen=true（自動合併已凍結）時也一樣停下。\n2. ${COMMENT('下面這份 merge-decision')}\n3. 跑 gate：${GATE}。\n4. exit 0：gh pr merge ${N} --repo ${GH} --squash --match-head-commit <目前 head>（合併方式依 guard.config.json 的 auto_merge.merge_method，預設 squash；目標 repo 用 CI 的 agent-merge-gate 當 required check 時，要等它對這個 head 轉綠才合併得進去）。合併指令回報成功不代表已合進去（merge queue 可能只是排隊）：接著跑 gh pr view ${N} --repo ${GH} --json state,mergedAt,mergeCommit 讀回，state=MERGED 填 merge_state=merged，還在排隊填 queued，其他填 not_merged。\n5. exit 1 或 3：不合併，改為退回 PR：${RETURN}；followups 照抄 gate 輸出的 followups，merge_state 填 not_merged。\nmerge-decision：\n${JSON.stringify(dec)}\npayload 用 merge-decision，gate_reasons 照抄 gate 輸出。`,
@@ -439,7 +536,7 @@ const outFollowups = merged || queued ? [] : (result.followups && result.followu
 let followupDocs = null
 if (outFollowups.length) {
   phase('Followup')
-  followupDocs = await tryAgent(
+  followupDocs = await awfAgent(
     `${CTX}\n\n## 派工單\nPR #${N} 因為需求與成果不一致被退回。把每一則新需求寫成一份文件：${FOLLOWUP_DIR}/followup-<requirement_id>.md（requirement_id 裡的 / 換成 -）。\n每份寫：對應的原需求（逐字引用）、期望、實際（附證據位置）、要怎麼調整、驗證方式、來源（PR #${N}、head ${dec.head_sha}）。\n新需求：${JSON.stringify(outFollowups)}\n寫完跑 python3 .claude/teams/tools/check_rules.py。payload 用 docs（kind=other，audience=agents），rule_check 填結果。`,
     { label: 'followup', phase: 'Followup', agentType: NS + 'tpm-writer', schema: DOCS },
   )
@@ -447,7 +544,7 @@ if (outFollowups.length) {
 
 // (e) 合併紀錄
 phase('Record')
-const record = await tryAgent(
+const record = await awfAgent(
   `${CTX}\n\n## 派工單\n寫合併紀錄到 ${A.run_dir}/合併紀錄.md：PR、head SHA、結果（${merged ? '已合併' : queued ? '已進 merge queue，尚未合進去' : '未合併'}）、需求對照表（逐條 requirement_id、結果、證據）、skeptic 判出的不一致、gate 理由、新需求文件路徑、下一步。\n對照表：${JSON.stringify(result)}\nskeptic 判出：${JSON.stringify(refuted)}\n新需求文件：${JSON.stringify(followupDocs ? followupDocs.payload.documents : [])}\n寫完跑 python3 .claude/teams/tools/check_rules.py。payload 用 docs（kind=exec_record），rule_check 填結果。`,
   { label: 'record', phase: 'Record', agentType: NS + 'tpm-writer', schema: DOCS },
 )
