@@ -35,6 +35,7 @@ python3 tests/scrub_check.py [路徑…]  # 只跑去客戶化掃描，可只掃
 python3 tests/smoke_init.py [設定檔]  # 在暫存目錄跑 init.py 並檢查產出；KEEP=1 保留暫存目錄
 python3 plugin/hooks/tests/run.py [--project <已 init 的專案>]  # hook 測試（應擋＝exit 2）
 python3 tests/check_docs.py          # 文件裡的角色、workflow、command 數量與名單要和實際檔案一致
+python3 tests/check_compile.py       # 所有 Python 檔（含 hook）用現在的 Python 編譯得過
 python3 tests/bench/run_plan.py --selftest   # 基準實跑腳本不花 token 的部分；不帶 --selftest 會真的呼叫 claude（數百萬 token），只在發佈前手動跑
 python3 init.py --target <專案> [--hooks plugin|project] [--answers <答案.json>] [--defaults] [--upgrade [--adopt-new-fields]]
 ```
@@ -56,6 +57,7 @@ python3 .claude/teams/tools/kb.py --selftest                                    
 python3 .claude/teams/tools/locate.py --selftest                                           # 工具先定位
 python3 .claude/teams/tools/awf_cost.py --selftest                                         # workflow 的 token 與時間
 python3 .claude/teams/tools/awf_watch.py --selftest                                        # watcher（進度事件、通知、狀態列）
+python3 .claude/teams/tools/awf_doctor.py --selftest                                       # 安裝檢查（awf.py doctor）
 ```
 
 在 repo 內也可以直接驗，例如 `python3 scaffold/.claude/teams/tools/build.py --check`（處理 `plugin/workflow-templates/`），路徑會依檔案位置推算。範本帶佔位符，不能直接乾跑；乾跑由 `tests/smoke_init.py` 在 init 過的暫存專案裡做（`awf.py render --all` 後 `check_workflows.mjs --wf-dir`）。
@@ -129,6 +131,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **知識層**：`tools/kb.py`（FTS5，退回純 Python BM25；中文 bigram）。輸出包在資料標籤裡；卡片只放標題樹與行號，不放內文。
 - **讀取預算**：`plugin/hooks/read_budget.py`，由 `guard.read_budget_check` 呼叫。只套模版角色；**預設不啟用**（`limits` 沒寫 `mode` 就關閉，內建 profile 不預設 `mode`，由使用者在 init 問答、答案檔的 `read_limits` 或 `methodology.json` 決定要不要開與門檻）；任何例外都放行（I9）。狀態檔在系統暫存目錄的 `awf-read-budget/<session_id>/<agent_id>.json`（`AWF_READ_BUDGET_DIR` 可覆寫，測試用）。
 - **量成本**：`tools/awf_cost.py` 讀 Claude Code 的 workflow transcript（格式沒承諾穩定，解析集中在 `read_agent`、`read_wf_meta`）。基準實跑在 `tests/bench/`（`make_fixture.py` 產生虛構專案、`run_plan.py` 真的呼叫 claude，會花 token，不在 run_all 裡）。
+- **doctor（0.5）**：`tools/awf_doctor.py`（`awf.py doctor` 轉給它）。只讀、不連網：環境、plugin 與專案版本、安裝來源（`installed_plugins.json`、`known_marketplaces.json`，格式沒承諾穩定，讀不懂就略過）、hook 編譯與重複註冊、`schemalib.check_doc` 驗 methodology、覆寫檔版本。每項 `{id, level, msg, fix}`；有 error 才 exit 1。別的專案的安裝不算衝突（和 `awf.find_plugin` 一致）。
 - **watcher（0.5）**：`tools/awf_watch.py`（`awf.py watch`、`awf.py statusline` 轉給它）。唯讀合併 run.json、執行紀錄檔、workflow transcript（`awf_cost.tail_agent` 增量讀），把前後兩份快照的差異（`diff_events`）附加到 `<run>/progress.jsonl`（格式 `schemas/progress-event.schema.json`），記憶在 `<run>/.watch-state.json`。`workflow_stalled` 只回報、不處理。profile 的 `progress.notify` 預設不設；有設時只送 `NOTIFY_FIELDS` 的欄位，命中 `SECRETISH` 整筆不送。閘門工具不讀這兩個檔（`save_run.py --selftest` 的 B4.2 案例）。整合方式見 `docs/監控與整合.md`。
 - 這些都是輔助：失敗只警告、不擋流程；gate 判定不看它們的輸出（調研重用例外：`verify_reuse` 不符會判 invalid，只會更嚴）。
 
@@ -198,12 +201,13 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### Hooks（`plugin/hooks/`）
 
-- **入口**：只有一個，`awf_hook.py <guard-shell|guard-paths|envelope>`。設定一律透過 `awf_config.py` 讀 `${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json`，不要寫死路徑。
+- **入口**：只有一個，`awf_hook.py <guard-shell|guard-paths|envelope|session-start>`。設定一律透過 `awf_config.py` 讀 `${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json`，不要寫死路徑。
 - **失敗語意**（`awf_hook.py` 開頭的說明為準）：
   - hook 跑不起來（找不到 Python、逾時、Windows 沒有 Git Bash）：plugin 的 `hooks.json` 設 `onFailure: continue`、timeout 10 秒，放行，不鎖死使用者。要更嚴就用 `--hooks project`。
   - 跑得起來但輸入壞掉（空、不是 JSON、缺欄位、shell 指令超過 128KB）：守門類擋（exit 2），交件類放行。128KB 上限是因為 guard 規則耗時隨指令長度約平方成長，拖到逾時就等於放行。
   - `guard.py` 或 `awf_config.py` 載入失敗：改用 `awf_hook.py` 內建的最小規則（擋 push、`gh pr merge`、`--approve`、GitHub API 寫入），其他放行。
   - 交件 hook（`envelope`）自己出錯時刻意放行，避免卡住所有 subagent；信封仍由 workflow 的 `schema` 與 `save_run.py stage` 驗證。
+- **`session-start`（0.5）**：SessionStart 時比對 plugin 版本與專案 `.claude/teams/VERSION`，不一致印一行 JSON（`systemMessage` 與 `additionalContext`）。只是提示：永遠 exit 0，沒套用、讀不到、輸入壞掉、任何例外都不印；版本字串只收單純的版本格式（會進對話）。複製進專案的 hook 旁邊沒有 plugin.json，不提示。測試在 `tests/test_entry.py` 的第 6 段。
 - **`guard-paths` 的範圍**：Edit、Write、NotebookEdit、Read、Grep。`guard.config.json` 的 `linked_repos`（工作區以外的我方 repo，`guard.linked_rel`）讓 dev-* 可以改裡面的檔、tpm-writer 可以寫它的 specs，其餘規則照舊；模版角色可以寫這個 session 的 scratchpad（`guard.in_scratchpad`：系統暫存目錄底下的 `<session_id>/scratchpad/`）。Read、Grep 讀機敏檔（`.env`、金鑰、憑證）一律擋，主 session 也擋；`acceptance_test_dirs` 裡的檔案 dev-implementer 不能寫。
 - **`guard-shell` 擋什麼**：同時處理 Bash 與 PowerShell 工具。擋推送、寫上游、推受保護分支、越權寫入，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - **steward 合併什麼時候放行**：由 `guard.py` 的 `merge_exception` 判斷，以下全部成立才放行：
@@ -229,6 +233,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - `/agent-workflow:init-workflow`：先在對話中確認使用者的習慣，再跑 `init.py --answers`。
   - `/agent-workflow:add-agent`：把使用者自己的 agent 加進 SDLC。
   - `/agent-workflow:correct`：把一則教訓變成最高可行層級的強制機制，並在 rules.md〈專案規則〉維護「規則 ↔ 強制方式」對照表。
+  - `/agent-workflow:status`、`cost`、`kb`、`doctor`：薄殼，各自只叫 `awf.py watch --once`、`awf_cost.py`、`kb.py`、`awf.py doctor` 並說明怎麼回報。`status`、`cost`、`doctor` 和 Claude Code 內建指令同名，文件一律寫完整名稱。
 
 ## 改動時的檢查清單
 
@@ -253,6 +258,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改執行核心（kernel 片段）**：重跑 `build.py`；`tools/scenarios/sdlc-plan.mjs` 的 `V04` 情境（升級、上限、重用、角度數）要一起改；`save_run.py` 的 `_retried_ok`、`model_errors` 依賴 trace 的 `model`、`tier`、`superseded`、`attempt` 欄位。
 - **改讀取預算**：`plugin/hooks/tests/run.py` 的 A2 一段補該擋與該放（Bash 與 PowerShell 各一），並確認效能檢查（計數路徑 50ms 內）仍通過；任何新的失敗路徑都要放行。
 - **改 pack.py／kb.py／locate.py**：各自的 `--selftest`；改了子任務資料包的路徑或 `pack-args.json` 的鍵，`sdlc-build.js` 的 `taskPack`／`REF_ERRS` 與 `tools/scenarios/sdlc-build.mjs` 的「子任務資料包」情境要一起改；改了 `locate.py` 的輸出格式，`sdlc-plan.js` 的 `toolLocated` 與 `tools/scenarios/sdlc-plan.mjs` 的「工具先定位」情境要一起改；`pack.md` 的內容不能有時間戳或絕對路徑以外會變動的東西（可重現是 `tests/bench/run_plan.py --selftest` 的檢查項）。
+- **改 doctor**：`awf_doctor.py --selftest`；新的檢查項要有修法（`fix`），而且單項出錯不能讓整支失敗。所有 Python 檔的語法由 `tests/check_compile.py` 檢查（CI 在 3.9 與最新版各跑一次）。
 - **改 watcher**：`awf_watch.py --selftest`；事件類型或欄位改了，`schemas/progress-event.schema.json`、`methodology.schema.json` 的 `progress.notify.events`、`docs/監控與整合.md` 的事件表要一起改；送給外部指令的欄位只能加進 `NOTIFY_FIELDS`（不放需求內容、摘要、路徑）；任何失敗都只警告。
 - **改派工單或派工數**：跑 `tests/check_budget.py`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。
 - **新增會寫紀錄的唯讀角色**：加進 `awf_config.py` 的 `RECORD_ONLY_ROLES` 與 `check_agents.py` 的對應檢查，hook 測試補該擋（寫 repo、run.json、merge-audit）與該放（寫 runs_dir 的 `.md`）。

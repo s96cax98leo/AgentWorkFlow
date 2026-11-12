@@ -281,12 +281,16 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | 合併後 main 紅了 | `event-post-merge` | repo、run_dir |
 | `/agent-workflow:add-agent`、加我自己的 agent | `add-agent` skill | — |
 | `/agent-workflow:correct`、把這個錯誤變成做不到 | `correct` skill | 錯誤描述或出處 |
+| `/agent-workflow:status`、現在跑到哪 | `status` skill | run 目錄（可省略） |
+| `/agent-workflow:cost`、花了多少 token | `cost` skill | run 目錄（可省略） |
+| `/agent-workflow:kb`、文件裡哪裡有寫 | `kb` skill | 要查的問題 |
+| `/agent-workflow:doctor`、檢查安裝 | `doctor` skill | — |
 | 比較方案、A 還是 B | `team-debate` skill | — |
 | 分析某個網站 | `site-report` skill | 網址 |
 
 `/event <描述>` 會自動判斷事件類型。事件判斷與閘門的完整規則寫在 `tpm-team` skill。
 
-plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。其他功能是 skill，用 `/agent-workflow:<skill 名>` 叫用（例如 `/agent-workflow:add-agent`）；依 [Claude Code 文件](https://code.claude.com/docs/en/skills)，沒有其他指令同名時，也可以省略 `agent-workflow:` 前綴。
+plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。其他功能是 skill，用 `/agent-workflow:<skill 名>` 叫用（例如 `/agent-workflow:add-agent`）；依 [Claude Code 文件](https://code.claude.com/docs/en/skills)，沒有其他指令同名時，也可以省略 `agent-workflow:` 前綴。`status`、`cost`、`doctor` 和 Claude Code 內建指令同名，要用完整名稱。
 
 ## 角色
 
@@ -408,7 +412,7 @@ AgentWorkFlow/
 ├── .github/                          # 本 repo 的 CI（ci.yml）與 Dependabot 設定
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
-│   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、team-debate、site-report 系列、design-system-template
+│   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   ├── workflow-templates/           # workflow 範本（sdlc 8 支、event 8 支）與 legacy.json（舊副本指紋）；awf.py next 逐段產生腳本
 │   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）、read_budget.py

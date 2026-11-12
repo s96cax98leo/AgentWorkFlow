@@ -149,6 +149,7 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `kb.py build｜query｜lint` | 知識層：把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行 |
 | `awf_cost.py` | 讀 workflow transcript，依角色與模型加總 token、時間、平均 context（只做估算，不參與閘門） |
 | `awf_watch.py` | 給外部程式看進度：`awf.py watch` 把 run 的變化寫成 `<run_dir>/progress.jsonl`，`awf.py statusline` 印一行狀態；唯讀、不參與閘門 |
+| `awf_doctor.py` | 檢查安裝：`awf.py doctor` 逐項檢查環境、plugin 與專案版本、安裝來源衝突、hook、設定，每項附修法；只讀 |
 
 ```bash
 python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 16 支腳本
@@ -164,6 +165,7 @@ python3 .claude/teams/tools/kb.py --selftest
 python3 .claude/teams/tools/locate.py --selftest
 python3 .claude/teams/tools/awf_cost.py --selftest
 python3 .claude/teams/tools/awf_watch.py --selftest
+python3 .claude/teams/tools/awf_doctor.py --selftest
 python3 .claude/teams/tools/awf.py --selftest
 ```
 

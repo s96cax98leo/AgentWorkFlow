@@ -12,6 +12,8 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 
 每一步先說明要做什麼，等使用者同意再執行。提問用選項式（AskUserQuestion），每題附預設值，使用者可以直接接受。
 
+**先用預設值套用（零設定起步）**：使用者說「先用預設值」「之後再調」時，不問第 3、4 步。做完第 1、2 步後，把會做的事列給使用者（新增 `.claude/teams/`、`CLAUDE.md` 追加一行引用、settings 深度合併；開發規範用 default profile；repo 與目錄用預設值），同意後執行 `python3 <模版根目錄>/init.py --target <目標專案> --defaults`，再做最後的驗證步驟。提醒使用者：`UPSTREAM_REPO`、`FORK_REPO` 等值是空的，推送與合併之前要補（改 `workflow.config` 後跑 `init.py --upgrade`），開發規範之後可以改 `.claude/teams/methodology.json`。
+
 ## 1. 確認位置
 找到 AgentWorkFlow 模版根目錄（有 `init.py`、`workflow.config.example`、`scaffold/` 的那個目錄）。`${CLAUDE_PLUGIN_ROOT}` 指向 plugin 快取（`~/.claude/plugins/cache/…`），裡面只有 plugin 目錄、沒有 `init.py`，不能從它往上找。依序試：
 

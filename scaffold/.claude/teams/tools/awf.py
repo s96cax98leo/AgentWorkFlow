@@ -10,6 +10,7 @@
     python3 .claude/teams/tools/awf.py handoff --run <run_dir> [--print]      # 寫 <run_dir>/接手摘要.md：換 session 或換人接手時看
     python3 .claude/teams/tools/awf.py watch --run <run_dir> [--once [--json]] [--interval 5] [--stall-seconds 900]   # 進度事件寫到 <run_dir>/progress.jsonl（見 awf_watch.py）
     python3 .claude/teams/tools/awf.py statusline                             # 一行狀態，給 Claude Code 的 statusLine 用
+    python3 .claude/teams/tools/awf.py doctor [--json]                        # 檢查安裝：環境、plugin 與專案版本、安裝來源衝突、hook、設定（見 awf_doctor.py）
     python3 .claude/teams/tools/awf.py render <workflow>|--all --out <目錄>
     python3 .claude/teams/tools/awf.py --selftest
     共用選項：--plugin-dir <plugin 目錄>（找不到 plugin 時才需要）
@@ -761,6 +762,9 @@ def main(argv: list[str], project: Path | None = None, home: Path | None = None)
     if cmd in ("watch", "statusline"):      # 唯讀的進度監看（awf_watch.py）：不需要 plugin，也不碰閘門
         import awf_watch
         return awf_watch.main([cmd, *argv[1:]] if cmd == "statusline" else argv[1:], project)
+    if cmd == "doctor":                     # 唯讀的安裝檢查（awf_doctor.py）
+        import awf_doctor
+        return awf_doctor.main(argv[1:], project, home)
     try:
         plugin, pnotes = (None, []) if cmd in ("approve", "start", "handoff") else find_plugin(project, opt(argv, "--plugin-dir"), home)
         if cmd == "render":

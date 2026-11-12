@@ -1,5 +1,5 @@
 {
-  "description": "agent-workflow 守門與交件信封檢查，單一入口 awf_hook.py（純 Python，macOS／Linux／Windows 共用；有 python3 用 python3，沒有改用 python）。shell 守門涵蓋 Bash 與 PowerShell；路徑守門涵蓋 Edit、Write、NotebookEdit、Read、Grep。失敗語意：plugin 會套在使用者所有專案，所以 hook 跑不起來（找不到 Python、逾時、Windows 沒有 Git Bash）時放行（onFailure: continue），不鎖死工具；跑得起來但輸入壞掉時守門擋下、交件放行；guard 模組載入失敗時改用 awf_hook.py 內建的最小規則（擋 push、合併、approve、GitHub API 寫入）。要更嚴格（跑不起來也擋）請用 init.py --hooks project，在專案 settings 寫 onFailure: block 與 Python 絕對路徑；信任邊界在伺服器端（ruleset、required check）。設定讀 ${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json；用 plugin 安裝時，專案的 .claude/settings.json 不要再註冊同樣的 hooks。",
+  "description": "agent-workflow 守門與交件信封檢查，單一入口 awf_hook.py（純 Python，macOS／Linux／Windows 共用；有 python3 用 python3，沒有改用 python）。shell 守門涵蓋 Bash 與 PowerShell；路徑守門涵蓋 Edit、Write、NotebookEdit、Read、Grep。失敗語意：plugin 會套在使用者所有專案，所以 hook 跑不起來（找不到 Python、逾時、Windows 沒有 Git Bash）時放行（onFailure: continue），不鎖死工具；跑得起來但輸入壞掉時守門擋下、交件放行；guard 模組載入失敗時改用 awf_hook.py 內建的最小規則（擋 push、合併、approve、GitHub API 寫入）。要更嚴格（跑不起來也擋）請用 init.py --hooks project，在專案 settings 寫 onFailure: block 與 Python 絕對路徑；信任邊界在伺服器端（ruleset、required check）。設定讀 ${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json；用 plugin 安裝時，專案的 .claude/settings.json 不要再註冊同樣的 hooks。SessionStart 另有一個版本提示（plugin 與專案 .claude/teams/VERSION 不一致時印一行），只提示、永遠放行。",
   "hooks": {
     "PreToolUse": [
       {
@@ -54,6 +54,17 @@
             "type": "command",
             "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; fi",
             "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" session-start; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" session-start; fi",
+            "timeout": 5
           }
         ]
       }

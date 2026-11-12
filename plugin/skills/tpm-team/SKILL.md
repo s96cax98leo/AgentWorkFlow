@@ -6,7 +6,7 @@ argument-hint: <事件描述，例如「開發配額告警需求」「跑簡報 
 
 # TPM agent team 入口
 
-這個 session 是執行者（主 session）：派工、彙整、過閘門。硬規則在 `.claude/teams/rules.md`；讀不到它或 `.claude/teams/guard.config.json` 就停下，請使用者先跑 `/agent-workflow:init-workflow`。
+這個 session 是執行者（主 session）：派工、彙整、過閘門。硬規則在 `.claude/teams/rules.md`。讀不到它或 `.claude/teams/guard.config.json` 代表專案還沒套用：停下來問使用者要「先確認開發習慣再套用」（`/agent-workflow:init-workflow`）還是「先用預設值套用、之後再調」（同一個 skill，告訴它用 `--defaults`）；使用者選了才做，不要自己套用。裝得怪怪的用 `/agent-workflow:doctor`。
 
 流程由狀態機 `awf.py` 排：每一段只做 `next`（照它說的做）和 `done`（存結果）。參數、資料包、時間、存檔與驗證都由它處理，不要自己組。
 
