@@ -385,7 +385,10 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
     put(&pj(&teams, "VERSION"), "9.9.9\n");
     // Python 版從工具所在的目錄讀 schema 與片段；這裡放進暫存專案
     copy_dir(&pj(src, "schemas"), &pj(&teams, "schemas"));
-    copy_dir(&pj(src, "tools/snippets"), &pj(&teams, "tools/snippets"));
+    // 1.0 的專案沒有 tools/snippets：不複製，產生腳本時用模版的片段
+    if is_dir(&pj(src, "tools/snippets")) {
+        copy_dir(&pj(src, "tools/snippets"), &pj(&teams, "tools/snippets"));
+    }
     put(&pj(&plugin, ".claude-plugin/plugin.json"), &jd(&json!({"version": "9.9.9"})));
     for (w, _) in REQUIRED {
         put(&pj(&plugin, &format!("{TEMPLATES}/{w}.js")), &fake_template(w));

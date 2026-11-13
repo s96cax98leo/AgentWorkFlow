@@ -401,7 +401,6 @@ fn fresh_init() {
 /// 記錄已知問題：`awf state --selftest` 在 1.0 init 過的專案裡會失敗（`state/selftest.rs` 從專案的 `tools/snippets` 複製片段，
 /// 1.0 的專案沒有這個目錄）。`state/` 不在 init 這次改動的範圍；那邊改成從模版找片段之後，拿掉 ignore。
 #[test]
-#[ignore = "state 的 selftest 還在找專案的 tools/snippets，等 state/ 那邊改"]
 fn state_selftest_in_project() {
     let w = Work::new("state");
     let t = w.dir("project");
