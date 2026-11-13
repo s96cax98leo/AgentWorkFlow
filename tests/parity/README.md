@@ -19,6 +19,7 @@
 | `state.expected.json` | 狀態機：1,019 步劇本（468 個指令、75 個函式呼叫；每種動作、每段與事件類型、續跑、政策核准、非標準結果、覆寫檔），12 支腳本的雜湊；不同的 8 項列在 `state_parity.rs` 的 `STRICTER` 與 `KNOWN` | `python3 tests/parity/record_state.py > tests/parity/state.expected.json` |
 | `publish.expected.json` | 推送工具：110 個指令、325 個函式探測、73 個 git 步驟（只用暫存 bare repo 與假 `gh`）；較嚴的 7 項列在 `publish_parity.rs` 的 `STRICTER` | `python3 tests/parity/record_publish.py > tests/parity/publish.expected.json` |
 | `watch.expected.json` | watcher：83 次 tick（11 種事件都走到）、512 個函式探測、27 個指令；較嚴的 4 項列在 `watch_parity.rs` 的 `STRICTER` | `python3 tests/parity/record_watch.py > tests/parity/watch.expected.json` |
+| `doctor.expected.json` | 安裝檢查：70 次檢查（項目、文字版、JSON 版、結束碼）與 25 個函式探測；Rust 版沒有的 `python`、`hooks-compile` 兩項在錄的時候就濾掉 | `python3 tests/parity/record_doctor.py > tests/parity/doctor.expected.json` |
 
 規則：
 
