@@ -1,7 +1,7 @@
 //! 文件與實際檔案的一致性檢查：角色、workflow、command 的數量與名單，以及 SDLC 段落順序。
 //! 由 `tests/check_docs.py` 移植。
 //!
-//! 檢查的文件：README.md、CLAUDE.md、scaffold/.claude/teams/README.md、.claude-plugin/marketplace.json 與
+//! 檢查的文件：README.md、CLAUDE.md、plugin/scaffold/.claude/teams/README.md、.claude-plugin/marketplace.json 與
 //! plugin/.claude-plugin/plugin.json 的 description。實際狀態從檔案算：
 //!   - agent：plugin/agents/*.md；核心角色與舊名取自 `awf_core::check_agents` 的 `CORE`、`ALIASES`，
 //!     其餘是網站分析 agent。
@@ -107,7 +107,7 @@ fn docs(root: &Path) -> Result<Vec<(String, String)>, String> {
         Some(slot) => slot.1 = v,
         None => out.push((k, v)),
     };
-    for rel in ["README.md", "CLAUDE.md", "scaffold/.claude/teams/README.md"] {
+    for rel in ["README.md", "CLAUDE.md", "plugin/scaffold/.claude/teams/README.md"] {
         let text = read_text(root, rel)?;
         put(&mut out, rel.to_string(), text);
     }
@@ -275,13 +275,13 @@ fn check(root: &Path, consts: &Consts) -> Result<(Facts, Vec<String>), String> {
         check_sdlc(&f, &r, name, text, &mut errs)?;
     }
     let get = |k: &str| d.iter().find(|(n, _)| n == k).map(|(_, t)| t.as_str()).unwrap_or_default();
-    let (readme, teams) = (get("README.md"), get("scaffold/.claude/teams/README.md"));
+    let (readme, teams) = (get("README.md"), get("plugin/scaffold/.claude/teams/README.md"));
     for role in &f.core {
         if !readme.contains(&format!("`{role}`")) {
             errs.push(format!("README.md 的角色表少了核心角色 `{role}`"));
         }
         if !teams.contains(role.as_str()) {
-            errs.push(format!("scaffold/.claude/teams/README.md 少了核心角色 {role}"));
+            errs.push(format!("plugin/scaffold/.claude/teams/README.md 少了核心角色 {role}"));
         }
     }
     for role in &f.site {

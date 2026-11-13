@@ -384,7 +384,7 @@ fn script_matches_python() {
 #[test]
 fn selftest_matches_python() {
     let exp = expected();
-    let scaffold = format!("{}/scaffold", src_root());
+    let scaffold = format!("{}/plugin/scaffold", src_root());
     let ctx = Ctx::new(&scaffold, &scaffold);
     let mut out = String::new();
     let code = watch::selftest(&ctx, &mut out).map_err(|e| format!("{}：{}", e.class, e.msg)).expect("selftest 不該中斷");

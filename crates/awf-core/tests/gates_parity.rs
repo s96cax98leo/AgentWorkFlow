@@ -32,7 +32,7 @@ fn root() -> PathBuf {
 }
 
 fn teams() -> PathBuf {
-    root().join("scaffold/.claude/teams")
+    root().join("plugin/scaffold/.claude/teams")
 }
 
 fn expected() -> &'static Value {

@@ -8678,7 +8678,7 @@
    {
     "op": "agents",
     "note": "repo 的 plugin",
-    "claude": "@ROOT@/scaffold/.claude",
+    "claude": "@ROOT@/plugin/scaffold/.claude",
     "env_plugin": null,
     "home": "@TMP@/ag/home",
     "argv": [
@@ -8692,7 +8692,7 @@
    {
     "op": "agents",
     "note": "repo 的 agents，只給 --agents-dir",
-    "claude": "@ROOT@/scaffold/.claude",
+    "claude": "@ROOT@/plugin/scaffold/.claude",
     "env_plugin": null,
     "home": "@TMP@/ag/home",
     "argv": [

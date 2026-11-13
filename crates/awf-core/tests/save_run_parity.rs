@@ -48,7 +48,7 @@ fn expected() -> Value {
 }
 
 fn teams() -> String {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scaffold/.claude/teams");
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugin/scaffold/.claude/teams");
     p.canonicalize().expect("scaffold 的 teams 目錄").to_string_lossy().into_owned()
 }
 

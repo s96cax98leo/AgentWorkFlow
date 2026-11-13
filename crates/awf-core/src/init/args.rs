@@ -23,7 +23,7 @@ pub struct Args {
     pub defaults: bool,
     /// 0.x 的選項（`--hooks project` 用的 Python）。1.0 不再需要：收下、提示一行、忽略，舊的腳本才不會壞。
     pub python: Option<String>,
-    /// 模版根目錄（Rust 版新增；Python 版用 init.py 自己的位置）。
+    /// 模版在哪（plugin 目錄，或底下有 `plugin/` 的 repo 根目錄）。
     pub source: Option<String>,
     /// `--with-merge-gate` 要放進專案的 linux-x64 執行檔（沒給用模版的 `plugin/bin/awf-linux-x64`）。
     pub merge_gate_bin: Option<String>,

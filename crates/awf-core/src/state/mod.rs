@@ -12,7 +12,7 @@
 //!
 //! 和 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
 //! - 專案根目錄取 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄（Python 版從工具檔的位置往上推）。
-//! - 「模版 repo 自己」：環境變數 `AWF_TEMPLATE_DIR`，否則從執行檔往上找到有 `plugin/.claude-plugin/plugin.json` 的目錄。
+//! - 「模版自己」：[`crate::template::find`]（`AWF_TEMPLATE_DIR` → plugin 的環境變數 → 從執行檔往上找到 plugin 目錄）。
 //! - 時間可以用環境變數 `AWF_NOW`（`YYYY-MM-DDTHH:MM:SSZ` 或 epoch 秒數）固定，方便對跑。
 //! - 讀進來的 JSON 有 NaN、Infinity、落單的代理字元跳脫、超出 64 位元範圍的整數時當成讀不懂；巢狀超過 200 層當成沒接住的例外。
 //! - Python 版丟出沒接住的例外的地方（traceback、exit 1），這裡印「awf：類別：訊息」、exit 1。
@@ -151,7 +151,8 @@ pub struct Env {
     pub home: String,
     /// `AWF_PLUGIN_DIR`、`CLAUDE_PLUGIN_ROOT`（依序）。
     pub plugin_env: [Option<String>; 2],
-    /// 模版 repo 的根目錄（底下有 `plugin/` 與 `scaffold/`）：在模版 repo 裡直接跑時用它的 plugin。
+    /// 模版根目錄＝plugin 目錄（底下有 `scaffold/` 與 `workflow-templates/`，見 [`crate::template`]）：
+    /// 執行檔自己所在的 plugin（或在模版 repo 裡直接跑時 repo 的 `plugin/`）。
     pub template: Option<String>,
     /// workflow 紀錄的根目錄（`AWF_TRANSCRIPTS_DIR`）；None 用 Claude Code 的專案目錄（`~/.claude/projects/<專案>`）。
     pub transcripts: Option<String>,
@@ -186,20 +187,6 @@ fn parse_now(raw: &str) -> Option<f64> {
     Some((days * 86_400 + hh * 3600 + mm * 60 + ss) as f64)
 }
 
-/// 從執行檔往上找模版 repo（有 `plugin/.claude-plugin/plugin.json` 的目錄）。
-fn template_from_exe() -> Option<String> {
-    let exe = std::env::current_exe().ok()?;
-    let exe = exe.canonicalize().unwrap_or(exe);
-    let mut cur = exe.parent();
-    while let Some(d) = cur {
-        if d.join("plugin").join(".claude-plugin").join("plugin.json").is_file() {
-            return d.to_str().map(|s| s.replace('\\', "/"));
-        }
-        cur = d.parent();
-    }
-    None
-}
-
 impl Env {
     /// 命令列用：從行程的環境收集。
     pub fn from_env() -> Env {
@@ -219,7 +206,7 @@ impl Env {
             cwd,
             home,
             plugin_env: [var("AWF_PLUGIN_DIR"), var("CLAUDE_PLUGIN_ROOT")],
-            template: var("AWF_TEMPLATE_DIR").or_else(template_from_exe),
+            template: crate::template::find_str(),
             transcripts: var("AWF_TRANSCRIPTS_DIR"),
             now,
             today,
@@ -259,9 +246,9 @@ impl Env {
         ctx
     }
 
-    /// 模版 repo 的 plugin 目錄（有 workflow-templates/ 才算）。
+    /// 模版自己的 plugin 目錄（有 workflow-templates/ 才算）。
     pub(crate) fn template_plugin(&self) -> Option<String> {
-        let p = pyish::pjoin(self.template.as_deref()?, "plugin");
+        let p = self.template.clone()?;
         is_dir(&pyish::pjoin(&p, TEMPLATES)).then_some(p)
     }
 }

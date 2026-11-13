@@ -1,25 +1,30 @@
-// 乾跑檢查 .claude/workflows/*.js（不呼叫真的 agent）：
+// 乾跑檢查 workflow 腳本（不呼叫真的 agent）：
 //   1. meta 是純字面值，有 name／description，phase() 用到的標題都在 meta.phases
 //   2. 每個 agent() 的 schema：根是 object、required ⊆ properties（Workflow 的要求）、agentType 是 tpm-*／dev-*（可帶 plugin 命名空間）且定義檔存在；
 //      profile extensions 登記的使用者 agent 例外：沒有命名空間時檢查專案 .claude/agents/<名>.md 存在，其他 plugin 的不檢查定義檔
 //   3. 用依 schema 產生的假回傳把腳本從頭跑到尾，確定沒有 runtime 錯誤
 //   4. 每張派工單都有 rules.md（含〈專案規則〉）、輸出語言，最後一行是「執行紀錄檔：<路徑>.md」；回傳帶 trace，筆數＝實際派出數
 //   5. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
-// 用法：node .claude/teams/tools/check_workflows.mjs [--agents-dir <dir>] [--wf-dir <產生好的 workflow 目錄>]
-//   agents 目錄預設依序找：--agents-dir、環境變數 AWF_PLUGIN_DIR／CLAUDE_PLUGIN_ROOT 的 agents/、專案 .claude/agents
+// 這支檔在 plugin 的 workflow-templates/ 裡，情境在旁邊的 scenarios/。
+// 用法：node "<plugin>/workflow-templates/check_workflows.mjs" [--project <專案目錄>] [--wf-dir <產生好的 workflow 目錄>] [--agents-dir <dir>]
+//   --project：專案根目錄（檢查擴充 agent 的定義檔 <專案>/.claude/agents/<名>.md 時用）；沒給用環境變數 CLAUDE_PROJECT_DIR，再沒有用目前目錄
+//   agents 目錄預設依序找：--agents-dir、環境變數 AWF_PLUGIN_DIR／CLAUDE_PLUGIN_ROOT 的 agents/、這支檔所在 plugin 的 agents/、專案 .claude/agents
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const claude = join(here, '..', '..')
+const projAt = process.argv.indexOf('--project')
+const project = resolve(projAt > 0 && process.argv[projAt + 1] ? process.argv[projAt + 1] : (process.env.CLAUDE_PROJECT_DIR || process.cwd()))
+const claude = join(project, '.claude')
+const ownAgents = join(here, '..', 'agents')
 const argAt = process.argv.indexOf('--agents-dir')
 // workflow 腳本的位置：--wf-dir（例如 awf render --all 產生的目錄），沒給就是專案的 .claude/workflows（範本帶佔位符，不能直接乾跑）
 const wfAt = process.argv.indexOf('--wf-dir')
 const wfDir = wfAt > 0 ? process.argv[wfAt + 1] : join(claude, 'workflows')
 if (!existsSync(wfDir)) { console.log(`找不到 workflow 目錄 ${wfDir}：先跑 awf render --all --out <目錄>，再加 --wf-dir <目錄>`); process.exit(1) }
 const pluginDir = process.env.AWF_PLUGIN_DIR || process.env.CLAUDE_PLUGIN_ROOT
-const agentsDir = argAt > 0 ? process.argv[argAt + 1] : (pluginDir && existsSync(join(pluginDir, 'agents')) ? join(pluginDir, 'agents') : join(claude, 'agents'))
+const agentsDir = argAt > 0 ? process.argv[argAt + 1] : (pluginDir && existsSync(join(pluginDir, 'agents')) ? join(pluginDir, 'agents') : existsSync(ownAgents) ? ownAgents : join(claude, 'agents'))
 const role = (t) => String(t || '').split(':').pop()
 const projectAgents = join(claude, 'agents')
 const METH_RE = /\/\*@methodology\*\/ ([\s\S]*?) \/\*@end\*\//

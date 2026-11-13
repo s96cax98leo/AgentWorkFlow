@@ -35,7 +35,7 @@ fn replay_matches_python() {
     let schemas = Path::new(&bare).join("scaffold/.claude/teams/schemas");
     std::fs::create_dir_all(schemas.join("payloads")).expect("建目錄");
     for sub in ["", "payloads"] {
-        for f in std::fs::read_dir(src.join("scaffold/.claude/teams/schemas").join(sub)).expect("schema 目錄").flatten() {
+        for f in std::fs::read_dir(src.join("plugin/scaffold/.claude/teams/schemas").join(sub)).expect("schema 目錄").flatten() {
             if f.path().is_file() {
                 std::fs::copy(f.path(), schemas.join(sub).join(f.file_name())).expect("複製 schema");
             }
@@ -60,7 +60,7 @@ fn replay_matches_python() {
                     home: format!("{root}/home"),
                     plugin_env: [None, None],
                     // Python 版在模版 repo 裡跑，沒給 --plugin-dir 時用 repo 自己的 plugin；「找不到 plugin」的步驟是把那條路拿掉
-                    template: Some(if no_plugin { bare.clone() } else { src_s.clone() }),
+                    template: Some(if no_plugin { bare.clone() } else { format!("{src_s}/plugin") }),
                     transcripts: None,
                     now: None,
                     today: None,

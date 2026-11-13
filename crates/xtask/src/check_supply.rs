@@ -1,7 +1,7 @@
 //! 供應鏈檢查。由 `tests/check_supply.py` 移植，再加上 Rust 與 Node 那兩半。
 //!
 //! plugin 會在使用者的所有專案執行，所以要守住下面幾條：
-//!   1. action 都釘 40 字元 commit SHA：.github/workflows/*.yml 與 scaffold/.github/workflows/*.tmpl。
+//!   1. action 都釘 40 字元 commit SHA：.github/workflows/*.yml 與 plugin/scaffold/.github/workflows/*.tmpl。
 //!   2. 版控（git ls-files）裡沒有 __pycache__、.env、私鑰形狀的檔案或內容。
 //!   3. `Cargo.lock` 存在而且在版控裡（建置出來的執行檔用哪些版本是固定的）。
 //!   4. Rust 相依都來自 crates.io：`Cargo.lock` 裡沒有 git 來源，也沒有 workspace 以外的 path 相依。
@@ -11,7 +11,7 @@
 //!      而且不用網路模組。
 //!
 //! Python 檔還在的期間另外兩條照舊（有 `.py` 才掃、才列出；Python 移除那天不用改這支）：
-//!   - 只 import 標準庫或 repo 內模組：plugin/hooks/*.py、scaffold/.claude/teams/tools/*.py、init.py。
+//!   - 只 import 標準庫或 repo 內模組：plugin/hooks/*.py、plugin/scaffold/.claude/teams/tools/*.py、init.py。
 //!   - plugin/ 下的 .py 沒有網路呼叫：不 import urllib、http.client、socket、requests 等。
 //!
 //! 失敗時逐條列出，exit 1。Python 那兩條和 Python 版不同的地方（都只會更嚴，不會更鬆）：
@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// repo 內模組：這些目錄下的 .py 可以互相 import（hook 會把 tools 目錄加進 sys.path 用 schemalib）
-const INTERNAL_DIRS: [&str; 3] = ["", "plugin/hooks", "scaffold/.claude/teams/tools"];
+const INTERNAL_DIRS: [&str; 3] = ["", "plugin/hooks", "plugin/scaffold/.claude/teams/tools"];
 
 /// 網路相關模組（只看頂層名稱，http 另外只擋 http.client／http.server）
 const NETWORK_MODULES: &[&str] = &[
@@ -148,10 +148,10 @@ fn top(module: &str) -> &str {
     module.split('.').next().unwrap_or_default()
 }
 
-/// 只能用標準庫的檔案：plugin/hooks/*.py、scaffold/.claude/teams/tools/*.py、init.py。
+/// 只能用標準庫的檔案：plugin/hooks/*.py、plugin/scaffold/.claude/teams/tools/*.py、init.py。
 fn stdlib_only_files(root: &Path) -> Vec<String> {
     let mut files = files_in(root, "plugin/hooks", ".py");
-    files.extend(files_in(root, "scaffold/.claude/teams/tools", ".py"));
+    files.extend(files_in(root, "plugin/scaffold/.claude/teams/tools", ".py"));
     if root.join("init.py").is_file() {
         files.push("init.py".to_string());
     }
@@ -177,7 +177,8 @@ fn check_stdlib_only(root: &Path, errors: &mut Vec<String>) {
 }
 
 fn check_no_network(root: &Path, errors: &mut Vec<String>) {
-    for rel in py_files_under(root, "plugin") {
+    // plugin/scaffold/ 是複製進專案的模版，不是 plugin 自己執行的程式（搬進 plugin/ 之前就不在這條的範圍）
+    for rel in py_files_under(root, "plugin").into_iter().filter(|r| !r.starts_with("plugin/scaffold/")) {
         let Some(found) = imports_of(root, &rel, errors) else { continue };
         for (line, module) in found {
             let sub = NETWORK_SUBMODULES.iter().any(|s| module == *s || module.strip_prefix(s).is_some_and(|r| r.starts_with('.')));
@@ -191,7 +192,7 @@ fn check_no_network(root: &Path, errors: &mut Vec<String>) {
 fn check_pinned_actions(root: &Path, pats: &Patterns, errors: &mut Vec<String>) {
     let mut files = files_in(root, ".github/workflows", ".yml");
     files.extend(files_in(root, ".github/workflows", ".yaml"));
-    files.extend(files_in(root, "scaffold/.github/workflows", ".tmpl"));
+    files.extend(files_in(root, "plugin/scaffold/.github/workflows", ".tmpl"));
     for rel in files {
         let text = match util::read_text(&full(root, &rel)) {
             Ok(t) => t,
@@ -406,8 +407,8 @@ const NODE_BUILTINS: &[&str] = &["assert", "child_process", "crypto", "events", 
 fn node_files(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     for (dir, exts) in [
-        ("scaffold/.claude/teams/tools", &[".mjs", ".cjs"][..]),
-        ("scaffold/.claude/teams/tools/scenarios", &[".mjs", ".cjs"][..]),
+        ("plugin/workflow-templates", &[".mjs", ".cjs"][..]),
+        ("plugin/workflow-templates/scenarios", &[".mjs", ".cjs"][..]),
         ("crates/xtask/src/js", &[".mjs", ".cjs", ".js"][..]),
     ] {
         for ext in exts {

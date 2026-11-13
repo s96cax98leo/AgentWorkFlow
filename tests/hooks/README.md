@@ -24,7 +24,7 @@
 |---|---|---|
 | `write` | `path`，加 `text`／`blob`（`fixtures.json` 裡的名稱）／`hex` 其中一個 | 寫檔，上層目錄自動建立 |
 | `mkdir`、`rm` | `path` | 建目錄；刪檔或整個目錄 |
-| `copy` | `from`（相對於 repo 根）、`to` | 複製整個目錄（專案的 schemas 取自 `scaffold/`） |
+| `copy` | `from`（相對於 repo 根）、`to` | 複製整個目錄（專案的 schemas 取自 `plugin/scaffold/`） |
 | `git` | `cwd`、`args` | 跑 git。作者與日期固定、不讀使用者的 git 設定；remote 只是設定裡的網址，不會連出去 |
 | `mtime` | `path`、`days_ago` | 把修改時間調到幾天前 |
 

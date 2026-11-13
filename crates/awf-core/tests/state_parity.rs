@@ -408,7 +408,7 @@ fn dry_run(st: &Stage) -> Option<String> {
     }
     let src = Path::new(&st.src);
     let o = std::process::Command::new("node")
-        .arg(src.join("scaffold/.claude/teams/tools/check_workflows.mjs"))
+        .arg(src.join("plugin/workflow-templates/check_workflows.mjs"))
         .arg("--agents-dir")
         .arg(src.join("plugin/agents"))
         .arg("--wf-dir")

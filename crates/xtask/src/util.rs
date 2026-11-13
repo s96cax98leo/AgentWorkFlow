@@ -7,14 +7,19 @@ use std::process::Command;
 /// 一次指令的結果：（exit code、stdout、stderr）。
 pub type Captured = (i32, String, String);
 
-/// 模版 repo 裡的 `.claude/teams`（schema、片段、golden-set、內建 profile 都在這裡）。
+/// repo 裡的模版根目錄（plugin 目錄）。xtask 的 `root` 一律是 repo 根目錄；模版裡的位置都由 `awf_core::template` 決定。
+pub fn plugin_dir(root: &Path) -> PathBuf {
+    root.join("plugin")
+}
+
+/// 模版的 `.claude/teams`（schema、golden-set、內建 profile 都在這裡）。
 pub fn teams_dir(root: &Path) -> PathBuf {
-    root.join("scaffold").join(".claude").join("teams")
+    awf_core::template::teams(&plugin_dir(root))
 }
 
 /// 共用片段的目錄。
 pub fn snippet_dir(root: &Path) -> PathBuf {
-    teams_dir(root).join("tools").join("snippets")
+    awf_core::template::snippets(&plugin_dir(root))
 }
 
 /// `shutil.which(name)`：照 PATH 找執行檔；Windows 另外試 PATHEXT 的副檔名。

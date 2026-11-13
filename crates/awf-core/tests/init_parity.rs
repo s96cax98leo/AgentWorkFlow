@@ -73,6 +73,7 @@ fn copy_template(exp: &Value, dst: &Path) {
     for rel in exp["template"].as_array().expect("template") {
         copy_tree(&repo().join(s(rel)), &dst.join(s(rel)));
     }
+    // repo 的 marketplace 清單在 `.claude-plugin/`（本機的 Claude Code 設定在 `.claude/`，不要混到）
     let pj = dst.join("plugin/.claude-plugin/plugin.json");
     std::fs::write(&pj, format!("{{\"name\": \"agent-workflow\", \"version\": \"{}\"}}\n", s(&exp["version"]))).expect("寫 plugin.json");
     // 發佈版才有的 linux-x64 執行檔：放一個只有 ELF 檔頭的假檔與對得上的 checksums.json

@@ -318,7 +318,7 @@ fn schema_teams(env: &Env) -> Option<String> {
     if has(&own) {
         return Some(own);
     }
-    let tpl = pyish::pjoin(env.template.as_deref()?, "scaffold/.claude/teams");
+    let tpl = crate::template::teams_str(env.template.as_deref()?);
     has(&tpl).then_some(tpl)
 }
 
@@ -550,7 +550,7 @@ fn selftest_in(root: &Path) -> i32 {
 
     // ── 假的 plugin 與專案
     let from = Env::from_env();
-    let good = from.template.as_deref().map(|t| pyish::pjoin(t, "scaffold/.claude/teams")).filter(|t| is_dir(t)).or_else(|| Some(from.teams()).filter(|t| is_dir(t)));
+    let good = from.template.as_deref().map(crate::template::teams_str).filter(|t| is_dir(t)).or_else(|| Some(from.teams()).filter(|t| is_dir(t)));
     let Some(src_teams) = good else {
         println!("awf doctor selftest：找不到內建 profile 與 schema（要在模版 repo 或已 init 的專案裡跑）");
         return 1;

@@ -7,7 +7,7 @@ import { extScenario, ENV } from './_helpers.mjs'
 const SD_PROFILE = { stages: { design: { system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設'], feature_scope: 'x', system_scope: 'x' } } } }
 
 // recipe 情境用內建 default profile 的 recipes／modifiers（scaffold 本身沒有內嵌 profile，init 過的專案可能自訂過）
-const DEF = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'methodologies', 'default.json'), 'utf8'))
+const DEF = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'scaffold', '.claude', 'teams', 'methodologies', 'default.json'), 'utf8'))
 const RP = { recipes: DEF.recipes, modifiers: DEF.modifiers }
 
 const TRIAGE = (kind, confidence) => (base) => ({ ...base, status: 'done', open_questions: [],

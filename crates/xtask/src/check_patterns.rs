@@ -41,7 +41,7 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
 ///
 /// 組裝用的是狀態機自己的 [`awf_core::state::render_custom`]（`awf next --script` 走的那一支），不另抄一份 preamble：
 /// 在暫存目錄擺一個最小的專案（測試用的 AGENT_NS、輸出語言、給定的 profile、沒有擴充 agent；schema 取自 `root`），
-/// 片段取自 `root` 的 scaffold。
+/// 片段取自 `root` 的 `plugin/workflow-templates/snippets/`。
 fn render_custom(root: &Path, text: &str, stage: &str, args: &Value, methodology: &Value) -> Result<String, String> {
     let tmp = TempDir::new("awf-cs-proj.")?;
     let proj = tmp.path();

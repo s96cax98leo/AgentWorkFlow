@@ -19,12 +19,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
-/// 指紋檔在模版裡的位置（相對模版根目錄）。
-pub const FILE: &str = "plugin/legacy-tools.json";
-/// 版本號所在的檔（相對模版根目錄）。
+/// 指紋檔在模版裡的位置（相對模版根目錄，也就是 plugin 目錄）。
+pub const FILE: &str = "legacy-tools.json";
+/// 指紋檔在 repo 裡的位置（相對 repo 根目錄）。
+pub const REPO_FILE: &str = "plugin/legacy-tools.json";
+/// 版本號所在的檔（git 歷史裡的路徑，相對 repo 根目錄）。
 const PLUGIN_JSON: &str = "plugin/.claude-plugin/plugin.json";
 
-/// 0.x 的 init 複製了什麼：（模版裡的路徑, 專案裡的路徑, 複製時換不換佔位符）。前兩個是目錄，第三個是單一檔。
+/// 0.x 的 init 複製了什麼：（git 歷史裡的路徑, 專案裡的路徑, 複製時換不換佔位符）。前兩個是目錄，第三個是單一檔。
+/// 這些是 0.x 各版當時的位置（那時 scaffold 在 repo 根目錄），不隨之後的搬家改。
 pub const SOURCES: &[(&str, &str, bool)] = &[
     ("scaffold/.claude/teams/tools", ".claude/teams/tools", true),
     ("plugin/hooks", ".claude/hooks", false),

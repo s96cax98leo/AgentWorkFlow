@@ -28,6 +28,7 @@ pub mod script;
 pub mod spec;
 pub mod state;
 pub mod sync_branch;
+pub mod template;
 
 /// 版本（workspace 的版本）。
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

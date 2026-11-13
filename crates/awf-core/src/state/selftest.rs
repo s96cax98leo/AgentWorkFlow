@@ -1,7 +1,7 @@
 //! `awf state --selftest`：項目名稱與順序同 Python 版的 `awf.py --selftest`。
 //!
 //! Python 版的工具從自己所在的目錄讀 schema、片段、內建 profile 與交付文件型錄；這裡沒有「工具所在的目錄」，
-//! 改從專案的 `.claude/teams`（已 init 的專案）或模版 repo 的 `scaffold/.claude/teams` 讀，並把 schema 與片段放進暫存專案。
+//! 改從專案的 `.claude/teams`（已 init 的專案）或模版的 `scaffold/.claude/teams` 讀，並把 schema 與片段放進暫存專案。
 //! 在模版 repo 裡跑（資源取自模版）時，和 Python 版一樣多驗兩項真的範本、少驗一項從登記檔找 plugin。
 
 use super::{
@@ -325,14 +325,14 @@ fn fail_text<X>(r: Result<X, Fail>) -> String {
     }
 }
 
-/// 讀資源的 `.claude/teams`：專案自己的（已 init），不然用模版 repo 的 scaffold。第二個值＝是不是取自模版 repo。
+/// 讀資源的 `.claude/teams`：專案自己的（已 init），不然用模版的 scaffold。第二個值＝是不是取自模版。
 fn source_teams(env: &Env) -> (String, bool) {
     let own = env.teams();
     if is_file(&pj(&own, "methodologies/default.json")) && is_dir(&pj(&own, "schemas")) {
         return (own, false);
     }
     match &env.template {
-        Some(t) => (pj(t, "scaffold/.claude/teams"), true),
+        Some(t) => (crate::template::teams_str(t), true),
         None => (own, false),
     }
 }
@@ -1006,7 +1006,7 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
         c == 0 && rendered.len() == REQUIRED.len() && !rendered.iter().any(|n| ph_re().is_match(&read(&pj(&outd, &format!("{n}.js"))))),
         out.clone(),
     );
-    let real_dir = env.template.as_ref().map(|tp| pj(tp, &format!("plugin/{TEMPLATES}")));
+    let real_dir = env.template.as_ref().map(|tp| pj(tp, TEMPLATES));
     if let Some(real_dir) = real_dir.filter(|p| in_template && is_dir(p)) {
         let names = js_in(&real_dir);
         let known = |n: &str| REQUIRED.iter().any(|(k, _)| *k == n);

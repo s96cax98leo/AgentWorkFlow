@@ -1,5 +1,6 @@
-//! 產生 `plugin/workflow-templates/legacy.json`：舊版 init 複製進專案的 workflow 副本長什麼樣。
-//! 由 `tests/gen_legacy_templates.py` 移植。
+//! 產生並核對兩份「舊版本長什麼樣」的指紋檔（都從 git 歷史算，內容只和歷史有關）：
+//! - `plugin/workflow-templates/legacy.json`：舊版 init 複製進專案的 workflow 副本（這個檔的本體）。
+//! - `plugin/legacy-tools.json`：0.x 的 init 複製進專案的工具與 hook（產生程式在 `awf_core::init::legacy_tools`，這裡只呼叫）。
 //!
 //! 0.5 起 workflow 不再複製進專案（由 `awf next` 依 plugin 的範本逐段產生）。`awf init --upgrade` 要能分辨專案裡的
 //! `.claude/workflows/*.js` 是「舊版原樣的副本」（可以移除）還是「使用者改過的」（保留）。做法：把各版的範本依佔位符
@@ -10,13 +11,16 @@
 //! `legacy.json` 和 git 歷史算出來的逐字相同。
 //!
 //! 用法：
-//!   cargo xtask gen-legacy            # 只比對（預設）；不一致 exit 1
-//!   cargo xtask gen-legacy --write    # 寫回 legacy.json
+//!   cargo xtask gen-legacy            # 只比對（預設）；任何一份不一致 exit 1
+//!   cargo xtask gen-legacy --write    # 兩份都重寫（legacy-tools.json 用檔案裡記的 revs）
 //!
-//! 需要完整的 git 歷史（[`RELEASES`] 的那幾個 commit 要拿得到）；淺層 clone 拿不到時判失敗，不略過。
-//! 和 Python 版不同的地方：預設是比對（Python 版預設寫入、`--check` 才比對；`--check` 這裡照認）。
+//! 需要完整的 git 歷史（[`RELEASES`] 的那幾個 commit、legacy-tools.json 的 `revs` 要拿得到）；淺層 clone 拿不到時判失敗，不略過。
+//! 預設是比對，`--write` 才寫（`--check` 照認，等同預設）。
+//!
+//! 歷史裡的路徑（[`OLD_DIR`]、`legacy_tools::SOURCES`）是各版當時的位置，不隨之後的搬家改。
 
 use crate::util::{self, Captured};
+use awf_core::init::legacy_tools;
 use serde_json::{json, Map, Value};
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
@@ -27,7 +31,7 @@ use std::process::Command;
 pub const RELEASES: [(&str, &str); 3] = [("0.3.0", "v0.3.0"), ("0.4.0", "7ab673c"), ("0.4.1", "d81cb5c")];
 const OLD_DIR: &str = "scaffold/.claude/workflows";
 const OUT_REL: &str = "plugin/workflow-templates/legacy.json";
-/// 檔案開頭的說明。字面要和已發佈的 legacy.json 相同（裡面提到的是當初產生它的 Python 腳本），改了檔案內容就變了。
+/// 檔案開頭的說明。字面要和已發佈的 legacy.json 相同（裡面提到的是 0.x 當初產生它的腳本），改了檔案內容就變了。
 const NOTE: &str = "舊版 init 複製進專案的 workflow 副本的指紋（init.py --upgrade 用來分辨原樣的副本與使用者改過的檔）。由 tests/gen_legacy_templates.py 產生，不要手改。";
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
@@ -85,8 +89,38 @@ pub fn build(root: &Path) -> Result<String, String> {
     Ok(format!("{}\n", serde_json::to_string(&doc).map_err(|e| e.to_string())?))
 }
 
-/// 指令本體：`root` 是 repo 根目錄，`args` 是 `--write`（或 Python 版的 `--check`）。
+/// `plugin/legacy-tools.json`：用檔案裡記的 `revs` 從 git 歷史重新產生，回（一不一致、說明）。`write` 時寫回。
+fn tools(root: &Path, write: bool) -> Result<(bool, String), String> {
+    let path = root.join(legacy_tools::REPO_FILE);
+    let have = util::read_text(&path)?;
+    let revs: Vec<String> = serde_json::from_str::<Value>(&have).ok()
+        .and_then(|d| d.get("revs").and_then(Value::as_array).map(|a| a.iter().filter_map(|r| r.as_str().map(str::to_string)).collect()))
+        .ok_or_else(|| format!("{} 沒有 revs", legacy_tools::REPO_FILE))?;
+    let doc = legacy_tools::generate(root, &revs)?;
+    let text = legacy_tools::render(&doc);
+    if write {
+        std::fs::write(&path, &text).map_err(|e| format!("寫不了 {}：{e}", legacy_tools::REPO_FILE))?;
+        return Ok((true, format!("已寫 {}：{}\n", legacy_tools::REPO_FILE, doc.get("count").cloned().unwrap_or(Value::Null))));
+    }
+    let same = have == text;
+    let msg = if same { "一致".to_string() } else { "和 git 歷史算出來的不一致（確認後用 cargo xtask gen-legacy --write 重寫）".to_string() };
+    Ok((same, format!("legacy-tools.json：{msg}\n")))
+}
+
+/// 指令本體：`root` 是 repo 根目錄，`args` 是 `--write`（`--check` 等同預設的只比對）。
 pub fn run_captured(root: &Path, args: &[String]) -> Captured {
+    let (code, out, err) = templates(root, args);
+    if code != 0 {
+        return (code, out, err);
+    }
+    match tools(root, args.iter().any(|a| a == "--write")) {
+        Ok((same, msg)) => (if same { 0 } else { 1 }, format!("{msg}{out}"), err),
+        Err(e) => (1, out, format!("gen-legacy：{e}\n")),
+    }
+}
+
+/// `plugin/workflow-templates/legacy.json` 的比對或重寫。
+fn templates(root: &Path, args: &[String]) -> Captured {
     let write = args.iter().any(|a| a == "--write");
     let text = match build(root) {
         Ok(t) => t,

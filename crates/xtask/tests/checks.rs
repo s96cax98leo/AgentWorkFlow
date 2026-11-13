@@ -31,10 +31,12 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
-/// 暫存的 repo 根目錄，裡面只有 `scaffold/.claude/teams`（片段、schema、golden-set、內建 profile）。
+/// 暫存的 repo 根目錄，裡面只有 `plugin/scaffold/.claude/teams`（schema、golden-set、內建 profile）與
+/// `plugin/workflow-templates/snippets`（片段）。
 fn teams_copy(tag: &str) -> TempDir {
     let tmp = TempDir::new(&format!("awf-xtask-{tag}-")).expect("暫存目錄");
     copy_dir(&util::teams_dir(&root()), &util::teams_dir(tmp.path()));
+    copy_dir(&util::snippet_dir(&root()), &util::snippet_dir(tmp.path()));
     tmp
 }
 
@@ -309,8 +311,8 @@ fn write_cargo(d: &Path) {
     write(d, "crates/demo/Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n");
     write(d, "Cargo.lock", &format!("version = 4\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\n \"serde\",\n]\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"{CRATES_IO}\"\nchecksum = \"00\"\n"));
     write(d, "crates/xtask/allowed-crates.txt", "# 說明\n\nserde\n");
-    write(d, "scaffold/.claude/teams/tools/check_workflows.mjs", "import { readFileSync } from 'node:fs'\nimport {\n  join,\n} from 'path'\nconst s = await import(somewhere)\n// 字串裡的 from 'left-pad' 不算\n");
-    write(d, "scaffold/.claude/teams/tools/scenarios/a.mjs", "import { X } from './_helpers.mjs'\nexport default []\n");
+    write(d, "plugin/workflow-templates/check_workflows.mjs", "import { readFileSync } from 'node:fs'\nimport {\n  join,\n} from 'path'\nconst s = await import(somewhere)\n// 字串裡的 from 'left-pad' 不算\n");
+    write(d, "plugin/workflow-templates/scenarios/a.mjs", "import { X } from './_helpers.mjs'\nexport default []\n");
     write(d, "crates/xtask/src/js/t.cjs", "const fs = require('fs')\n");
 }
 
@@ -329,9 +331,9 @@ fn supply_catches_each_kind() {
     write(d, "helper.py", "import json\n");
     write(d, "plugin/hooks/guard.py", "import re, json\nfrom pathlib import Path\n");
     write(d, "plugin/skills/demo/tool.py", "import json\n");
-    write(d, "scaffold/.claude/teams/tools/schemalib.py", "import json\nfrom . import sibling\n");
+    write(d, "plugin/scaffold/.claude/teams/tools/schemalib.py", "import json\nfrom . import sibling\n");
     write(d, ".github/workflows/ci.yml", &format!("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{sha} # v4\n      - uses: ./local\n"));
-    write(d, "scaffold/.github/workflows/gate.yml.tmpl", &format!("steps:\n  - name: x\n    uses: \"actions/setup-node@{sha}\"\n"));
+    write(d, "plugin/scaffold/.github/workflows/gate.yml.tmpl", &format!("steps:\n  - name: x\n    uses: \"actions/setup-node@{sha}\"\n"));
     write(d, ".env.example", "A=1\n");
     write(d, "README.md", "乾淨\n");
     write_cargo(d);
@@ -342,12 +344,12 @@ fn supply_catches_each_kind() {
 
     // 逐類弄壞
     write(d, "init.py", "import os\nimport requests\ntry:\n    import yaml.parser as yp\nexcept ImportError:\n    pass\n");
-    write(d, "scaffold/.claude/teams/tools/schemalib.py", "import importlib\nm = importlib.import_module('jsonschema')\n");
+    write(d, "plugin/scaffold/.claude/teams/tools/schemalib.py", "import importlib\nm = importlib.import_module('jsonschema')\n");
     write(d, "plugin/hooks/guard.py", "import re\nfrom http import client\n");
     write(d, "plugin/skills/demo/tool.py", "def f():\n    import urllib.request\n    return __import__('socket')\n");
     write(d, "plugin/skills/demo/broken.py", "x = 'abc\n");
     write(d, ".github/workflows/ci.yml", "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: docker://alpine:3\n");
-    write(d, "scaffold/.github/workflows/gate.yml.tmpl", "steps:\n  - name: x\n    uses: 'actions/setup-node@0123456'\n");
+    write(d, "plugin/scaffold/.github/workflows/gate.yml.tmpl", "steps:\n  - name: x\n    uses: 'actions/setup-node@0123456'\n");
     write(d, ".env", "A=1\n");
     write(d, "conf/.env.local", "A=1\n");
     write(d, "keys/id_rsa", "x\n");
@@ -365,14 +367,14 @@ fn supply_catches_each_kind() {
     ));
     write(d, "crates/xtask/allowed-crates.txt", "serde\ngone\n");
     // Node：外部套件、網路模組
-    write(d, "scaffold/.claude/teams/tools/scenarios/a.mjs", "import axios from 'axios'\nexport { y } from \"../up.mjs\"\n");
+    write(d, "plugin/workflow-templates/scenarios/a.mjs", "import axios from 'axios'\nexport { y } from \"../up.mjs\"\n");
     write(d, "crates/xtask/src/js/t.cjs", "const fs = require('fs')\nconst h = require('node:https')\n");
     git(d, &["add", "-A", "-f"]);
     let (rc, out, err) = check_supply::run_captured(d);
     assert_eq!(rc, 1, "{out}{err}");
     for want in [
         "[失敗] 只用標準庫\n",
-        "  - scaffold/.claude/teams/tools/schemalib.py:2：import 了非標準庫模組 jsonschema\n",
+        "  - plugin/scaffold/.claude/teams/tools/schemalib.py:2：import 了非標準庫模組 jsonschema\n",
         "  - init.py:2：import 了非標準庫模組 requests\n",
         "  - init.py:4：import 了非標準庫模組 yaml.parser\n",
         "[失敗] plugin 不連網\n",
@@ -382,7 +384,7 @@ fn supply_catches_each_kind() {
         "  - plugin/skills/demo/tool.py:3：plugin 不得有網路呼叫（import socket）\n",
         "[失敗] action 釘 SHA\n",
         "  - .github/workflows/ci.yml:4：action 沒有釘 40 字元 commit SHA（actions/checkout@v4）\n",
-        "  - scaffold/.github/workflows/gate.yml.tmpl:3：action 沒有釘 40 字元 commit SHA（actions/setup-node@0123456）\n",
+        "  - plugin/scaffold/.github/workflows/gate.yml.tmpl:3：action 沒有釘 40 字元 commit SHA（actions/setup-node@0123456）\n",
         "[失敗] 版控沒有快取、.env、私鑰\n",
         "  - .env：版控裡不該有 .env 檔\n",
         "  - conf/.env.local：版控裡不該有 .env 檔\n",
@@ -400,7 +402,7 @@ fn supply_catches_each_kind() {
         "  - extra：Cargo.lock 有、允許清單沒有（確認要用它之後加進 crates/xtask/allowed-crates.txt）\n",
         "  - gone：允許清單有、Cargo.lock 沒有（已經不用就從 crates/xtask/allowed-crates.txt 拿掉）\n",
         "[失敗] Node 腳本只用內建模組\n",
-        "  - scaffold/.claude/teams/tools/scenarios/a.mjs:1：只能 import 內建模組（不含網路）或相對路徑（axios）\n",
+        "  - plugin/workflow-templates/scenarios/a.mjs:1：只能 import 內建模組（不含網路）或相對路徑（axios）\n",
         "  - crates/xtask/src/js/t.cjs:2：只能 import 內建模組（不含網路）或相對路徑（node:https）\n",
     ] {
         assert!(out.contains(want), "少了「{want}」：\n{out}");

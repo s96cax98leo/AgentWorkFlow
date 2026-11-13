@@ -59,7 +59,7 @@ fn src_root() -> String {
 }
 
 fn teams() -> String {
-    format!("{}/scaffold/.claude/teams", src_root())
+    format!("{}/plugin/scaffold/.claude/teams", src_root())
 }
 
 fn s(v: &Value) -> &str {
@@ -423,8 +423,8 @@ fn selftest_matches_python() {
     let fake_gh = dir.join("fake_gh.sh");
     std::fs::write(&fake_gh, "base=\"$1\"\nshift\necho \"$*\" >> \"$base.log\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--body-file\" ]; then cp \"$a\" \"$base.body\"; fi\n  prev=\"$a\"\ndone\necho \"https://github.com/acme-fork/app/pull/7\"\n").expect("write");
     let t = teams();
-    let ctx = Ctx { profile: format!("{t}/methodology.json"), pack_root: format!("{}/scaffold", src_root()), cwd: dir.to_string_lossy().into_owned(), teams: t, today: None };
-    let env = Env { ctx, project: format!("{}/scaffold", src_root()), git: vec!["git".into()], gh: vec!["gh".into()], env: Vec::new() };
+    let ctx = Ctx { profile: format!("{t}/methodology.json"), pack_root: format!("{}/plugin/scaffold", src_root()), cwd: dir.to_string_lossy().into_owned(), teams: t, today: None };
+    let env = Env { ctx, project: format!("{}/plugin/scaffold", src_root()), git: vec!["git".into()], gh: vec!["gh".into()], env: Vec::new() };
     let sh = |p: &Path| vec!["sh".to_string(), p.to_string_lossy().into_owned()];
     let mut out = String::new();
     let code = pb::selftest_with(&env, &sh(&fake_git), &sh(&fake_gh), &mut out);

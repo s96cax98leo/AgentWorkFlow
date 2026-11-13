@@ -2,7 +2,7 @@
 //!
 //! 做法：在暫存目錄用預設 profile init 一個專案，乾跑全部 workflow（check_workflows.mjs 的 AWF_SCENARIO_REPORT），
 //! 算每支 workflow 的 agent 數（有 recipe:feature 情境就量它，否則量預設情境）與派工單總字數，另算每個內建 recipe
-//! 從 plan 到 deliver 的總派工數，和 `scaffold/.claude/teams/golden-set/token-budget.json` 的基準比：超過基準 10% 就失敗。
+//! 從 plan 到 deliver 的總派工數，和 `plugin/scaffold/.claude/teams/golden-set/token-budget.json` 的基準比：超過基準 10% 就失敗。
 //!
 //! 限制：乾跑量的是「派出去的字」與「派幾個 agent」，量不到 agent 實際讀檔與輸出的長度。
 //! 字數以 code point 計（同 Python 的 `len()`）。
@@ -21,7 +21,6 @@ use awf_core::merge_gate::pyutil;
 use awf_core::{pyfmt, recipe};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const TOLERANCE: f64 = 0.10;
 const STAGES: [&str; 5] = ["plan", "design", "build", "test", "deliver"];
@@ -31,8 +30,7 @@ fn scenario_report(root: &Path) -> Result<Value, String> {
     let r = tempproj::rendered(root, "awf-budget.")?;
     let rep = r.tmp.path().join("report.json");
     let p = util::run(
-        Command::new("node").arg(tempproj::check_workflows(root, &r.proj)).arg("--agents-dir").arg(root.join("plugin").join("agents")).arg("--wf-dir").arg(&r.wf_dir)
-            .current_dir(&r.proj).env("AWF_SCENARIO_REPORT", &rep),
+        tempproj::check_workflows(root, &r.proj, &r.wf_dir).env("AWF_SCENARIO_REPORT", &rep),
         None,
     )?;
     if !rep.is_file() {
@@ -196,7 +194,7 @@ pub fn run_captured(root: &Path, args: &[String]) -> Captured {
         Err(e) => return fail(e),
     };
     let update = rest.iter().any(|a| a == "--update");
-    let default_rel = "scaffold/.claude/teams/golden-set/token-budget.json";
+    let default_rel = "plugin/scaffold/.claude/teams/golden-set/token-budget.json";
     let (budget, shown) = match custom {
         Some(p) => (PathBuf::from(&p), p),
         None => (util::teams_dir(root).join("golden-set").join("token-budget.json"), default_rel.to_string()),

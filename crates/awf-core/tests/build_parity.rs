@@ -68,9 +68,9 @@ fn build_matches_python() {
                 runs += 1;
                 let argv: Vec<String> = st["argv"].as_array().map(|a| a.iter().map(|x| s(x).to_string()).collect()).unwrap_or_default();
                 let paths = if op == "build_real" {
-                    Paths::template_repo(&root.canonicalize().expect("repo 根目錄"))
+                    Paths::template(&root.canonicalize().expect("repo 根目錄").join("plugin"))
                 } else if s(&st["mode"]) == "template" {
-                    Paths::template_repo(Path::new(&real(s(&st["root"]))))
+                    Paths::template(&Path::new(&real(s(&st["root"]))).join("plugin"))
                 } else {
                     Paths::project(Path::new(&real(s(&st["root"]))))
                 };
@@ -112,15 +112,15 @@ fn detect_paths() {
     let _ = std::fs::remove_dir_all(&base);
     let mk = |p: &str| std::fs::create_dir_all(base.join(p)).expect("mkdir");
     mk("tpl/plugin/workflow-templates");
-    mk("tpl/scaffold/.claude/teams");
+    mk("tpl/plugin/scaffold/.claude/teams");
     mk("tpl/crates/deep");
     mk("tpl/_tpm/proj/.claude/teams");
     mk("plain/sub");
     let base = base.canonicalize().expect("canonicalize");
     let tpl = base.join("tpl");
     assert_eq!(Paths::detect(&tpl).wf_dir, tpl.join("plugin/workflow-templates"));
-    assert_eq!(Paths::detect(&tpl).teams_dir, tpl.join("scaffold/.claude/teams"));
-    assert_eq!(Paths::detect(&tpl).snippet_dir, tpl.join("scaffold/.claude/teams/tools/snippets"));
+    assert_eq!(Paths::detect(&tpl).teams_dir, tpl.join("plugin/scaffold/.claude/teams"));
+    assert_eq!(Paths::detect(&tpl).snippet_dir, tpl.join("plugin/workflow-templates/snippets"));
     // 模版 repo 的子目錄：往上找
     assert_eq!(Paths::detect(&tpl.join("crates/deep")).wf_dir, tpl.join("plugin/workflow-templates"));
     // 模版 repo 底下的已 init 專案：當專案

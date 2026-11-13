@@ -265,7 +265,7 @@ pub fn repo_files(repo: &str) -> Vec<String> {
 // ------------------------------------------------------------------ 型錄與設定
 fn embedded_catalog() -> &'static Value {
     static C: OnceLock<Value> = OnceLock::new();
-    C.get_or_init(|| pyish::json_loads(include_str!("../../../../scaffold/.claude/teams/deliverables/catalog.json")).unwrap_or(Value::Null))
+    C.get_or_init(|| pyish::json_loads(include_str!("../../../../plugin/scaffold/.claude/teams/deliverables/catalog.json")).unwrap_or(Value::Null))
 }
 
 fn is_catalog(v: &Value) -> bool {
