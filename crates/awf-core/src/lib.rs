@@ -6,6 +6,7 @@
 pub mod checklist;
 pub mod config;
 pub mod hooks;
+pub mod kb;
 pub mod pyfmt;
 pub mod recipe;
 pub mod schema;
