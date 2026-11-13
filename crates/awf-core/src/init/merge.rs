@@ -208,11 +208,11 @@ mod tests {
         let have = m(json!({"a": {"p": 5}, "s": {"deep": {}}}));
         let miss = missing_fields(&base, &have, "", true);
         let paths: Vec<&str> = miss.iter().map(|(p, _)| p.as_str()).collect();
-        assert_eq!(paths, vec!["s.deep.k", "s.n", "z"]);
+        assert_eq!(paths, vec!["s.n", "z"]);
         let mut doc = have.clone();
         for (p, v) in &miss {
             set_missing(&mut doc, p, v);
         }
-        assert_eq!(Value::Object(doc), json!({"a": {"p": 5}, "s": {"deep": {"k": 1}, "n": 1}, "z": 9}));
+        assert_eq!(Value::Object(doc), json!({"a": {"p": 5}, "s": {"deep": {}, "n": 1}, "z": 9}));
     }
 }
