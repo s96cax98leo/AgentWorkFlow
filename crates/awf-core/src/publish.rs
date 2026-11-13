@@ -976,10 +976,18 @@ impl Tester<'_> {
 /// 用假的 git push 與 gh 把每個拒絕條件走一遍（不連網、不真的推送）。回傳 exit code。
 /// `env.ctx` 的 teams 目錄要有 schema（在 `scaffold/` 或已 init 的專案根目錄跑）。
 pub fn selftest(env: &Env, out: &mut String) -> i32 {
+    let me = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "awf".into());
+    let fake = |flag: &str| vec![me.clone(), "publish".to_string(), flag.to_string()];
+    selftest_with(env, &fake("--selftest-fake-git"), &fake("--selftest-fake-gh"), out)
+}
+
+/// selftest 的本體。`fake_git`、`fake_gh` 是替身指令的開頭，後面會接「紀錄檔的路徑前綴」與原本的參數：
+/// 假的 git 遇到 push 只把參數記到 `<前綴>.log`，其他交給真的 git；假的 gh 把參數記到 `<前綴>.log`、PR 說明抄到 `<前綴>.body`、印一個 PR 網址。
+pub fn selftest_with(env: &Env, fake_git: &[String], fake_gh: &[String], out: &mut String) -> i32 {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
     let root = std::env::temp_dir().join(format!("awf-publish-selftest-{}-{nanos}", std::process::id()));
     let root_text = root.to_string_lossy().into_owned();
-    let result = std::fs::create_dir_all(&root).map_err(|e| e.to_string()).and_then(|_| selftest_body(env, &root_text, out));
+    let result = std::fs::create_dir_all(&root).map_err(|e| e.to_string()).and_then(|_| selftest_body(env, fake_git, fake_gh, &root_text, out));
     let _ = std::fs::remove_dir_all(&root);
     let ok = match result {
         Ok(ok) => ok,
@@ -992,7 +1000,7 @@ pub fn selftest(env: &Env, out: &mut String) -> i32 {
     if ok { 0 } else { 1 }
 }
 
-fn selftest_body(env: &Env, root: &str, out: &mut String) -> Result<bool, String> {
+fn selftest_body(env: &Env, fake_git: &[String], fake_gh: &[String], root: &str, out: &mut String) -> Result<bool, String> {
     let proj = format!("{root}/proj");
     let cfg = json!({"runs_dir": "_tpm/runs", "fork_repo": "acme-fork/app", "upstream_repos": "acme-up/app",
         "allowed_branch_prefixes": "feature/,bugfix/", "protected_branches": ["main", "master"]});
@@ -1006,15 +1014,15 @@ fn selftest_body(env: &Env, root: &str, out: &mut String) -> Result<bool, String
         &format!("{epic}/specs/e/intent.md"),
         "# intent\n## 目標\nx\n## 範圍\nx\n## 不做的事\nx\n## 驗收條件\n- AC-1\n## 調研問題\nx\n## 判準\nx\n## 現象\nx\n## 重現步驟\nx\n## 預期行為\nx\n## 根因\nx\n".as_bytes(),
     )?;
-    let me = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "awf".into());
     let (fg, fh) = (format!("{root}/fake_git"), format!("{root}/fake_gh"));
+    let with_base = |prefix: &[String], base: &str| prefix.iter().cloned().chain([base.to_string()]).collect::<Vec<String>>();
     let mut pub_ctx = env.ctx.clone();
     pub_ctx.profile = profile;
     let pub_env = Env {
         ctx: pub_ctx,
         project: proj.clone(),
-        git: vec![me.clone(), "publish".into(), "--selftest-fake-git".into(), fg.clone()],
-        gh: vec![me, "publish".into(), "--selftest-fake-gh".into(), fh.clone()],
+        git: with_base(fake_git, &fg),
+        gh: with_base(fake_gh, &fh),
         env: env.env.clone(),
     };
     let repo = format!("{proj}/repos/app");
