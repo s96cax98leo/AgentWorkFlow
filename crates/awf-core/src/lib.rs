@@ -12,6 +12,7 @@ pub mod config;
 pub mod cost;
 pub mod deliverables;
 pub mod hooks;
+pub mod init;
 pub mod kb;
 pub mod locate;
 pub mod merge_gate;
