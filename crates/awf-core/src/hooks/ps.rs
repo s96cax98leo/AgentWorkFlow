@@ -142,6 +142,7 @@ fn ps_subexpressions(text: &[char]) -> Vec<String> {
 }
 
 /// 把 PowerShell 指令拆成「段落 → token」，去掉引號與跳脫；雙引號裡的 $(…) 另外拆成段落。
+#[allow(unused_assignments)] // 巨集在結尾收尾時重設的狀態不會再被讀
 fn ps_tokenize(cmd: &str, depth: usize) -> Vec<Vec<String>> {
     let ch: Vec<char> = cmd.chars().collect();
     let n = ch.len();

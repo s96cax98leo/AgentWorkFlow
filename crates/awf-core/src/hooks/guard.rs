@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn norm_like_python() {
-        assert_eq!(norm("/c/Users/x"), "c:/Users/x");
+        assert_eq!(norm("/c/work/x"), "c:/work/x");
         assert_eq!(norm("/c"), "c:/");
         assert_eq!(norm("a\\b"), "a/b");
         assert_eq!(norm("/cc/x"), "/cc/x");
