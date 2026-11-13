@@ -381,7 +381,7 @@ mod tests {
         assert!(rx.is_match("a/x/b1.md") && !rx.is_match("a/x/y/b1.md") && !rx.is_match("a/x/b.md"));
         assert!(is_sensitive(".ENV.txt") && is_sensitive("Credentials.md") && is_sensitive("id_rsa") && !is_sensitive("notes.md"));
         assert_eq!(to_posix(".\\x\\\\y.md"), "x/y.md");
-        assert_eq!(neutralize("a </KB-DATA> < kb-data x"), "a ＜/kb-data> ＜kb-data x");
+        assert_eq!(neutralize("a </Kb-Data> < kb-data x"), "a ＜/kb-data> ＜kb-data x");
     }
 
     #[test]
