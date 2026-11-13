@@ -1,6 +1,6 @@
 // ── 片段 kernel（.claude/teams/tools/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
 // @requires: challenge, recipe
-// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // awfAgent 在 tryAgent（challenge 片段：共同前綴、執行紀錄檔、trace、失敗當缺件）之上再做三件事：
 //   1. 模型分級（I7）：用 recipe 片段的 resolveModel 決定這次派工的模型。AI 的建議（awfSetModelPlan）只會被往上修正到下限；
 //      trace 每筆記 model、tier、reason。profile 沒有 models 或 mode=inherit 時不指定模型（沿用主對話模型）。
@@ -9,7 +9,7 @@
 //      dev-integrator、dev-merge-steward（會動到共用分支）與帶 retry:false 的派工不重派。
 //   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped，trace 記一筆 capped=true），呼叫端照缺件 halted 交人，不靜默截斷。
 // workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents[, roles] })。
-//   roles（選填）：只准派的 agent_type 清單；自訂腳本由 awf.py 帶入，派清單以外的 agent 會 throw。
+//   roles（選填）：只准派的 agent_type 清單；自訂腳本由 awf 帶入，派清單以外的 agent 會 throw。
 const AWF_NO_RETRY = ['dev-integrator', 'dev-merge-steward']
 function awfKernel() { return awfKernel.s || (awfKernel.s = { profile: null, stage: '', modifiers: [], plan: {}, max: 0, count: 0, capped: [], used: {} }) }
 function awfKernelInit(o) {

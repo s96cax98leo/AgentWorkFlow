@@ -188,7 +188,7 @@ export default [
         if (!modes[n] && /加跑受影響舊驗收條件|characterization|量測基線/.test(v)) e.push(`${n} 不該加額外驗證模式`)
         const design = ['feature', 'change', 'perf'].includes(n)
         if (design ? !/spec\.md/.test(v) : (!/intent\.md/.test(v) || /spec\.md/.test(v))) e.push(`${n} 的驗收條件來源應為 ${design ? 'spec.md' : 'intent.md（不提 spec.md）'}`)
-        if (!/run_brief\.py/.test(v)) e.push('verifier 派工單要求用 run_brief.py')
+        if (!/awf run-brief/.test(v)) e.push('verifier 派工單要求用 awf run-brief')
         return e
       },
     })),

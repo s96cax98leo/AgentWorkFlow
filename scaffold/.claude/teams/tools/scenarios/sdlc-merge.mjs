@@ -33,7 +33,7 @@ export default [
       expect: (r) => (r.labels.includes('execute:merge') && r.out && r.out.merged === false ? [] : ['沒有 merge_state 不能算已合併']),
     },
     {
-      // merge_gate.py 有 --findings 卻沒有 --reviewed-sha 一律 hold：gate 指令兩個都要帶，reviewed-sha 取審查／驗證當下的 head
+      // awf merge-gate 有 --findings 卻沒有 --reviewed-sha 一律 hold：gate 指令兩個都要帶，reviewed-sha 取審查／驗證當下的 head
       name: 'gate 指令帶 reviewed-sha',
       args: {},
       fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },

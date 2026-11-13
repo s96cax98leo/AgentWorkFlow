@@ -117,7 +117,7 @@
     },
     "confirmed_by": {
       "type": "string",
-      "description": "誰確認了這份設定（deliverables.py configure --write --by）"
+      "description": "誰確認了這份設定（awf deliverables configure --write --by）"
     },
     "show_approvers": {
       "type": "boolean",

@@ -10,7 +10,7 @@
 
 1. **新增可信任的合併 agent（`dev-merge-steward`）與合併後監看 agent（`dev-release-watcher`）。**（取代原建議 4）
    - steward 的信任來源是「需求與成果對照」：把每一條需求，對到驗證報告、測試與程式位置，逐條判定一致、不一致或缺證據；diff 裡對不到任何需求的改動也要列出。對照結果綁定 head SHA。
-   - 全部一致，而且確定性 gate（`merge_gate.py`）也通過，才合併。gate 會再機械檢查對照表是否涵蓋需求清單的所有項目，agent 說服不了它。
+   - 全部一致，而且確定性 gate（`awf merge-gate`）也通過，才合併。gate 會再機械檢查對照表是否涵蓋需求清單的所有項目，agent 說服不了它。
    - 有任何不一致、缺證據或範圍外改動：產出新需求（說明哪一條需求、期望、實際、要怎麼調整），並退回 PR（request changes、轉回 draft）。新需求的文件由文件 agent 寫，steward 本身沒有 Edit／Write。
    - steward 永遠不 approve。守門比對完整的 agent 名稱，防止同名 agent 冒充。
 2. **上游取得授權後開放。**（取代原建議 1）上游 repo 要有上游 org owner 的書面授權、安裝我方 App 並設好 ruleset，設定檔 `upstream_authorized_by` 填入授權人後才放行；沒填一律擋。上游無法由我方 revert，所以上游只靠合併前的對照與 gate。

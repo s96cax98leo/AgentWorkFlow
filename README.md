@@ -8,7 +8,7 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 - **其他事件**（簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看）各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
 
-所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具都是 Python 標準庫，在 macOS、Linux、Windows（PowerShell）上都能執行。目前版本 **0.6.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
+所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具是單一執行檔 `awf`（Rust，隨 plugin 提供），在 macOS、Linux、Windows（PowerShell）上都能執行，不需要 Python。目前版本 **0.6.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 做法
 
@@ -17,11 +17,11 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 | 原則 | 意思 | 怎麼落實 |
 |---|---|---|
 | 只管流程，不管規範 | 模版不替你決定 TDD、commit 格式、分支命名 | 這些寫在專案的開發規範 profile（`methodology.json`），agent 與 workflow 只從 profile 讀 |
-| 人在閘門決定，agent 在閘門之間做事 | agent 不會自己決定「可以進下一段」 | plan、design、test、deliver 結束時停下，重點列在對話裡，核准用 `save_run.py approve` 記錄；plan 一律由人核准 |
+| 人在閘門決定，agent 在閘門之間做事 | agent 不會自己決定「可以進下一段」 | plan、design、test、deliver 結束時停下，重點列在對話裡，核准用 `awf save-run approve` 記錄；plan 一律由人核准 |
 | 寫的人不驗、驗的人不改 | 同一個 agent 不能既實作又宣布通過 | 實作、驗證、審查、反駁、合併各是不同角色；唯讀角色沒有 Edit／Write 工具 |
-| 不採信 agent 的說法 | agent 回報「通過了」不算數 | 閘門由確定性工具（Python）用實際資料重算：信封內容、head SHA、CI 結果、diff 形狀、執行紀錄檔在不在 |
+| 不採信 agent 的說法 | agent 回報「通過了」不算數 | 閘門由確定性工具（`awf`）用實際資料重算：信封內容、head SHA、CI 結果、diff 形狀、執行紀錄檔在不在 |
 | 缺件不是「沒有發現」 | agent 失敗、逾時、沒交件，不能當成沒問題 | workflow 把缺件列進 `missing`；審查、反駁、驗證類缺件一律停下交人 |
-| gate 只會更嚴 | 工具遇到資料缺漏、讀不懂、對不上，一律 hold | 流程可以用 `save_run.py escalate` 加嚴，工具不會自動降級 |
+| gate 只會更嚴 | 工具遇到資料缺漏、讀不懂、對不上，一律 hold | 流程可以用 `awf save-run escalate` 加嚴，工具不會自動降級 |
 | 輔助功能失敗不擋流程 | 知識庫、資料包、成本統計壞了只警告 | 這些工具不參與閘門判定；hook 自己跑不起來時放行，不鎖死使用者 |
 | 不破壞既有設定 | 套用到既有專案只新增檔案 | `CLAUDE.md` 只追加一行引用，settings 深度合併；角色規則只套用在模版自己的 agent |
 
@@ -38,11 +38,11 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
  ├─ sync     確定性工具決定怎麼跟上 main（rebase／merge／中轉分支）
  ├─ test     verifier 在目前 HEAD 逐條驗收＋反作弊檢查；視需要加設計、安全審查       ──► 閘門：確認驗證結果
  ├─ deliver  依審查軸審整條分支，skeptic 逐則反駁，寫 PR 說明                        ──► 閘門：推送、開 PR 由你決定
- └─ merge    （預設關閉）steward 對照需求與證據，merge_gate.py 判定通過才合併        ──► 合併後監看 main
+ └─ merge    （預設關閉）steward 對照需求與證據，awf merge-gate 判定通過才合併        ──► 合併後監看 main
 ```
 
 - 每一段是一支 workflow 腳本（`sdlc-*.js`），由主 session 用 Workflow 工具執行；腳本不能取時間、不能中途等人輸入，所以需要人決定的地方就拆成兩支。
-- 每一段的回傳由 `save_run.py stage` 存進 run 目錄並驗證；下一段開跑前，整條閘門鏈都要通過。
+- 每一段的回傳由 `awf save-run stage` 存進 run 目錄並驗證；下一段開跑前，整條閘門鏈都要通過。
 - **不是每個需求都走滿七段**：triage 會建議一個 recipe（新功能、bug、CR、hotfix、重構、依賴升級、文件、補測試、效能、調研、回退），你在 plan 閘門確認後鎖定。細節見下面〈依需求類型分流〉。
 - 不論走哪種流程，**intent、rules.md、plan 的人工核准、每個 agent 的執行紀錄**都不能省。
 
@@ -65,22 +65,22 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 
 ### 4. 確定性工具：閘門用資料判定
 
-agent 之間用 JSON 信封交件（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload），格式由 schema 定義，交件時 hook 會驗。之後的判定都交給不含 LLM 的 Python 工具：
+agent 之間用 JSON 信封交件（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload），格式由 schema 定義，交件時 hook 會驗。之後的判定都交給不含 LLM 的確定性工具（`awf` 的子指令）：
 
 | 工具 | 判定什麼 |
 |---|---|
-| `save_run.py` | 存每段的回傳、驗信封、記核准。政策核准時讀實際內容：驗證有沒過的條目、反作弊有發現、有阻擋性問題、agent 缺件、紀錄檔缺件，都不能自動核准 |
-| `recipe.py` | 這個需求該走哪些段；之後用實際 diff 反查（說是改文件卻動了程式、沒做 design 卻碰 migration）|
-| `sync_branch.py` | 怎麼跟上 main，並檢查中轉分支沒有殘留衝突標記與夾帶改動 |
-| `publish.py` | 只推 fork 的功能分支；推送前掃機敏值、檢查閘門鏈都已核准 |
-| `merge_gate.py` | 需求對照表、審查時的 head SHA、required checks、測試數、風險等級、每日上限、白名單、凍結旗標；全部寫進稽核紀錄 |
+| `awf save-run` | 存每段的回傳、驗信封、記核准。政策核准時讀實際內容：驗證有沒過的條目、反作弊有發現、有阻擋性問題、agent 缺件、紀錄檔缺件，都不能自動核准 |
+| `awf recipe` | 這個需求該走哪些段；之後用實際 diff 反查（說是改文件卻動了程式、沒做 design 卻碰 migration）|
+| `awf sync-branch` | 怎麼跟上 main，並檢查中轉分支沒有殘留衝突標記與夾帶改動 |
+| `awf publish` | 只推 fork 的功能分支；推送前掃機敏值、檢查閘門鏈都已核准 |
+| `awf merge-gate` | 需求對照表、審查時的 head SHA、required checks、測試數、風險等級、每日上限、白名單、凍結旗標；全部寫進稽核紀錄 |
 
 workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後不能默默少掉子任務、彙整不能改驗證結果、各分片要驗同一個 HEAD。對不上就停下交人。
 
 ### 5. 每個 agent 都留紀錄
 
 - 每張派工單指定一個紀錄檔 `<run 目錄>/<段>/<label>.md`：做了什麼、跑了哪些指令與結果、結論、不確定的地方。
-- `save_run.py stage` 依 workflow 回傳的 trace 產生 `執行紀錄索引.md`；紀錄檔缺了算缺件，不能政策核准。
+- `awf save-run stage` 依 workflow 回傳的 trace 產生 `執行紀錄索引.md`；紀錄檔缺了算缺件，不能政策核准。
 - run 目錄留著完整的過程：需求、recipe、每段的回傳、核准紀錄（誰、何時）、每個 agent 的紀錄、合併稽核。之後要追「這個決定是誰在什麼依據下做的」都查得到。
 
 ### 6. 省 token：限制讀進來的量，不限制寫出去的量
@@ -95,12 +95,12 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 |---|---|---|
 | 模型分級 | triage 建議各角色用 `light`／`standard`／`strong` 哪一級，工具守下限：合併、安全審查、plan 的 spec-author 一定用最強的，AI 降不下去。沒交件會用高一級重派一次 | `models` |
 | 讀取預算（預設不啟用） | 啟用後，hook 擋模版角色整檔讀大檔（建議門檻：超過 400 行要分段讀），並給每個 agent 讀取額度，用完要求收斂交件 | `limits.mode`：不寫或 `off`＝不啟用、`warn`＝只提醒、`enforce`＝擋；門檻是 `whole_file_lines`、`read_budget` |
-| 知識層 | `kb.py` 把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行；產出可以用 Obsidian 打開 | `knowledge` |
-| 資料包 | 每段開跑前由工具（不是 agent）整理好需求、知識庫命中的行段、前面各段的紀錄 | `pack.py` |
-| 兩段式調研 | 先「定位」行段，再由分析 agent 只讀那些行段。定位先由工具做（不花 token），不夠才派便宜的模型補 | 內建於 `sdlc-plan`；`locate.py` |
-| 子任務資料包 | build 前為每個子任務整理好 spec 對應小節的行段、對得上的限制文件、相依子任務的介面；實作的 agent 不用整份讀 spec | `pack.py build`、子任務的 `spec_refs` |
-| 決策記憶 | 人在閘門上答過的問題記下來，之後的資料包帶上相關的，agent 不再重問 | `save_run.py approve --answer`、`decide` |
-| 調研重用 | plan 重跑時，來源檔沒變的調研角度直接沿用；閘門會重新核對來源的雜湊 | `pack.py --reuse-from`、`--keep-research` |
+| 知識層 | `awf kb` 把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行；產出可以用 Obsidian 打開 | `knowledge` |
+| 資料包 | 每段開跑前由工具（不是 agent）整理好需求、知識庫命中的行段、前面各段的紀錄 | `awf pack` |
+| 兩段式調研 | 先「定位」行段，再由分析 agent 只讀那些行段。定位先由工具做（不花 token），不夠才派便宜的模型補 | 內建於 `sdlc-plan`；`awf locate` |
+| 子任務資料包 | build 前為每個子任務整理好 spec 對應小節的行段、對得上的限制文件、相依子任務的介面；實作的 agent 不用整份讀 spec | `awf pack build`、子任務的 `spec_refs` |
+| 決策記憶 | 人在閘門上答過的問題記下來，之後的資料包帶上相關的，agent 不再重問 | `awf save-run approve --answer`、`decide` |
+| 調研重用 | plan 重跑時，來源檔沒變的調研角度直接沿用；閘門會重新核對來源的雜湊 | `awf pack --reuse-from`、`--keep-research` |
 | 派工數上限 | 一支 workflow 最多派幾個 agent，到上限就停下交人，不靜默截斷 | `limits.max_agents` |
 
 唯一碰到輸出的是**交件信封**：summary 不超過 400 字、evidence 最多 12 則。它只管 agent 交回給 workflow 的那份 JSON；細節照樣完整寫在檔案裡，信封只放路徑。
@@ -110,7 +110,7 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 在 `tests/bench/` 的虛構專案（67 個檔、約 6,100 行）實測 0.4.0 的 plan 段（讀取預算開 `enforce`）：首次 2.69M token、6.9 分鐘；同一個 run 重跑 0.76M（首次的 28%）。改版前的數字量自大很多的真實專案，兩者不是同一個情境，不能直接相除。完整數字與限制見 [`CHANGELOG.md`](CHANGELOG.md)。想看自己的 run 花了多少：
 
 ```bash
-python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run 目錄>
+awf cost --project . --run-dir <run 目錄>
 ```
 
 ### 7. 信任邊界在伺服器端
@@ -123,10 +123,10 @@ python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run 目錄>
 
 | 部分 | 內容 | 怎麼進到專案 | 怎麼更新 |
 |---|---|---|---|
-| `plugin/` | agents、skills、slash commands、hooks | 安裝 Claude Code plugin，每台機器裝一次，所有專案共用 | `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins` |
-| `scaffold/` | 硬規則、workflow、schema、開發規範 profile、工具、golden-set、settings、`CLAUDE.md` 範本 | `init.py` 複製進目標專案，同時換掉 `{{佔位符}}` | 在專案跑 `init.py --upgrade` |
+| `plugin/` | agents、skills、slash commands、hooks、workflow 範本、執行檔 `awf`（`bin/`） | 安裝 Claude Code plugin，每台機器裝一次，所有專案共用 | `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins` |
+| `scaffold/` | 硬規則、守門設定、schema、開發規範 profile、golden-set、settings、`CLAUDE.md` 範本 | `awf init` 複製進目標專案，同時換掉 `{{佔位符}}` | 在專案跑 `awf init --upgrade` |
 
-0.5 起 workflow 的範本也在 plugin 裡（`plugin/workflow-templates/`），不複製進專案：狀態機 `awf.py next` 每段用範本加專案的設定產生腳本，plugin 更新後流程跟著更新。專案仍要跑一次 init，因為規則、守門設定、開發規範 profile 與工具是每個專案自己的。
+0.5 起 workflow 的範本也在 plugin 裡（`plugin/workflow-templates/`），不複製進專案：狀態機 `awf next` 每段用範本加專案的設定產生腳本，plugin 更新後流程跟著更新。1.0 起工具也不複製進專案：`awf` 由 plugin 的 `bin/` 提供，專案裡沒有工具副本。專案仍要跑一次 init，因為規則、守門設定與開發規範 profile 是每個專案自己的。
 
 你可以把自己的 agent 加進 plan、design、test、deliver 任一段（`/agent-workflow:add-agent`），也可以整份換掉開發規範 profile；見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)。
 
@@ -135,7 +135,7 @@ python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run 目錄>
 ## 需求
 
 - Claude Code
-- Python 3.9 以上，只用標準庫。Windows 沒有 `python3` 指令時，改用 `py -3` 或 `python`。
+- 不需要 Python：工具是 plugin 內附的執行檔 `awf`（macOS、Linux、Windows 的 x64 與 arm64；其他平台自己建置，見 [`docs/建置與發佈.md`](docs/建置與發佈.md)）。
 - git；要開 PR 或合併的話另外需要 `gh`。
 - Node.js 18 以上，只有乾跑驗證 workflow 時才需要。
 
@@ -174,8 +174,10 @@ claude plugin install agent-workflow@agentworkflow
 
 ```bash
 git clone https://github.com/s96cax98leo/AgentWorkFlow.git ~/tools/AgentWorkFlow
-python3 ~/tools/AgentWorkFlow/init.py --target ~/work/my-project
+~/tools/AgentWorkFlow/plugin/bin/awf init --target ~/work/my-project
 ```
+
+在 Claude Code 裡，plugin 的 `bin/` 已經在 PATH 上，直接打 `awf` 就可以；在自己的終端機要寫完整路徑（如上），或把 `plugin/bin` 加進 PATH。下面的指令都寫成 `awf …`。
 
 init 會先逐一詢問佔位符的值，再確認你的開發習慣：開發規範 profile、測試要不要先行、code style 的工具或指令、commit 格式、分支前綴、PR 大小上限、文件格式。每題都有預設值，直接按 Enter 就套用。也可以在 Claude Code 裡執行 `/agent-workflow:init-workflow`，讓它在對話中問完再幫你跑 init。
 
@@ -184,9 +186,9 @@ init 會在專案寫下 `.claude/teams/VERSION`（套用的模版版本）與 `.
 要驗證產出，在目標專案根目錄執行：
 
 ```bash
-python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check --plugin-dir ~/tools/AgentWorkFlow/plugin
+awf render --all --out _tpm/wf-check --plugin-dir ~/tools/AgentWorkFlow/plugin
 node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir ~/tools/AgentWorkFlow/plugin/agents
-python3 .claude/teams/tools/check_agents.py --plugin-dir ~/tools/AgentWorkFlow/plugin
+awf check-agents --plugin-dir ~/tools/AgentWorkFlow/plugin
 python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 ```
 
@@ -205,10 +207,10 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | 1 plan | `sdlc-plan` | triage 分類；各調研角度先定位行段、再分析（來源沒變的角度沿用上次結論）；spec-author 寫 `intent.md`；skeptic 挑錯 | 閘門：核准 intent 與 recipe |
 | 2 design | `sdlc-design` | 先出大綱判斷規模，太大就拆子計劃平行規劃再彙整；產出 spec、plan、子任務與檔案所有權，skeptic 平行檢查一致性 | 閘門：核准 spec＋plan（要修改時走 `sdlc-design-revise`） |
 | 3 build | `sdlc-build` | 依 profile 先寫測試或後補測試；子任務依相依分層，同一層各自開 worktree 平行實作，每層由 integrator 合併 | 中斷時交人，用剩下的子任務重跑 |
-| 3.5 sync | `sdlc-sync` | `sync_branch.py` 決定怎麼跟上 main：已跟上不動；沒推送過且沒衝突用 rebase；已推送且沒衝突 merge main；有衝突走中轉分支並開 PR 取代原 PR | head 變了就由 test 重新驗證 |
+| 3.5 sync | `sdlc-sync` | `awf sync-branch` 決定怎麼跟上 main：已跟上不動；沒推送過且沒衝突用 rebase；已推送且沒衝突 merge main；有衝突走中轉分支並開 PR 取代原 PR | head 變了就由 test 重新驗證 |
 | 4 test | `sdlc-test` | verifier 逐條驗收並做反作弊檢查，視 recipe 加設計與安全審查；失敗就修正，最多 2 輪 | 閘門：確認驗證結果 |
 | 5 deliver | `sdlc-deliver` | 依 recipe 的審查軸審 PR，skeptic 逐則反駁，寫 PR 說明草稿 | 閘門：推送、開 PR 由你當下決定 |
-| 6 merge | `sdlc-merge` | 啟用 auto_merge 時，steward 對照需求與證據（綁審查時的 head），`merge_gate.py` 判定能不能合併 | 合併後跑 `event-post-merge` 監看 |
+| 6 merge | `sdlc-merge` | 啟用 auto_merge 時，steward 對照需求與證據（綁審查時的 head），`awf merge-gate` 判定能不能合併 | 合併後跑 `event-post-merge` 監看 |
 
 完整走一遍的範例見 [`docs/套用範例.md`](docs/套用範例.md)。
 
@@ -230,17 +232,17 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 | `spike` | 調研、可行性 | 只有 plan，不能推送 | 調研問題與判準 | 8 |
 | `revert` | 合併後回退 | 不走 design、sync | 回退原因、範圍、恢復條件 | 16 |
 
-- **只能加嚴**：triage 只給建議，人在 plan 閘門核准後鎖在 run.json；之後只能用 `save_run.py escalate` 加嚴，不能降級。modifiers（`ui`、`security`、`migration`、`public_api`、`large`）疊上去也只會加嚴，例如 `migration` 會強制加 design 段與回滾檢查。
+- **只能加嚴**：triage 只給建議，人在 plan 閘門核准後鎖在 run.json；之後只能用 `awf save-run escalate` 加嚴，不能降級。modifiers（`ui`、`security`、`migration`、`public_api`、`large`）疊上去也只會加嚴，例如 `migration` 會強制加 design 段與回滾檢查。
 - **不可省**：intent（四個必要節加上該類型的專屬節）、plan 的人工核准、rules.md、每個 agent 的執行紀錄、merge_gate、只推 fork。
-- **用 diff 反查**：`publish.py` 與 `merge_gate.py --recipe` 會依實際改動的檔案判斷 recipe 夠不夠，例如 docs 卻改了程式、沒有 design 卻碰到 migration、改了 `.claude/` 或 `.github/` 卻沒做安全審查，一律擋下並提示用 escalate。CI 範本沒有 run.json，所以這項只在本機 publish 與 steward 的 gate 生效。
-- **執行紀錄**：每個 agent 把紀錄寫在 `<run_dir>/<段>/<label>.md`，`save_run.py stage` 產生 `執行紀錄索引.md`。測試等長輸出用 `run_brief.py` 先濃縮再讀，完整 log 另存。
+- **用 diff 反查**：`awf publish` 與 `awf merge-gate --recipe` 會依實際改動的檔案判斷 recipe 夠不夠，例如 docs 卻改了程式、沒有 design 卻碰到 migration、改了 `.claude/` 或 `.github/` 卻沒做安全審查，一律擋下並提示用 escalate。CI 範本沒有 run.json，所以這項只在本機 publish 與 steward 的 gate 生效。
+- **執行紀錄**：每個 agent 把紀錄寫在 `<run_dir>/<段>/<label>.md`，`awf save-run stage` 產生 `執行紀錄索引.md`。測試等長輸出用 `awf run-brief` 先濃縮再讀，完整 log 另存。
 - **量測方式與限制**：派工數來自 `tests/check_budget.py` 的乾跑（假回傳，bugfix、hotfix 用 2 個子任務，docs 用 1 個，其他用 4 個），實際數字會隨子任務數、審查發現數而變。乾跑量的是「派幾個 agent」和「派工單有多少字」，量不到 agent 實際讀檔與輸出的 token。
 
 細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈依需求類型分流〉。
 
 ## 核心概念
 
-**閘門**：plan、design、test、deliver 結束時，主 session 把重點列在對話裡，等決策者核准，核准用 `save_run.py approve` 記錄。plan 一律由人核准；其他段可以改用政策核准（`--by policy`），這時工具會讀該段的實際結果：驗證有沒通過的條目、反作弊有發現、有阻擋性的待決問題、agent 缺件、執行紀錄缺件、workflow 中斷，都不能自動核准。需求取消時用 `save_run.py abandon` 記錄，之後任何一段都不能核准，也不能推送。
+**閘門**：plan、design、test、deliver 結束時，主 session 把重點列在對話裡，等決策者核准，核准用 `awf save-run approve` 記錄。plan 一律由人核准；其他段可以改用政策核准（`--by policy`），這時工具會讀該段的實際結果：驗證有沒通過的條目、反作弊有發現、有阻擋性的待決問題、agent 缺件、執行紀錄缺件、workflow 中斷，都不能自動核准。需求取消時用 `awf save-run abandon` 記錄，之後任何一段都不能核准，也不能推送。
 
 **交件信封**：每個 `dev-*`／`tpm-*` agent 都用 JSON 信封交件，欄位是 status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload。成果寫成檔案，信封只放路徑；summary 不超過 400 字、evidence 最多 12 則。hook 會驗證信封，不合格就交不出去。
 
@@ -250,18 +252,18 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 
 **可信任的自動合併**（預設關閉）：
 - `dev-merge-steward` 逐條對照需求與證據，證據要綁定 head SHA；對照不一致時產出 followup 新需求並退回 PR。
-- `merge_gate.py` 以確定性規則複核對照表、required checks、測試數、風險等級、每日上限、白名單和凍結旗標，結果寫進稽核紀錄。
+- `awf merge-gate` 以確定性規則複核對照表、required checks、測試數、風險等級、每日上限、白名單和凍結旗標，結果寫進稽核紀錄。
 - 沒有任何 agent 能核准 PR。
 - 真正的信任邊界在伺服器端：GitHub ruleset、gate App 的 required check、CODEOWNERS。啟用前請照 [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) 的檢查清單完成設定。
 
 **加入自己的 agent**：在 Claude Code 裡跑 `/agent-workflow:add-agent`，它會問要加在哪一段、套用哪個模版角色的守門規則、派工內容是什麼，需要的話幫你建立 agent 定義檔。設定寫在 `methodology.json` 的 `extensions` 與 `guard.config.json` 的 `extension_agents`。擴充 agent 和該段的內建 agent 平行執行，它的 blocker／important 發現會擋住政策核准。只能套用唯讀類角色；build 段和 merge 段不開放擴充。
 
-**守門 hooks**：入口只有一個，`awf_hook.py`。
+**守門 hooks**：入口只有一個，`awf hook`。
 - `guard-shell` 同時涵蓋 Bash 與 PowerShell 工具，擋推送、寫上游、推受保護分支，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - `guard-paths` 擋越權寫入，以及用 Read、Grep 讀機敏檔（`.env`、金鑰、憑證）。只能寫紀錄的角色只准寫 runs_dir 裡的 `.md`；所有模版 agent 都不能改 `.claude/teams/`、run.json 與執行紀錄索引。
 - `envelope` 驗證交件信封。
 - 角色規則只套用在模版自己的 agent 上，你原本的 agent 不受影響。
-- 失敗時的取捨：hook 跑不起來（找不到 Python、逾時）時放行，不鎖死工具；跑得起來但輸入壞掉或指令超過 128KB 時擋下；guard 模組壞掉時改用內建的最小規則。要「跑不起來也擋」請用 `init.py --hooks project`。
+- 失敗時的取捨：hook 跑不起來（找不到執行檔、逾時）時放行，不鎖死工具；跑得起來但輸入壞掉或指令超過 128KB 時擋下；守門設定載入失敗時改用內建的最小規則。要「跑不起來也擋」請用 `awf init --hooks project`。
 - hook 只是本機的減速帶，可以被繞過；真正的信任邊界在伺服器端，見 [`SECURITY.md`](SECURITY.md)。
 
 ## 指令與事件
@@ -311,10 +313,10 @@ plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。�
 | | `tpm-researcher` | 針對一個具體問題調研，結論附 `路徑:行號` 或指令；上游模式唯讀分析上游：預測衝突、影響範圍、與我方分支的交集 |
 | | `tpm-reviewer` | 依指定面向審查 PR 或分支，只留建議；deliver 模式依 recipe 的審查軸審整條整合分支，只報信心 ≥0.8 的發現 |
 | | `tpm-skeptic` | 專門反駁別人的發現，不確定時判反駁成立 |
-| | `tpm-writer` | 把定稿的素材寫成文件，寫完跑 `check_rules.py` |
+| | `tpm-writer` | 把定稿的素材寫成文件，寫完跑 `awf check-rules` |
 | 網站分析 | `tech-architect`、`infra-analyst`、`biz-analyst`、`perf-auditor`、`competitor-scout`、`lead-synthesizer` | 分別負責技術架構、基礎設施、商業模式、效能、競品，最後由 lead-synthesizer 交叉驗證、合成總報告 |
 
-上面是 14 個核心角色（dev 9 個、tpm 5 個）與 6 個網站分析 agent。另有 2 個舊名薄殼，相容一版、下一版移除：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`，舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。還在用舊名的專案請跑 `init.py --upgrade`。
+上面是 14 個核心角色（dev 9 個、tpm 5 個）與 6 個網站分析 agent。另有 2 個舊名薄殼，相容一版、下一版移除：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`，舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。還在用舊名的專案請跑 `awf init --upgrade`。
 
 ## 更新與釘版本
 
@@ -330,7 +332,7 @@ claude plugin update agent-workflow@agentworkflow   # 或在 Claude Code 的 /pl
 
 ```bash
 git -C ~/tools/AgentWorkFlow pull
-python3 ~/tools/AgentWorkFlow/init.py --target . --upgrade [--adopt-new-fields]
+awf init --target . --upgrade [--adopt-new-fields]
 ```
 
 `--upgrade` 會換掉模版檔、保留你的設定，並列出 profile 缺少的新欄位；`--adopt-new-fields` 把這些欄位補進你的 `methodology.json`。從 0.2.x 升上來要用 recipe 分流，或從 0.3.x 升上來要用模型分級、讀取預算、知識層，就要加 `--adopt-new-fields`。細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈升級已 init 的專案〉。
@@ -354,7 +356,7 @@ python3 ~/tools/AgentWorkFlow/init.py --target . --upgrade [--adopt-new-fields]
 ## init 的選項
 
 ```
-python3 init.py --target <專案> [--config workflow.config] [--answers <答案.json>] [--defaults]
+awf init --target <專案> [--config workflow.config] [--answers <答案.json>] [--defaults]
                 [--hooks plugin|project] [--python <路徑>] [--with-mcp] [--with-merge-gate]
                 [--upgrade] [--adopt-new-fields] [--force] [--overwrite-user-files]
 ```
@@ -365,7 +367,7 @@ python3 init.py --target <專案> [--config workflow.config] [--answers <答案.
 | `--answers` | 開發規範與慣例的答案檔（JSON），不用互動，適合 CI；格式見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md) |
 | `--defaults` | 全部用預設值，使用 default profile |
 | `--hooks plugin` | 預設。hooks 由 plugin 註冊 |
-| `--hooks project` | 把 hooks 複製到專案的 `.claude/hooks/`，由 `settings.json` 註冊，並寫入 Python 的絕對路徑。**Windows 建議用這個。** 和 plugin 註冊只能擇一 |
+| `--hooks project` | hooks 改由專案的 `settings.json` 註冊，並寫入執行檔的絕對路徑。**Windows 建議用這個。** 和 plugin 註冊只能擇一 |
 | `--with-mcp` | 產生正式的 `.mcp.json`，不加時只產生 `.mcp.json.example` |
 | `--with-merge-gate` | 放 `.github/workflows/agent-merge-gate.yml`。預設不放，因為還沒設好 gate App 時它會讓每個 PR 失敗 |
 | `--upgrade` | 升級已 init 的專案（建議的更新方式）：模版檔換成這版，使用者的設定保留，列出 profile 缺少的新欄位。沒給 `--config` 時沿用 `.claude/teams/workflow.config`（`--force` 也一樣） |
@@ -416,14 +418,15 @@ AgentWorkFlow/
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
 │   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
-│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge）與 legacy.json（舊副本指紋）；awf.py next 逐段產生腳本
-│   └── hooks/                        # hooks.json＋awf_hook.py（guard-shell、guard-paths、envelope）、read_budget.py
-├── scaffold/                         # init.py 複製進目標專案的內容
-│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、tools/（含 recipe.py、run_brief.py、pack.py、kb.py、locate.py、awf_cost.py、awf.py）、golden-set/
+│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
+│   ├── bin/                          # 執行檔 awf（啟動器＋各平台的執行檔）
+│   └── hooks/                        # hooks.json：註冊 awf hook（guard-shell、guard-paths、envelope、session-start）
+├── scaffold/                         # awf init 複製進目標專案的內容（設定、schema、profile、rules、golden-set；不含工具）
+│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、deliverables/、golden-set/、guard.config.json.tmpl
 │   ├── .github/workflows/            # agent-merge-gate.yml.tmpl（選用）
 │   ├── CLAUDE.md.tmpl、.mcp.json.tmpl
 │   └── _runs/                        # run 目錄說明
-├── init.py                           # 套用模版（互動問答或讀設定檔）
+├── crates/                           # awf 的原始碼（Rust）：awf-core（全部邏輯）、awf（執行檔入口）、xtask（建置與檢查）
 ├── workflow.config.example           # 佔位符的值
 ├── CHANGELOG.md、SECURITY.md、LICENSE
 ├── docs/                             # 說明文件
@@ -442,7 +445,7 @@ AgentWorkFlow/
 | [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) | 自動合併的防線分層、啟用前檢查清單、revert 演練 |
 | [`docs/adr-agent-auto-merge.md`](docs/adr-agent-auto-merge.md) | 自動合併的架構決策紀錄 |
 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md) | 開發規範 profile、recipe、平行參數、把自己的 agent 加進 workflow、新增 agent／skill／hook／workflow、套用到既有專案、升級 |
-| [`docs/監控與整合.md`](docs/監控與整合.md) | 從外面看進度與成本：`awf.py watch`、事件流、通知、狀態列、OTel |
+| [`docs/監控與整合.md`](docs/監控與整合.md) | 從外面看進度與成本：`awf watch`、事件流、通知、狀態列、OTel |
 | [`docs/踩坑手冊.md`](docs/踩坑手冊.md) | 實戰教訓：症狀、原因、做法 |
 | [`docs/參考-pstack.md`](docs/參考-pstack.md) | 參考過的外部 plugin（pstack）：差異、引進與沒引進的做法 |
 | [`docs/套用範例.md`](docs/套用範例.md) | 用虛構的「示範客戶 ACME」從 init 走到 deliver |
@@ -457,7 +460,7 @@ python3 tests/scrub_check.py [路徑…]   # 只跑去客戶化掃描
 python3 tests/smoke_init.py           # 只跑 init 煙霧測試；KEEP=1 保留暫存目錄
 python3 plugin/hooks/tests/run.py     # 只跑 hook 測試（Bash 與 PowerShell 案例）
 python3 tests/check_docs.py           # 文件一致性（角色、workflow、command 的數量與名單）
-python3 tests/check_recipes.py        # recipe 的 Python 與 JS 解析結果一致
+python3 tests/check_recipes.py        # recipe 的工具端與 JS 片段解析結果一致
 python3 tests/check_budget.py         # 派工數與派工單字數不超過基準 10%
 ```
 

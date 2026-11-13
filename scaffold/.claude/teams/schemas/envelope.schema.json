@@ -1,7 +1,7 @@
 {
   "$id": "envelope",
   "title": "agent 交件信封（所有 agent 共用）",
-  "description": "agent 交件區塊的 JSON 版。成果一律寫成檔案，信封只放路徑。語意規則（有 blocking 問題就不能 done 等）在 tools/check_envelope.py。",
+  "description": "agent 交件區塊的 JSON 版。成果一律寫成檔案，信封只放路徑。語意規則（有 blocking 問題就不能 done 等）在 awf check-envelope。",
   "type": "object",
   "required": ["status", "summary", "artifacts", "evidence", "confidence", "open_questions", "derived_work", "payload"],
   "properties": {
@@ -39,6 +39,6 @@
       }
     },
     "derived_work": {"type": "array", "items": {"type": "string"}, "description": "衍生工作，不編號（任務編號由 {{TASK_AUTHORITY}} 發）"},
-    "payload": {"type": "object", "description": "依角色而定，見 payloads/*.schema.json；build.py 組合時會替換這裡"}
+    "payload": {"type": "object", "description": "依角色而定，見 payloads/*.schema.json；awf build 組合時會替換這裡"}
   }
 }

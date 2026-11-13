@@ -53,7 +53,7 @@
       "guidance": "四軸審查（standards、spec、bugs、history），只留信心 ≥0.8 且未被 skeptic 推翻的發現。"
     },
     "merge": {
-      "guidance": "需求清單逐條對照驗證證據，全部一致且 merge_gate.py 判 merge 才合併。"
+      "guidance": "需求清單逐條對照驗證證據，全部一致且 awf merge-gate 判 merge 才合併。"
     }
   },
   "parallelism": {

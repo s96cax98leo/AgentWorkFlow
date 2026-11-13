@@ -1,6 +1,6 @@
 {
  "version": 1,
- "_說明": "交付文件型錄。專案要交哪些由 .claude/teams/deliverables.json 決定（deliverables.py configure 協助產生）；這裡沒列的文件可以在交付設定裡自訂。source：auto＝可以從 SDLC 產物產生；assisted＝工具給範本與原料、人補內容；external＝外部證據，只收錄與檢查有沒有附。on＝哪類改動會影響它（改動分類、mod:<modifier>、path:<glob>、stage:<段>、recipe:<名>、event:<事件>）。",
+ "_說明": "交付文件型錄。專案要交哪些由 .claude/teams/deliverables.json 決定（awf deliverables configure 協助產生）；這裡沒列的文件可以在交付設定裡自訂。source：auto＝可以從 SDLC 產物產生；assisted＝工具給範本與原料、人補內容；external＝外部證據，只收錄與檢查有沒有附。on＝哪類改動會影響它（改動分類、mod:<modifier>、path:<glob>、stage:<段>、recipe:<名>、event:<事件>）。",
  "groups": [
   {
    "id": "pm",
