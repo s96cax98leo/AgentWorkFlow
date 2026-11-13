@@ -10,6 +10,7 @@
 | `kb.expected.json` | 知識層：固定文件集上的 412 步劇本（build、增量、query、lint，FTS5 與純 BM25 兩條路）與函式探測 | 見 `tests/parity/record_kb.py` 開頭的用法 |
 | `small.expected.json` | run_brief、check_envelope、check_rules：222 步劇本（偵測、摘要、信封的 golden 範例、規則掃描與 commit 檢查） | `python3 tests/parity/record_small.py > tests/parity/small.expected.json` |
 | `gates.expected.json` | merge gate 298 例（selftest 轉出與 CLI）、純函式 465 例、sync-branch 86 例；和 Python 不同的案例只准更嚴，列在 `gates_parity.rs` 的 `STRICTER` | `python3 tests/parity/record_gates.py > tests/parity/gates.expected.json` |
+| `deliverables.expected.json` | 交付文件與工具先定位：625 步劇本（323 個指令）與 1,956 個函式探測（隱私規則、`body_hash`、過期判定） | `python3 tests/parity/record_deliverables.py > tests/parity/deliverables.expected.json` |
 
 規則：
 
