@@ -7,9 +7,13 @@ pub mod checklist;
 pub mod config;
 pub mod hooks;
 pub mod kb;
+pub mod merge_gate;
+pub mod publish;
 pub mod pyfmt;
 pub mod recipe;
+pub mod save_run;
 pub mod schema;
+pub mod sync_branch;
 
 /// 版本（workspace 的版本）。
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

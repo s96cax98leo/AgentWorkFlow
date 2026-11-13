@@ -5,6 +5,8 @@
 | 檔案 | 內容 | 怎麼重錄 |
 |---|---|---|
 | `hooks.expected.jsonl` | hook 測試的每次呼叫（模式、輸入雜湊、exit code、stdout、stderr）與每個案例的判定，共 1,335 個案例 | `python3 plugin/hooks/tests/run.py --record tests/parity/hooks.expected.jsonl` |
+| `schema.expected.json` | golden-set 每個範例與內建 profile 的完整錯誤清單，加探測案例 | `python3 tests/parity/record_schema.py > tests/parity/schema.expected.json` |
+| `recipe.expected.json` | recipe 與模型分級：golden 案例、探測案例、CLI、內建常數 | 見 `tests/parity/record_recipe.py` 開頭的用法 |
 
 規則：
 
