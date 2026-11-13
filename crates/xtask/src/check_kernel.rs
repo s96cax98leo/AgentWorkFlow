@@ -1,4 +1,4 @@
-//! 執行核心（`snippets/kernel.js`）的單元檢查：workflow 的情境走不到的行為直接對片段測。由 `tests/check_kernel.py` 移植。
+//! 執行核心（`snippets/kernel.js`）的單元檢查：workflow 的情境走不到的行為直接對片段測。原本是 0.x 的 Python 工具 `check_kernel.py`。
 //!
 //! 用 node 載入 challenge、recipe、kernel 三個片段，給假的 agent()；測試本體在 `js/kernel.cjs`（原樣搬來），檢查：
 //!   1. label 重複時第二次起自動加序號（trace、紀錄檔、失敗升級都靠 label 對，不能撞）。
@@ -9,8 +9,8 @@
 //!   6. 片段裡的派工（challengeList）在啟用核心後也經過它。
 //!   7. dev-integrator、dev-merge-steward 與 retry:false 的派工失敗不自動重派。
 //!
-//! 沒有 node 時判失敗（不略過）。和 Python 版不同的地方（只會更嚴）：node 的輸出不是 JSON 陣列時判失敗
-//! （Python 版只要是合法 JSON 就逐項印出）。
+//! 沒有 node 時判失敗（不略過）。和 0.x 的 Python 版不同的地方（只會更嚴）：node 的輸出不是 JSON 陣列時判失敗
+//! （0.x 的 Python 版只要是合法 JSON 就逐項印出）。
 
 use crate::util::{self, Captured};
 use awf_core::merge_gate::pyutil;

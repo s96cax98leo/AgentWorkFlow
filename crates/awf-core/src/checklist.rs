@@ -1,5 +1,5 @@
 //! 可驗證的 checklist：每一項都帶驗證指令，打勾與否以指令實際結果為準，不以人或 agent 的宣稱為準。
-//! 由 `scaffold/.claude/teams/tools/checklist.py` 移植。
+//! 原本是 0.x 的 Python 工具 `checklist.py`。
 //!
 //! 格式（Markdown，一行一項；沒有驗證指令的項目一律算未完成）：
 //!     - [ ] SP1.3 初始化改成跨平台 — 驗證：`awf init --help`

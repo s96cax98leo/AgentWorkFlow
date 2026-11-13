@@ -1,5 +1,5 @@
 //! 自訂 workflow 腳本的靜態檢查與組裝（`awf next --script` 用）。
-//! 由 `scaffold/.claude/teams/tools/awf_script.py` 移植；錯誤訊息與組裝結果是對跑基準的一部分
+//! 原本是 0.x 的 Python 工具 `awf_script.py`；錯誤訊息與組裝結果是對跑基準的一部分
 //! （`tests/parity/tools.expected.json`）。
 //!
 //! 檢查的規則（每一條都對應一種繞過執行核心的寫法）：

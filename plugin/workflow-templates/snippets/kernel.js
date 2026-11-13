@@ -1,4 +1,4 @@
-// ── 片段 kernel（.claude/teams/tools/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
+// ── 片段 kernel（workflow-templates/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
 // @requires: challenge, recipe
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // awfAgent 在 tryAgent（challenge 片段：共同前綴、執行紀錄檔、trace、失敗當缺件）之上再做三件事：

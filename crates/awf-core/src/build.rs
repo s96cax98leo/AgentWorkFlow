@@ -1,5 +1,5 @@
 //! 把 schema、methodology 與共用片段內嵌進 workflow 腳本（Workflow 腳本不能 import 檔案）。
-//! 由 `scaffold/.claude/teams/tools/build.py` 移植；輸出與訊息是對跑基準的一部分（`tests/parity/build.expected.json`）。
+//! 原本是 0.x 的 Python 工具 `build.py`；輸出與訊息是對跑基準的一部分（`tests/parity/build.expected.json`）。
 //!
 //! 標記寫法（腳本內）：
 //!   - `/*@schema:<payload 名>*/ null /*@end*/`：換成信封＋payload 的完整 schema（`envelope` 代表 payload 不限形狀）。
@@ -10,8 +10,8 @@
 //! `// @requires: <名>[, <名>]`，引用它的 workflow 必須也引用這些片段。違反時 exit 1。
 //! profile 的 extensions（使用者自己的 agent）必須登記在 guard.config.json 的 extension_agents，否則不內嵌（exit 1）。
 //!
-//! 和 Python 版不同的地方：Python 版依工具檔的位置決定處理哪個目錄，這裡由呼叫端給 [`Paths`]；
-//! Python 版直接當掉（traceback）的情況（未知的 schema 名、檔案不是 UTF-8 等），這裡在 stderr 印一行說明，exit code 同樣是 1。
+//! 和 0.x 的 Python 版不同的地方：0.x 的 Python 版依工具檔的位置決定處理哪個目錄，這裡由呼叫端給 [`Paths`]；
+//! 0.x 的 Python 版直接當掉（traceback）的情況（未知的 schema 名、檔案不是 UTF-8 等），這裡在 stderr 印一行說明，exit code 同樣是 1。
 
 use crate::kb::pyish::{self, WS_CLASS};
 use crate::merge_gate::{pyjson, pyutil};
@@ -90,9 +90,9 @@ impl Paths {
 /// 內嵌失敗的原因。
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuildError {
-    /// 片段不合規則（Python 版的 SnippetError）：印在 stdout，前面加 workflow 檔名。
+    /// 片段不合規則（0.x 的 Python 版的 SnippetError）：印在 stdout，前面加 workflow 檔名。
     Snippet(String),
-    /// 其他（讀不到檔、未知的 schema）：Python 版在這裡直接當掉，這裡印在 stderr。
+    /// 其他（讀不到檔、未知的 schema）：0.x 的 Python 版在這裡直接當掉，這裡印在 stderr。
     Other(String),
 }
 
@@ -276,7 +276,7 @@ pub fn unregistered_extensions(methodology: Option<&Value>, teams_dir: &Path) ->
             (Some(Value::Array(a)), Some(x)) => a.iter().any(|y| pyfmt::eq(x, y)),
             (Some(Value::Array(a)), None) => a.iter().any(Value::is_null),
             (Some(Value::String(s)), Some(Value::String(a))) => s.contains(a.as_str()),
-            // Python 版在這裡當掉（對數字或字串做不合法的 in）；這裡當成沒登記，只會更嚴
+            // 0.x 的 Python 版在這裡當掉（對數字或字串做不合法的 in）；這裡當成沒登記，只會更嚴
             _ => false,
         };
         if !known {

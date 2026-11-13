@@ -1,4 +1,4 @@
-//! `--selftest`：和 Python 版同樣的 107 項檢查，在暫存目錄裡跑一遍。
+//! `--selftest`：和 0.x 的 Python 版同樣的 107 項檢查，在暫存目錄裡跑一遍。
 
 use super::core::*;
 use super::flow::{run as flow_run, *};

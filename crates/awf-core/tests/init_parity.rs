@@ -1,6 +1,6 @@
 //! init 的回歸基準：照劇本（tests/parity/init.expected.json）做一遍，逐字比對。
 //!
-//! 劇本原本是 Python 版 `init.py` 錄的；1.0 起 init 的行為不同了（工具不複製進專案、hook 改成執行檔、升級會整理舊工具、
+//! 劇本原本是 0.x 的 Python 版 `init.py` 錄的；1.0 起 init 的行為不同了（工具不複製進專案、hook 改成執行檔、升級會整理舊工具、
 //! merge gate 帶執行檔），基準改由這個實作重錄，當成回歸基準：行為或訊息一改，這裡就會指出是哪個案例的哪一步。
 //!
 //! 劇本的每個案例有自己的暫存目錄（`@TMP@`）；`steps` 是檔案操作與指令（run）。每個 run 比 exit code、stdout、stderr

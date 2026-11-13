@@ -27,10 +27,7 @@ argument-hint: <agent 名稱或想做的事（可省略）>
 讀 `.claude/teams/guard.config.json` 與 `.claude/teams/methodology.json`。讀不到就停下，請使用者先跑 `/init-workflow`。
 `guard.config.json` 的 `auto_merge.enabled` 是 true 時，主 session 不能直接改這個檔（hook 會擋）：照常整理改動，第 5 步停在只產出 diff（`guard.config.json` 與 `methodology.json` 兩份一起），請使用者走 PR＋CODEOWNERS，**不要**先單獨寫 `methodology.json`（沒登記守門的擴充 agent 不能進 workflow）。
 
-**找模版根目錄**（下面驗證指令的 `<AgentWorkFlow>`）：`${CLAUDE_PLUGIN_ROOT}` 是 plugin 快取，只有 plugin 目錄，不能往上一層找。依序試：
-1. `~/.claude/plugins/known_marketplaces.json`（Windows：`%USERPROFILE%\.claude\plugins\known_marketplaces.json`）裡 `agentworkflow` 的 `installLocation`。
-2. `~/.claude/plugins/marketplaces/agentworkflow/`。
-3. 都找不到（或目錄裡沒有 `plugin/agents/`）就問使用者模版 repo 在哪裡。
+**plugin 目錄**（下面驗證指令的 `<plugin>`）：這個 skill 所在的 plugin（`${CLAUDE_PLUGIN_ROOT}`，也就是這份 SKILL.md 往上兩層），乾跑腳本與 agent 定義都在裡面，不用另外找模版 repo。
 
 ## 2. 確認是哪個 agent
 - 列出專案 `.claude/agents/*.md`，以及使用者安裝的其他 plugin 裡的 agent，問要用現成的還是新建。
@@ -104,8 +101,8 @@ model: inherit
 ## 6. 驗證
 ```bash
 awf render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 12 支腳本
-node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir <AgentWorkFlow>/plugin/agents   # 確認擴充 agent 會被派出、定義檔存在
-uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py              # methodology.json 合法
+node <plugin>/workflow-templates/check_workflows.mjs --project . --wf-dir _tpm/wf-check   # 確認擴充 agent 會被派出、定義檔存在（<plugin> 是 plugin 目錄）
+awf doctor                             # methodology.json 合法（doctor 會用 schema 驗）
 ```
 再用 hook 確認守門生效（應該 exit 2，被擋）：
 ```bash

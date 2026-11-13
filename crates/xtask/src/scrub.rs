@@ -1,5 +1,5 @@
 //! 去客戶化掃描：用 `tests/scrub_terms.txt`（公開的通用規則）與 `tests/scrub_terms.local.txt`（本機的真實名稱，不進版控；
-//! 存在才讀）掃描檔案內容與路徑名，兩份都是一行一個 ERE 正規式。由 `tests/scrub_check.py` 移植。
+//! 存在才讀）掃描檔案內容與路徑名，兩份都是一行一個 ERE 正規式。原本是 0.x 的 Python 工具 `scrub_check.py`。
 //!
 //! 用法：
 //!   cargo xtask scrub                        # 掃整個 repo
@@ -7,12 +7,12 @@
 //! 任何命中就以 1 退出，並列出「檔案:行號:內容」。排除 .git、__pycache__、node_modules、根目錄的本機目錄
 //! （_tpm、graft、.claude、.idea、Rust 的建置產物 target）、兩份掃描清單本身與二進位檔。
 //!
-//! 和 Python 版不同的地方（都只會更嚴，不會更鬆）：
+//! 和 0.x 的 Python 版不同的地方（都只會更嚴，不會更鬆）：
 //!   - 清單裡 Rust 編不過的規則：明確報錯、exit 1，不略過。錯誤訊息只寫檔名與行號，不印規則內容。
-//!   - 正規式的差異由 [`crate::pyre`] 逐條改寫；路徑名結尾有換行時多比一次。
-//!   - 指定的路徑是 repo 以外的絕對路徑：Python 版當掉（traceback），這裡印一行說明，exit code 同樣是 1。
+//!   - 正規式的差異由 [`crate::termre`] 逐條改寫；路徑名結尾有換行時多比一次。
+//!   - 指定的路徑是 repo 以外的絕對路徑：0.x 的 Python 版當掉（traceback），這裡印一行說明，exit code 同樣是 1。
 
-use crate::pyre::{self, Pat};
+use crate::termre::{self, Pat};
 use awf_core::merge_gate::pyutil;
 use std::path::{Path, PathBuf};
 
@@ -41,7 +41,7 @@ fn load_patterns(root: &Path) -> Result<Vec<Pat>, (i32, String)> {
             if pyutil::strip(line).is_empty() || line.trim_start_matches(pyutil::is_py_space).starts_with('#') {
                 continue;
             }
-            match pyre::compile(line) {
+            match termre::compile(line) {
                 Ok(p) => pats.push(p),
                 Err(why) => {
                     return Err((1, format!("掃描清單 tests/{name} 第 {} 行的規則編不過（{why}）；規則不能略過，請改寫這一行\n", i + 1)));
@@ -137,7 +137,7 @@ pub fn run_captured(root: &Path, argv: &[String]) -> (i32, String, String) {
     for a in argv {
         match resolve_target(root, a) {
             Some(t) => targets.push(t),
-            // 不存在的路徑和 Python 版一樣略過
+            // 不存在的路徑和 0.x 的 Python 版一樣略過
             None if !Path::new(a).exists() => {}
             None => return (1, String::new(), format!("路徑不在 repo 裡：{a}\n")),
         }

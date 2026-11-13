@@ -124,9 +124,9 @@ awf cost --project . --run-dir <run 目錄>
 | 部分 | 內容 | 怎麼進到專案 | 怎麼更新 |
 |---|---|---|---|
 | `plugin/` | agents、skills、slash commands、hooks、workflow 範本、執行檔 `awf`（`bin/`） | 安裝 Claude Code plugin，每台機器裝一次，所有專案共用 | `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins` |
-| `scaffold/` | 硬規則、守門設定、schema、開發規範 profile、golden-set、settings、`CLAUDE.md` 範本 | `awf init` 複製進目標專案，同時換掉 `{{佔位符}}` | 在專案跑 `awf init --upgrade` |
+| `plugin/scaffold/` | 硬規則、守門設定、schema、開發規範 profile、golden-set、settings、`CLAUDE.md` 範本 | `awf init` 複製進目標專案，同時換掉 `{{佔位符}}` | 在專案跑 `awf init --upgrade` |
 
-0.5 起 workflow 的範本也在 plugin 裡（`plugin/workflow-templates/`），不複製進專案：狀態機 `awf next` 每段用範本加專案的設定產生腳本，plugin 更新後流程跟著更新。1.0 起工具也不複製進專案：`awf` 由 plugin 的 `bin/` 提供，專案裡沒有工具副本。專案仍要跑一次 init，因為規則、守門設定與開發規範 profile 是每個專案自己的。
+0.5 起 workflow 的範本也在 plugin 裡（`plugin/workflow-templates/`），不複製進專案：狀態機 `awf next` 每段用範本加專案的設定產生腳本，plugin 更新後流程跟著更新。1.0 起工具也不複製進專案：`awf` 由 plugin 的 `bin/` 提供，專案裡沒有工具副本。要複製進專案的設定（`scaffold/`）也放在 plugin 目錄裡，所以裝好 plugin 就能直接 `awf init`，不用另外 clone 這個 repo。專案仍要跑一次 init，因為規則、守門設定與開發規範 profile 是每個專案自己的。
 
 你可以把自己的 agent 加進 plan、design、test、deliver 任一段（`/agent-workflow:add-agent`），也可以整份換掉開發規範 profile；見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)。
 
@@ -135,7 +135,7 @@ awf cost --project . --run-dir <run 目錄>
 ## 需求
 
 - Claude Code
-- 不需要 Python：工具是 plugin 內附的執行檔 `awf`（macOS、Linux、Windows 的 x64 與 arm64；其他平台自己建置，見 [`docs/建置與發佈.md`](docs/建置與發佈.md)）。
+- 工具是 plugin 內附的執行檔 `awf`（macOS、Linux、Windows 的 x64 與 arm64），不用另外安裝直譯器或套件；其他平台或想自己建置時需要 Rust 工具鏈，見下面〈自己建置〉與 [`docs/建置與發佈.md`](docs/建置與發佈.md)。
 - git；要開 PR 或合併的話另外需要 `gh`。
 - Node.js 18 以上，只有乾跑驗證 workflow 時才需要。
 
@@ -172,25 +172,41 @@ claude plugin install agent-workflow@agentworkflow
 
 ### 2. 在目標專案套用模版（每個專案做一次）
 
+裝好 plugin 之後，在 Claude Code 裡執行（plugin 的 `bin/` 已經在 Claude Code 的 PATH 上）：
+
 ```bash
-git clone https://github.com/s96cax98leo/AgentWorkFlow.git ~/tools/AgentWorkFlow
-~/tools/AgentWorkFlow/plugin/bin/awf init --target ~/work/my-project
+awf init --target ~/work/my-project
 ```
 
-在 Claude Code 裡，plugin 的 `bin/` 已經在 PATH 上，直接打 `awf` 就可以；在自己的終端機要寫完整路徑（如上），或把 `plugin/bin` 加進 PATH。下面的指令都寫成 `awf …`。
+不用 clone 這個 repo：`awf init` 要複製的設定就在 plugin 目錄裡，它會自己找到。也可以執行 `/agent-workflow:init-workflow`，讓它在對話中問完再幫你跑 init。
+
+在自己的終端機（不是 Claude Code 裡）執行時，`awf` 不在 PATH 上，要寫 plugin 安裝位置的完整路徑（`~/.claude/plugins/` 底下這個 plugin 的 `bin/awf`），或把那個 `bin/` 加進 PATH。下面的指令都寫成 `awf …`。
 
 init 會先逐一詢問佔位符的值，再確認你的開發習慣：開發規範 profile、測試要不要先行、code style 的工具或指令、commit 格式、分支前綴、PR 大小上限、文件格式。每題都有預設值，直接按 Enter 就套用。也可以在 Claude Code 裡執行 `/agent-workflow:init-workflow`，讓它在對話中問完再幫你跑 init。
 
 init 會在專案寫下 `.claude/teams/VERSION`（套用的模版版本）與 `.claude/teams/workflow.config`（這次的佔位符值），之後 `--upgrade` 與 `--force` 沒給 `--config` 時都會沿用。
 
-要驗證產出，在目標專案根目錄執行：
+要驗證產出，在目標專案根目錄執行（`awf init` 結尾的「下一步」會印出帶實際路徑的同一組指令）：
 
 ```bash
-awf render --all --out _tpm/wf-check --plugin-dir ~/tools/AgentWorkFlow/plugin
-node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir ~/tools/AgentWorkFlow/plugin/agents
-awf check-agents --plugin-dir ~/tools/AgentWorkFlow/plugin
-python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
+awf doctor
+awf render --all --out _tpm/wf-check
+awf check-agents --plugin-dir <plugin 目錄>
+node <plugin 目錄>/workflow-templates/check_workflows.mjs --project . --wf-dir _tpm/wf-check   # 乾跑，需要 Node.js
 ```
+
+### 自己建置（選用）
+
+內附的執行檔沒有你的平台，或想用開發中的版本時，clone 這個 repo 自己建置（需要 Rust 工具鏈，其他什麼都不用裝）：
+
+```bash
+git clone https://github.com/s96cax98leo/AgentWorkFlow.git ~/tools/AgentWorkFlow
+cd ~/tools/AgentWorkFlow
+cargo build --release -p awf
+target/release/awf init --target ~/work/my-project
+```
+
+建出來的執行檔會從自己的位置往上找到這個 repo 的 `plugin/` 當模版。要讓 plugin 的啟動器（`plugin/bin/awf`）用它，把環境變數 `AWF_BIN` 指到 `target/release/awf`。發佈用的五個平台執行檔怎麼建、怎麼核對，見 [`docs/建置與發佈.md`](docs/建置與發佈.md)。
 
 ## 快速開始
 
@@ -236,7 +252,7 @@ python3 ~/tools/AgentWorkFlow/plugin/hooks/tests/run.py --project .
 - **不可省**：intent（四個必要節加上該類型的專屬節）、plan 的人工核准、rules.md、每個 agent 的執行紀錄、merge_gate、只推 fork。
 - **用 diff 反查**：`awf publish` 與 `awf merge-gate --recipe` 會依實際改動的檔案判斷 recipe 夠不夠，例如 docs 卻改了程式、沒有 design 卻碰到 migration、改了 `.claude/` 或 `.github/` 卻沒做安全審查，一律擋下並提示用 escalate。CI 範本沒有 run.json，所以這項只在本機 publish 與 steward 的 gate 生效。
 - **執行紀錄**：每個 agent 把紀錄寫在 `<run_dir>/<段>/<label>.md`，`awf save-run stage` 產生 `執行紀錄索引.md`。測試等長輸出用 `awf run-brief` 先濃縮再讀，完整 log 另存。
-- **量測方式與限制**：派工數來自 `tests/check_budget.py` 的乾跑（假回傳，bugfix、hotfix 用 2 個子任務，docs 用 1 個，其他用 4 個），實際數字會隨子任務數、審查發現數而變。乾跑量的是「派幾個 agent」和「派工單有多少字」，量不到 agent 實際讀檔與輸出的 token。
+- **量測方式與限制**：派工數來自 `cargo xtask check-budget` 的乾跑（假回傳，bugfix、hotfix 用 2 個子任務，docs 用 1 個，其他用 4 個），實際數字會隨子任務數、審查發現數而變。乾跑量的是「派幾個 agent」和「派工單有多少字」，量不到 agent 實際讀檔與輸出的 token。
 
 細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈依需求類型分流〉。
 
@@ -331,7 +347,7 @@ claude plugin update agent-workflow@agentworkflow   # 或在 Claude Code 的 /pl
 **更新已 init 的專案**：plugin 更新不會動到專案裡的 scaffold 檔案，每個專案要另外跑：
 
 ```bash
-git -C ~/tools/AgentWorkFlow pull
+# 先照上面更新 plugin（scaffold 在 plugin 裡，plugin 更新後才有新版模版）
 awf init --target . --upgrade [--adopt-new-fields]
 ```
 
@@ -357,13 +373,13 @@ awf init --target . --upgrade [--adopt-new-fields]
 
 ```
 awf init --target <專案> [--config workflow.config] [--answers <答案.json>] [--defaults]
-                [--hooks plugin|project] [--python <路徑>] [--with-mcp] [--with-merge-gate]
+                [--hooks plugin|project] [--with-mcp] [--with-merge-gate]
                 [--upgrade] [--adopt-new-fields] [--force] [--overwrite-user-files]
 ```
 
 | 選項 | 說明 |
 |---|---|
-| `--config` | 從設定檔讀佔位符（`cp workflow.config.example workflow.config` 後修改），不給就互動詢問 |
+| `--config` | 從設定檔讀佔位符（把 plugin 目錄的 `workflow.config.example` 複製成 `workflow.config` 後修改），不給就互動詢問 |
 | `--answers` | 開發規範與慣例的答案檔（JSON），不用互動，適合 CI；格式見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md) |
 | `--defaults` | 全部用預設值，使用 default profile |
 | `--hooks plugin` | 預設。hooks 由 plugin 註冊 |
@@ -414,23 +430,27 @@ init 對既有專案只新增檔案，你原本的 agent、skill、command 和�
 AgentWorkFlow/
 ├── .claude-plugin/marketplace.json   # marketplace（名稱 agentworkflow）
 ├── .github/                          # 本 repo 的 CI（ci.yml）與 Dependabot 設定
-├── plugin/                           # plugin 本體（名稱 agent-workflow）
+├── plugin/                           # plugin 本體（名稱 agent-workflow）；從 marketplace 安裝時只有這個目錄，它也是 awf init 的模版
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
 │   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
+│   │   ├── snippets/                 # 多支 workflow 共用的片段（awf build 內嵌進範本）
+│   │   ├── scenarios/                # 乾跑的情境檔（每支 workflow 一檔）
+│   │   └── check_workflows.mjs       # 乾跑所有 workflow 的 Node 腳本
+│   ├── scaffold/                     # awf init 複製進目標專案的內容（設定、schema、profile、rules、golden-set；不含工具）
+│   │   ├── .claude/teams/            # rules.md、schemas/、methodologies/、deliverables/、golden-set/、guard.config.json.tmpl
+│   │   ├── .github/workflows/        # agent-merge-gate.yml.tmpl（選用）
+│   │   ├── CLAUDE.md.tmpl、.mcp.json.tmpl
+│   │   └── _runs/                    # run 目錄說明
+│   ├── workflow.config.example       # 佔位符的值
+│   ├── legacy-tools.json             # 0.x 複製進專案的工具檔指紋（awf init --upgrade 用來移除沒改過的舊副本）
 │   ├── bin/                          # 執行檔 awf（啟動器＋各平台的執行檔）
 │   └── hooks/                        # hooks.json：註冊 awf hook（guard-shell、guard-paths、envelope、session-start）
-├── scaffold/                         # awf init 複製進目標專案的內容（設定、schema、profile、rules、golden-set；不含工具）
-│   ├── .claude/teams/                # rules.md、schemas/、methodologies/、deliverables/、golden-set/、guard.config.json.tmpl
-│   ├── .github/workflows/            # agent-merge-gate.yml.tmpl（選用）
-│   ├── CLAUDE.md.tmpl、.mcp.json.tmpl
-│   └── _runs/                        # run 目錄說明
 ├── crates/                           # awf 的原始碼（Rust）：awf-core（全部邏輯）、awf（執行檔入口）、xtask（建置與檢查）
-├── workflow.config.example           # 佔位符的值
 ├── CHANGELOG.md、SECURITY.md、LICENSE
 ├── docs/                             # 說明文件
-└── tests/                            # 去客戶化掃描、init 煙霧測試、recipe 與派工預算檢查、全部測試入口；bench/ 是基準實跑
+└── tests/                            # 測試資料：回歸基準（parity/）、hook 案例（hooks/）、去客戶化清單（scrub_terms.txt）、基準實跑的需求（bench/）
 ```
 
 ## 文件
@@ -454,17 +474,29 @@ AgentWorkFlow/
 
 ## 開發這個模版
 
+工具與測試都是 Rust（`cargo`），只有驗證 workflow 的幾步要 Node.js。全部檢查是下面兩個指令，兩個都過才算通過：
+
 ```bash
-python3 tests/run_all.py              # 全部：去客戶化掃描 → init 煙霧測試 → hook 測試 → tests/check_*.py → check-tokens
-python3 tests/scrub_check.py [路徑…]   # 只跑去客戶化掃描
-python3 tests/smoke_init.py           # 只跑 init 煙霧測試；KEEP=1 保留暫存目錄
-python3 plugin/hooks/tests/run.py     # 只跑 hook 測試（Bash 與 PowerShell 案例）
-python3 tests/check_docs.py           # 文件一致性（角色、workflow、command 的數量與名單）
-python3 tests/check_recipes.py        # recipe 的工具端與 JS 片段解析結果一致
-python3 tests/check_budget.py         # 派工數與派工單字數不超過基準 10%
+cargo test --workspace                # 單元測試、回歸基準（tests/parity/）、hook 案例（tests/hooks/）、init 煙霧測試
+cargo xtask check-all                 # 去客戶化掃描、golden、文件核對、recipe／執行核心／pattern／派工預算、供應鏈、啟動器、片段漂移、各子指令的 selftest、workflow 乾跑
 ```
 
-- **CI**（`.github/workflows/ci.yml`）：每個 push 與 PR 都跑 `tests/run_all.py`，矩陣是 ubuntu-latest（Python 3.12、3.13）、ubuntu-22.04（Python 3.9）、macos-latest、windows-latest（pwsh）。CI 用到的 action 都釘 commit SHA。
+單獨跑其中一項：
+
+```bash
+cargo xtask scrub [路徑…]             # 只跑去客戶化掃描
+cargo xtask check-docs                # 文件一致性（角色、workflow、command 的數量與名單）
+cargo xtask check-recipes             # recipe 的工具端與 JS 片段解析結果一致
+cargo xtask check-budget              # 派工數與派工單字數不超過基準 10%
+cargo xtask check-supply              # 供應鏈：action 釘 SHA、相依的來源與允許清單、Node 腳本只用內建模組
+cargo test -p awf --test smoke_init   # 只跑 init 煙霧測試
+cargo test -p awf --test hooks_cases  # 只跑 hook 案例（Bash 與 PowerShell）
+cargo run -q -p awf -- <子指令> --selftest   # 單一子指令的 selftest，例如 state、merge-gate、save-run
+```
+
+其他 `cargo xtask` 子指令（golden、check-kernel、check-patterns、check-launchers、gen-legacy、bench、dist、checksums）見 `cargo xtask --help`。回歸基準怎麼更新見 [`tests/parity/README.md`](tests/parity/README.md)。
+
+- **CI**（`.github/workflows/ci.yml`）：每個 push 與 PR 都在 ubuntu-latest、macos-latest、windows-latest 跑 `cargo build`、`cargo test --workspace`、`cargo xtask check-all`。CI 用到的 action 都釘 commit SHA。
 - **Dependabot**（`.github/dependabot.yml`）：每週檢查 CI 用到的 GitHub Actions 有沒有新版，有就自動開 PR，同時更新 SHA 與版本註解。這些 PR 由 GitHub 的 `dependabot[bot]` 開，是這個 repo 自己的設定，不是外人提交的；CI 綠了、讀過上游 release notes 再決定要不要合併。
 - **去客戶化掃描**讀兩份清單：`tests/scrub_terms.txt`（公開的通用規則：本機路徑、憑證格式、個人信箱）與 `tests/scrub_terms.local.txt`（要擋的真實名稱，不進版控）。範例一律用虛構的「示範客戶 ACME」。
 

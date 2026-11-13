@@ -3,8 +3,6 @@
 //! 每支檢查兩種：對這個 repo 實跑要通過；在暫存副本裡弄壞一個輸入（golden 的預期、片段裡的上限檢查、基準數字、
 //! 版控裡的檔案）要報失敗、exit 非零，而且訊息指得出是哪裡。
 //! 自訂腳本的組裝結果和固定的預期檔比（`tests/fixtures/custom-script-frame.*.js`）。
-//! 另有一個和 Python 版直接對照的測試（供應鏈檢查的 import 清單）：Python 檔還在的期間才跑，
-//! 找不到 python3 或對應的 Python 檔就略過；Python 移除後這個測試與它掃的東西一起沒有了。
 #![cfg(unix)]
 
 use serde_json::{json, Value};
@@ -298,10 +296,7 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(st.status.success(), "git {args:?}：{}", String::from_utf8_lossy(&st.stderr));
 }
 
-/// Python 檔不在時沒有前兩條（`RUST_PASSING` 是其餘的）。
-const PASSING: &str = "[通過] 只用標準庫\n[通過] plugin 不連網\n[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n[通過] Cargo.lock 在版控裡\n\
-[通過] Rust 相依都來自 crates.io\n[通過] Rust 相依和允許清單一致\n[通過] Node 腳本只用內建模組\n\n供應鏈檢查通過\n";
-const RUST_PASSING: &str = "[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n[通過] Cargo.lock 在版控裡\n\
+const PASSING: &str = "[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n[通過] Cargo.lock 在版控裡\n\
 [通過] Rust 相依都來自 crates.io\n[通過] Rust 相依和允許清單一致\n[通過] Node 腳本只用內建模組\n\n供應鏈檢查通過\n";
 const CRATES_IO: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
@@ -327,11 +322,6 @@ fn supply_catches_each_kind() {
     let tmp = TempDir::new("awf-xtask-supply-").expect("暫存目錄");
     let d = tmp.path();
     let sha = "0123456789abcdef0123456789abcdef01234567";
-    write(d, "init.py", "import os\nimport helper\nfrom schemalib import x\n");
-    write(d, "helper.py", "import json\n");
-    write(d, "plugin/hooks/guard.py", "import re, json\nfrom pathlib import Path\n");
-    write(d, "plugin/skills/demo/tool.py", "import json\n");
-    write(d, "plugin/scaffold/.claude/teams/tools/schemalib.py", "import json\nfrom . import sibling\n");
     write(d, ".github/workflows/ci.yml", &format!("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{sha} # v4\n      - uses: ./local\n"));
     write(d, "plugin/scaffold/.github/workflows/gate.yml.tmpl", &format!("steps:\n  - name: x\n    uses: \"actions/setup-node@{sha}\"\n"));
     write(d, ".env.example", "A=1\n");
@@ -343,11 +333,6 @@ fn supply_catches_each_kind() {
     assert_eq!((rc, out.as_str()), (0, PASSING), "{err}");
 
     // 逐類弄壞
-    write(d, "init.py", "import os\nimport requests\ntry:\n    import yaml.parser as yp\nexcept ImportError:\n    pass\n");
-    write(d, "plugin/scaffold/.claude/teams/tools/schemalib.py", "import importlib\nm = importlib.import_module('jsonschema')\n");
-    write(d, "plugin/hooks/guard.py", "import re\nfrom http import client\n");
-    write(d, "plugin/skills/demo/tool.py", "def f():\n    import urllib.request\n    return __import__('socket')\n");
-    write(d, "plugin/skills/demo/broken.py", "x = 'abc\n");
     write(d, ".github/workflows/ci.yml", "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: docker://alpine:3\n");
     write(d, "plugin/scaffold/.github/workflows/gate.yml.tmpl", "steps:\n  - name: x\n    uses: 'actions/setup-node@0123456'\n");
     write(d, ".env", "A=1\n");
@@ -373,15 +358,6 @@ fn supply_catches_each_kind() {
     let (rc, out, err) = check_supply::run_captured(d);
     assert_eq!(rc, 1, "{out}{err}");
     for want in [
-        "[失敗] 只用標準庫\n",
-        "  - plugin/scaffold/.claude/teams/tools/schemalib.py:2：import 了非標準庫模組 jsonschema\n",
-        "  - init.py:2：import 了非標準庫模組 requests\n",
-        "  - init.py:4：import 了非標準庫模組 yaml.parser\n",
-        "[失敗] plugin 不連網\n",
-        "  - plugin/hooks/guard.py:2：plugin 不得有網路呼叫（import http.client）\n",
-        "  - plugin/skills/demo/broken.py：無法解析（",
-        "  - plugin/skills/demo/tool.py:2：plugin 不得有網路呼叫（import urllib.request）\n",
-        "  - plugin/skills/demo/tool.py:3：plugin 不得有網路呼叫（import socket）\n",
         "[失敗] action 釘 SHA\n",
         "  - .github/workflows/ci.yml:4：action 沒有釘 40 字元 commit SHA（actions/checkout@v4）\n",
         "  - plugin/scaffold/.github/workflows/gate.yml.tmpl:3：action 沒有釘 40 字元 commit SHA（actions/setup-node@0123456）\n",
@@ -407,14 +383,14 @@ fn supply_catches_each_kind() {
     ] {
         assert!(out.contains(want), "少了「{want}」：\n{out}");
     }
-    assert_eq!(out.matches("  - ").count(), 23, "{out}");
-    assert!(out.ends_with("\n供應鏈檢查失敗：23 條\n"), "{out}");
-    assert!(!out.contains(".env.example") && !out.contains("docker://") && !out.contains("helper"), "{out}");
+    assert_eq!(out.matches("  - ").count(), 16, "{out}");
+    assert!(out.ends_with("\n供應鏈檢查失敗：16 條\n"), "{out}");
+    assert!(!out.contains(".env.example") && !out.contains("docker://"), "{out}");
 }
 
-/// Python 檔都不在時：沒有 Python 那兩條，其餘照常；Cargo.lock 沒進版控、不存在、workspace 成員沒跟上都要失敗。
+/// Cargo.lock 沒進版控、不存在、workspace 成員沒跟上都要失敗。
 #[test]
-fn supply_without_python_checks_rust_side() {
+fn supply_checks_rust_side() {
     let tmp = TempDir::new("awf-xtask-supply-rs-").expect("暫存目錄");
     let d = tmp.path();
     write_cargo(d);
@@ -422,7 +398,7 @@ fn supply_without_python_checks_rust_side() {
     git(d, &["init", "-q"]);
     git(d, &["add", "-A"]);
     let (rc, out, err) = check_supply::run_captured(d);
-    assert_eq!((rc, out.as_str()), (0, RUST_PASSING), "{err}");
+    assert_eq!((rc, out.as_str()), (0, PASSING), "{err}");
 
     git(d, &["rm", "-q", "--cached", "Cargo.lock"]);
     let (rc, out, _) = check_supply::run_captured(d);
@@ -448,7 +424,7 @@ fn supply_without_python_checks_rust_side() {
 #[test]
 fn supply_fails_outside_git() {
     let tmp = TempDir::new("awf-xtask-supply-nogit-").expect("暫存目錄");
-    write(tmp.path(), "init.py", "import os\n");
+    write(tmp.path(), "README.md", "乾淨\n");
     // 上層剛好是 git repo 時 ls-files 會成功；用 GIT_CEILING_DIRECTORIES 擋不了子程序的環境，所以只在確定不在 repo 裡時才驗
     let inside = Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).current_dir(tmp.path()).output().map(|o| o.status.success()).unwrap_or(false);
     if inside {
@@ -459,52 +435,10 @@ fn supply_fails_outside_git() {
     assert!(out.contains("[失敗] 版控沒有快取、.env、私鑰\n  - git ls-files 失敗："), "{out}");
 }
 
-// ------------------------------------------------------------------ 和 Python 版直接對照（Python 版還在的期間）
-
-/// 跑一段 Python，回 stdout 的 JSON；沒有 python3 回 None。
-fn python_json(code: &str, args: &[&Path]) -> Option<Value> {
-    let py = util::which("python3")?;
-    let out = Command::new(py).arg("-c").arg(code).args(args).env("PYTHONUTF8", "1").output().ok()?;
-    assert!(out.status.success(), "Python 那一邊失敗：{}", String::from_utf8_lossy(&out.stderr));
-    Some(serde_json::from_slice(&out.stdout).expect("Python 那一邊的 JSON"))
-}
-
-/// 供應鏈檢查看的每個 Python 檔：Rust 找到的 import 和 Python `ast` 找到的相同（行號與模組名）。
-#[test]
-fn supply_imports_match_python_ast() {
-    let r = root();
-    if !r.join("tests/check_supply.py").is_file() {
-        eprintln!("略過：Python 版已經不在");
-        return;
-    }
-    let code = "import sys, json\nsys.path.insert(0, sys.argv[1] + '/tests')\nimport check_supply as c\n\
-                print(json.dumps({c.rel(p): sorted(c.imports(p)) for p in c.files(c.STDLIB_ONLY_GLOBS) + c.files(['plugin/**/*.py'])}))";
-    let Some(py) = python_json(code, &[&r]) else {
-        eprintln!("略過：找不到 python3");
-        return;
-    };
-    let py = py.as_object().expect("物件");
-    let files = check_supply::python_files(&r);
-    let mut theirs: Vec<&String> = py.keys().collect();
-    let mut mine: Vec<&String> = files.iter().collect();
-    theirs.sort();
-    mine.sort();
-    assert_eq!(mine, theirs, "要看的檔案清單不同");
-    let mut total = 0;
-    for f in &files {
-        let mut got = check_supply::imports_in(&r.join(f)).unwrap_or_else(|e| panic!("{f}：{e}"));
-        got.sort();
-        let got: Vec<Value> = got.into_iter().map(|(l, m)| json!([l, m])).collect();
-        total += got.len();
-        assert_eq!(Value::Array(got), py[f.as_str()], "{f} 的 import 不同");
-    }
-    assert!(total > 300, "import 太少，可能沒掃到：{total}");
-}
-
 /// 自訂腳本的組裝結果沒有走樣：骨架（狀態機接上去的那一段與外層包裝；片段、profile、schema 的內文換成記號，
 /// 見 `check_patterns::script_frame`）和固定的預期檔逐字相同。
 ///
-/// 預期檔的來歷：Python 版還在的時候，這個測試直接拿 `awf.py` 的 `render_custom` 對照，全文逐字相同（只差標題列的
+/// 預期檔的來歷：0.x 的 Python 版還在的時候，這個測試直接拿 `awf.py` 的 `render_custom` 對照，全文逐字相同（只差標題列的
 /// 「awf.py」改成「awf」）；預期檔就是那一次的結果取骨架存下來的。之後行為確實該變時用
 /// `AWF_UPDATE_EXPECTED=1 cargo test -p xtask --test checks custom_script` 重寫，並在 commit 說明哪裡變了、為什麼。
 #[test]

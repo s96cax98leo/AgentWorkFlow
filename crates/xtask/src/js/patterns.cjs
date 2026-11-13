@@ -1,4 +1,4 @@
-// check-patterns 的測試本體：pattern 庫（challenge、recipe、kernel、patterns 四個片段）。由 tests/check_patterns.py 原樣搬來。
+// check-patterns 的測試本體：pattern 庫（challenge、recipe、kernel、patterns 四個片段）。原本在 0.x 的 tests/check_patterns.py 裡。
 // 用法：node -e <本檔> <片段檔…>；通過印 ok，沒通過印理由並 exit 1。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')

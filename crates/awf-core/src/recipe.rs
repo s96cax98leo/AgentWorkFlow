@@ -1,15 +1,15 @@
-//! 依需求類型分流（recipe、modifier）與模型分級的解析。由 `scaffold/.claude/teams/tools/recipe.py` 移植。
+//! 依需求類型分流（recipe、modifier）與模型分級的解析。原本是 0.x 的 Python 工具 `recipe.py`。
 //!
 //! recipe 定義在開發規範 profile（methodology.json）的 recipes／modifiers；模版內建 11 個 recipe 與 5 個 modifier
 //! （`builtin_recipes`、`builtin_modifiers`）。profile 沒有 recipes（舊版）或指定了不存在的 recipe 時，
 //! 一律當成 feature（`fallback_feature`），只會更嚴，不會變鬆。
 //!
 //! 移植方式：資料一律是 `serde_json::Value`，Python 的 `None` 對應 `Value::Null`（所有參數都可以給 Null）。
-//! Python 版碰到形狀不對的輸入會丟例外（工具當掉、exit 1）；這裡回 `Err(PyErr)`，`kind` 是 Python 的例外類別名。
+//! 0.x 的 Python 版碰到形狀不對的輸入會丟例外（工具當掉、exit 1）；這裡回 `Err(PyErr)`，`kind` 是 Python 的例外類別名。
 //! 呼叫端碰到 Err 一律要當成失敗（fail-closed），不能當成「沒有問題」。
 //! 對跑基準在 `tests/parity/recipe.expected.json`（`tests/parity/record_recipe.py` 錄）。
 //!
-//! 和 Python 版的已知差異：
+//! 和 0.x 的 Python 版的已知差異：
 //! - `classify` 回排序過的清單（Python 回 set，走訪順序不固定）。
 //! - 沒有 `__file__`：`load_profile`、`golden_cases`、`selftest` 的 teams 目錄由呼叫端給；`main` 用目前目錄的 `.claude/teams`。
 //! - 讀 JSON 用 serde_json：不收 NaN／Infinity，超過 64 位元的整數會變成浮點數。
@@ -65,7 +65,7 @@ recipe 定義在開發規範 profile（methodology.json）的 recipes／modifier
 
 // ------------------------------------------------------------------ Python 語意的小工具
 
-/// Python 版會丟的例外。`kind` 是例外類別名（TypeError、AttributeError、KeyError…）。
+/// 0.x 的 Python 版會丟的例外。`kind` 是例外類別名（TypeError、AttributeError、KeyError…）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyErr {
     pub kind: &'static str,

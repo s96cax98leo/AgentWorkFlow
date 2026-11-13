@@ -1,4 +1,4 @@
-//! schema 驗證的對跑：和 Python 版錄下來的基準（tests/parity/schema.expected.json）逐字比對。
+//! schema 驗證的對跑：和 0.x 的 Python 版錄下來的基準（tests/parity/schema.expected.json）逐字比對。
 
 use awf_core::schema::{self, Schemas};
 use serde_json::Value;

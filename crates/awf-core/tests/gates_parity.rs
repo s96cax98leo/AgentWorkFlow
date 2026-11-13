@@ -1,9 +1,9 @@
-//! merge gate 與 sync-branch 的對跑：和 Python 版錄下來的基準（tests/parity/gates.expected.json）逐字比對。
+//! merge gate 與 sync-branch 的對跑：和 0.x 的 Python 版錄下來的基準（tests/parity/gates.expected.json）逐字比對。
 //!
-//! 基準的格式與正規化規則見 `tests/parity/record_gates.py` 開頭的說明。每個案例在自己的暫存目錄重建輸入檔，
+//! 基準的格式與正規化規則見 `tests/parity/README.md`。每個案例在自己的暫存目錄重建輸入檔，
 //! 用同樣的參數跑 Rust 版，比 exit code、stdout、stderr（參數錯誤只比最後一行）與寫出來的檔（稽核紀錄）。
 //!
-//! 和 Python 版不一樣的地方只准更嚴，全部列在 `STRICTER`（附理由）；Python 版丟出沒接住的例外的案例
+//! 和 0.x 的 Python 版不一樣的地方只准更嚴，全部列在 `STRICTER`（附理由）；0.x 的 Python 版丟出沒接住的例外的案例
 //! （基準裡記 crash），這裡只要求「不放行」。
 
 #![cfg(unix)]
@@ -18,7 +18,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-/// 和 Python 版判定不同、但只會更嚴的案例（案例名 → 理由）。
+/// 和 0.x 的 Python 版判定不同、但只會更嚴的案例（案例名 → 理由）。
 const STRICTER: &[(&str, &str)] = &[
     ("merged-today '２'", "全形數字：Python 的 int() 收，這裡只收 ASCII 數字 → hold"),
     ("diff：hunk 標頭用全形數字（Python 收、另一個實作只會更嚴）", "hunk 標頭只收 ASCII 數字 → diff 解析不了、hold"),
@@ -104,7 +104,7 @@ fn days() -> Vec<(String, &'static str)> {
         .filter_map(|(n, tag)| pyutil::add_days(today, n).map(|d| (pyutil::iso(d), tag))).collect()
 }
 
-/// 需求清單指令（對應 Python 版 selftest 臨時寫的 gen_reqs.py）。
+/// 需求清單指令（對應 0.x 的 Python 版 selftest 臨時寫的 gen_reqs.py）。
 fn gen_cmd() -> Value {
     json!(["sh", "-c", "printf '{\"requirements\": [{\"id\": \"ISSUE-7\", \"text\": \"登入頁顯示錯誤訊息\", \"source\": \"issue #7 of %s\"}]}\\n' \"$AWF_REPO\""])
 }
@@ -314,10 +314,10 @@ fn merge_gate_cases_match_python() {
         let name = s(&c["name"]);
         let got = run_mg_case(c);
         if c.get("crash").is_some() {
-            // Python 版在這裡丟例外（traceback、exit 1、沒有判定）：只要求不放行、也不輸出 merge
+            // 0.x 的 Python 版在這裡丟例外（traceback、exit 1、沒有判定）：只要求不放行、也不輸出 merge
             crash += 1;
             if got.code == 0 || got.stdout.contains("\"decision\": \"merge\"") {
-                bad.push(format!("{name}：Python 版丟例外的案例，這裡卻放行（exit {}）", got.code));
+                bad.push(format!("{name}：0.x 的 Python 版丟例外的案例，這裡卻放行（exit {}）", got.code));
             }
             continue;
         }
@@ -431,7 +431,7 @@ fn merge_gate_selftest_matches_python() {
     let want = &expected()["mg"]["selftest"];
     let got = sha_re().replace_all(&out, "@SHA@").into_owned();
     assert_eq!(json!(code), want["code"], "{out}");
-    assert!(got == s(&want["stdout"]), "selftest 的輸出和 Python 版不同：{}", first_diff(s(&want["stdout"]), &got));
+    assert!(got == s(&want["stdout"]), "selftest 的輸出和 0.x 的 Python 版不同：{}", first_diff(s(&want["stdout"]), &got));
 }
 
 #[test]
@@ -442,7 +442,7 @@ fn sync_branch_selftest_matches_python() {
     let code = sb::selftest(&ctx, &mut out);
     let want = &expected()["sb"]["selftest"];
     assert_eq!(json!(code), want["code"], "{out}");
-    assert!(out == s(&want["stdout"]), "selftest 的輸出和 Python 版不同：{}", first_diff(s(&want["stdout"]), &out));
+    assert!(out == s(&want["stdout"]), "selftest 的輸出和 0.x 的 Python 版不同：{}", first_diff(s(&want["stdout"]), &out));
 }
 
 // ------------------------------------------------------------------ sync-branch：照錄下來的步驟重播
@@ -479,10 +479,10 @@ fn sync_branch_steps_match_python() {
                 continue;
             };
             if step.get("crash").is_some() {
-                // Python 版丟例外：這裡只要求停下
+                // 0.x 的 Python 版丟例外：這裡只要求停下
                 crash += 1;
                 if code == 0 {
-                    bad.push(format!("{label}：Python 版丟例外的案例，這裡卻 exit 0"));
+                    bad.push(format!("{label}：0.x 的 Python 版丟例外的案例，這裡卻 exit 0"));
                 }
                 continue;
             }

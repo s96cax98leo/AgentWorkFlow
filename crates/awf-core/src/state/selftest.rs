@@ -1,8 +1,8 @@
-//! `awf state --selftest`：項目名稱與順序同 Python 版的 `awf.py --selftest`。
+//! `awf state --selftest`：項目名稱與順序同 0.x 的 Python 版的 `awf.py --selftest`。
 //!
-//! Python 版的工具從自己所在的目錄讀 schema、片段、內建 profile 與交付文件型錄；這裡沒有「工具所在的目錄」，
+//! 0.x 的 Python 版的工具從自己所在的目錄讀 schema、片段、內建 profile 與交付文件型錄；這裡沒有「工具所在的目錄」，
 //! 改從專案的 `.claude/teams`（已 init 的專案）或模版的 `scaffold/.claude/teams` 讀，並把 schema 與片段放進暫存專案。
-//! 在模版 repo 裡跑（資源取自模版）時，和 Python 版一樣多驗兩項真的範本、少驗一項從登記檔找 plugin。
+//! 在模版 repo 裡跑（資源取自模版）時，和 0.x 的 Python 版一樣多驗兩項真的範本、少驗一項從登記檔找 plugin。
 
 use super::{
     deliverables_sync, event_required, event_route, find_plugin, highlights, is_dir, is_file, load_json, plugin::ph_re, plugin_candidates, render, run_captured, stage_args, Env, Fail, ARGS_LINE,
@@ -14,7 +14,7 @@ use crate::{check_agents, pack, recipe, script};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// 假範本（Python 版的 FAKE_TEMPLATE；佔位符在這裡組出來，原始碼裡不寫真的佔位符）。
+/// 假範本（0.x 的 Python 版的 FAKE_TEMPLATE；佔位符在這裡組出來，原始碼裡不寫真的佔位符）。
 fn fake_template(name: &str) -> String {
     let (l, r) = ("{".repeat(2), "}".repeat(2));
     format!(
@@ -383,7 +383,7 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
     let guard = json!({"auto_merge": {"enabled": true}});
     put(&pj(&teams, "guard.config.json"), &jd(&guard));
     put(&pj(&teams, "VERSION"), "9.9.9\n");
-    // Python 版從工具所在的目錄讀 schema 與片段；這裡放進暫存專案
+    // 0.x 的 Python 版從工具所在的目錄讀 schema 與片段；這裡放進暫存專案
     copy_dir(&pj(src, "schemas"), &pj(&teams, "schemas"));
     // 1.0 的專案沒有 tools/snippets：不複製，產生腳本時用模版的片段
     if is_dir(&pj(src, "tools/snippets")) {

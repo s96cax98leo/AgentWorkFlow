@@ -1,5 +1,8 @@
 //! `cargo xtask check-all`：依序跑 repo 的全部維護檢查，每一步印「通過／失敗／略過 <名稱>」，最後印總結。
-//! 取代 `tests/run_all.py`。不需要 Python；要 cargo、git，node 見下。
+//! 要 cargo、git，node 見下。
+//!
+//! 全部檢查＝`cargo test --workspace`＋`cargo xtask check-all`，兩個都過才算通過：這支不包含 `cargo test`
+//! （單元測試、回歸基準、hook 案例、init 的煙霧測試都在那邊）。
 //!
 //! 步驟（順序固定）：
 //!   1. scrub、golden、check-docs、check-recipes、check-kernel、check-patterns、check-budget、check-supply、
@@ -10,9 +13,6 @@
 //!   5. 各子指令的 selftest：`awf <子指令> --selftest`（在 `plugin/scaffold/` 下跑），清單見 [`SELFTESTS`]。
 //!   6. bench --selftest：基準實跑不花 token 的部分。
 //!   7. workflow 乾跑：暫存專案 init、產生 12 支腳本，`node check_workflows.mjs` 把每支與全部情境走一遍。
-//!   8. smoke-init：留位，還沒接上（不算通過、不算失敗，總結會列出）。
-//!
-//! 不包含 `cargo test --workspace`（對跑基準與單元測試）：那個另外跑，兩個都過才算全部檢查通過。
 //!
 //! 沒有 node 時：需要 node 的步驟（check-recipes、check-kernel、check-patterns、check-budget、workflow 乾跑）印「略過」、
 //! 不執行，總結列出；略過不算通過，所以整體 exit 1。確定要在沒有 node 的機器上只看其餘步驟時加 `--allow-skip`
@@ -40,8 +40,6 @@ enum Outcome {
     Fail(String),
     /// 沒執行（缺工具）：理由。
     Skip(String),
-    /// 還沒接上的位置：說明。
-    Todo(String),
 }
 
 fn from_captured((code, out, err): Captured) -> Outcome {
@@ -121,7 +119,6 @@ fn steps<'a>(root: &'a Path) -> Vec<Step<'a>> {
     }
     add(&mut v, "bench --selftest", false, Box::new(move || from_captured(bench::run_captured(root, &["--selftest".to_string()]))));
     add(&mut v, "workflow 乾跑（check_workflows.mjs）", true, Box::new(move || dry_run(root)));
-    add(&mut v, "smoke-init", false, Box::new(move || Outcome::Todo("還沒接上：init 的煙霧測試另外移植，接上之前請另外確認 init".to_string())));
     v
 }
 
@@ -147,7 +144,7 @@ pub fn run(root: &Path, args: &[String]) -> i32 {
     let has_node = util::which("node").is_some();
     let all = steps(root);
     let total = all.len();
-    let (mut passed, mut failed, mut skipped, mut todo): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) = Default::default();
+    let (mut passed, mut failed, mut skipped): (Vec<String>, Vec<String>, Vec<String>) = Default::default();
     let mut ran = 0;
     let start = Instant::now();
     for st in all {
@@ -177,15 +174,11 @@ pub fn run(root: &Path, args: &[String]) -> i32 {
                 println!("略過  {name}（{why}，沒有執行）");
                 skipped.push(format!("{name}（{why}）"));
             }
-            Outcome::Todo(why) => {
-                println!("未接  {name}（{why}）");
-                todo.push(name);
-            }
         }
     }
     println!("\n================ 總結 ================");
-    println!("通過 {}、失敗 {}、略過 {}、未接上 {}（共 {ran} 步，{:.0} 秒）", passed.len(), failed.len(), skipped.len(), todo.len(), start.elapsed().as_secs_f64());
-    for (label, list) in [("失敗", &failed), ("略過（沒有執行，不算通過）", &skipped), ("未接上（不算通過、不算失敗）", &todo)] {
+    println!("通過 {}、失敗 {}、略過 {}（共 {ran} 步，{:.0} 秒）", passed.len(), failed.len(), skipped.len(), start.elapsed().as_secs_f64());
+    for (label, list) in [("失敗", &failed), ("略過（沒有執行，不算通過）", &skipped)] {
         if !list.is_empty() {
             println!("{label}：");
             for x in list {
@@ -196,7 +189,7 @@ pub fn run(root: &Path, args: &[String]) -> i32 {
     if only.is_some() {
         println!("注意：用了 --only，只跑了 {ran}／{total} 步，不是全部檢查。");
     }
-    println!("不包含 cargo test --workspace（對跑基準與單元測試）：另外跑，兩個都過才算全部檢查通過。");
+    println!("全部檢查＝cargo test --workspace＋cargo xtask check-all：這裡不包含 cargo test（單元測試、回歸基準、hook 案例、init 煙霧測試），要另外跑，兩個都過才算通過。");
     if ran == 0 {
         println!("沒有任何步驟符合 --only");
         return 2;

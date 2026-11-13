@@ -1,5 +1,5 @@
-//! `awf pack --selftest`：和 Python 版同樣的檢查項（名稱、順序、項數都相同）。
-//! 中間幾次 `run_pack` 的輸出照 Python 版一樣直接印出來。
+//! `awf pack --selftest`：和 0.x 的 Python 版同樣的檢查項（名稱、順序、項數都相同）。
+//! 中間幾次 `run_pack` 的輸出照 0.x 的 Python 版一樣直接印出來。
 
 use super::*;
 

@@ -1,5 +1,5 @@
 //! 工具先定位：不派 agent，先用確定性的方式找出「哪個檔的哪幾行」值得讀。
-//! 由 `scaffold/.claude/teams/tools/locate.py` 移植，輸出、結束碼、訊息文字和 Python 版逐字相同
+//! 原本是 0.x 的 Python 工具 `locate.py`，輸出、結束碼、訊息文字和 0.x 的 Python 版逐字相同
 //! （對跑基準在 `tests/parity/deliverables.expected.json` 的 locate 部分；說明文字裡的指令已改成 `awf locate`）。
 //!
 //! 做法：把目標 repo 的文字檔切成固定行數的視窗，用需求文字當查詢做 BM25 排序（分詞和知識層相同），
@@ -88,7 +88,7 @@ impl Located {
         Located { note: note.to_string(), ..Default::default() }
     }
 
-    /// 和 Python 版回傳的 dict 同樣的鍵。
+    /// 和 0.x 的 Python 版回傳的 dict 同樣的鍵。
     pub fn to_json(&self) -> Value {
         let locs: Vec<Value> = self.locations.iter().map(|x| json!({"path": x.path, "start": x.start, "end": x.end, "why": x.why})).collect();
         json!({"locations": locs, "enough": self.enough, "coverage": self.coverage, "note": self.note})
@@ -608,7 +608,7 @@ fn slurp(root: &str, rel: &str) -> String {
     String::from_utf8_lossy(&std::fs::read(pyish::pjoin(root, rel)).unwrap_or_default()).into_owned()
 }
 
-/// `--selftest`：和 Python 版同樣的檢查項，逐項印結果。
+/// `--selftest`：和 0.x 的 Python 版同樣的檢查項，逐項印結果。
 pub fn selftest(out: &mut String) -> i32 {
     let mut fails = 0usize;
     out.push_str("locate selftest\n");

@@ -1,4 +1,4 @@
-//! 守門的共用部分：設定與工作區（[`Guard`]）、路徑判斷、跑 git、轉呼叫目標 repo 自己的 guard。由 `plugin/hooks/guard.py` 移植。
+//! 守門的共用部分：設定與工作區（[`Guard`]）、路徑判斷、跑 git、轉呼叫目標 repo 自己的 guard。原本是 0.x 的 Python 工具 `guard.py`。
 //!
 //! 規則本身在 `guard_shell.rs`（Bash／PowerShell）與 `guard_paths.rs`（Edit／Write／Read／Grep）。
 

@@ -1,5 +1,5 @@
 {
- "_說明": "基準用虛構專案每個檔的 sha1。最初由 Python 版 tests/bench/make_fixture.py 的產出記下來（當時每個 .py 都確認過能編譯）；cargo xtask bench --selftest 核對現在的產出和它逐檔相同。內容確實該變時用 cargo xtask bench manifest --write 重寫，並在 commit 說明。",
+ "_說明": "基準用虛構專案每個檔的 sha1。最初由 0.x 的 Python 版 tests/bench/make_fixture.py 的產出記下來（當時每個 .py 都確認過能編譯）；cargo xtask bench --selftest 核對現在的產出和它逐檔相同。內容確實該變時用 cargo xtask bench manifest --write 重寫，並在 commit 說明。",
  "files": {
   ".gitignore": "23ca2300b9bc8df17fa50d0332a54447d7e7b08a",
   "README.md": "96dc36299fdbba124f6b06b4e6a0cc8815c84ecf",

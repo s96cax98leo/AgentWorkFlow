@@ -1,7 +1,7 @@
 //! SessionStart 的版本提示：plugin 版本和專案 `.claude/teams/VERSION` 不一致時印一行 JSON。
 //! 只是提示，不是守門：永遠 exit 0；沒套用的專案、讀不到版本、輸入壞掉、任何失敗都不印任何東西。
 //!
-//! plugin 目錄：Python 版是「腳本所在目錄的上一層」。執行檔沒有這個關係，依序看
+//! plugin 目錄：0.x 的 Python 版是「腳本所在目錄的上一層」。執行檔沒有這個關係，依序看
 //! `CLAUDE_PLUGIN_ROOT`、`AWF_PLUGIN_DIR`、執行檔所在目錄的上一層（`<plugin>/bin/awf`）。
 //! 找不到 `.claude-plugin/plugin.json`（例如複製進專案的 hook）就不提示。
 

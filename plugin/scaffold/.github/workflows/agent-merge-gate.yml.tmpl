@@ -1,11 +1,11 @@
 # agent-merge-gate：把確定性 merge gate（awf merge-gate）當成 PR 的 required check。
-# awf init --with-merge-gate 由 AgentWorkFlow 的 scaffold/.github/workflows/agent-merge-gate.yml.tmpl 產生。完整說明見 AgentWorkFlow 的 docs/自動合併信任模型.md。
+# awf init --with-merge-gate 由 AgentWorkFlow 的 plugin/scaffold/.github/workflows/agent-merge-gate.yml.tmpl 產生。完整說明見 AgentWorkFlow 的 docs/自動合併信任模型.md。
 #
 # 為什麼這樣寫：
 # - 信任邊界在 GitHub 伺服器端，不在本機 hook。這支 CI 的結果才是能不能合併的依據。
 # - gate 與設定一律從「受保護的 base 分支」checkout 後執行，不執行 PR 自帶的執行檔、guard.config.json 或任何 PR 程式碼。
 #   PR 只被當成資料（git diff）。所以用 pull_request_target（在 base 的脈絡執行），並且絕對不要 checkout PR head 後執行它的程式。
-# - gate 是一支執行檔（1.0 起取代 0.x 的 merge_gate.py，runner 不需要裝任何東西）：awf init --with-merge-gate 把 linux-x64 的
+# - gate 是一支執行檔（runner 不需要另外裝直譯器；這支 workflow 的 JSON 一律用 runner 內建的 jq 處理）：awf init --with-merge-gate 把 linux-x64 的
 #   執行檔與記它 sha256 的 checksums.json 放進 .claude/teams/bin/，兩個檔和這支 workflow 一起進受保護的 base 分支。
 #   CI 從 base 的 checkout 取出它們，先用 sha256sum 核對執行檔和 checksums.json 記的一致（抓檔案損壞、換行或 LFS 轉換弄壞的情況），
 #   再執行。信任來自「base 受保護、.claude/teams/bin/ 由 CODEOWNERS 指定只能由人核准」，不是來自這個雜湊（兩個檔同一個來源）。
@@ -48,7 +48,7 @@
 #
 # gate 的輸入：
 #   - 需求清單：base 分支上 guard.config.json 的 requirements（json／command／spec-md adapter）；沒設 path／command 時用 base 分支上
-#     .claude/teams/methodology.json（開發規範 profile）的 requirements，和本機 merge_gate 同一個來源。
+#     .claude/teams/methodology.json（開發規範 profile）的 requirements，和本機的 awf merge-gate 同一個來源。
 #   - diff：git diff base...head（只讀，不執行）。
 #   - required checks：本 PR 其他 check 的結果（排除本 check）。
 #   - steward 的 merge-decision、驗證證據、測試數：dev-merge-steward 在執行模式跑 gate 之前，以 merger App 身分貼在 PR 的最後一則留言
@@ -153,29 +153,39 @@ jobs:
           OUT="$RUNNER_TEMP/gate"
           gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
             --jq '.check_runs[] | select(.name != "agent-merge-gate/decision" and .name != "gate") | {name, conclusion: (.conclusion // .status)} | @json' \
-            | python3 -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))' > "$OUT/checks.json"
+            | jq -cs '.' > "$OUT/checks.json"
           gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | @json' > "$OUT/comments.jsonl"
-          python3 - "$OUT" "$MERGER_BOT" <<'PY'
-          import json, re, sys
-          from pathlib import Path
-          out, bot = Path(sys.argv[1]), sys.argv[2]
-          picked = None
-          for line in (out / "comments.jsonl").read_text(encoding="utf-8").splitlines():
-              c = json.loads(line)
-              if bot and c["user"]["login"] == bot and "<!-- agent-merge-gate-inputs -->" in c["body"]:
-                  picked = c["body"]
-          if picked is None:
-              print("沒有 merger App 貼的 gate 輸入（gate 會判 hold）")
-              sys.exit(0)
-          m = re.search(r"```json\s*(\{.*?\})\s*```", picked, re.S)
-          data = json.loads(m.group(1)) if m else {}
-          for key in ("decision", "evidence", "findings"):
-              if key in data:
-                  (out / f"{key}.json").write_text(json.dumps(data[key], ensure_ascii=False), encoding="utf-8")
-          for key in ("tests_before", "tests_after"):
-              if isinstance(data.get(key), int):
-                  (out / key).write_text(str(data[key]), encoding="utf-8")
-          PY
+          # 只採信 merger App（vars.AGENT_MERGER_BOT）貼的、帶標記的留言，取最後一則；留言的形狀讀不懂就讓這一步失敗（fail-closed）
+          jq -cs --arg bot "$MERGER_BOT" '
+            [ .[]
+              | select($bot != ""
+                       and ((.user | if type == "object" and has("login") then .login else error("留言的 user 讀不懂") end) == $bot)
+                       and (.body | contains("<!-- agent-merge-gate-inputs -->")))
+              | .body ]
+            | if length == 0 then null else last end' "$OUT/comments.jsonl" > "$OUT/picked.json"
+          if [ "$(cat "$OUT/picked.json")" = "null" ]; then
+            echo "沒有 merger App 貼的 gate 輸入（gate 會判 hold）"
+          else
+            # 留言裡第一個 ```json 區塊；沒有區塊當成空的輸入，區塊不是合法 JSON 就讓這一步失敗
+            jq -c '[match("```json\\s*(\\{[\\s\\S]*?\\})\\s*```")]
+                   | if length == 0 then {} else .[0].captures[0].string | fromjson end' "$OUT/picked.json" > "$OUT/inputs.json"
+            for key in decision evidence findings; do
+              if [ "$(jq -r --arg k "$key" 'has($k)' "$OUT/inputs.json")" = "true" ]; then
+                jq -c --arg k "$key" '.[$k]' "$OUT/inputs.json" > "$OUT/$key.json"
+              fi
+            done
+            # 測試數只收 JSON 的整數（true／false 照原樣交給 gate，由它拒絕）；小數、字串、沒給都不傳
+            for key in tests_before tests_after; do
+              V="$(jq -r --arg k "$key" '
+                    .[$k]
+                    | if type == "boolean" then (if . then "True" else "False" end)
+                      elif type == "number" and (tojson | test("^-?[0-9]+$")) then tojson
+                      else empty end' "$OUT/inputs.json")"
+              if [ -n "$V" ]; then
+                printf '%s' "$V" > "$OUT/$key"
+              fi
+            done
+          fi
 
       - name: 算今天（UTC）merger App 已合併的 PR 數（每日上限用）
         id: today
@@ -191,10 +201,9 @@ jobs:
           # 搜尋 merged:>=今天 的 PR，再依 mergedBy 篩出 merger App（GraphQL 的 bot login 不帶 [bot]，兩邊都去掉再比）
           if [ -n "$MERGER_BOT" ] && LIST="$(gh pr list --repo "$REPO" --state merged --base "$BASE_REF" \
                 --search "merged:>=$TODAY" --limit 200 --json number,mergedBy,mergedAt)"; then
-            N="$(printf '%s' "$LIST" | python3 -c 'import json,sys
-          norm = lambda s: (s or "").replace("[bot]", "")
-          rows = json.load(sys.stdin)
-          print(sum(1 for r in rows if norm((r.get("mergedBy") or {}).get("login")) == norm(sys.argv[1])))' "$MERGER_BOT")" || N=unknown
+            N="$(printf '%s' "$LIST" | jq -r --arg bot "$MERGER_BOT" '
+                  def norm: (. // "") | split("[bot]") | join("");
+                  [ .[] | select(((.mergedBy // {}).login | norm) == ($bot | norm)) ] | length')" || N=unknown
           else
             N=unknown
           fi
@@ -264,17 +273,17 @@ jobs:
           test -n "$REPORT_SHA"
           if [ "$GATE_EXIT" = "0" ]; then CONCLUSION=success; else CONCLUSION=failure; fi
           # 回報位置：merge_group 時是 queue commit（github.event.merge_group.head_sha），其他事件是 PR head
-          python3 - "$OUT/result.json" "$CONCLUSION" "$REPORT_SHA" > "$OUT/check.json" <<'PY'
-          import json, sys
-          try:
-              res = json.load(open(sys.argv[1], encoding="utf-8"))
-          except (OSError, ValueError):
-              res = {"decision": "hold", "reasons": ["gate 沒有輸出結果"]}
-          summary = f"decision: {res.get('decision')}\n\n" + "\n".join(f"- {r}" for r in res.get("reasons", []))
-          print(json.dumps({"name": "agent-merge-gate/decision", "head_sha": sys.argv[3], "status": "completed",
-                            "conclusion": sys.argv[2],
-                            "output": {"title": f"merge gate：{res.get('decision')}", "summary": summary[:60000]}},
-                           ensure_ascii=False))
-          PY
+          # gate 的結果讀不到、不是單一份 JSON：當成 hold（這時 CONCLUSION 也已經是 failure）
+          if ! RES="$(jq -cs 'if length == 1 then .[0] else error("不是單一份 JSON") end' "$OUT/result.json" 2>/dev/null)"; then
+            RES='{"decision":"hold","reasons":["gate 沒有輸出結果"]}'
+          fi
+          printf '%s' "$RES" | jq -c --arg conclusion "$CONCLUSION" --arg sha "$REPORT_SHA" '
+            def text: if type == "string" then . elif . == null then "None" elif . == true then "True" elif . == false then "False" else tojson end;
+            (if type == "object" then . else error("gate 的結果不是物件") end)
+            | (.decision | text) as $d
+            | (if has("reasons") then .reasons else [] end) as $reasons
+            | {name: "agent-merge-gate/decision", head_sha: $sha, status: "completed", conclusion: $conclusion,
+               output: {title: ("merge gate：" + $d),
+                        summary: (("decision: " + $d + "\n\n" + ([$reasons[] | "- " + text] | join("\n"))) | .[0:60000])}}' > "$OUT/check.json"
           gh api -X POST "repos/$REPO/check-runs" --input "$OUT/check.json" > /dev/null
           test "$CONCLUSION" = success

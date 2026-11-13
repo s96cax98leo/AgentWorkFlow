@@ -188,6 +188,44 @@ fn a_fresh_init_copies_settings_but_no_tools() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// CLAUDE.md 的標記：新產生的寫「由 awf init 從模版產生」；0.x 寫的「由 init.py 從模版產生」照樣認成 init 自己產生的。
+#[test]
+fn a_claude_md_mark_new_and_0x_are_both_recognized() {
+    use awf_core::init::{is_generated_claude_md, CLAUDE_MARK, CLAUDE_MARK_0X};
+    let d = tmp("a-mark");
+    let r = run(&d, None, &["--target", "p", "--defaults"]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    let md = d.join("p/CLAUDE.md");
+    let fresh = read(&md);
+    assert!(fresh.starts_with("<!-- agent-workflow：由 awf init 從模版產生（"), "{}", fresh.lines().next().unwrap_or_default());
+    assert!(!fresh.contains("init.py"), "新產生的 CLAUDE.md 不該再提 init.py");
+    assert!(is_generated_claude_md(&fresh) && is_generated_claude_md(&format!("{CLAUDE_MARK_0X}（…） -->\n# x\n")));
+    assert!(!is_generated_claude_md("# 使用者自己的 CLAUDE.md\n") && CLAUDE_MARK != CLAUDE_MARK_0X);
+
+    // 兩種標記的既有檔都走「init 自己產生的」那條路：不加 --force 原樣略過、不另寫引用檔；--force 更新標記之前的內容並保留〈專案特定〉
+    for (name, mark) in [("old", CLAUDE_MARK_0X), ("new", CLAUDE_MARK)] {
+        let p = d.join(name);
+        let body = format!("{mark}（舊的說明） -->\n# 舊標題\n\n舊內容\n\n## 專案特定\n\n我自己加的規則\n");
+        write(&p.join("CLAUDE.md"), &body);
+        let r = run(&d, None, &["--target", name, "--defaults"]);
+        assert_eq!(r.code, 0, "{name}：{}", r.err);
+        assert_eq!(read(&p.join("CLAUDE.md")), body, "{name}：沒有 --force 不該動");
+        assert!(!p.join(".claude/teams/agent-workflow.CLAUDE.md").exists(), "{name}：被當成使用者的檔了");
+        let r = run(&d, None, &["--target", name, "--defaults", "--force"]);
+        assert_eq!(r.code, 0, "{name}：{}", r.err);
+        let now = read(&p.join("CLAUDE.md"));
+        assert!(now.starts_with(CLAUDE_MARK) && !now.contains("舊內容") && now.contains("我自己加的規則"), "{name}：{now}");
+        assert!(!p.join(".claude/teams/agent-workflow.CLAUDE.md").exists(), "{name}：被當成使用者的檔了");
+    }
+    // 沒有標記的是使用者的檔：不覆蓋，改寫引用檔
+    let u = d.join("user");
+    write(&u.join("CLAUDE.md"), "# 我的專案\n");
+    let r = run(&d, None, &["--target", "user", "--defaults"]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(read(&u.join("CLAUDE.md")).starts_with("# 我的專案\n") && u.join(".claude/teams/agent-workflow.CLAUDE.md").is_file());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn a_python_option_is_ignored_with_a_note() {
     let d = tmp("a2");

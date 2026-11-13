@@ -1,6 +1,6 @@
 //! 把模版套進專案（複製 scaffold 的設定、替換佔位符、合併既有設定、升級）。
 //!
-//! 起點是 Python 版 `init.py` 的移植；1.0 起行為不同了（對跑基準 `tests/parity/init.expected.json` 改當這個實作的回歸基準）：
+//! 起點是 0.x 的 Python 版 `init.py` 的移植；1.0 起行為不同了（對跑基準 `tests/parity/init.expected.json` 改當這個實作的回歸基準）：
 //! - **工具不複製進專案**：`scaffold/.claude/teams/tools/` 與 scaffold 裡的 `.py` 不放（工具都在 `awf` 執行檔裡）。
 //!   覆寫檔（`--with-workflows`）要的片段，內嵌時先找專案自己的 `tools/snippets/`（舊專案還有時），再找模版的。
 //! - **`--hooks project`**：把這支執行檔複製到 `<專案>/.claude/hooks/bin/`，settings 用它的絕對路徑註冊 `awf hook <種類>`。
@@ -32,7 +32,7 @@ pub use legacy::{pristine_legacy_workflow, tidy_old_workflows, Tidy};
 pub use legacy_tools::{tidy_old_tools, ToolsTidy};
 pub use merge::{deep_merge, hook_forms, merge_hooks, merge_settings, migrate_allow, missing_fields, set_missing};
 pub use profile::{apply_answers, parse_constraints};
-pub use writer::{dest_for, hook_bin_rel, hook_command, not_copied, scaffold_plan, workflow_plan, Item, Writer, GATE_BIN_NAME, GATE_BIN_REL, GATE_SUMS_REL};
+pub use writer::{dest_for, hook_bin_rel, hook_command, is_generated_claude_md, not_copied, scaffold_plan, workflow_plan, Item, Writer, CLAUDE_MARK, CLAUDE_MARK_0X, GATE_BIN_NAME, GATE_BIN_REL, GATE_SUMS_REL};
 
 use crate::kb::pyish::WS_CLASS;
 use crate::merge_gate::pyutil::{self, ReadErr};

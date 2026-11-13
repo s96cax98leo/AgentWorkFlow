@@ -44,7 +44,7 @@ argument-hint: <錯誤描述、踩坑手冊條目、followup 路徑或 commit／
 |---|---|---|
 | **1. 架構或確定性工具**：讓錯誤寫不出來或流程走不下去 | 專案自己的型別、模組邊界、建置步驟 | `awf merge-gate` 的判定、驗證器（`crates/awf-core/src/schema.rs`）的語意規則、workflow 裡的確定性核對（回傳 `halted: true`） |
 | **2. schema／hook／lint**：錯誤寫得出來但會被立刻擋 | 專案既有 lint 的規則、pre-commit | 信封與 payload schema（`schemas/`）、守門規則（`crates/awf-core/src/hooks/guard.rs`）、`awf check-rules` |
-| **3. 測試**：錯誤會在跑測試時被抓 | 專案既有的測試 | `golden-set/valid|invalid/`（含 `semantic` 反例）、`check_workflows.mjs` 的 `SCENARIOS`、`plugin/hooks/tests/run.py` |
+| **3. 測試**：錯誤會在跑測試時被抓 | 專案既有的測試 | `golden-set/valid|invalid/`（含 `semantic` 反例）、`check_workflows.mjs` 的情境（`plugin/workflow-templates/scenarios/`）、hook 案例（`tests/hooks/cases.jsonl`） |
 | **4. 文件**：只能靠人或 agent 讀到 | rules.md〈專案規則〉、agent 提示、專案 CLAUDE.md | `rules.md` 通用規則、agent 提示、`docs/踩坑手冊.md` |
 
 - 一條規則可以同時用兩層（例如第 2 層擋、第 3 層證明），對照表記最高的那層。
@@ -52,8 +52,8 @@ argument-hint: <錯誤描述、踩坑手冊條目、followup 路徑或 commit／
 
 **在模版 repo 自己身上用時的對應**（照 `CLAUDE.md`〈改動時的檢查清單〉）：
 - 語意規則：寫在 `crates/awf-core/src/schema.rs`，在 `golden-set/invalid/` 補 `semantic` 反例、`valid/` 補正例；改了 schema 重跑 `awf build`。
-- guard 規則：寫在 `crates/awf-core/src/hooks/guard.rs`，在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的案例，Bash 與 PowerShell 各一。
-- workflow 核對：寫在 `plugin/workflow-templates/*.js`，乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
+- guard 規則：寫在 `crates/awf-core/src/hooks/guard.rs`，在 `tests/hooks/cases.jsonl` 補一個該擋、一個該放的案例，Bash 與 PowerShell 各一（格式見 `tests/hooks/README.md`）。
+- workflow 核對：寫在 `plugin/workflow-templates/*.js`，乾跑走不到的分支在 `plugin/workflow-templates/scenarios/<workflow>.mjs` 補情境。
 
 ## 3. 列計畫，等使用者同意
 
@@ -77,7 +77,7 @@ argument-hint: <錯誤描述、踩坑手冊條目、followup 路徑或 commit／
   3. 前兩者都不行時，在暫存目錄重建最小重現，並註明和原錯誤的差異。
 - **兩個證明指令都要實際跑過**，回報指令與輸出摘要（exit code、關鍵訊息）。只寫「應該會擋」不算完成。
 - 擋不住或誤擋修正版時，回第 2 步重新選層，不要放寬檢查來讓修正版通過。
-- 跑專案既有的完整驗證（rules.md〈專案規則〉的 verify 指令；模版 repo 是 `python3 tests/run_all.py`），確認沒有誤擋其他東西。
+- 跑專案既有的完整驗證（rules.md〈專案規則〉的 verify 指令；模版 repo 是 `cargo test --workspace` 加 `cargo xtask check-all`），確認沒有誤擋其他東西。
 
 ## 5. 更新對照表
 

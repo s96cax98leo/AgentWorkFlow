@@ -131,7 +131,7 @@ pub fn run(ctx: &Ctx, argv: &[String], stdin: &mut dyn FnMut() -> R<String>, out
     match dispatch(ctx, argv, stdin, out, err) {
         Ok(code) => code,
         Err(e) => {
-            // Python 版在這裡是沒接住的例外（traceback、exit 1）
+            // 0.x 的 Python 版在這裡是沒接住的例外（traceback、exit 1）
             line(err, format!("awf save-run：{}：{}", e.class, e.msg));
             1
         }

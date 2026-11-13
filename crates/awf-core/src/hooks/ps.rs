@@ -1,5 +1,5 @@
 //! 指令拆段：bash 依引號外的運算子切段（[`segments`]），PowerShell 先拆成 token 再正規化成 bash 風格（[`ps_segments`]）。
-//! 由 `plugin/hooks/guard.py` 的 segments／_ungroup／_ps_tokenize／_ps_normalize 移植，逐字元照原本的狀態機。
+//! 原本是 0.x 的 Python 工具 `guard.py` 的 segments／_ungroup／_ps_tokenize／_ps_normalize，逐字元照原本的狀態機。
 
 use super::guard::cmd_name;
 use super::py;

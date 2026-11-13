@@ -1,9 +1,9 @@
-//! 安裝檢查。由 `scaffold/.claude/teams/tools/awf_doctor.py` 移植。
+//! 安裝檢查。原本是 0.x 的 Python 工具 `awf_doctor.py`。
 //!
 //! 只讀、不改任何檔案、不連網。結束碼：有「問題」是 1，其餘 0（「注意」不算失敗）。
 //! Claude Code 的 installed_plugins.json、known_marketplaces.json 格式沒有承諾穩定：讀不懂就略過那一項並說明。
 //!
-//! 和 Python 版不同的地方（對跑測試把這兩項濾掉再比）：
+//! 和 0.x 的 Python 版不同的地方（對跑測試把這兩項濾掉再比）：
 //! - 沒有 `python` 這一項：執行檔不需要 Python。
 //! - 沒有 `hooks-compile` 這一項：那是「hook 的 .py 編譯得過」，hook 改註冊成執行檔之後換成執行檔的檢查。
 //!

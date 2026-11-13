@@ -35,7 +35,7 @@
 | `hook` | `mode`、`proj`（`CLAUDE_PROJECT_DIR`）、`stdin`（物件）或 `stdin_raw`（原樣的字串）、`rc`；`stdout`、`stderr` 沒寫＝預期是空的；選填 `env`（多給的環境變數） | 有 `name` 算 1 個；`also` 裡每一項（`stderr_has`：stderr 含其中任一段字）各算 1 個；`rc_not` 另外要求 exit code 不在清單裡 |
 | `check` | `exists`／`absent`；`json` 加 `expect`（欄位相等）或 `range`；`files`（`dir`、`recursive`、`prefix`、`suffix`、`contains`、`except`）加 `count`（`none`／`some`）；`jsonl` 加 `where` 與 `field`＋`set` 或 `count`；`hooks_file` 加 `rule`（註冊設定的形狀） | 1 個 |
 | `perf` | `fn`（`check_read`／`check_shell`）、`times`、`stat`（`median`／`mean`）、`limit_ms`；`counted` 是量完之後的狀態檢查 | 1 個，有 `counted` 再加 1 個 |
-| `na` | `name`、`want`、`why` | 1 個（Python 版才有意義的案例，只列名稱與原因，不執行） |
+| `na` | `name`、`want`、`why` | 1 個（0.x 的 Python 版才有意義的案例，只列名稱與原因，不執行） |
 
 `hook` 的 `stdin` 會用 Python `json.dumps(…, ensure_ascii=False)` 的寫法送出（逗號與冒號後面各一個空白、鍵的順序照檔案），和原本的測試台一樣。
 子行程的環境是固定的：`PATH`（最前面是假的 `python3`）、`HOME`（空目錄）、`TMPDIR`、`CLAUDE_PROJECT_DIR`、`AWF_READ_BUDGET_DIR=@TMP@/rb-state`，其他一律不帶。

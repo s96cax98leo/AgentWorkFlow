@@ -1,5 +1,5 @@
 // @requires: challenge
-// ── 片段 review-skeptic（.claude/teams/tools/snippets/review-skeptic.js）：審查 agent 交 findings 後，派 skeptic 逐則反駁 ──
+// ── 片段 review-skeptic（workflow-templates/snippets/review-skeptic.js）：審查 agent 交 findings 後，派 skeptic 逐則反駁 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 用到 challenge 片段的 judgeVerdicts 與 awfDispatch（有執行核心就經過它），引用本片段的 workflow 也要引用 challenge 片段。
 // 缺件（rules.md 規則 26）：審查或反駁的 agent 回 null 或交件無效時記進 missing（回傳的 missing 欄位是 label）；

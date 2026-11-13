@@ -1,12 +1,12 @@
 //! schema 工具：載入、組合（信封＋payload）、驗證，以及 schema 表達不了的語意規則。
 //!
-//! 由 `scaffold/.claude/teams/tools/schemalib.py` 移植。錯誤訊息的文字是對跑基準的一部分
+//! 原本是 0.x 的 Python 工具 `schemalib.py`。錯誤訊息的文字是對跑基準的一部分
 //! （`tests/parity/schema.expected.json`），改訊息要重錄基準並說明。
 //!
 //! 只支援 schemas/ 用到的 JSON Schema 關鍵字（`SUPPORTED_KEYWORDS`）。不認得的關鍵字等於沒檢查，
 //! 所以 `unsupported_keywords` 要回空清單才算合格。
 //!
-//! 和 Python 版的已知差異：使用者寫的正規式（schema 的 pattern、`check_regex`、`id_pattern`、`privacy_allow`）
+//! 和 0.x 的 Python 版的已知差異：使用者寫的正規式（schema 的 pattern、`check_regex`、`id_pattern`、`privacy_allow`）
 //! 改由 Rust 的引擎（fancy-regex）解讀，寫壞時的錯誤說明文字不同（「不是合法的正規式：」之後那一段）。
 
 use crate::pyfmt::{self, items, repr, str_of, str_opt, truthy, truthy_opt};
@@ -441,7 +441,7 @@ pub fn plan_outline_errors(payload: &Value) -> Vec<String> {
     if split && subs.len() < 2 { errs.push("split=true 時至少要 2 個子計劃".into()); }
     if !split && !subs.is_empty() { errs.push("split=false 時 sub_plans 要留空".into()); }
     let ids: Vec<String> = subs.iter().map(|s| str_opt(get(s, "id"))).collect();
-    // Python 版走訪的是 set（順序不固定）；這裡排序，輸出固定
+    // 0.x 的 Python 版走訪的是 set（順序不固定）；這裡排序，輸出固定
     let dup: BTreeSet<&String> = ids.iter().filter(|x| ids.iter().filter(|y| y == x).count() > 1).collect();
     for i in dup { errs.push(format!("子計劃 id {i} 重複")); }
     let mut order: Vec<String> = Vec::new();

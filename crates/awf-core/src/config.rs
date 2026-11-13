@@ -1,12 +1,12 @@
-//! 守門設定（`.claude/teams/guard.config.json`）的讀取與角色對應。由 `plugin/hooks/awf_config.py` 移植。
+//! 守門設定（`.claude/teams/guard.config.json`）的讀取與角色對應。原本是 0.x 的 Python 工具 `awf_config.py`。
 //!
 //! 沒有設定檔時用安全預設（只套用角色規則），不擋主 session 的一般操作，所以還沒 init 的專案不會被誤擋。
 //! 「模版角色」＝ agent_type 的命名空間在 team_agent_namespaces（預設只有 agent-workflow:），且角色名以
 //! team_agent_prefixes 開頭；或角色名就是 [`RESERVED_ROLES`] 之一；或登記在 extension_agents。
 //!
-//! 和 Python 版的差別：Python 的設定是不限型別的 dict，欄位型別寫錯時要等用到那一行才出錯。
+//! 和 0.x 的 Python 版的差別：Python 的設定是不限型別的 dict，欄位型別寫錯時要等用到那一行才出錯。
 //! 這裡在載入時就把欄位轉成固定型別，型別不對記在 [`Config::type_fault`]，守門一開始就當成意外錯誤擋下（只會更嚴）。
-//! 載入階段就會讓 Python 版丟例外的寫法（runs_dir 不是字串、writer_dirs 元素不是字串）照舊回 `Err`，
+//! 載入階段就會讓 0.x 的 Python 版丟例外的寫法（runs_dir 不是字串、writer_dirs 元素不是字串）照舊回 `Err`，
 //! 由入口改用內建最小規則。
 
 use crate::hooks::path;
@@ -124,7 +124,7 @@ pub struct Config {
     pub configured: bool,
     /// 設定檔讀不懂的原因；空字串＝沒問題。
     pub broken: String,
-    /// 欄位型別不對（Python 版用到時會丟例外）。守門類一開始就擋。
+    /// 欄位型別不對（0.x 的 Python 版用到時會丟例外）。守門類一開始就擋。
     pub type_fault: Option<String>,
 }
 
@@ -269,7 +269,7 @@ fn str_list(v: Option<&Value>, key: &str, fault: &mut Option<String>) -> Vec<Str
 }
 
 /// 回傳合併預設後的設定。設定檔存在但讀不到或不是 JSON 物件時 fail-closed：視為已設定，其餘欄位用預設值，`broken` 記下原因。
-/// `Err`＝Python 版在載入階段就會丟例外的寫法。
+/// `Err`＝0.x 的 Python 版在載入階段就會丟例外的寫法。
 pub fn load(ws: &str) -> Result<Config, PyErr> {
     let mut cfg = defaults();
     let dflt = defaults();

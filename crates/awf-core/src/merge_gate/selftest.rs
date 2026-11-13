@@ -1,5 +1,5 @@
-//! `awf merge-gate --selftest`：照 Python 版 selftest 的案例與順序，在暫存專案裡實際跑 `check`。
-//! 輸出的每一行（案例名、判定、預期）和 Python 版相同。
+//! `awf merge-gate --selftest`：照 0.x 的 Python 版 selftest 的案例與順序，在暫存專案裡實際跑 `check`。
+//! 輸出的每一行（案例名、判定、預期）和 0.x 的 Python 版相同。
 
 use super::{exit_code, parse_diff, pyutil, read_audit, run, Ctx};
 use crate::pyfmt::{self, repr_str};

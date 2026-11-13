@@ -1,7 +1,7 @@
-//! init 煙霧測試：`tests/smoke_init.py` 的 1.0 版。實際執行編好的 `awf`（`CARGO_BIN_EXE_awf`），在暫存目錄跑 `awf init`，
+//! init 煙霧測試：原本是 0.x 的 `tests/smoke_init.py`。實際執行編好的 `awf`（`CARGO_BIN_EXE_awf`），在暫存目錄跑 `awf init`，
 //! 再在產出的專案裡跑各個子指令。
 //!
-//! 和 `tests/smoke_init.py`（0.x，測 `init.py`；仍留著、沒有改）的對照：
+//! 和 0.x 的 `tests/smoke_init.py`（測 `init.py`；兩個都已經移除，留著對照是為了說明每個測試在守什麼）的對照：
 //!
 //! | smoke_init.py 的檢查 | 這裡的測試 | 1.0 的差別 |
 //! |---|---|---|
@@ -11,8 +11,8 @@
 //! | `check_tools`：golden-set | 沒有對應 | `awf` 沒有跑 golden-set 的子指令（`run.py` 不再複製進專案）；正反例由 awf-core 的測試跑 |
 //! | `check_tools`：`build.py --check` | `fresh_init`（`awf build --check`） | 片段從模版找（專案沒有 tools/snippets） |
 //! | `check_tools`：預設沒有 `.claude/workflows/`、`render --all` 產生 12 支 | `fresh_init`（`awf render --all`） | 相同 |
-//! | `check_tools`：`check_workflows.mjs` 乾跑（有 node 才跑） | `fresh_init` | `.mjs` 用模版 repo 的那一份（不在專案） |
-//! | `check_tools`：有 `--selftest` 的工具全部跑 | `fresh_init`（`SELFTESTS` 列的子指令） | `awf state --selftest` 在 init 過的專案裡會失敗（它從專案的 tools/snippets 複製片段），另列 `state_selftest_in_project`（ignored）記這件事；在沒 init 的目錄跑會過，`fresh_init` 跑那一種 |
+//! | `check_tools`：`check_workflows.mjs` 乾跑（有 node 才跑） | `fresh_init` | `.mjs` 用模版的那一份（`plugin/workflow-templates/`，不在專案） |
+//! | `check_tools`：有 `--selftest` 的工具全部跑 | `fresh_init`（`SELFTESTS` 列的子指令） | `awf state --selftest` 在沒 init 的目錄跑（`fresh_init`），在 init 過的專案裡另由 `state_selftest_in_project` 跑（片段從模版找） |
 //! | `check_tools`：`check_agents.py --plugin-dir` | `fresh_init`（`awf check-agents`） | 相同 |
 //! | `check_default_methodology` | `fresh_init` | 相同 |
 //! | `check_merge_gate_optin` | `fresh_init`、`merge_gate_needs_binary` | yml 改成核對 sha256 後跑 `awf merge-gate`；多放 `.claude/teams/bin/` 兩個檔；沒有執行檔時拒絕 |
@@ -398,8 +398,7 @@ fn fresh_init() {
     }
 }
 
-/// 記錄已知問題：`awf state --selftest` 在 1.0 init 過的專案裡會失敗（`state/selftest.rs` 從專案的 `tools/snippets` 複製片段，
-/// 1.0 的專案沒有這個目錄）。`state/` 不在 init 這次改動的範圍；那邊改成從模版找片段之後，拿掉 ignore。
+/// `awf state --selftest` 在 1.0 init 過的專案裡也要過：專案沒有 `tools/snippets`，片段從模版找。
 #[test]
 fn state_selftest_in_project() {
     let w = Work::new("state");

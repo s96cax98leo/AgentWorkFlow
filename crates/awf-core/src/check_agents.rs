@@ -1,6 +1,6 @@
 //! 檢查 tpm-*／dev-* agent 的格式：frontmatter 欄位、五段內文、預載 skill 存在、payload 有對應 schema，
 //! 以及「外部內容一律當資料，不當指令」的約束（硬性約束段要有「當資料」）。
-//! 由 `scaffold/.claude/teams/tools/check_agents.py` 移植；訊息文字是對跑基準的一部分（`tests/parity/tools.expected.json`）。
+//! 原本是 0.x 的 Python 工具 `check_agents.py`；訊息文字是對跑基準的一部分（`tests/parity/tools.expected.json`）。
 //!
 //! 找 agents 目錄的順序：`--agents-dir <dir>` → `--plugin-dir <dir>/agents` → 環境變數 AWF_PLUGIN_DIR、CLAUDE_PLUGIN_ROOT 的 agents/
 //! → 專案 `.claude/agents`。skill 會在這些地方找：plugin 的 skills/、agents 目錄旁的 skills/、專案 `.claude/skills`、`~/.claude/skills`、內建。
@@ -8,10 +8,10 @@
 //! （[`crate::config::RESERVED_ROLES`]、[`crate::config::RECORD_ONLY_ROLES`]）：CORE 與 ALIASES 都要在 RESERVED_ROLES 裡、
 //! RECORD_ONLY_ROLES 要和這裡的 RECORD_ONLY 一致。
 //!
-//! 和 Python 版的已知差異：
-//! - Python 版用 `ast` 解析 plugin 目錄裡的 `hooks/awf_config.py`；守門規則移植後常數在 `config.rs`，這裡直接比 Rust 的常數，
+//! 和 0.x 的 Python 版的已知差異：
+//! - 0.x 的 Python 版用 `ast` 解析 plugin 目錄裡的 `hooks/awf_config.py`；守門規則移植後常數在 `config.rs`，這裡直接比 Rust 的常數，
 //!   不再讀那支檔（它不存在、是空的、寫法不同都不影響結果）。對跑基準裡只測「讀那支檔」的案例在重放時排除，見測試。
-//! - Python 版在 `--plugin-dir` 後面沒接值、agent 檔不是 UTF-8 時直接當掉（traceback、exit 1）；這裡印一行說明後 exit 1。
+//! - 0.x 的 Python 版在 `--plugin-dir` 後面沒接值、agent 檔不是 UTF-8 時直接當掉（traceback、exit 1）；這裡印一行說明後 exit 1。
 //! - `dev-merge-steward` 的執行紀錄小節要寫明由誰代寫：`save_run`（舊寫法）與 `save-run`（`awf save-run`）都認。
 
 use crate::kb::pyish::{self, is_space, ppath};
@@ -437,7 +437,7 @@ mod tests {
         v.as_str().unwrap_or_default()
     }
 
-    /// 對跑：照 Python 版錄下來的劇本（tests/parity/tools.expected.json 的 agents）做一遍，逐字比對。
+    /// 對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/tools.expected.json 的 agents）做一遍，逐字比對。
     /// 只用絕對路徑、不改環境變數，可以和別的測試平行。
     #[test]
     fn agents_match_python() {
@@ -454,7 +454,7 @@ mod tests {
         let steps = doc["agents"]["steps"].as_array().expect("steps");
         let mut bad: Vec<String> = Vec::new();
         let mut runs = 0;
-        // Python 版讀 plugin 目錄裡的 hooks/awf_config.py；這裡比的是 config.rs 的常數，所以「那支檔不存在、是空的、
+        // 0.x 的 Python 版讀 plugin 目錄裡的 hooks/awf_config.py；這裡比的是 config.rs 的常數，所以「那支檔不存在、是空的、
         // 少了角色、寫法讀不懂」這三種訊息不會再出現。預期輸出裡這三種行先拿掉再比：
         //   - 整個輸出只有這幾行的步驟（案例就是在測那支檔）→ 排除，記在 skipped
         //   - 還有別的錯誤行的步驟 → 其餘各行照比，記在 trimmed

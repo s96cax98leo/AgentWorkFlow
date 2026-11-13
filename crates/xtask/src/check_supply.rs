@@ -1,8 +1,8 @@
-//! 供應鏈檢查。由 `tests/check_supply.py` 移植，再加上 Rust 與 Node 那兩半。
+//! 供應鏈檢查。
 //!
 //! plugin 會在使用者的所有專案執行，所以要守住下面幾條：
 //!   1. action 都釘 40 字元 commit SHA：.github/workflows/*.yml 與 plugin/scaffold/.github/workflows/*.tmpl。
-//!   2. 版控（git ls-files）裡沒有 __pycache__、.env、私鑰形狀的檔案或內容。
+//!   2. 版控（git ls-files）裡沒有 `__pycache__`、`.pyc`、.env、私鑰形狀的檔案或內容。
 //!   3. `Cargo.lock` 存在而且在版控裡（建置出來的執行檔用哪些版本是固定的）。
 //!   4. Rust 相依都來自 crates.io：`Cargo.lock` 裡沒有 git 來源，也沒有 workspace 以外的 path 相依。
 //!   5. Rust 相依的名單和允許清單（`crates/xtask/allowed-crates.txt`，一行一個 crate 名）一致：多了、少了都算失敗，
@@ -10,64 +10,13 @@
 //!   6. Node 腳本（乾跑用的 `check_workflows.mjs`、`scenarios/*.mjs`，xtask 的 `js/*.cjs`）只 import 內建模組或相對路徑，
 //!      而且不用網路模組。
 //!
-//! Python 檔還在的期間另外兩條照舊（有 `.py` 才掃、才列出；Python 移除那天不用改這支）：
-//!   - 只 import 標準庫或 repo 內模組：plugin/hooks/*.py、plugin/scaffold/.claude/teams/tools/*.py、init.py。
-//!   - plugin/ 下的 .py 沒有網路呼叫：不 import urllib、http.client、socket、requests 等。
-//!
-//! 失敗時逐條列出，exit 1。Python 那兩條和 Python 版不同的地方（都只會更嚴，不會更鬆）：
-//!   - import 用 [`crate::pyimports`] 找，不是 `ast`：差異見那個模組的說明（同一個檔有多條時順序可能不同）。
-//!   - 標準庫清單固定用 Python 版的後備清單（3.9 的頂層模組）再扣掉之後版本移除的模組；Python 版在 3.10 以上用
-//!     執行當下那一版的 `sys.stdlib_module_names`，所以結果會跟著 Python 版本變，這裡取各版都算標準庫的那些。
-//!   - 檔案不是 UTF-8、跑不了 git：Python 版當掉（traceback、exit 1），這裡列成一條失敗。
+//! 失敗時逐條列出，exit 1。檔案不是 UTF-8、跑不了 git 都列成一條失敗（只會更嚴）。
 
-use crate::pyimports;
-use crate::pyre::{self, Pat};
+use crate::termre::{self, Pat};
 use crate::util::{self, Captured};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-/// repo 內模組：這些目錄下的 .py 可以互相 import（hook 會把 tools 目錄加進 sys.path 用 schemalib）
-const INTERNAL_DIRS: [&str; 3] = ["", "plugin/hooks", "plugin/scaffold/.claude/teams/tools"];
-
-/// 網路相關模組（只看頂層名稱，http 另外只擋 http.client／http.server）
-const NETWORK_MODULES: &[&str] = &[
-    "urllib", "urllib2", "urllib3", "socket", "ssl", "requests", "httpx", "aiohttp",
-    "ftplib", "smtplib", "poplib", "imaplib", "telnetlib", "nntplib", "xmlrpc",
-    "socketserver", "websocket", "websockets", "pycurl", "asyncio",
-];
-const NETWORK_SUBMODULES: &[&str] = &["http.client", "http.server", "http.cookiejar", "asyncio.streams"];
-
-/// Python 3.9 標準庫的頂層模組（Python 版的後備清單）
-const STDLIB_39: &str = "
-__future__ _thread abc aifc argparse array ast asynchat asyncio asyncore atexit audioop base64 bdb
-binascii binhex bisect builtins bz2 calendar cgi cgitb chunk cmath cmd code codecs codeop collections
-colorsys compileall concurrent configparser contextlib contextvars copy copyreg cProfile crypt csv
-ctypes curses dataclasses datetime dbm decimal difflib dis distutils doctest email encodings ensurepip
-enum errno faulthandler fcntl filecmp fileinput fnmatch formatter fractions ftplib functools gc
-getopt getpass gettext glob graphlib grp gzip hashlib heapq hmac html http imaplib imghdr imp
-importlib inspect io ipaddress itertools json keyword lib2to3 linecache locale logging lzma mailbox
-mailcap marshal math mimetypes mmap modulefinder msilib msvcrt multiprocessing netrc nis nntplib
-ntpath numbers operator optparse os ossaudiodev parser pathlib pdb pickle pickletools pipes pkgutil
-platform plistlib poplib posix posixpath pprint profile pstats pty pwd py_compile pyclbr pydoc queue
-quopri random re readline reprlib resource rlcompleter runpy sched secrets select selectors shelve
-shlex shutil signal site smtpd smtplib sndhdr socket socketserver spwd sqlite3 sre_compile
-sre_constants sre_parse ssl stat statistics string stringprep struct subprocess sunau symbol
-symtable sys sysconfig syslog tabnanny tarfile telnetlib tempfile termios textwrap threading time
-timeit tkinter token tokenize trace traceback tracemalloc tty turtle turtledemo types typing
-unicodedata unittest urllib uu uuid venv warnings wave weakref webbrowser winreg winsound wsgiref
-xdrlib xml xmlrpc zipapp zipfile zipimport zlib zoneinfo
-";
-/// 3.10～3.13 從標準庫移除的模組：新版 Python 上 import 它們會失敗，不算標準庫
-const REMOVED_AFTER_39: &[&str] = &[
-    "aifc", "asynchat", "asyncore", "audioop", "binhex", "cgi", "cgitb", "chunk", "crypt", "distutils", "formatter",
-    "imghdr", "imp", "lib2to3", "mailcap", "msilib", "nis", "nntplib", "ossaudiodev", "parser", "pipes", "smtpd",
-    "sndhdr", "spwd", "sunau", "symbol", "telnetlib", "uu", "xdrlib",
-];
-
-fn stdlib() -> BTreeSet<&'static str> {
-    STDLIB_39.split_whitespace().filter(|m| !REMOVED_AFTER_39.contains(m)).collect()
-}
 
 struct Patterns {
     uses: Pat,
@@ -79,7 +28,7 @@ struct Patterns {
 }
 
 fn patterns() -> Result<Patterns, String> {
-    let c = |p: &str| pyre::compile(p).map_err(|e| format!("內建的樣式編不過（{e}）"));
+    let c = |p: &str| termre::compile(p).map_err(|e| format!("內建的樣式編不過（{e}）"));
     Ok(Patterns {
         uses: c(r#"(?m)^\s*(?:-\s*)?uses:\s*['"]?([^\s#'"]+)"#)?,
         pinned: c(r"@[0-9a-f]{40}$")?,
@@ -103,90 +52,8 @@ fn files_in(root: &Path, dir: &str, suffix: &str) -> Vec<String> {
     names.into_iter().map(|n| if dir.is_empty() { n } else { format!("{dir}/{n}") }).collect()
 }
 
-/// `<root>/<dir>/**/*.py`（相對路徑，照各段排序；不走進符號連結的目錄，略過 `__pycache__`）。
-fn py_files_under(root: &Path, dir: &str) -> Vec<String> {
-    fn walk(base: &Path, rel: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
-        for e in std::fs::read_dir(base).into_iter().flatten().flatten() {
-            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
-            let is_link = e.file_type().map(|t| t.is_symlink()).unwrap_or(false);
-            let path = e.path();
-            rel.push(name.clone());
-            if path.is_dir() {
-                if !is_link && name != "__pycache__" {
-                    walk(&path, rel, out);
-                }
-            } else if path.is_file() && name.ends_with(".py") && name.len() > 3 {
-                out.push(rel.clone());
-            }
-            rel.pop();
-        }
-    }
-    let mut out = Vec::new();
-    let mut rel: Vec<String> = dir.split('/').map(str::to_string).collect();
-    walk(&root.join(dir), &mut rel, &mut out);
-    out.sort();
-    out.into_iter().map(|p| p.join("/")).collect()
-}
-
 fn full(root: &Path, rel: &str) -> PathBuf {
     rel.split('/').fold(root.to_path_buf(), |p, part| p.join(part))
-}
-
-/// 讀檔並找出 import；讀不了或解析不了時記一條錯誤、回 None。
-fn imports_of(root: &Path, rel: &str, errors: &mut Vec<String>) -> Option<Vec<(usize, String)>> {
-    let found = util::read_text(&full(root, rel)).map_err(|_| "讀不到或不是 UTF-8".to_string()).and_then(|t| pyimports::imports(&t));
-    match found {
-        Ok(f) => Some(f),
-        Err(e) => {
-            errors.push(format!("{rel}：無法解析（{e}）"));
-            None
-        }
-    }
-}
-
-fn top(module: &str) -> &str {
-    module.split('.').next().unwrap_or_default()
-}
-
-/// 只能用標準庫的檔案：plugin/hooks/*.py、plugin/scaffold/.claude/teams/tools/*.py、init.py。
-fn stdlib_only_files(root: &Path) -> Vec<String> {
-    let mut files = files_in(root, "plugin/hooks", ".py");
-    files.extend(files_in(root, "plugin/scaffold/.claude/teams/tools", ".py"));
-    if root.join("init.py").is_file() {
-        files.push("init.py".to_string());
-    }
-    files
-}
-
-fn check_stdlib_only(root: &Path, errors: &mut Vec<String>) {
-    let std = stdlib();
-    let mut internal: BTreeSet<String> = BTreeSet::new();
-    for d in INTERNAL_DIRS {
-        // 模組名是檔名去掉最後一個副檔名
-        internal.extend(files_in(root, d, ".py").iter().filter_map(|f| f.rsplit('/').next()).map(|n| n.strip_suffix(".py").unwrap_or(n).to_string()));
-    }
-    for rel in stdlib_only_files(root) {
-        let Some(found) = imports_of(root, &rel, errors) else { continue };
-        for (line, module) in found {
-            let t = top(&module);
-            if !t.is_empty() && !std.contains(t) && !internal.contains(t) {
-                errors.push(format!("{rel}:{line}：import 了非標準庫模組 {module}"));
-            }
-        }
-    }
-}
-
-fn check_no_network(root: &Path, errors: &mut Vec<String>) {
-    // plugin/scaffold/ 是複製進專案的模版，不是 plugin 自己執行的程式（搬進 plugin/ 之前就不在這條的範圍）
-    for rel in py_files_under(root, "plugin").into_iter().filter(|r| !r.starts_with("plugin/scaffold/")) {
-        let Some(found) = imports_of(root, &rel, errors) else { continue };
-        for (line, module) in found {
-            let sub = NETWORK_SUBMODULES.iter().any(|s| module == *s || module.strip_prefix(s).is_some_and(|r| r.starts_with('.')));
-            if NETWORK_MODULES.contains(&top(&module)) || sub {
-                errors.push(format!("{rel}:{line}：plugin 不得有網路呼叫（import {module}）"));
-            }
-        }
-    }
 }
 
 fn check_pinned_actions(root: &Path, pats: &Patterns, errors: &mut Vec<String>) {
@@ -485,15 +352,6 @@ pub fn run_captured(root: &Path) -> Captured {
         }
     };
     let mut errors = Vec::new();
-    // Python 檔還在的期間照舊掃；沒有 .py 就沒有這兩條
-    if !stdlib_only_files(root).is_empty() {
-        check_stdlib_only(root, &mut errors);
-        report("只用標準庫", std::mem::take(&mut errors));
-    }
-    if !py_files_under(root, "plugin").is_empty() {
-        check_no_network(root, &mut errors);
-        report("plugin 不連網", std::mem::take(&mut errors));
-    }
     check_pinned_actions(root, &pats, &mut errors);
     report("action 釘 SHA", std::mem::take(&mut errors));
     check_tracked_files(root, &pats, &mut errors);
@@ -512,20 +370,4 @@ pub fn run_captured(root: &Path) -> Captured {
     }
     out.push_str("\n供應鏈檢查通過\n");
     (0, out, String::new())
-}
-
-/// 測試與對照用：一個 Python 檔的 import（行號、模組名）。
-pub fn imports_in(path: &Path) -> Result<Vec<(usize, String)>, String> {
-    pyimports::imports(&util::read_text(path)?)
-}
-
-/// 檢查會看的 Python 檔（相對路徑）：第 1 項與第 2 項的聯集，照檢查的順序、不重複。
-pub fn python_files(root: &Path) -> Vec<String> {
-    let mut files = stdlib_only_files(root);
-    for f in py_files_under(root, "plugin") {
-        if !files.contains(&f) {
-            files.push(f);
-        }
-    }
-    files
 }

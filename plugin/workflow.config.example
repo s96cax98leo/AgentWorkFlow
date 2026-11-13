@@ -1,5 +1,5 @@
-# AgentWorkFlow 專案設定：init.py 用這些值替換 scaffold/ 裡的 {{佔位符}}。
-# 用法：cp workflow.config.example workflow.config，改值後跑 python3 init.py --target <專案目錄>
+# AgentWorkFlow 專案設定：awf init 用這些值替換 scaffold/ 裡的 {{佔位符}}。
+# 用法：把這個檔複製成 workflow.config，改值後跑 awf init --target <專案目錄> --config workflow.config
 # 格式：每行 KEY=value（value 到行尾，不用加引號）；# 開頭是註解；值留空＝不設定。
 # 清單用逗號分隔。不要在這裡放任何金鑰或密碼。
 

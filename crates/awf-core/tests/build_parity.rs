@@ -1,6 +1,6 @@
-//! build（內嵌 schema、methodology 與片段）的對跑：照 Python 版錄下來的劇本（tests/parity/build.expected.json 的 `build`）
+//! build（內嵌 schema、methodology 與片段）的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/build.expected.json 的 `build`）
 //! 做一遍，逐字比對 exit code、stdout、stderr 與跑完之後每支 workflow 的內容。
-//! err_any 的步驟只比 exit code 與 stdout：Python 版在那裡直接當掉（traceback），這裡要有自己的說明。
+//! err_any 的步驟只比 exit code 與 stdout：0.x 的 Python 版在那裡直接當掉（traceback），這裡要有自己的說明。
 #![cfg(unix)]
 
 use awf_core::build::{self, Paths};
@@ -101,11 +101,11 @@ fn build_matches_python() {
     }
     let _ = std::fs::remove_dir_all(&base);
     assert!(runs > 100, "劇本太短：{runs}");
-    println!("build：{runs} 次執行，{} 次逐字相同，{loose} 次只比 exit code 與 stdout（Python 版當掉）", runs - loose);
+    println!("build：{runs} 次執行，{} 次逐字相同，{loose} 次只比 exit code 與 stdout（0.x 的 Python 版當掉）", runs - loose);
     assert!(bad.is_empty(), "{} 處不同（共 {} 步）：\n{}", bad.len(), steps.len(), bad.join("\n"));
 }
 
-/// 偵測模版 repo 與專案（Python 版依工具檔的位置判斷，這裡依目錄內容）。
+/// 偵測模版 repo 與專案（0.x 的 Python 版依工具檔的位置判斷，這裡依目錄內容）。
 #[test]
 fn detect_paths() {
     let base = std::env::temp_dir().join(format!("awf-build-detect-{}", std::process::id()));

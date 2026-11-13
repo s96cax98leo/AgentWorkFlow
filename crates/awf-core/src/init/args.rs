@@ -5,7 +5,7 @@
 
 use crate::pyfmt::repr_str;
 
-/// 解析完的選項（欄位名對應 Python 版的 `a.<名>`）。
+/// 解析完的選項（欄位名對應 0.x 的 Python 版的 `a.<名>`）。
 #[derive(Debug, Default, Clone)]
 pub struct Args {
     pub positional: Option<String>,
@@ -39,7 +39,7 @@ pub enum ArgStop {
     Error(String),
 }
 
-/// （選項名, 要不要帶值）。順序同 Python 版 `add_argument` 的順序（「ambiguous option」訊息照這個順序列）。
+/// （選項名, 要不要帶值）。順序同 0.x 的 Python 版 `add_argument` 的順序（「ambiguous option」訊息照這個順序列）。
 const OPTS: &[(&str, bool)] = &[
     ("--target", true),
     ("--config", true),

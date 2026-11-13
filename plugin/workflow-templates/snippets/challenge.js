@@ -1,4 +1,4 @@
-// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
 // 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。

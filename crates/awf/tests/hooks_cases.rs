@@ -21,7 +21,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::{Map, Value};
 
 const EXE: &str = env!("CARGO_BIN_EXE_awf");
-/// 從 Python 版測試台轉過來的案例數；之後只會加，不會少。
+/// 從 0.x 的 Python 版測試台轉過來的案例數；之後只會加，不會少。
 const MIN_CASES: usize = 1335;
 
 fn repo_root() -> PathBuf {
@@ -563,7 +563,7 @@ impl<'a> Runner<'a> {
         }
     }
 
-    /// 讀取預算的耗時：在測試行程裡直接呼叫（和 Python 版一樣量「讀設定＋檢查＋讀寫狀態檔」，不含行程啟動）。
+    /// 讀取預算的耗時：在測試行程裡直接呼叫（和 0.x 的 Python 版一樣量「讀設定＋檢查＋讀寫狀態檔」，不含行程啟動）。
     fn perf(&mut self, line: usize, st: &Value) -> Result<(), String> {
         std::env::set_var("AWF_READ_BUDGET_DIR", format!("{}/rb-state", self.root));
         std::env::set_var("CLAUDE_PROJECT_DIR", self.x(&st["proj"]));

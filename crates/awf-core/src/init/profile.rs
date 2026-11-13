@@ -1,6 +1,6 @@
 //! 開發規範（methodology profile）：選哪個 profile、把答案檔或互動問答的回答套進去、升級時比對缺少的欄位。
 //!
-//! 模版只管工作流程，做法由使用者決定；這裡的題目與預設值照 Python 版 `init.py`。
+//! 模版只管工作流程，做法由使用者決定；這裡的題目與預設值照 0.x 的 Python 版 `init.py`。
 
 use super::merge::{deep_merge, missing_fields, set_missing, short};
 use super::{crash, die, read_text, read_text_sig, write_text_native, Console, Kv, Shown, Site, R};
@@ -27,7 +27,7 @@ fn empty() -> &'static Map<String, Value> {
     E.get_or_init(Map::new)
 }
 
-/// `d.get(k, {})`，而且之後要當物件用：有這個鍵但不是物件時 Python 版會當掉。
+/// `d.get(k, {})`，而且之後要當物件用：有這個鍵但不是物件時 0.x 的 Python 版會當掉。
 fn sub<'a>(d: &'a Map<String, Value>, k: &str, what: &str) -> R<&'a Map<String, Value>> {
     match d.get(k) {
         None => Ok(empty()),

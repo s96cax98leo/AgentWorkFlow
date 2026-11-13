@@ -1,7 +1,7 @@
 {
   "$id": "methodology",
   "title": "開發規範 profile：SDLC 各段的做法與專案慣例。模版只管工作流程，做法由這份 profile 決定",
-  "description": "awf init 把選定的 profile（scaffold/.claude/teams/methodologies/<名稱>.json）加上使用者回答的慣例，合併成目標專案的 .claude/teams/methodology.json；awf build 把它內嵌進 sdlc-*.js。改了 profile 要重跑 awf build。",
+  "description": "awf init 把選定的 profile（模版的 methodologies/<名稱>.json）加上使用者回答的慣例，合併成目標專案的 .claude/teams/methodology.json；awf build 把它內嵌進 sdlc-*.js。改了 profile 要重跑 awf build。",
   "type": "object",
   "required": ["name", "description", "stages", "requirements", "conventions"],
   "properties": {

@@ -1,5 +1,5 @@
 //! 基準實跑：在虛構專案上跑 sdlc-plan，量 token、時間、平均 context，以及重跑的比例。
-//! 由 `tests/bench/run_plan.py` 移植；虛構專案在 [`crate::bench_fixture`]。
+//! 原本是 0.x 的 Python 工具 `run_plan.py`；虛構專案在 [`crate::bench_fixture`]。
 //!
 //! **實跑會真的呼叫 claude，一次要花數百萬 token**，所以不在 check-all 裡，只在發佈前手動跑。
 //!
@@ -23,7 +23,7 @@
 //!
 //! 工具（init、render、save-run、cost）在行程內呼叫 awf-core；備資料包起這個 repo 建出來的 `awf`（它以目前目錄為基準）。
 //! 不起任何外部直譯器；只有實跑會起 `claude`。
-//! 和 Python 版不同的地方：selftest 第一項原本看 `.claude/hooks/read_budget.py` 在不在（hook 還是 Python 檔的時候），
+//! 和 0.x 的 Python 版不同的地方：selftest 第一項原本看 `.claude/hooks/read_budget.py` 在不在（hook 還是 Python 檔的時候），
 //! 這裡改看專案的 settings.json 有沒有註冊 hook（hook 換成執行檔之後不會有那支檔）。
 
 use crate::bench_fixture as fixture;

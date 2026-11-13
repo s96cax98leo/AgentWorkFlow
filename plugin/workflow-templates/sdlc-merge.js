@@ -15,7 +15,7 @@ export const meta = {
 const NS = '{{AGENT_NS}}'
 // tryAgent：agent 失敗（throw）時當成缺件回 null（challenge 片段）
 /*@snippet:challenge*/
-// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
 // 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
@@ -167,7 +167,7 @@ const A = args || {}
 for (const k of ['repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
 // recipe（需求類型）：args.recipe／modifiers／size 決定這次走哪些段、派哪些角色；沒給 recipe＝feature（完整流程，和改版前一樣）
 /*@snippet:recipe*/
-// ── 片段 recipe（.claude/teams/tools/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
+// ── 片段 recipe（workflow-templates/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 規則和 awf recipe 完全一致（golden-set/recipes/*.json 兩邊都跑，結果要相同）：
 //   profile 沒有 recipes（舊版）或指定的 recipe 不存在 → 當成 feature 完整流程（只會更嚴）；
@@ -335,7 +335,7 @@ const NEXT_OF = (st) => recipeNext(R, st) || recipeSdlc().slice(recipeSdlc().ind
 const HAS_DESIGN = R.stages.includes('design')
 // 執行紀錄與派工固定前綴（challenge 片段）：每張派工單都帶 rules.md、輸出語言，最後一行指定執行紀錄檔；回傳一律帶 trace
 /*@snippet:kernel*/
-// ── 片段 kernel（.claude/teams/tools/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
+// ── 片段 kernel（workflow-templates/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
 // @requires: challenge, recipe
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // awfAgent 在 tryAgent（challenge 片段：共同前綴、執行紀錄檔、trace、失敗當缺件）之上再做三件事：

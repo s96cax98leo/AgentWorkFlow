@@ -20,8 +20,8 @@
 | `.claude/teams/methodologies/` | 模版內建的 profile：`default`（模版原本的做法）、`lightweight`（範例）。新增 profile 時從這裡複製 |
 | `.claude/teams/schemas/` | 交件信封與各種 payload 的 schema（唯一來源），另有 `methodology.schema.json` |
 | `awf`（plugin 的 `bin/`） | 檢查、落檔與確定性工具：單一執行檔，專案裡沒有工具副本，見〈工具〉 |
-| `.claude/teams/tools/` | 乾跑驗證 workflow 用的 `check_workflows.mjs`、情境（`scenarios/`）與共用片段（`snippets/`） |
-| `.claude/teams/golden-set/` | schema 的正反例，與官方 jsonschema 交叉比對 |
+| plugin 的 `workflow-templates/check_workflows.mjs` | 乾跑驗證 workflow 的 Node 腳本，連同情境（`scenarios/`）與共用片段（`snippets/`）都在 plugin 裡，不複製進專案 |
+| `.claude/teams/golden-set/` | schema 的正反例（改 schema 或 profile 時在這裡補案例） |
 | `{{RUNS_DIR}}/<YYYYMMDD>-<事件>-<短名>/` | 每次執行的信封、筆記與 `run.json`（閘門核准紀錄），見 `{{RUNS_DIR}}/README.md` |
 
 ## 需求開發：AI-native SDLC
@@ -143,7 +143,7 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `awf sync-branch` | 決定怎麼跟上 base（rebase、merge 或中轉分支），並檢查中轉分支沒有殘留衝突標記與夾帶改動 |
 | `awf publish` | 確定性推送：只推 fork 的功能分支，推送前掃機敏值，依閘門判定後開 PR，並寫入 `publish-audit.jsonl` |
 | `awf checklist` | 可驗證的 checklist：以驗證指令的實際結果打勾 |
-| `check_workflows.mjs` | 乾跑所有 workflow，包括子計劃、分片驗證、平行修正、缺件等情境（情境在 `tools/scenarios/<workflow>.mjs`） |
+| `check_workflows.mjs` | 乾跑所有 workflow，包括子計劃、分片驗證、平行修正、缺件等情境（在 plugin 的 `workflow-templates/`，情境在它旁邊的 `scenarios/<workflow>.mjs`；用 `--project` 指定專案） |
 | `awf check-agents` | 檢查 `tpm-*`／`dev-*` agent 的格式 |
 | `awf pack <段> --run <run_dir>` | 每段開跑前備資料包（`pack.md`）與要併進 args 的 `pack-args.json`；plan 段另算可沿用的調研角度；build 段另寫每個子任務的資料包（`build/<子任務 id>/pack.md`）；每份資料包帶上相關的既有決定（`decisions.jsonl`）。只由主 session 執行 |
 | `awf locate --repo <repo> --requirement <需求>` | 工具先定位：用需求的用詞對程式與文件做排序，找出要讀的行段。由 `awf pack plan` 呼叫，結果放進 `pack-args.json` 的 `located`；文件角度命中夠就不派定位 agent |
@@ -156,10 +156,8 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 
 ```bash
 awf render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 12 支腳本
-uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py
-node .claude/teams/tools/check_workflows.mjs --wf-dir _tpm/wf-check --agents-dir <plugin>/agents
+node <plugin>/workflow-templates/check_workflows.mjs --project . --wf-dir _tpm/wf-check
 awf check-agents --plugin-dir <plugin>
-python3 <plugin>/hooks/tests/run.py --project .
 awf merge-gate --selftest
 awf publish --selftest
 awf sync-branch --selftest
@@ -177,7 +175,7 @@ awf state --selftest
 ## 新增一種事件
 0. 形狀是「幾個角度平行找 → skeptic 反駁 → writer 寫文件」的事件不用寫程式：在 `methodology.json` 的 `events` 加一筆（欄位見模版的 `docs/事件處理.md`），`awf start --event <名>` 就能用。下面幾步是形狀不同、要自己寫 workflow 時才需要。
 1. 照 plugin 的 `workflow-templates/event-*.js` 的骨架，在專案的 `.claude/workflows/` 寫 workflow：拆工或固定角度 → 平行處理 → skeptic → writer。schema 用 `/*@schema:<payload>*/ null /*@end*/` 標記，agentType 寫 `NS + 'tpm-…'`。
-2. 跑 `awf build`（內嵌 schema）和 `check_workflows.mjs --wf-dir .claude/workflows`；乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
+2. 跑 `awf build`（內嵌 schema）和 `node <plugin>/workflow-templates/check_workflows.mjs --project . --wf-dir .claude/workflows`。情境檔（`scenarios/<workflow>.mjs`）跟著 plugin，自己寫的 workflow 只會跑預設路徑的乾跑。
 3. 在 `tpm-team` skill 的事件對照表加一列。
 4. 需要新的 payload 時，放到 `schemas/payloads/`，並在 `golden-set/` 補正例和反例。
 

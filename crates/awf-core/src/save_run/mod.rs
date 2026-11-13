@@ -1,7 +1,7 @@
-//! run 的存檔、核准與閘門。由 `scaffold/.claude/teams/tools/save_run.py` 移植：輸出、exit code、訊息文字、寫出的檔案內容
-//! 都和 Python 版逐字相同（對跑基準在 `tests/parity/save_run.expected.json`）。
+//! run 的存檔、核准與閘門。原本是 0.x 的 Python 工具 `save_run.py`：輸出、exit code、訊息文字、寫出的檔案內容
+//! 都和 0.x 的 Python 版逐字相同（對跑基準在 `tests/parity/save_run.expected.json`）。
 //!
-//! 這是整個流程的閘門，判定只能和 Python 版一樣或更嚴。分檔：
+//! 這是整個流程的閘門，判定只能和 0.x 的 Python 版一樣或更嚴。分檔：
 //! - `py`：Python 語意的小工具（型別不對時丟的例外、JSON 的讀寫、pathlib 的文字規則）。
 //! - `trace`：信封、agent 缺件、執行紀錄（trace）的核對與代寫、執行紀錄索引、模型分級。
 //! - `policy`：政策核准的判定、recipe 的一致與竄改檢查、整條閘門鏈、開發規範 profile 的讀法。
@@ -12,12 +12,12 @@
 //! - `selftest`：`--selftest`。
 //!
 //! 核心函式一律收明確的路徑（[`Ctx`]：schema 所在的 teams 目錄、專案的 profile、資料包的專案根、相對路徑的基準），
-//! 不依賴行程的目前目錄。別的模組在行程內呼叫用 [`run_captured`]（Python 版是 awf.py 用 subprocess 呼叫 save_run.py）。
+//! 不依賴行程的目前目錄。別的模組在行程內呼叫用 [`run_captured`]（0.x 的 Python 版是 awf.py 用 subprocess 呼叫 save_run.py）。
 //!
-//! 和 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
+//! 和 0.x 的 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
 //! - 讀進來的 JSON（workflow 回傳、run.json、各段的結果檔、profile）有 NaN、Infinity、落單的代理字元跳脫、
 //!   超出 64 位元範圍的整數、巢狀超過 200 層時，一律當成讀不懂（Python 讀得進來）。
-//! - Python 版丟出沒接住的例外的地方（traceback、exit 1），這裡印「awf save-run：類別：訊息」、exit 1，同樣不記錄、不核准。
+//! - 0.x 的 Python 版丟出沒接住的例外的地方（traceback、exit 1），這裡印「awf save-run：類別：訊息」、exit 1，同樣不記錄、不核准。
 //! - 用法訊息的指令名是 `awf save-run`。
 
 mod archive;
@@ -68,12 +68,12 @@ pub const KERNEL_STAGES: [&str; 7] = ["plan", "design", "build", "sync", "test",
 pub struct Ctx {
     /// schema 所在的 `.claude/teams`（信封與狀態快照的 schema、guard.config.json）。
     pub teams: String,
-    /// 專案的開發規範 profile（Python 版的 `PROJECT_PROFILE`）：`<專案>/.claude/teams/methodology.json`。
+    /// 專案的開發規範 profile（0.x 的 Python 版的 `PROJECT_PROFILE`）：`<專案>/.claude/teams/methodology.json`。
     /// 專案根目錄由它往上三層推得（限制文件的位置、檢查指令的工作目錄）。
     pub profile: String,
     /// 資料包（調研重用）認的專案根目錄：需求檔、來源檔要在它底下。
     pub pack_root: String,
-    /// 相對路徑的基準（Python 版的目前目錄）。
+    /// 相對路徑的基準（0.x 的 Python 版的目前目錄）。
     pub cwd: String,
     /// 固定「今天」（YYYY-MM-DD）；None 用本機日期。只影響 決策記憶.md 裡哪些決定算過期。
     pub today: Option<String>,
@@ -92,7 +92,7 @@ impl Ctx {
         Ctx::new(&crate::deliverables::default_root(), &cwd)
     }
 
-    /// Python 版的 `project_root()`：profile 在 `<專案>/.claude/teams/` 底下。
+    /// 0.x 的 Python 版的 `project_root()`：profile 在 `<專案>/.claude/teams/` 底下。
     pub fn project_root(&self) -> String {
         py::pparent(&py::pparent(&py::pparent(&self.profile)))
     }
@@ -180,7 +180,7 @@ impl Ctx {
 }
 
 /// `opt(argv, name, default)`：第一個 `name` 後面那個參數。
-/// `pack.run_epic(run)`：run.json 讀得進來、不是空值也不是物件時，Python 版在 `.get` 丟 AttributeError
+/// `pack.run_epic(run)`：run.json 讀得進來、不是空值也不是物件時，0.x 的 Python 版在 `.get` 丟 AttributeError
 /// （`pack::run_epic` 這時回空字串）。這裡先擋下來，不讓讀不懂的 run.json 被當成「沒有 epic」繼續做。
 pub(crate) fn run_epic(ctx: &Ctx, run: &str) -> py::R<String> {
     let dir = ctx.abs(run);
@@ -201,7 +201,7 @@ pub fn opts(argv: &[String], name: &str) -> Vec<String> {
     argv.iter().enumerate().filter(|(_, a)| *a == name).filter_map(|(i, _)| argv.get(i + 1).cloned()).collect()
 }
 
-/// 讀 `<run>/run.json`。讀不到、不是 utf-8、不是看得懂的 JSON 都回錯誤（Python 版在這裡丟例外結束）。
+/// 讀 `<run>/run.json`。讀不到、不是 utf-8、不是看得懂的 JSON 都回錯誤（0.x 的 Python 版在這裡丟例外結束）。
 pub fn load(ctx: &Ctx, run: &str) -> R<Value> {
     ctx.load_json(&py::pj(run, "run.json"))
 }

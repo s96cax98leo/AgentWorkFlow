@@ -1,4 +1,4 @@
-//! guard-paths：Edit／Write／NotebookEdit 的寫入範圍，Read／Grep 的機敏檔。由 `plugin/hooks/guard.py` 的 `check_paths`、`check_read` 移植。
+//! guard-paths：Edit／Write／NotebookEdit 的寫入範圍，Read／Grep 的機敏檔。原本是 0.x 的 Python 工具 `guard.py` 的 `check_paths`、`check_read`。
 
 use super::guard::{err, fold, git_toplevel, is_secret_path, norm, str_or_empty, tool_input, Guard, AUDIT_FILES, PACK_STATE, R, SECRET_FILE_OK, SHARED_CONTEXT_NAMES};
 use super::path;

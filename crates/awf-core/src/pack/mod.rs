@@ -1,5 +1,5 @@
 //! 資料包與調研重用：每段開跑前由工具（不是 agent）整理好要讀的資料，不花 LLM token。
-//! 由 `scaffold/.claude/teams/tools/pack.py` 移植，輸出、exit code、訊息文字、寫出的檔案內容都和 Python 版逐字相同
+//! 原本是 0.x 的 Python 工具 `pack.py`，輸出、exit code、訊息文字、寫出的檔案內容都和 0.x 的 Python 版逐字相同
 //! （對跑基準在 `tests/parity/pack.expected.json`）。
 //!
 //! 做兩件事：
@@ -13,7 +13,7 @@
 //!
 //! 路徑一律是用 `/` 的字串（和 kb、locate、deliverables 相同）。專案根目錄由呼叫端給（CLI 用 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄）。
 //!
-//! 和 Python 版的差別（都不放寬判定）：
+//! 和 0.x 的 Python 版的差別（都不放寬判定）：
 //! - Python 碰到型別不對的輸入會丟例外的地方（例如子任務的 owns 是數字），這裡回 [`PyErr`]（類別名與訊息照 Python），
 //!   由 `run_pack` 照原本 `except` 的範圍決定是記成說明還是結束（exit 1）。
 //! - `verify_reuse`／`sources_changed` 在 Python 會丟例外的畸形紀錄（目錄清單的 path 不是字串之類），這裡一律算「讀不到」（判不符）。
@@ -384,7 +384,7 @@ pub fn load_json(p: &str) -> Option<Value> {
 
 // ------------------------------------------------------------------ 調研重用
 /// JSON 原文裡有沒有落單的代理字元跳脫（高位那一半後面沒接低位那一半之類）。解析器會把它們都換成 U+FFFD，
-/// 兩個不同的字串可能因此變成相同；Python 版寫不出這種檔（寫檔時編碼會失敗），所以有就當成讀不懂。
+/// 兩個不同的字串可能因此變成相同；0.x 的 Python 版寫不出這種檔（寫檔時編碼會失敗），所以有就當成讀不懂。
 fn lone_surrogate_escape(text: &str) -> bool {
     let b = text.as_bytes();
     let unit = |i: usize| -> Option<u32> {
@@ -663,7 +663,7 @@ pub fn verify_reuse(run: &str, repo: Option<&str>, result: &Value, requirement: 
     let key = requirement.map(|r| requirement_key(r, root));
     let mut errs: Vec<String> = Vec::new();
     for angle in reused.iter().filter_map(Value::as_str) {
-        // 比 Python 版嚴：角度名稱會拿去組紀錄檔路徑，帶路徑分隔或 .. 會對到 run 目錄外
+        // 比 0.x 的 Python 版嚴：角度名稱會拿去組紀錄檔路徑，帶路徑分隔或 .. 會對到 run 目錄外
         if angle.contains('/') || angle.contains('\\') || angle.split('/').any(|p| p == "..") || angle == ".." {
             errs.push(format!("沿用的調研角度 {angle} 的名稱不能含路徑分隔或 .."));
             continue;
@@ -766,7 +766,7 @@ pub fn record_reuse(run: &str, repo: Option<&str>, result: &Value, requirement: 
 }
 
 // ------------------------------------------------------------------ 決策記憶
-/// Python 版的 `DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")`：`pack::DATE.is_match(s)`。
+/// 0.x 的 Python 版的 `DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")`：`pack::DATE.is_match(s)`。
 pub struct DateRe;
 
 pub static DATE: DateRe = DateRe;
@@ -836,7 +836,7 @@ pub fn current_decisions(decs: &[Value]) -> Vec<Value> {
 
 /// 這次要帶的既有決定：沒過期；範圍是 epic 的要同一個 run／epic（或 --reuse-from 帶進來的 run），
 /// 範圍是 project 的要和需求的用詞對得上（至少 3 個詞，或問題的詞有三成出現在需求裡）。最新的在前，最多 MAX_DECISIONS 筆。
-/// 決定的 run 欄位是清單或物件時回 TypeError（Python 版在這裡丟例外，呼叫端各自處理）。
+/// 決定的 run 欄位是清單或物件時回 TypeError（0.x 的 Python 版在這裡丟例外，呼叫端各自處理）。
 pub fn relevant_decisions(runs: &str, run_name: &str, epic: &str, requirement: &str, today: &str, family: &[String]) -> PyResult<Vec<Value>> {
     let names: HashSet<&str> = std::iter::once(run_name).chain(family.iter().map(String::as_str)).filter(|n| !n.is_empty()).collect();
     let mut req: Option<HashSet<String>> = None;
@@ -1308,7 +1308,7 @@ fn today_local() -> String {
 }
 
 /// 產生一段的資料包。`argv[0]` 是段名。stdout 的文字寫進 `out`；回傳 exit code。
-/// `Err` 是 Python 版沒有接住的例外（那邊是 traceback、exit 1）。
+/// `Err` 是 0.x 的 Python 版沒有接住的例外（那邊是 traceback、exit 1）。
 pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> {
     let Some(stage) = argv.first().map(String::as_str) else { return Ok(2) };
     let run_raw = opt(argv, "--run");

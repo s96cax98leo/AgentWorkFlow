@@ -1,5 +1,5 @@
 //! workflow 的成本與時間：讀 Claude Code 存的 workflow transcript，依 workflow、角色、模型加總 token。
-//! 由 `scaffold/.claude/teams/tools/awf_cost.py` 移植；輸出文字是對跑基準的一部分（`tests/parity/tools.expected.json`）。
+//! 原本是 0.x 的 Python 工具 `awf_cost.py`；輸出文字是對跑基準的一部分（`tests/parity/tools.expected.json`）。
 //!
 //! 資料來源（Claude Code 的內部格式，官方沒有承諾穩定，所以解析集中在 [`read_agent`]、[`tail_agent`]、[`read_wf_meta`]）：
 //!   `<session 目錄>/subagents/workflows/wf_<id>/agent-<agentId>.jsonl`      每筆 assistant 訊息有 message.usage、message.model
@@ -7,10 +7,10 @@
 //!   `<session 目錄>/workflows/wf_<id>.json`                                 workflowName、status、durationMs、scriptPath、agentCount
 //! 同一個請求的 usage 會重複出現在多行，依 requestId 去重（沒有就用 message.id）。
 //!
-//! Python 版在幾種輸入下會直接當掉（traceback、exit 1）：naive 與 aware 的時間戳互比、requestId 是清單或物件、
+//! 0.x 的 Python 版在幾種輸入下會直接當掉（traceback、exit 1）：naive 與 aware 的時間戳互比、requestId 是清單或物件、
 //! wf 目錄的路徑不到三層。這裡用 [`Crash`] 表示，CLI 印一行說明後同樣 exit 1。
 //!
-//! 和 Python 版的已知差異（都是極端輸入）：
+//! 和 0.x 的 Python 版的已知差異（都是極端輸入）：
 //! - 超過 64 位元的整數 token 數當成「不是整數」（算 0）；加總超過 i64 時停在上限。
 //! - JSON 巢狀超過 200 層的行當成讀不懂（Python 要到約一千層才丟 RecursionError 當掉）。
 //! - NaN／Infinity 當成 null（Python 的 NaN 是真值、而且每個都不相等）。
@@ -52,7 +52,7 @@ pub const SHORT: [&str; 4] = ["input", "cache_write", "cache_read", "output"];
 /// 比對 run_dir 時每個 agent 最多掃的開頭字數。
 pub const SCAN_PROMPT_BYTES: usize = 200_000;
 
-/// Python 版會直接當掉的地方；內容是例外的類別與訊息。
+/// 0.x 的 Python 版會直接當掉的地方；內容是例外的類別與訊息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Crash(pub String);
 
@@ -842,7 +842,7 @@ fn groups_json(gs: &[Group]) -> Value {
 }
 
 impl Row {
-    /// `--json` 輸出的一筆（鍵的順序和 Python 版相同）。
+    /// `--json` 輸出的一筆（鍵的順序和 0.x 的 Python 版相同）。
     pub fn to_json(&self) -> Value {
         let mut tokens = Map::new();
         for (k, v) in SHORT.iter().zip(self.tokens) {

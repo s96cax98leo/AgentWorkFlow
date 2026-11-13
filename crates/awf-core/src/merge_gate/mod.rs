@@ -1,11 +1,11 @@
 //! 確定性 merge gate：機械複核合併 agent（dev-merge-steward）的需求對照表，並檢查其他合併條件。
-//! 由 `scaffold/.claude/teams/tools/merge_gate.py` 移植；判定、exit code、輸出文字照 Python 版，只會一樣或更嚴。
+//! 原本是 0.x 的 Python 工具 `merge_gate.py`；判定、exit code、輸出文字照 0.x 的 Python 版，只會一樣或更嚴。
 //!
 //! agent 可能被 PR 內容說服；這支程式只看結構化輸入，不讀 PR 說明，說服不了。
 //! 結束碼：0＝merge；1＝hold；3＝escalate；2＝參數錯誤。輸入缺漏一律判 hold（fail-closed）。
 //!
-//! 和 Python 版的差別（都不會讓判定變鬆）：
-//! - Python 版遇到形狀不對的設定值會丟沒接住的例外（traceback、exit 1）；這裡印一行訊息、exit 1（`Fail::Crash`）。
+//! 和 0.x 的 Python 版的差別（都不會讓判定變鬆）：
+//! - 0.x 的 Python 版遇到形狀不對的設定值會丟沒接住的例外（traceback、exit 1）；這裡印一行訊息、exit 1（`Fail::Crash`）。
 //! - JSON 解析見 `pyjson`（NaN、巢狀過深當成讀不到）；整數只收 ASCII 數字。
 //! - hunk 標頭只收 ASCII 數字，行數超過 64 位元當成解析不了（hold）。
 //!
@@ -186,8 +186,8 @@ impl Ctx {
     }
 }
 
-/// 出錯的兩種：`Input` 對應 Python 版的 InputError（判 hold 並列進理由）；
-/// `Crash` 是 Python 版會丟出沒接住的例外的地方（這裡印訊息、exit 1，不輸出判定）。
+/// 出錯的兩種：`Input` 對應 0.x 的 Python 版的 InputError（判 hold 並列進理由）；
+/// `Crash` 是 0.x 的 Python 版會丟出沒接住的例外的地方（這裡印訊息、exit 1，不輸出判定）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fail {
     Input(String),
@@ -197,7 +197,7 @@ pub enum Fail {
 type Crash = String;
 
 fn crash(what: &str) -> Crash {
-    format!("{what}（Python 版在這裡丟例外結束；一律不放行）")
+    format!("{what}（0.x 的 Python 版在這裡丟例外結束；一律不放行）")
 }
 
 static NULL: Value = Value::Null;
@@ -761,7 +761,7 @@ impl Diff {
         self.files.iter().map(|(p, _)| p.as_str()).collect()
     }
 
-    /// 和 Python 版 parse_diff 回傳的 dict 同形狀（對跑用）。
+    /// 和 0.x 的 Python 版 parse_diff 回傳的 dict 同形狀（對跑用）。
     pub fn to_value(&self) -> Value {
         let files: Map<String, Value> = self.files.iter().map(|(p, c)| (p.clone(), json!([c[0], c[1]]))).collect();
         let entries: Vec<Value> = self.entries.iter().map(|e| json!({"old": e.old, "new": e.new, "deleted": e.deleted, "added": e.added, "binary": e.binary})).collect();
@@ -920,7 +920,7 @@ pub fn risk_tier(diff: &Diff, am: &Value) -> Result<(&'static str, Vec<String>),
 
 // ------------------------------------------------------------------ 判定
 
-/// 已載入的輸入（Python 版的 inp dict）。None＝沒給或讀不到。
+/// 已載入的輸入（0.x 的 Python 版的 inp dict）。None＝沒給或讀不到。
 #[derive(Debug, Clone, Default)]
 pub struct Inp {
     pub repo: String,
@@ -1413,7 +1413,7 @@ fn patch_id(ctx: &Ctx, git_dir: &str, base: &str, sha: &str) -> Option<String> {
         let mut c = Command::new("git");
         c.arg("-C").arg(git_dir).args(args);
         for (k, v) in &ctx.env { c.env(k, v); }
-        // Python 版沒給 stdin 時是繼承；這裡沒有要給它讀的東西，一律接空裝置
+        // 0.x 的 Python 版沒給 stdin 時是繼承；這裡沒有要給它讀的東西，一律接空裝置
         let r = pyutil::run(&mut c, data, None).ok()?;
         if r.code == 0 { Some(r.stdout) } else { None }
     };
@@ -1601,7 +1601,7 @@ pub fn run(ctx: &Ctx, argv: &[String], out: &mut String, errs: &mut String) -> i
 
 /// `awf merge-gate …`
 pub fn main(args: &[String]) -> i32 {
-    // selftest 的「command 需求來源」案例用：印一份需求清單（對應 Python 版 selftest 臨時寫的 gen_reqs.py）
+    // selftest 的「command 需求來源」案例用：印一份需求清單（對應 0.x 的 Python 版 selftest 臨時寫的 gen_reqs.py）
     if args.first().map(String::as_str) == Some("--selftest-requirements") {
         let repo = std::env::var("AWF_REPO").unwrap_or_default();
         println!("{}", json!({"requirements": [{"id": "ISSUE-7", "text": "登入頁顯示錯誤訊息", "source": format!("issue #7 of {repo}")}]}));

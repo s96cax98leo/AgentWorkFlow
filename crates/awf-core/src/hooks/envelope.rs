@@ -1,4 +1,4 @@
-//! 交件信封檢查（`awf hook envelope`）。由 `plugin/hooks/envelope_hook.py` 移植。
+//! 交件信封檢查（`awf hook envelope`）。原本是 0.x 的 Python 工具 `envelope_hook.py`。
 //! 只檢查 team 角色（見 `config::is_team_agent`）與 team 任務；驗證器是 `crate::schema`（原本的 schemalib.py）。
 //!
 //! 掛在四個事件：
@@ -7,7 +7,7 @@
 //!   - SubagentStop：子 agent 以文字結束時；stop_hook_active 為 true 就放行，避免無限迴圈
 //!   - TaskCompleted：team 任務的描述要寫 `output: <runs_dir>/<run>/<檔>.json`，這裡讀那個檔驗證
 //!
-//! 專案還沒 init 時不檢查、直接放行。Python 版看的是 `.claude/teams/tools/schemalib.py` 在不在；
+//! 專案還沒 init 時不檢查、直接放行。0.x 的 Python 版看的是 `.claude/teams/tools/schemalib.py` 在不在；
 //! 這裡驗證器內建，改成「schemalib.py 或 schemas/envelope.schema.json 任一存在」就算已 init。
 
 use super::guard::{err, say, Stop, R};

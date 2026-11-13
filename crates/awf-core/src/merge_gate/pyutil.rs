@@ -92,7 +92,7 @@ pub fn int_of_str(s: &str) -> Option<i128> {
 
 // ------------------------------------------------------------------ 讀檔與錯誤文字
 
-/// 讀檔失敗的種類：`Os` 對應 Python 的 OSError，`Decode` 對應 UnicodeDecodeError（Python 版多半沒接、直接結束）。
+/// 讀檔失敗的種類：`Os` 對應 Python 的 OSError，`Decode` 對應 UnicodeDecodeError（0.x 的 Python 版多半沒接、直接結束）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReadErr {
     Os(String),

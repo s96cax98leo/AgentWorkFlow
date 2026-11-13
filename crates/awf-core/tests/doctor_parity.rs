@@ -1,4 +1,4 @@
-//! doctor 的對跑：重放 `tests/parity/doctor.expected.json`（Python 版 awf_doctor 錄的），逐字比對。
+//! doctor 的對跑：重放 `tests/parity/doctor.expected.json`（0.x 的 Python 版 awf_doctor 錄的），逐字比對。
 //! 基準已經濾掉 Rust 版沒有的 `python`、`hooks-compile` 兩項。
 
 use awf_core::doctor::{self, Item};
@@ -30,7 +30,7 @@ fn replay_matches_python() {
     let real = |t: &str| t.replace("@TMP@", &root);
     let norm = |t: &str| t.replace(&root, "@TMP@");
     let (mut bad, mut n_checks, mut n_fn) = (Vec::new(), 0, 0);
-    // 「找不到 plugin」的步驟用的模版根：只有 schema、沒有 plugin/（Python 版是把 find_plugin 換掉，schema 照用模版的）
+    // 「找不到 plugin」的步驟用的模版根：只有 schema、沒有 plugin/（0.x 的 Python 版是把 find_plugin 換掉，schema 照用模版的）
     let bare = format!("{root}/bare-template");
     let schemas = Path::new(&bare).join("scaffold/.claude/teams/schemas");
     std::fs::create_dir_all(schemas.join("payloads")).expect("建目錄");
@@ -59,7 +59,7 @@ fn replay_matches_python() {
                     cwd: root.clone(),
                     home: format!("{root}/home"),
                     plugin_env: [None, None],
-                    // Python 版在模版 repo 裡跑，沒給 --plugin-dir 時用 repo 自己的 plugin；「找不到 plugin」的步驟是把那條路拿掉
+                    // 0.x 的 Python 版在模版 repo 裡跑，沒給 --plugin-dir 時用 repo 自己的 plugin；「找不到 plugin」的步驟是把那條路拿掉
                     template: Some(if no_plugin { bare.clone() } else { format!("{src_s}/plugin") }),
                     transcripts: None,
                     now: None,
