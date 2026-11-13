@@ -24,7 +24,7 @@ fn sha1_16(s: &str) -> String {
 }
 
 /// 從位元組位置 `pos` 起取 `n` 個字元；不夠長回 None。回傳（那一段, 下一個位置）。
-fn take_chars(text: &str, pos: usize, n: usize) -> Option<(&str, usize)> {
+pub(super) fn take_chars(text: &str, pos: usize, n: usize) -> Option<(&str, usize)> {
     let rest = text.get(pos..)?;
     if n == 0 {
         return Some(("", pos));

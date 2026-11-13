@@ -1,31 +1,37 @@
-//! 把模版套進專案（複製 scaffold、替換佔位符、合併既有設定、升級）。由根目錄的 `init.py` 移植。
+//! 把模版套進專案（複製 scaffold 的設定、替換佔位符、合併既有設定、升級）。
 //!
-//! 行為和 Python 版相同（對跑基準在 `tests/parity/init.expected.json`）：輸出、exit code、訊息文字、寫出的檔案內容逐字相同。
-//! 訊息開頭的「init.py：」與說明文字裡的 `init.py`、`build.py` 也照舊（之後改成執行檔的那一批再一起換）。
+//! 起點是 Python 版 `init.py` 的移植；1.0 起行為不同了（對跑基準 `tests/parity/init.expected.json` 改當這個實作的回歸基準）：
+//! - **工具不複製進專案**：`scaffold/.claude/teams/tools/` 與 scaffold 裡的 `.py` 不放（工具都在 `awf` 執行檔裡）。
+//!   覆寫檔（`--with-workflows`）要的片段，內嵌時先找專案自己的 `tools/snippets/`（舊專案還有時），再找模版的。
+//! - **`--hooks project`**：把這支執行檔複製到 `<專案>/.claude/hooks/bin/`，settings 用它的絕對路徑註冊 `awf hook <種類>`。
+//!   不需要 Python；`--python` 收下、提示一行、忽略。
+//! - **`--upgrade`／`--force`**：0.x 複製進專案的工具副本，指紋相符的移除、改過的保留並列出（[`legacy_tools`]）；
+//!   settings 裡 0.x 註冊的 hook 與權限換成 1.0 的寫法，使用者自己的不動。
+//! - **`--with-merge-gate`**：另外把 linux-x64 的執行檔與 `checksums.json` 放進 `.claude/teams/bin/`（CI 從受保護的 base 取出來跑）。
 //!
-//! 和 Python 版不同的地方：
-//! - 模版根目錄：Python 版用 init.py 自己的位置；這裡依序看 `--source`、環境變數 `AWF_TEMPLATE_DIR`、
-//!   `CLAUDE_PLUGIN_ROOT`／`AWF_PLUGIN_DIR` 的上一層、執行檔往上找到含 `scaffold/` 與 `plugin/` 的目錄。
-//! - 最後的內嵌（build）在程式內呼叫 [`crate::build`]，不另外跑 `build.py`（專案裡有 `tools/build.py` 才做，條件照舊）。
-//! - `--hooks project` 寫進 settings 的 Python：`--python` 沒給時在 PATH 找 `python3`／`python`，問它自己的絕對路徑
-//!   （Python 版用「跑 init.py 的那個 Python」）。找不到而且要用時就停下。
-//! - Python 版直接當掉（traceback）的情況（檔案不是 UTF-8、設定的形狀不對、寫不進檔案），這裡在 stderr 印一行說明，exit code 同樣是 1。
-//! - JSON 裡的 `NaN`、`Infinity` 當成不合法（Python 讀得進來）：對使用者的檔案只會變成「沒有合併、原樣保留」。
+//! 其他細節：
+//! - 模版根目錄依序看 `--source`、環境變數 `AWF_TEMPLATE_DIR`、`CLAUDE_PLUGIN_ROOT`／`AWF_PLUGIN_DIR` 的上一層、
+//!   執行檔往上找到含 `scaffold/` 與 `plugin/` 的目錄（[`find_template_root`]）。
+//! - 最後的內嵌（build）在程式內呼叫 [`crate::build`]。
+//! - 檔案不是 UTF-8、設定的形狀不對、寫不進檔案：在 stderr 印一行說明，exit code 1。
+//! - JSON 裡的 `NaN`、`Infinity` 當成不合法：對使用者的檔案只會變成「沒有合併、原樣保留」。
 //! - `~使用者名` 開頭的路徑不展開（只展開 `~`）。
 //!
 //! 核心函式都收明確的模版根（[`Site`]）與目標路徑，不讀行程的目前目錄與環境變數；那些由 [`Env::from_process`] 收集。
 
 mod args;
 mod legacy;
+pub mod legacy_tools;
 mod merge;
 mod profile;
 mod writer;
 
 pub use args::Args;
 pub use legacy::{pristine_legacy_workflow, tidy_old_workflows, Tidy};
-pub use merge::{deep_merge, merge_hooks, merge_settings, missing_fields, set_missing};
+pub use legacy_tools::{tidy_old_tools, ToolsTidy};
+pub use merge::{deep_merge, hook_forms, merge_hooks, merge_settings, migrate_allow, missing_fields, set_missing};
 pub use profile::{apply_answers, parse_constraints};
-pub use writer::{dest_for, hook_command, hook_files_plan, scaffold_plan, workflow_plan, Item, Writer};
+pub use writer::{dest_for, hook_bin_rel, hook_command, not_copied, scaffold_plan, workflow_plan, Item, Writer, GATE_BIN_NAME, GATE_BIN_REL, GATE_SUMS_REL};
 
 use crate::kb::pyish::WS_CLASS;
 use crate::merge_gate::pyutil::{self, ReadErr};
@@ -37,7 +43,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
-/// Python 版的說明文字（`init.py` 的 docstring），缺 `--target` 時印在 stderr。
+/// 說明文字，缺 `--target` 時印在 stderr。
 const DOC: &str = include_str!("usage.txt");
 
 /// init 寫進專案的版本戳（內容＝plugin.json 的 version）。
@@ -45,7 +51,7 @@ pub const VERSION_FILE: &str = ".claude/teams/VERSION";
 /// 這次用的佔位符值（`--upgrade` 沒給 `--config` 時沿用）。
 pub const RECORD_FILE: &str = ".claude/teams/workflow.config";
 
-/// 停下來：在 stderr 印「init.py：<訊息>」，exit 1（Python 版的 `die`，以及它直接當掉的情況）。
+/// 停下來：在 stderr 印「awf init：<訊息>」，exit 1。
 #[derive(Debug)]
 pub struct Stop(pub String);
 
@@ -55,7 +61,7 @@ pub(crate) fn die<T>(msg: impl Into<String>) -> R<T> {
     Err(Stop(msg.into()))
 }
 
-/// Python 版在這裡會直接當掉（traceback）；這裡印一行說明，exit code 一樣是 1。
+/// 環境出錯（讀不了、寫不進、形狀不對）：印一行說明，exit code 1。
 pub(crate) fn crash<T>(msg: impl Into<String>) -> R<T> {
     Err(Stop(msg.into()))
 }
@@ -164,7 +170,7 @@ pub struct Shown {
     pub real: PathBuf,
 }
 
-/// 行程層級的輸入：模版在哪、目前目錄、家目錄、預設的 Python。測試直接給值，不碰行程狀態。
+/// 行程層級的輸入：模版在哪、目前目錄、家目錄、這支執行檔。測試直接給值，不碰行程狀態。
 #[derive(Debug, Clone, Default)]
 pub struct Env {
     /// 模版根目錄（底下有 `scaffold/`、`plugin/`、`workflow.config.example`）；`--source` 優先。
@@ -173,8 +179,24 @@ pub struct Env {
     pub cwd: PathBuf,
     /// `~` 展開成什麼。
     pub home: Option<String>,
-    /// `--hooks project` 寫進 settings 的 Python（`--python` 沒給時用）；None 表示到 PATH 找。
-    pub python: Option<String>,
+    /// `--hooks project` 要複製進專案的執行檔：環境變數 `AWF_BIN` 指的檔，沒設就是這支執行檔自己（解開符號連結）。
+    pub awf_bin: Option<PathBuf>,
+}
+
+/// 模版根目錄（底下有 `scaffold/` 與 `plugin/`）：`AWF_TEMPLATE_DIR` → `CLAUDE_PLUGIN_ROOT`／`AWF_PLUGIN_DIR` 的上一層 → 執行檔往上找。
+pub fn find_template_root() -> Option<PathBuf> {
+    let var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+    if let Some(p) = var("AWF_TEMPLATE_DIR") {
+        return Some(PathBuf::from(p));
+    }
+    let from_plugin = ["CLAUDE_PLUGIN_ROOT", "AWF_PLUGIN_DIR"].iter().filter_map(|k| var(k))
+        .filter_map(|p| Path::new(&p).parent().map(Path::to_path_buf))
+        .find(|d| is_template_root(d));
+    if from_plugin.is_some() {
+        return from_plugin;
+    }
+    let exe = std::env::current_exe().ok().and_then(|p| p.canonicalize().ok());
+    exe.as_deref().and_then(|p| p.ancestors().skip(1).find(|d| is_template_root(d)).map(Path::to_path_buf))
 }
 
 fn is_template_root(d: &Path) -> bool {
@@ -182,24 +204,15 @@ fn is_template_root(d: &Path) -> bool {
 }
 
 impl Env {
-    /// 從行程的環境收集：`AWF_TEMPLATE_DIR` → `CLAUDE_PLUGIN_ROOT`／`AWF_PLUGIN_DIR` 的上一層 → 執行檔往上找。
+    /// 從行程的環境收集（模版根目錄見 [`find_template_root`]）。
     pub fn from_process() -> Self {
         let var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
-        let mut source = var("AWF_TEMPLATE_DIR").map(PathBuf::from);
-        if source.is_none() {
-            source = ["CLAUDE_PLUGIN_ROOT", "AWF_PLUGIN_DIR"].iter().filter_map(|k| var(k))
-                .filter_map(|p| Path::new(&p).parent().map(Path::to_path_buf))
-                .find(|d| is_template_root(d));
-        }
-        if source.is_none() {
-            let exe = std::env::current_exe().ok().and_then(|p| p.canonicalize().ok());
-            source = exe.as_deref().and_then(|p| p.ancestors().skip(1).find(|d| is_template_root(d)).map(Path::to_path_buf));
-        }
+        let awf_bin = var("AWF_BIN").map(PathBuf::from).or_else(|| std::env::current_exe().ok()).map(|p| p.canonicalize().unwrap_or(p));
         Self {
-            source,
+            source: find_template_root(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             home: var("HOME").or_else(|| var("USERPROFILE")),
-            python: var("AWF_PYTHON"),
+            awf_bin,
         }
     }
 }
@@ -226,8 +239,14 @@ impl Site {
         self.here.join("workflow.config.example")
     }
 
-    pub fn plugin_hooks(&self) -> PathBuf {
-        self.here.join("plugin").join("hooks")
+    /// 發佈用的執行檔與 `checksums.json` 所在的目錄。
+    pub fn plugin_bin(&self) -> PathBuf {
+        self.here.join("plugin").join("bin")
+    }
+
+    /// 共用片段在模版裡的位置（由 [`crate::build::template_snippet_dir`] 決定）。
+    pub fn snippets(&self) -> PathBuf {
+        crate::build::template_snippet_dir(&self.here)
     }
 
     pub fn methodologies(&self) -> PathBuf {
@@ -376,77 +395,150 @@ fn plugin_version(site: &Site) -> R<String> {
     }
 }
 
-// ------------------------------------------------------------------ hooks 用的 Python
+// ------------------------------------------------------------------ 執行檔（hooks、merge gate）
 
-fn find_on_path(names: &[&str]) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).flat_map(|d| names.iter().map(move |n| d.join(n))).find(|p| p.is_file())
+/// `--hooks project` 要複製進專案的執行檔內容。找不到就停下（settings 要寫它的絕對路徑，不能寫一個不存在的檔）。
+fn hook_bin_bytes(env: &Env) -> R<Vec<u8>> {
+    let Some(src) = env.awf_bin.as_deref().filter(|p| p.is_file()) else {
+        return die(match &env.awf_bin {
+            Some(p) => format!("--hooks project 要把 awf 執行檔複製進專案，但找不到 {}；用環境變數 AWF_BIN 指定執行檔", p.display()),
+            None => "--hooks project 要把 awf 執行檔複製進專案，但找不到這支執行檔的位置；用環境變數 AWF_BIN 指定".to_string(),
+        });
+    };
+    match std::fs::read(src) {
+        Ok(b) if !b.is_empty() => Ok(b),
+        Ok(_) => die(format!("--hooks project：{} 是空檔，不是執行檔", src.display())),
+        Err(e) => crash(format!("讀不了 {}：{e}", src.display())),
+    }
 }
 
-/// 到 PATH 找 Python，並問它自己的絕對路徑（在 venv 裡時回它底下的基礎 Python：venv 可能被刪）。
-pub fn find_python() -> Option<String> {
-    let names: &[&str] = if cfg!(windows) { &["python.exe", "python3.exe"] } else { &["python3", "python"] };
-    let exe = find_on_path(names)?;
-    let probe = "import sys\nfrom pathlib import Path\ne = sys.executable\nb = getattr(sys, '_base_executable', None)\n\
-if sys.prefix != sys.base_prefix and b and Path(b).is_file():\n    e = b\nprint(Path(e).resolve())\n";
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.args(["-c", probe]);
-    let asked = pyutil::run(&mut cmd, None, Some(std::time::Duration::from_secs(20))).ok()
-        .filter(|o| o.code == 0)
-        .map(|o| pyutil::strip(&pyutil::text(&o.stdout)).to_string())
-        .filter(|p| Path::new(p).is_file());
-    asked.or_else(|| exe.canonicalize().ok().map(|p| p.to_string_lossy().into_owned()))
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// 寫進 settings.json 的 Python：`--python` > [`Env::python`] > PATH 上的 Python。
-/// 找不到時，`--hooks project` 停下（要寫絕對路徑）；其他情況用不到，回 `python3`。
-fn python_for_hooks(site: &Site, env: &Env, over: Option<&str>, hooks: &str) -> R<String> {
-    if let Some(o) = over.filter(|s| !s.is_empty()) {
-        let p = site.user_path(o);
-        if !p.real.is_file() {
-            return die(format!("--python 指定的檔案不存在：{o}"));
+/// 是不是 linux x86-64 的 ELF 執行檔（只看檔頭：魔術數字、64 位元、little-endian、機器類型 62）。
+pub fn is_elf_x86_64(data: &[u8]) -> bool {
+    data.len() >= 20 && data.starts_with(b"\x7fELF") && data.get(4) == Some(&2) && data.get(5) == Some(&1) && data.get(18) == Some(&62) && data.get(19) == Some(&0)
+}
+
+/// merge gate 的 CI 要放進專案的兩個檔：linux-x64 的執行檔與記它 sha256 的 `checksums.json`。
+#[derive(Debug)]
+pub struct GateFiles {
+    pub bin: Vec<u8>,
+    pub checksums: String,
+}
+
+/// 找出並核對 merge gate 要用的執行檔（在寫任何檔之前做：缺了就整個停下，不留半套）。
+/// 預設用模版的 `plugin/bin/awf-linux-x64` 與同目錄的 `checksums.json`；`--merge-gate-bin`（與 `--merge-gate-checksums`）可以指定別的。
+fn gate_files(site: &Site, a: &Args) -> R<GateFiles> {
+    let given = a.merge_gate_bin.as_deref().filter(|s| !s.is_empty());
+    let given_sums = a.merge_gate_checksums.as_deref().filter(|s| !s.is_empty());
+    let (bin_path, bin_shown) = match given {
+        Some(g) => (site.user_path(g).real, g.to_string()),
+        None => {
+            let p = site.plugin_bin().join(GATE_BIN_NAME);
+            (p.clone(), p.display().to_string())
         }
-        return Ok(pyutil::resolve(&p.real.to_string_lossy()));
+    };
+    if !bin_path.is_file() {
+        return die(match given {
+            Some(g) => format!("--merge-gate-bin 指定的檔案不存在：{g}"),
+            None => format!(
+                "--with-merge-gate 要把 linux-x64 的執行檔放進專案（CI 從受保護的 base 取出它來跑 awf merge-gate），但模版裡沒有 {bin_shown}。\
+發佈版的 plugin 才有這個檔；用自己建置的模版時，加 --merge-gate-bin <linux-x64 的 awf 執行檔> 指定"
+            ),
+        });
     }
-    if let Some(p) = &env.python {
-        return Ok(p.clone());
+    let bin = match std::fs::read(&bin_path) {
+        Ok(b) => b,
+        Err(e) => return crash(format!("讀不了 {bin_shown}：{e}")),
+    };
+    if !is_elf_x86_64(&bin) {
+        return die(format!("{bin_shown} 不是 linux x86-64 的執行檔（ELF 檔頭不對）；merge gate 的 CI 在 ubuntu 的 x64 runner 上跑，別的平台的執行檔不能用"));
     }
-    match find_python() {
-        Some(p) => Ok(p),
-        None if hooks == "project" => die("找不到 Python（--hooks project 要把 Python 的絕對路徑寫進 settings.json）；用 --python <路徑> 指定"),
-        None => Ok("python3".to_string()),
-    }
+    let sum = sha256_hex(&bin);
+    let sums_path = match (given, given_sums) {
+        (_, Some(s)) => Some((site.user_path(s).real, s.to_string())),
+        (None, None) => {
+            let p = site.plugin_bin().join("checksums.json");
+            Some((p.clone(), p.display().to_string()))
+        }
+        (Some(_), None) => None,
+    };
+    let checksums = match sums_path {
+        None => format!("{{\n  \"files\": {{\n    \"{GATE_BIN_NAME}\": \"{sum}\"\n  }},\n  \"source\": \"unknown\"\n}}\n"),
+        Some((p, shown)) => {
+            let text = match read_text_sig(&p) {
+                Ok(t) => t,
+                Err(ReadErr::Os(_)) if given_sums.is_none() => return die(format!("模版裡沒有 {shown}（記 {GATE_BIN_NAME} 的 sha256）；用 --merge-gate-bin 與 --merge-gate-checksums 指定")),
+                Err(ReadErr::Os(_)) => return die(format!("--merge-gate-checksums 指定的檔案不存在：{shown}")),
+                Err(e) => return crash(format!("讀不了 {shown}：{}", e.msg())),
+            };
+            let want = pyjson::loads(&text).ok().and_then(|d| d.get("files").and_then(|f| f.get(GATE_BIN_NAME)).and_then(Value::as_str).map(str::to_string));
+            match want {
+                Some(w) if w == sum => text,
+                Some(w) => return die(format!("{shown} 記的 {GATE_BIN_NAME} sha256（{w}）和執行檔 {bin_shown} 的（{sum}）不符，不放進專案")),
+                None => return die(format!("{shown} 讀不到 files.{GATE_BIN_NAME}（格式：{{\"files\": {{\"{GATE_BIN_NAME}\": \"<sha256>\"}}, \"source\": …}}）")),
+            }
+        }
+    };
+    Ok(GateFiles { bin, checksums })
 }
 
-/// Windows 上 `python3` 指令跑不跑得起來（plugin 的 hooks 用它啟動）。
-fn python3_works() -> bool {
-    let Some(exe) = find_on_path(&["python3.exe", "python3.cmd", "python3.bat", "python3"]) else { return false };
-    let mut cmd = std::process::Command::new(exe);
-    cmd.args(["-c", "print('ok')"]);
-    match pyutil::run(&mut cmd, None, Some(std::time::Duration::from_secs(20))) {
-        Ok(o) => o.code == 0 && pyutil::strip(&pyutil::text(&o.stdout)) == "ok",
-        Err(_) => false,
+/// 專案的 `.gitignore` 有沒有忽略這個相對路徑所在的目錄（只看最常見的寫法；看不出來就當沒有，多提示一次無妨）。
+fn gitignore_covers(target: &Path, rel_dir: &str) -> bool {
+    let Ok(text) = read_text_sig(&target.join(".gitignore")) else { return false };
+    let mut hit = false;
+    for line in pyutil::splitlines(&text) {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (neg, pat) = match line.strip_prefix('!') {
+            Some(rest) => (true, rest),
+            None => (false, line),
+        };
+        let pat = pat.trim_start_matches("**/").trim_start_matches('/');
+        let pat = pat.trim_end_matches("/**").trim_end_matches("/*").trim_end_matches('/');
+        if !pat.is_empty() && (rel_dir == pat || rel_dir.starts_with(&format!("{pat}/"))) {
+            hit = !neg;
+        }
     }
+    hit
 }
 
 // ------------------------------------------------------------------ 內嵌（build）
 
-/// init 最後的內嵌步驟：回（exit code, stdout, stderr）；專案裡沒有 `tools/build.py` 時不做（回 None，條件同 Python 版）。
-/// 之後不複製工具進專案時，這個條件要拿掉。
-pub fn run_build(target: &Path) -> Option<(i32, String, String)> {
-    if !target.join(".claude").join("teams").join("tools").join("build.py").is_file() {
-        return None;
-    }
-    Some(crate::build::run_captured(&[], &crate::build::Paths::project(target)))
+/// init 最後的內嵌步驟：處理專案的覆寫檔（`.claude/workflows/*.js`；沒有就只做檢查），回（exit code, stdout, stderr）。
+/// 片段先找專案自己的 `.claude/teams/tools/snippets/`（舊專案還有時），再找模版的 `template_snippets`。
+pub fn run_build(target: &Path, template_snippets: &Path) -> (i32, String, String) {
+    crate::build::run_captured(&[], &crate::build::Paths::project_with(target, Some(template_snippets.to_path_buf())))
 }
 
 // ------------------------------------------------------------------ 主流程
 
-fn has_awf_hooks(settings: &Path) -> bool {
-    let Ok(text) = read_text_sig(settings) else { return false };
-    let Ok(Value::Object(doc)) = pyjson::loads(&text) else { return false };
+/// settings.json 的 hooks 裡有沒有我們的註冊：（0.x 的 `awf_hook.py`, 1.0 的 `awf hook <種類>`）。
+fn awf_hooks_in(settings: &Path) -> (bool, bool) {
+    let Ok(text) = read_text_sig(settings) else { return (false, false) };
+    let Ok(Value::Object(doc)) = pyjson::loads(&text) else { return (false, false) };
     let hooks = doc.get("hooks").cloned().unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-    crate::recipe::dumps(&hooks, None).contains("awf_hook.py")
+    merge::hook_forms(&crate::recipe::dumps(&hooks, None))
+}
+
+/// 升級時把 settings.json 的 `permissions.allow` 裡 0.x 範本放的項目換成 1.0 的寫法（見 [`merge::migrate_allow`]）。
+/// 檔案不是合法 JSON 物件就不動。回傳換了哪些。
+fn migrate_settings_allow(target: &Path) -> R<Vec<(String, Option<String>)>> {
+    let path = target.join(".claude").join("settings.json");
+    let Ok(text) = read_text_sig(&path) else { return Ok(Vec::new()) };
+    let Ok(Value::Object(mut doc)) = pyjson::loads(&text) else { return Ok(Vec::new()) };
+    // 指的檔還在專案裡（例如改過而保留的 check_workflows.mjs）：那一項不動
+    let keep = |old: &str| old.split_whitespace().any(|w| w.trim_end_matches(":*)").starts_with(".claude/teams/tools/") && w.ends_with(".mjs:*)") && target.join(w.trim_end_matches(":*)")).is_file());
+    let changed = merge::migrate_allow(&mut doc, &keep);
+    if !changed.is_empty() {
+        writer::write_text(&path, &format!("{}\n", crate::recipe::dumps(&Value::Object(doc), Some(2))))?;
+    }
+    Ok(changed)
 }
 
 fn main_session_rx() -> Regex {
@@ -470,7 +562,7 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         }
         Err(args::ArgStop::Error(m)) => {
             con.say_err(args::USAGE);
-            con.say_err(&format!("init.py: error: {m}"));
+            con.say_err(&format!("awf init: error: {m}"));
             return Ok(2);
         }
     };
@@ -502,7 +594,35 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         return die(format!("找不到 {}", site.example().display()));
     }
 
+    if a.python.as_deref().is_some_and(|s| !s.is_empty()) {
+        con.say("注意：--python 是 0.x 的選項；1.0 不再需要 Python，已忽略。");
+    }
+
     let target_user = site.user_path(target_arg);
+    // 既有專案已經有模版產生的 merge gate CI：升級時一起換成執行檔的版本（舊的那份跑的是會被移除的 merge_gate.py）
+    let gate_yml = target_user.real.join(".github").join("workflows").join("agent-merge-gate.yml");
+    let gate_implied = !a.with_merge_gate && (a.force || a.upgrade) && read_text(&gate_yml).is_ok_and(|t| writer::ours().is_match(&t));
+    let with_merge_gate = a.with_merge_gate || gate_implied;
+    if !with_merge_gate && (a.merge_gate_bin.is_some() || a.merge_gate_checksums.is_some()) {
+        return die("--merge-gate-bin／--merge-gate-checksums 要搭配 --with-merge-gate");
+    }
+    if a.merge_gate_checksums.is_some() && a.merge_gate_bin.is_none() {
+        return die("--merge-gate-checksums 要搭配 --merge-gate-bin（沒指定執行檔時用模版自己的 checksums.json）");
+    }
+    // 要放進專案的執行檔先找齊、核對好，缺了就在動任何檔之前停下
+    let gate = if with_merge_gate {
+        match gate_files(&site, &a) {
+            Ok(g) => Some(g),
+            Err(Stop(m)) if gate_implied => {
+                return die(format!("這個專案已經有 merge gate 的 CI（.github/workflows/agent-merge-gate.yml），升級要一起換成 1.0 的版本（等同加了 --with-merge-gate）。{m}"));
+            }
+            Err(e) => return Err(e),
+        }
+    } else {
+        None
+    };
+    let hook_bin = if a.hooks == "project" { Some(hook_bin_bytes(env)?) } else { None };
+
     if let Err(e) = std::fs::create_dir_all(&target_user.real) {
         return crash(format!("建不了目錄 {}：{e}", target_user.shown));
     }
@@ -569,15 +689,15 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     let interactive = config.is_none() && !defaults && con.tty;
     let methodology = profile::build_methodology(con, &site, &mut vals, answers.as_ref(), interactive, defaults)?;
     let main_free = profile::ask_main_session(con, answers.as_ref(), interactive)?;
-    let python = python_for_hooks(&site, env, a.python.as_deref(), &a.hooks)?;
-    let (hook_cmd, hook_shell) = writer::hook_command(&python);
+    let hook_bin_path = target.join(hook_bin_rel());
+    let (hook_cmd, hook_shell) = writer::hook_command(&hook_bin_path.to_string_lossy());
     vals.set("AWF_HOOK_CMD", &hook_cmd);
     vals.set("AWF_HOOK_SHELL", &hook_shell);
     let runs = vals.get("RUNS_DIR").filter(|s| !s.is_empty()).unwrap_or("_tpm/runs").trim_matches('/').to_string();
     let briefs = vals.get("BRIEFS_DIR").unwrap_or_default().trim_matches('/').to_string();
 
     let mut w = Writer::new(target, &vals, force, a.overwrite_user_files);
-    for it in writer::scaffold_plan(&site.scaffold(), target, &runs, &a.hooks, a.with_mcp, a.with_merge_gate) {
+    for it in writer::scaffold_plan(&site.scaffold(), target, &runs, &a.hooks, a.with_mcp, with_merge_gate) {
         w.put(&it.src, &it.dst, it.text_render)?;
     }
 
@@ -602,10 +722,15 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         }
     }
 
-    if a.hooks == "project" {
-        for it in writer::hook_files_plan(&site.plugin_hooks(), target) {
-            w.put(&it.src, &it.dst, it.text_render)?;
-        }
+    if let Some(bytes) = &hook_bin {
+        w.put_bytes(&hook_bin_path, bytes, true)?;
+    }
+    if let Some(g) = &gate {
+        w.put_bytes(&target.join(GATE_BIN_REL), &g.bin, true)?;
+        w.put_bytes(&target.join(GATE_SUMS_REL), g.checksums.as_bytes(), false)?;
+    }
+    if gate_implied {
+        w.notes.push("專案已經有 merge gate 的 CI：這次一起更新（等同加了 --with-merge-gate）。".to_string());
     }
     for n in std::mem::take(&mut w.notes) {
         con.say(&n);
@@ -628,7 +753,7 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     // 值來自其他地方（./workflow.config、範例預設值）時不覆寫既有的紀錄，避免把使用者 init 時的值換掉
     let record_ok = config_arg.is_some() || config.as_ref().is_some_and(|c| c.shown == record.shown) || !record.real.is_file();
     if (templates_current || !record.real.is_file()) && record_ok {
-        let mut text = String::from("# init.py 這次用的佔位符值（init.py --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\n");
+        let mut text = String::from("# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\n");
         for (k, v) in vals.iter().filter(|(k, _)| !writer::COMPUTED.contains(k)) {
             text.push_str(&format!("{k}={v}\n"));
         }
@@ -666,9 +791,23 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         con.say(&format!("開發規範 profile：{}（{}）", pyfmt::str_opt(methodology.get("name")), w.rel(&meth)));
     }
 
-    // 舊版殘留：專案裡模版目錄下、這版模版已不再提供的檔案（不刪，列出來讓人決定）
+    // 0.x 複製進專案的工具副本：升級時指紋相符的移除，改過的保留（在算舊版殘留之前做，移除的就不會再被列一次）
+    let st_path = target.join(".claude").join("settings.json");
+    let (old_hooks, new_hooks) = if st_path.is_file() { awf_hooks_in(&st_path) } else { (false, false) };
+    let tools_dir = target.join(".claude").join("teams").join("tools");
+    let mut tidy = ToolsTidy::default();
+    let mut allow_changed: Vec<(String, Option<String>)> = Vec::new();
+    if force {
+        let index = legacy_tools::load_index(&site.here);
+        // settings 還註冊著 0.x 的 awf_hook.py（這次沒有換成執行檔）：.claude/hooks/ 的腳本還在用，不能移除
+        tidy = tidy_old_tools(target, index.as_ref(), &vals, old_hooks);
+        allow_changed = migrate_settings_allow(target)?;
+    }
+    let old_tools_left: Vec<PathBuf> = if tools_dir.is_dir() { writer::walk_files(&tools_dir).into_iter().filter(|p| !writer::skip_file(p)).collect() } else { Vec::new() };
+
+    // 舊版殘留：專案裡模版目錄下、這版模版已不再提供的檔案（不刪，列出來讓人決定）。tools/ 由上面那一段處理
     let mut stale: Vec<PathBuf> = Vec::new();
-    for sub in ["tools", "schemas", "golden-set", "methodologies"] {
+    for sub in ["schemas", "golden-set", "methodologies"] {
         let d = target.join(".claude").join("teams").join(sub);
         if d.is_dir() {
             stale.extend(writer::walk_files(&d).into_iter().filter(|p| !writer::skip_file(p) && !w.seen.contains(p)));
@@ -697,14 +836,48 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         con.say(&format!("略過 {} 個已存在的模版檔（用 --upgrade 更新）：", w.skipped.len()));
         list(con, target, &w.skipped);
     }
-    let st_path = target.join(".claude").join("settings.json");
     if st_path.is_file() {
-        let has_awf = has_awf_hooks(&st_path);
-        if a.hooks == "plugin" && has_awf {
-            con.say("注意：.claude/settings.json 裡有 awf_hook.py 的 hooks（先前用 --hooks project init 過），但這次是 --hooks plugin。plugin 也會註冊同一組 hooks，請擇一：刪掉 settings.json 裡的 awf_hook.py hooks，或改回 --hooks project。");
+        if a.hooks == "plugin" && (old_hooks || new_hooks) {
+            con.say("注意：.claude/settings.json 裡有 awf 的 hooks（先前用 --hooks project init 過），但這次是 --hooks plugin。plugin 也會註冊同一組 hooks，請擇一：刪掉 settings.json 裡 awf 的 hooks，或改回 --hooks project。");
         }
-        if a.hooks == "project" && !has_awf {
-            con.say("注意：.claude/settings.json 沒有 awf_hook.py 的 hooks（可能不是合法 JSON），請照 .claude/settings.README.md 手動註冊。");
+        if a.hooks == "plugin" && old_hooks {
+            con.say("  其中有 0.x 的寫法（python … awf_hook.py）：1.0 的 hook 是執行檔。要留在專案就加 --hooks project 重跑升級（會換成 awf hook <種類>）；在那之前 .claude/hooks/ 的舊腳本先留著沒有移除。");
+        }
+        if a.hooks == "project" && !new_hooks {
+            con.say("注意：.claude/settings.json 沒有 awf hook 的 hooks（可能不是合法 JSON），請照 .claude/settings.README.md 手動註冊。");
+        }
+        if a.hooks == "project" && old_hooks {
+            con.say("注意：.claude/settings.json 還有 0.x 的 hook 註冊（python … awf_hook.py）沒有換掉，請手動刪掉那幾筆；.claude/hooks/ 的舊腳本先留著沒有移除。");
+        }
+    }
+    if !tidy.removed.is_empty() {
+        con.say(&format!("移除 {} 個 0.x 複製進專案、沒改過的工具檔（1.0 的工具都在 awf 執行檔裡，不用放在專案）。", tidy.removed.len()));
+    }
+    if !tidy.modified.is_empty() {
+        con.say(&format!("保留 {} 個改過的舊工具檔（和任何一版原樣都對不上；1.0 不再使用它們，確認不需要後手動刪除）：", tidy.modified.len()));
+        for p in &tidy.modified {
+            con.say(&format!("  - {p}"));
+        }
+    }
+    if !tidy.unknown.is_empty() {
+        con.say(&format!(".claude/teams/tools/ 底下不是模版放的檔 {} 個，沒有動：", tidy.unknown.len()));
+        for p in &tidy.unknown {
+            con.say(&format!("  - {p}"));
+        }
+    }
+    if !tidy.failed.is_empty() {
+        con.say(&format!("警告：有 {} 個舊工具檔移除不了：{}", tidy.failed.len(), tidy.failed.join("、")));
+    }
+    if tidy.no_index {
+        con.say(&format!("注意：讀不到 {}（各版工具的指紋），.claude/teams/tools/ 的舊工具沒有整理；1.0 不再使用它們。", site.here.join(legacy_tools::FILE).display()));
+    }
+    if !force && !old_tools_left.is_empty() {
+        con.say(&format!("注意：.claude/teams/tools/ 還有 {} 個 0.x 複製進來的工具檔。1.0 的工具都在 awf 執行檔裡，不再使用它們；跑 awf init --upgrade 會移除沒改過的、保留改過的。", old_tools_left.len()));
+    }
+    if !allow_changed.is_empty() {
+        con.say(&format!(".claude/settings.json 的權限：{} 筆 0.x 的寫法換成 1.0 的（你自己加的權限沒有動）：", allow_changed.len()));
+        for (old, new) in &allow_changed {
+            con.say(&format!("  - {old} → {}", new.as_deref().unwrap_or("（拿掉：這個檔不再放在專案）")));
         }
     }
     if !stale.is_empty() {
@@ -723,29 +896,30 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     if force && !a.with_workflows {
         let t = tidy_old_workflows(target, &site.wf_templates(), &vals);
         if !t.removed.is_empty() {
-            con.say(&format!("移除 {} 支舊版複製進來、沒改過的 workflow 副本（0.5 起由 awf.py 依 plugin 的範本產生，不用放在專案）：{}", t.removed.len(), t.removed.join("、")));
+            con.say(&format!("移除 {} 支舊版複製進來、沒改過的 workflow 副本（0.5 起由 awf 依 plugin 的範本產生，不用放在專案）：{}", t.removed.len(), t.removed.join("、")));
         }
         if !t.overrides.is_empty() {
-            con.say(&format!("保留 {} 支 workflow 覆寫檔（有 awf-override 標記，awf.py 會用它們）：{}", t.overrides.len(), t.overrides.join("、")));
+            con.say(&format!("保留 {} 支 workflow 覆寫檔（有 awf-override 標記，awf 會用它們）：{}", t.overrides.len(), t.overrides.join("、")));
         }
         if !t.kept.is_empty() {
-            con.say(&format!("保留 {} 支和任何一版範本都對不上的 workflow（可能改過）：{}。awf.py 不會採用它們；要繼續用就在檔案結尾加一行「// awf-override: <版本>」，不用就刪掉。", t.kept.len(), t.kept.join("、")));
+            con.say(&format!("保留 {} 支和任何一版範本都對不上的 workflow（可能改過）：{}。awf 不會採用它們；要繼續用就在檔案結尾加一行「// awf-override: <版本>」，不用就刪掉。", t.kept.len(), t.kept.join("、")));
         }
     }
 
     // ------------------------------------------------------------ 內嵌 schema 與自我檢查
-    if let Some((code, out, err)) = run_build(target) {
+    {
+        let (code, out, err) = run_build(target, &site.snippets());
         con.write_raw(&out);
         let _ = con.err.write_all(err.as_bytes());
         if code != 0 {
-            con.say("警告：build.py 失敗，請手動跑 python3 .claude/teams/tools/build.py");
+            con.say("警告：內嵌（awf build）失敗，修正後在專案根目錄手動跑 awf build");
             if a.upgrade && exit_code == 0 {
                 exit_code = 1;
             }
         }
     }
 
-    // 覆寫檔的標記要在內嵌之後加（內嵌會重寫內嵌的部分）；awf.py 只採用有這個標記的專案 workflow
+    // 覆寫檔的標記要在內嵌之後加（內嵌會重寫內嵌的部分）；awf 只採用有這個標記的專案 workflow
     for dst in &wf_written {
         let body = match read_text(dst) {
             Ok(t) => t,
@@ -757,24 +931,27 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         }
     }
     if !wf_written.is_empty() {
-        con.say(&format!("workflow 覆寫檔 {} 支放在 .claude/workflows/（結尾有 awf-override 標記；awf.py 會用它們取代 plugin 的範本，plugin 更新後要自己對照更新。不需要改 workflow 的話可以整個刪掉）。", wf_written.len()));
+        con.say(&format!("workflow 覆寫檔 {} 支放在 .claude/workflows/（結尾有 awf-override 標記；awf 會用它們取代 plugin 的範本，plugin 更新後要自己對照更新。不需要改 workflow 的話可以整個刪掉）。", wf_written.len()));
     }
 
     if a.upgrade {
         con.say(&format!("\n升級完成：{} → {new_ver}。用 git diff 檢查變更；驗證指令見下面第 5 步。", if old_ver.is_empty() { "未記錄" } else { &old_ver }));
-        con.say("記得也更新 plugin（agents、skills、hooks）：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins。");
+        con.say("記得也更新 plugin（agents、skills、hooks、awf 執行檔）：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins。");
     }
 
-    if a.hooks == "plugin" && cfg!(windows) && !python3_works() {
-        con.say("\n警告：這台 Windows 的 python3 指令跑不起來（常見是 Microsoft Store 的空殼或只裝了 py 啟動器）。plugin 的 hooks 用 python3 啟動，跑不起來時守門會擋下所有 shell 與改檔動作。改用 --hooks project 重跑（init.py 會寫入 Python 絕對路徑），或安裝能用 python3 執行的 Python。");
+    if hook_bin.is_some() && !gitignore_covers(target, ".claude/hooks/bin") {
+        con.say(&format!(
+            "\n提示：{} 是這台機器這個平台的執行檔，不建議進版控（.gitignore 沒有忽略 .claude/hooks/bin/；要不要加由你決定，init 不改 .gitignore）。\n  settings.json 寫的是它的絕對路徑：換機器、換平台或搬專案位置後，各自跑一次 awf init --target <專案> --upgrade --hooks project。",
+            hook_bin_rel()
+        ));
     }
 
-    next_steps(con, &site, target, &a.hooks, &python);
+    next_steps(con, &site, target, &a.hooks);
     Ok(exit_code)
 }
 
 /// 結尾的「下一步」說明。
-fn next_steps(con: &mut Console, site: &Site, target: &Path, hooks: &str, python: &str) {
+fn next_steps(con: &mut Console, site: &Site, target: &Path, hooks: &str) {
     let here = &site.here;
     let teams = target.join(".claude").join("teams");
     let plugin = here.join("plugin");
@@ -782,34 +959,32 @@ fn next_steps(con: &mut Console, site: &Site, target: &Path, hooks: &str, python
     con.say("\n下一步：");
     if hooks == "plugin" {
         con.say(&format!(
-            "  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands 都由 plugin 提供）：\n       /plugin marketplace add {}\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：{} 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf_hook.py guard-shell 只出現一次（來源是 plugin）。",
+            "  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add {}\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：{} 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。",
             here.display(),
             target.join(".claude").join("settings.json").display()
         ));
     } else {
         con.say(&format!(
-            "  1. hooks 已複製到 {}，並註冊在 .claude/settings.json（Python：{python}）。\n     若也要用 plugin 的 agents／skills／commands：安裝 plugin 後，到 /plugin 停用它的 hooks，或改回 --hooks plugin 重新 init（加 --force）。\n  2. 確認 hooks 只註冊一次：在 Claude Code 跑 /hooks，awf_hook.py guard-shell 只出現一次（來源是專案 settings）。",
-            target.join(".claude").join("hooks").display()
+            "  1. awf 執行檔已複製到 {}，hooks 註冊在 .claude/settings.json（用它的絕對路徑跑 awf hook <種類>；跑不起來時擋下）。\n     若也要用 plugin 的 agents／skills／commands：安裝 plugin 後，到 /plugin 停用它的 hooks，或改回 --hooks plugin 重新 init（加 --force）。\n  2. 確認 hooks 只註冊一次：在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是專案 settings）。",
+            target.join(hook_bin_rel()).display()
         ));
     }
     let claude_doc = if target.join(writer::CLAUDE_IMPORT).exists() { writer::CLAUDE_IMPORT } else { "CLAUDE.md" };
     con.say(&format!(
-        "  3. 填寫 {} 的「## 專案規則」段與 {claude_doc} 的「專案特定」段。\n  4. 檢查 {}（上游、fork、禁止路徑、分支前綴）與\n     {}（開發規範與慣例；改了下一段 workflow 就生效，不用重跑 build.py）。\n  5. 驗證（在 {} 執行；Windows 把 python3 換成 py -3 或 python）：\n       uv run --no-project --with jsonschema python3 .claude/teams/golden-set/run.py\n       python3 .claude/teams/tools/awf.py render --all --out _tpm/wf-check --plugin-dir {}\n       node .claude/teams/tools/check_workflows.mjs --agents-dir {} --wf-dir _tpm/wf-check\n       python3 .claude/teams/tools/check_agents.py --plugin-dir {}\n       python3 {} --project {}",
+        "  3. 填寫 {} 的「## 專案規則」段與 {claude_doc} 的「專案特定」段。\n  4. 檢查 {}（上游、fork、禁止路徑、分支前綴）與\n     {}（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 {} 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir {}\n       awf check-agents --plugin-dir {}",
         teams.join("rules.md").display(),
         teams.join("guard.config.json").display(),
         teams.join("methodology.json").display(),
         target.display(),
         plugin.display(),
-        plugin.join("agents").display(),
-        plugin.display(),
-        plugin.join("hooks").join("tests").join("run.py").display(),
-        target.display()
+        plugin.display()
     ));
     let gate = target.join(".github").join("workflows").join("agent-merge-gate.yml");
     if gate.exists() {
         con.say(&format!(
-            "  6. merge gate CI 已放在 {}。在 GitHub 設好 gate App、ruleset 綁定來源之前，它會讓 PR 的 check 失敗；\n     啟用前檢查清單見 {}。",
+            "  6. merge gate CI 已放在 {}，它用的執行檔與 sha256 在 {}（三個檔要一起進受保護的 base 分支）。\n     在 GitHub 設好 gate App、ruleset 綁定來源之前，它會讓 PR 的 check 失敗；啟用前檢查清單見 {}。",
             gate.display(),
+            target.join(".claude").join("teams").join("bin").display(),
             trust.display()
         ));
     } else {
@@ -827,7 +1002,7 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write,
     let code = match go(args, env, &mut con) {
         Ok(code) => code,
         Err(Stop(msg)) => {
-            con.say_err(&format!("init.py：{msg}"));
+            con.say_err(&format!("awf init：{msg}"));
             1
         }
     };

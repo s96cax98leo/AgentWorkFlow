@@ -1,8 +1,9 @@
 //! 把模版檔寫進專案：替換佔位符、去掉 `.tmpl`，以及「不破壞使用者的既有設定」的每一條規則。
 //!
-//! 之後要換掉的兩件事各自是獨立的函式：
-//! - 「複製哪些檔」：[`scaffold_plan`]、[`workflow_plan`]、[`hook_files_plan`]（回傳來源與目的地的清單）。
-//! - 「hook 怎麼註冊」：[`hook_command`]（寫進 settings 的指令）與 [`dest_for`] 裡選哪一份 settings 模版。
+//! - 「複製哪些檔」：[`scaffold_plan`]、[`workflow_plan`]（回傳來源與目的地的清單）。1.0 起工具都在 `awf` 執行檔裡，
+//!   `scaffold/.claude/teams/tools/` 與 scaffold 裡的 `.py` 不複製（[`not_copied`]）。
+//! - 「hook 怎麼註冊」：[`hook_command`]（寫進 settings 的指令）與 [`dest_for`] 裡選哪一份 settings 模版；
+//!   `--hooks project` 用的執行檔與 merge gate 的執行檔由 [`Writer::put_bytes`] 放。
 
 use super::merge::{heading_at, merge_settings, missing_fields, refresh_notes};
 use super::{crash, read_raw, read_text, read_text_sig, Kv, R};
@@ -147,7 +148,25 @@ pub fn dest_for(rel: &Path, target: &Path, runs: &str, hooks: &str, with_mcp: bo
     Some(target.join(rel))
 }
 
-/// 複製哪些檔（一）：`scaffold/` 底下的全部（含 `.claude/teams/tools/` 的工具），依 [`dest_for`] 決定位置。
+/// 1.0 不複製進專案的 scaffold 檔（相對 scaffold 的路徑）：`.claude/teams/tools/` 整個目錄，以及其他地方的 `.py`
+/// （例如 `golden-set/run.py`：它要靠 tools 裡的模組，專案也不需要 Python）。
+pub fn not_copied(rel: &Path) -> bool {
+    let p = posix(rel);
+    p.starts_with(".claude/teams/tools/") || p.ends_with(".py")
+}
+
+/// `--hooks project` 時執行檔在專案裡的位置（相對專案根目錄）。
+pub fn hook_bin_rel() -> &'static str {
+    if cfg!(windows) { ".claude/hooks/bin/awf.exe" } else { ".claude/hooks/bin/awf" }
+}
+
+/// merge gate 的 CI 用的執行檔與雜湊檔在專案裡的位置（CI 範本寫的也是這兩個路徑）。
+pub const GATE_BIN_REL: &str = ".claude/teams/bin/awf-linux-x64";
+pub const GATE_SUMS_REL: &str = ".claude/teams/bin/checksums.json";
+/// `checksums.json` 裡 linux-x64 執行檔的鍵（發佈檔名，見 `crates/xtask/src/checksums.rs`）。
+pub const GATE_BIN_NAME: &str = "awf-linux-x64";
+
+/// 複製哪些檔（一）：`scaffold/` 底下的設定（[`not_copied`] 的不放），依 [`dest_for`] 決定位置。
 pub fn scaffold_plan(scaffold: &Path, target: &Path, runs: &str, hooks: &str, with_mcp: bool, with_merge_gate: bool) -> Vec<Item> {
     let mut out = Vec::new();
     for src in walk_files(scaffold) {
@@ -155,6 +174,9 @@ pub fn scaffold_plan(scaffold: &Path, target: &Path, runs: &str, hooks: &str, wi
             continue;
         }
         let Ok(rel) = src.strip_prefix(scaffold) else { continue };
+        if not_copied(rel) {
+            continue;
+        }
         if let Some(dst) = dest_for(rel, target, runs, hooks, with_mcp, with_merge_gate) {
             out.push(Item { src, dst, text_render: true });
         }
@@ -170,30 +192,16 @@ pub fn workflow_plan(wf_templates: &Path, target: &Path) -> Vec<Item> {
     }).collect()
 }
 
-/// 複製哪些檔（三）：`--hooks project` 時把 `plugin/hooks/` 複製到 `<專案>/.claude/hooks/`（不含 hooks.json）。
-pub fn hook_files_plan(plugin_hooks: &Path, target: &Path) -> Vec<Item> {
-    let mut out = Vec::new();
-    for src in walk_files(plugin_hooks) {
-        if skip_file(&src) || file_name(&src) == "hooks.json" {
-            continue;
-        }
-        let Ok(rel) = src.strip_prefix(plugin_hooks) else { continue };
-        let dst = target.join(".claude").join("hooks").join(rel);
-        out.push(Item { src, dst, text_render: false });
-    }
-    out
-}
-
-/// hook 怎麼註冊：回傳（AWF_HOOK_CMD, AWF_HOOK_SHELL），都是已經 JSON 跳脫好的片段。
+/// hook 怎麼註冊：回傳（AWF_HOOK_CMD, AWF_HOOK_SHELL），都是已經 JSON 跳脫好的片段。範本在後面接「 guard-shell」等種類。
 ///
-/// - macOS／Linux：shell form 交給 sh -c，Python 用絕對路徑，不靠 PATH 上的 python3。
-/// - Windows：明確指定 `"shell": "powershell"`，用呼叫運算子 `&` 執行絕對路徑的 python.exe。
-pub fn hook_command(python: &str) -> (String, String) {
-    let script = "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/awf_hook.py\"";
+/// `bin` 是執行檔的絕對路徑（專案裡的那份複本）。
+/// - macOS／Linux：shell form 交給 sh -c，路徑加引號。
+/// - Windows：明確指定 `"shell": "powershell"`，用呼叫運算子 `&` 執行。
+pub fn hook_command(bin: &str) -> (String, String) {
     let (cmd, shell) = if cfg!(windows) {
-        (format!("& \"{python}\" {script}"), ", \"shell\": \"powershell\"")
+        (format!("& \"{bin}\" hook"), ", \"shell\": \"powershell\"")
     } else {
-        (format!("\"{python}\" {script}"), "")
+        (format!("\"{bin}\" hook"), "")
     };
     (json_escape(&cmd), shell.to_string())
 }
@@ -356,7 +364,7 @@ impl<'a> Writer<'a> {
         }
         let nl = if body.contains("\r\n") { "\r\n" } else { "\n" };
         let lead = if body.is_empty() || body.ends_with('\n') || body.ends_with('\r') { "" } else { nl };
-        let block = format!("{lead}{nl}<!-- agent-workflow：模版的工作流程說明（init.py 追加；移除模版時刪掉這兩行） -->{nl}@{CLAUDE_IMPORT}{nl}");
+        let block = format!("{lead}{nl}<!-- agent-workflow：模版的工作流程說明（awf init 追加；移除模版時刪掉這兩行） -->{nl}@{CLAUDE_IMPORT}{nl}");
         let appended = std::fs::OpenOptions::new().append(true).open(dst).and_then(|mut f| std::io::Write::write_all(&mut f, block.as_bytes()));
         if let Err(e) = appended {
             return crash(format!("寫不進 {}：{e}", dst.display()));
@@ -417,7 +425,33 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    /// 放一個模版檔。任何 Python 版不會覆寫的檔，這裡也不覆寫。
+    /// 放一個不是從 scaffold 文字檔來的模版檔（執行檔、雜湊檔）：已存在而且沒加 `--force` 就略過，其餘照寫。
+    /// `exec` 時設成可執行。先寫到旁邊的暫存檔再改名（目的地可能正在被 hook 執行）。
+    pub fn put_bytes(&mut self, dst: &Path, bytes: &[u8], exec: bool) -> R<()> {
+        self.seen.insert(dst.to_path_buf());
+        if dst.exists() && !(self.force || self.overwrite_user) {
+            self.skipped.push(dst.to_path_buf());
+            return Ok(());
+        }
+        if std::fs::read(dst).is_ok_and(|old| old == bytes) && is_exec(dst) == exec {
+            self.written.push(dst.to_path_buf()); // 內容相同：不重寫（可能就是正在執行的這一支）
+            return Ok(());
+        }
+        let Some(dir) = dst.parent() else { return crash(format!("寫不進 {}", dst.display())) };
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            return crash(format!("建不了目錄 {}：{e}", dir.display()));
+        }
+        let tmp = dir.join(format!(".{}.awf-new", file_name(dst)));
+        let done = std::fs::write(&tmp, bytes).and_then(|()| set_exec(&tmp, exec)).and_then(|()| std::fs::rename(&tmp, dst));
+        if let Err(e) = done {
+            let _ = std::fs::remove_file(&tmp);
+            return crash(format!("寫不進 {}：{e}", dst.display()));
+        }
+        self.written.push(dst.to_path_buf());
+        Ok(())
+    }
+
+    /// 放一個模版檔。使用者的檔案不覆寫（規則見 `put_user`）。
     pub fn put(&mut self, src: &Path, dst: &Path, text_render: bool) -> R<()> {
         self.seen.insert(dst.to_path_buf());
         if self.put_user(src, dst)? {
@@ -457,6 +491,28 @@ impl<'a> Writer<'a> {
     }
 }
 
+#[cfg(unix)]
+fn is_exec(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_exec(_p: &Path) -> bool {
+    true
+}
+
+#[cfg(unix)]
+fn set_exec(p: &Path, exec: bool) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(if exec { 0o755 } else { 0o644 }))
+}
+
+#[cfg(not(unix))]
+fn set_exec(_p: &Path, _exec: bool) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +532,26 @@ mod tests {
         assert_eq!(dest(".claude/settings.project-hooks.json.tmpl", "plugin", false, false), None);
         assert_eq!(dest(".github/workflows/agent-merge-gate.yml.tmpl", "plugin", false, false), None);
         assert_eq!(dest(".github/workflows/agent-merge-gate.yml.tmpl", "plugin", false, true).as_deref(), Some(".github/workflows/agent-merge-gate.yml"));
+    }
+
+    #[test]
+    fn tools_and_python_are_not_copied() {
+        for rel in [".claude/teams/tools/awf.py", ".claude/teams/tools/snippets/kernel.js", ".claude/teams/tools/check_workflows.mjs", ".claude/teams/golden-set/run.py"] {
+            assert!(not_copied(Path::new(rel)), "{rel}");
+        }
+        for rel in [".claude/teams/rules.md", ".claude/teams/schemas/envelope.schema.json", ".claude/teams/golden-set/valid/a.json", ".claude/teams/toolsx/a.md", "_runs/README.md"] {
+            assert!(!not_copied(Path::new(rel)), "{rel}");
+        }
+    }
+
+    #[test]
+    fn hook_command_quotes_the_binary() {
+        let (cmd, shell) = hook_command("/p/示範 專案/.claude/hooks/bin/awf");
+        if cfg!(windows) {
+            assert_eq!((cmd.as_str(), shell.as_str()), ("& \\\"/p/示範 專案/.claude/hooks/bin/awf\\\" hook", ", \"shell\": \"powershell\""));
+        } else {
+            assert_eq!((cmd.as_str(), shell.as_str()), ("\\\"/p/示範 專案/.claude/hooks/bin/awf\\\" hook", ""));
+        }
     }
 
     #[test]
