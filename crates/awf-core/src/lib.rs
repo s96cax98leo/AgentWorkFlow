@@ -11,6 +11,7 @@ pub mod checklist;
 pub mod config;
 pub mod cost;
 pub mod deliverables;
+pub mod doctor;
 pub mod hooks;
 pub mod init;
 pub mod kb;
@@ -25,7 +26,9 @@ pub mod save_run;
 pub mod schema;
 pub mod script;
 pub mod spec;
+pub mod state;
 pub mod sync_branch;
 
 /// 版本（workspace 的版本）。
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub mod watch;

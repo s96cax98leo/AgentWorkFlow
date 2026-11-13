@@ -15,6 +15,7 @@
 | `build.expected.json` | 內嵌片段的 build 101 次執行、去客戶化掃描 41 次、文件核對 59 次（後兩支在 `crates/xtask`） | `python3 tests/parity/record_build.py > tests/parity/build.expected.json` |
 | `pack.expected.json` | 資料包、調研重用、決策記憶：585 步劇本與 1,389 個函式探測；已知差異 4 步列在 `pack_parity.rs` 的 `KNOWN` | `python3 tests/parity/record_pack.py > tests/parity/pack.expected.json` |
 | `init.expected.json` | `awf init`：112 個案例、246 次執行（每個選項、既有專案的保護、升級的各種情況、互動問答），比輸出與整棵目標目錄 | `python3 tests/parity/record_init.py > tests/parity/init.expected.json` |
+| `save_run.expected.json` | 閘門：2,305 步劇本（每一條拒絕與違規理由各有案例）與 4,062 個函式探測；和 Python 不同的 9 項列在 `save_run_parity.rs` 的 `STRICTER`（只會更嚴）與 `KNOWN` | `python3 tests/parity/record_save_run.py > tests/parity/save_run.expected.json` |
 
 規則：
 
