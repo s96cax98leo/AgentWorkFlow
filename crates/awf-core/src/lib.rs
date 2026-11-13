@@ -24,6 +24,7 @@ pub mod run_brief;
 pub mod save_run;
 pub mod schema;
 pub mod script;
+pub mod spec;
 pub mod sync_branch;
 
 /// 版本（workspace 的版本）。

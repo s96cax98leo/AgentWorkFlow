@@ -32,6 +32,7 @@ fn main() -> ExitCode {
         Some("cost") => ExitCode::from(awf_core::cost::main(&args[1..]).clamp(0, 255) as u8),
         Some("script") => ExitCode::from(awf_core::script::main(&args[1..]).clamp(0, 255) as u8),
         Some("build") => ExitCode::from(awf_core::build::main(&args[1..]).clamp(0, 255) as u8),
+        Some("spec") => ExitCode::from(awf_core::spec::main(&args[1..]).clamp(0, 255) as u8),
         Some("init") => ExitCode::from(awf_core::init::main(&args[1..]).clamp(0, 255) as u8),
         Some("check-agents") => ExitCode::from(awf_core::check_agents::main(&args[1..]).clamp(0, 255) as u8),
         Some("run-brief") => ExitCode::from(awf_core::run_brief::main(&args[1..]).clamp(0, 255) as u8),
