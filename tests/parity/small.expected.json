@@ -1,0 +1,2011 @@
+{
+ "steps": [
+  {
+   "op": "detect",
+   "text": "collected 3 items\n\ntests/test_a.py .F.\n\nFAILED tests/test_a.py::test_two - assert 1 == 2\n===== 1 failed, 2 passed in 0.12s =====\n",
+   "want": [
+    "pytest",
+    [
+     "tests/test_a.py::test_two"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": " FAIL  src/a.test.ts\n  ● sum › adds\n\n    expect(received).toBe(expected)\n\nTests:       1 failed, 4 passed, 5 total\n",
+   "want": [
+    "jest/vitest",
+    [
+     "src/a.test.ts",
+     "sum › adds"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "=== RUN   TestAdd\n--- FAIL: TestAdd (0.00s)\n    a_test.go:9: got 1\nFAIL\nFAIL\texample.com/a\t0.01s\n",
+   "want": [
+    "go test",
+    [
+     "TestAdd"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "",
+   "want": [
+    "",
+    []
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "nothing to see\nhere\n",
+   "want": [
+    "",
+    []
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "Ran 3 tests in 0.01s\n\nFAIL: test_a (pkg.T)\nERROR: test_b (pkg.T)\nFAIL: test_a (pkg.T)\n",
+   "want": [
+    "unittest",
+    [
+     "test_a (pkg.T)",
+     "test_b (pkg.T)"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "collected 2 items\nFAILED a::b\nERROR c::d - boom\nFAILED a::b\n== 2 failed in 0.1s ==\n",
+   "want": [
+    "pytest",
+    [
+     "a::b",
+     "c::d"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": " Test Files  1 failed (1)\n × suite > case one  \n ✕ another\n FAIL  x.test.ts\n",
+   "want": [
+    "jest/vitest",
+    [
+     "suite > case one",
+     "another",
+     "x.test.ts"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "ok  \texample.com/a\t0.1s\n--- FAIL: TestA (0.00s)\n--- FAIL: TestB/sub (0.00s)\n",
+   "want": [
+    "go test",
+    [
+     "TestA",
+     "TestB/sub"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "PASS\n",
+   "want": [
+    "go test",
+    []
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "=== 1 passed in 0.5s ===\nFAILED\u001cx y\n",
+   "want": [
+    "pytest",
+    []
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "Tests:\u001f 2 passed\n\u001f● spaced\u001fname\u001f\n",
+   "want": [
+    "jest/vitest",
+    [
+     "spaced\u001fname"
+    ]
+   ]
+  },
+  {
+   "op": "detect",
+   "text": "collected 1 items\r\nFAILED t::a\r\n",
+   "want": [
+    "pytest",
+    [
+     "t::a"
+    ]
+   ]
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "i=0; while [ $i -lt 50 ]; do echo \"row $i\"; i=$((i+1)); done; exit 3"
+   ],
+   "log": "@TMP@/logs/a.log",
+   "tail": null,
+   "code": 3,
+   "text": "結束碼：3\n框架：認不得（印最後 40 行）\n最後 40 行（共 50 行）：\n  row 10\n  row 11\n  row 12\n  row 13\n  row 14\n  row 15\n  row 16\n  row 17\n  row 18\n  row 19\n  row 20\n  row 21\n  row 22\n  row 23\n  row 24\n  row 25\n  row 26\n  row 27\n  row 28\n  row 29\n  row 30\n  row 31\n  row 32\n  row 33\n  row 34\n  row 35\n  row 36\n  row 37\n  row 38\n  row 39\n  row 40\n  row 41\n  row 42\n  row 43\n  row 44\n  row 45\n  row 46\n  row 47\n  row 48\n  row 49\n完整 log：@TMP@/logs/a.log",
+   "logged": "row 0\nrow 1\nrow 2\nrow 3\nrow 4\nrow 5\nrow 6\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\nrow 15\nrow 16\nrow 17\nrow 18\nrow 19\nrow 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\nrow 30\nrow 31\nrow 32\nrow 33\nrow 34\nrow 35\nrow 36\nrow 37\nrow 38\nrow 39\nrow 40\nrow 41\nrow 42\nrow 43\nrow 44\nrow 45\nrow 46\nrow 47\nrow 48\nrow 49\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "i=0; while [ $i -lt 50 ]; do echo \"row $i\"; i=$((i+1)); done"
+   ],
+   "log": "@TMP@/logs/b.log",
+   "tail": 5,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 5 行）\n最後 5 行（共 50 行）：\n  row 45\n  row 46\n  row 47\n  row 48\n  row 49\n完整 log：@TMP@/logs/b.log",
+   "logged": "row 0\nrow 1\nrow 2\nrow 3\nrow 4\nrow 5\nrow 6\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\nrow 15\nrow 16\nrow 17\nrow 18\nrow 19\nrow 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\nrow 30\nrow 31\nrow 32\nrow 33\nrow 34\nrow 35\nrow 36\nrow 37\nrow 38\nrow 39\nrow 40\nrow 41\nrow 42\nrow 43\nrow 44\nrow 45\nrow 46\nrow 47\nrow 48\nrow 49\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "echo one; echo two; echo three"
+   ],
+   "log": "@TMP@/logs/c.log",
+   "tail": 100,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 100 行）\n最後 3 行（共 3 行）：\n  one\n  two\n  three\n完整 log：@TMP@/logs/c.log",
+   "logged": "one\ntwo\nthree\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "echo one; echo two; echo three; echo four"
+   ],
+   "log": "@TMP@/logs/d.log",
+   "tail": -3,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 -3 行）\n最後 -3 行（共 4 行）：\n  four\n完整 log：@TMP@/logs/d.log",
+   "logged": "one\ntwo\nthree\nfour\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "echo one; echo two"
+   ],
+   "log": "@TMP@/logs/./e//e.log",
+   "tail": 0,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 40 行）\n最後 2 行（共 2 行）：\n  one\n  two\n完整 log：@TMP@/logs/e/e.log",
+   "logged": "one\ntwo\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "echo out; echo err 1>&2; echo out2"
+   ],
+   "log": "@TMP@/logs/f.log",
+   "tail": null,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 40 行）\n最後 3 行（共 3 行）：\n  out\n  err\n  out2\n完整 log：@TMP@/logs/f.log",
+   "logged": "out\nerr\nout2\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "printf 'a\\r\\nb\\rc\\n\\n\\n'"
+   ],
+   "log": "@TMP@/logs/g.log",
+   "tail": null,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 40 行）\n最後 3 行（共 3 行）：\n  a\n  b\n  c\n完整 log：@TMP@/logs/g.log",
+   "logged": "a\nb\nc\n\n\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "printf 'bad \\377 byte\\n'; printf '中文\\n'"
+   ],
+   "log": "@TMP@/logs/h.log",
+   "tail": null,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 40 行）\n最後 2 行（共 2 行）：\n  bad � byte\n  中文\n完整 log：@TMP@/logs/h.log",
+   "logged": "bad � byte\n中文\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "true"
+   ],
+   "log": "@TMP@/logs/i.log",
+   "tail": null,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 40 行）\n最後 0 行（共 0 行）：\n完整 log：@TMP@/logs/i.log",
+   "logged": ""
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "echo 'collected 25 items'; i=0; while [ $i -lt 25 ]; do echo \"FAILED t.py::t$i - x\"; i=$((i+1)); done; echo '=== 25 failed in 1.00s ==='; exit 1"
+   ],
+   "log": "@TMP@/logs/j.log",
+   "tail": null,
+   "code": 1,
+   "text": "結束碼：1\n框架：pytest\n失敗的測試（25 則，只列前 20 則）：\n  - t.py::t0\n  - t.py::t1\n  - t.py::t2\n  - t.py::t3\n  - t.py::t4\n  - t.py::t5\n  - t.py::t6\n  - t.py::t7\n  - t.py::t8\n  - t.py::t9\n  - t.py::t10\n  - t.py::t11\n  - t.py::t12\n  - t.py::t13\n  - t.py::t14\n  - t.py::t15\n  - t.py::t16\n  - t.py::t17\n  - t.py::t18\n  - t.py::t19\n最後 20 行（共 27 行）：\n  FAILED t.py::t6 - x\n  FAILED t.py::t7 - x\n  FAILED t.py::t8 - x\n  FAILED t.py::t9 - x\n  FAILED t.py::t10 - x\n  FAILED t.py::t11 - x\n  FAILED t.py::t12 - x\n  FAILED t.py::t13 - x\n  FAILED t.py::t14 - x\n  FAILED t.py::t15 - x\n  FAILED t.py::t16 - x\n  FAILED t.py::t17 - x\n  FAILED t.py::t18 - x\n  FAILED t.py::t19 - x\n  FAILED t.py::t20 - x\n  FAILED t.py::t21 - x\n  FAILED t.py::t22 - x\n  FAILED t.py::t23 - x\n  FAILED t.py::t24 - x\n  === 25 failed in 1.00s ===\n完整 log：@TMP@/logs/j.log",
+   "logged": "collected 25 items\nFAILED t.py::t0 - x\nFAILED t.py::t1 - x\nFAILED t.py::t2 - x\nFAILED t.py::t3 - x\nFAILED t.py::t4 - x\nFAILED t.py::t5 - x\nFAILED t.py::t6 - x\nFAILED t.py::t7 - x\nFAILED t.py::t8 - x\nFAILED t.py::t9 - x\nFAILED t.py::t10 - x\nFAILED t.py::t11 - x\nFAILED t.py::t12 - x\nFAILED t.py::t13 - x\nFAILED t.py::t14 - x\nFAILED t.py::t15 - x\nFAILED t.py::t16 - x\nFAILED t.py::t17 - x\nFAILED t.py::t18 - x\nFAILED t.py::t19 - x\nFAILED t.py::t20 - x\nFAILED t.py::t21 - x\nFAILED t.py::t22 - x\nFAILED t.py::t23 - x\nFAILED t.py::t24 - x\n=== 25 failed in 1.00s ===\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "echo '--- FAIL: TestA (0.00s)'; echo FAIL; exit 1"
+   ],
+   "log": "@TMP@/logs/k.log",
+   "tail": 2,
+   "code": 1,
+   "text": "結束碼：1\n框架：go test\n失敗的測試（1 則）：\n  - TestA\n最後 2 行（共 2 行）：\n  --- FAIL: TestA (0.00s)\n  FAIL\n完整 log：@TMP@/logs/k.log",
+   "logged": "--- FAIL: TestA (0.00s)\nFAIL\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "printf 'x\\013y\\034z\\n'"
+   ],
+   "log": "@TMP@/logs/l.log",
+   "tail": null,
+   "code": 0,
+   "text": "結束碼：0\n框架：認不得（印最後 40 行）\n最後 3 行（共 3 行）：\n  x\n  y\n  z\n完整 log：@TMP@/logs/l.log",
+   "logged": "x\u000by\u001cz\n"
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "sh",
+    "-c",
+    "kill -9 $$"
+   ],
+   "log": "@TMP@/logs/m.log",
+   "tail": null,
+   "code": -9,
+   "text": "結束碼：-9\n框架：認不得（印最後 40 行）\n最後 0 行（共 0 行）：\n完整 log：@TMP@/logs/m.log",
+   "logged": ""
+  },
+  {
+   "op": "brief",
+   "cmd": [
+    "awf-no-such-command-xyz",
+    "arg"
+   ],
+   "log": "@TMP@/logs/n.log",
+   "tail": null,
+   "code": 127,
+   "text": "結束碼：127\n框架：認不得（印最後 40 行）\n最後 1 行（共 1 行）：\n  找不到指令：[Errno 2] No such file or directory: 'awf-no-such-command-xyz'\n完整 log：@TMP@/logs/n.log",
+   "logged": "找不到指令：[Errno 2] No such file or directory: 'awf-no-such-command-xyz'\n"
+  },
+  {
+   "op": "default_log",
+   "name": "demo",
+   "want": "@TMP@/envlogs/demo-1.log"
+  },
+  {
+   "op": "default_log",
+   "name": "demo",
+   "want": "@TMP@/envlogs/demo-2.log"
+  },
+  {
+   "op": "default_log",
+   "name": "a b/c",
+   "want": "@TMP@/envlogs/a-b-c-1.log"
+  },
+  {
+   "op": "default_log",
+   "name": "///",
+   "want": "@TMP@/envlogs/cmd-1.log"
+  },
+  {
+   "op": "default_log",
+   "name": "中文",
+   "want": "@TMP@/envlogs/cmd-2.log"
+  },
+  {
+   "op": "default_log",
+   "name": "x.y_z-",
+   "want": "@TMP@/envlogs/x.y_z-1.log"
+  },
+  {
+   "op": "default_log",
+   "name": "--",
+   "want": "@TMP@/envlogs/cmd-3.log"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-build-result-sync-transit.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"task_id\": \"sync\",\n  \"branch\": \"merge/x-into-main-20261103\",\n  \"commits\": [\n   \"abc fix\"\n  ],\n  \"files_changed\": [\n   \"src/a.ts\"\n  ],\n  \"tests\": [\n   {\n    \"command\": \"vitest\",\n    \"result\": \"pass\"\n   }\n  ],\n  \"conflicts\": [\n   {\n    \"file\": \"src/a.ts\",\n    \"kind\": \"seam\",\n    \"resolution\": \"兩邊的參數都保留\"\n   }\n  ],\n  \"sync\": {\n   \"strategy\": \"transit\",\n   \"behind\": 3,\n   \"published\": true,\n   \"conflicts\": [\n    \"src/a.ts\"\n   ],\n   \"transit_branch\": \"merge/x-into-main-20261103\",\n   \"head_branch\": \"merge/x-into-main-20261103\",\n   \"head_sha\": \"0000000000000000000000000000000000000000\"\n  }\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-build-result-sync-transit.json",
+    "--payload",
+    "build-result"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-build-result.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"task_id\": \"t1\",\n  \"branch\": \"feature/x--t1\",\n  \"commits\": [\n   \"abc fix\"\n  ],\n  \"files_changed\": [\n   \"src/a.ts\"\n  ],\n  \"tests\": [\n   {\n    \"command\": \"vitest\",\n    \"result\": \"pass\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-build-result.json",
+    "--payload",
+    "build-result"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-criteria.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"commit\": \"abc1234\",\n  \"scope_covered\": \"all\",\n  \"scope_skipped\": \"none\",\n  \"criteria\": [\n   {\n    \"id\": \"T1\",\n    \"criterion\": \"402\",\n    \"command\": \"pytest\",\n    \"result\": \"pass\",\n    \"evidence\": \"1 passed\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-criteria.json",
+    "--payload",
+    "criteria"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-docs.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"documents\": [\n   {\n    \"path\": \"_tpm/briefs/x.md\",\n    \"kind\": \"exec_record\",\n    \"audience\": \"internal\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-docs.json",
+    "--payload",
+    "docs"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-env-at-limits.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"verdicts\": [\n   {\n    \"target_id\": \"f1\",\n    \"refuted\": false,\n    \"reason\": \"重現成功\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-env-at-limits.json",
+    "--payload",
+    "verdicts"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-env-needs-decision.json",
+   "text": "{\n \"status\": \"needs_decision\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [\n  {\n   \"question\": \"q\",\n   \"blocking\": true,\n   \"why_blocking\": \"w\",\n   \"options\": [\n    {\n     \"choice\": \"A\",\n     \"cost\": \"x\"\n    },\n    {\n     \"choice\": \"B\",\n     \"cost\": \"y\"\n    }\n   ],\n   \"recommendation\": \"A\",\n   \"default_applied\": \"none\"\n  }\n ],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {}\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-env-needs-decision.json"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=needs_decision，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-findings.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"lens\": \"bugs\",\n  \"findings\": [\n   {\n    \"id\": \"f1\",\n    \"severity\": \"important\",\n    \"claim\": \"x\",\n    \"location\": \"a.ts:3\",\n    \"recommendation\": \"y\",\n    \"confidence\": 0.85\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-findings.json",
+    "--payload",
+    "findings"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-items.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"source\": \"_tpm/meetings/x.md\",\n  \"items\": [\n   {\n    \"id\": \"i1\",\n    \"type\": \"action\",\n    \"text\": \"做 a\",\n    \"owner\": \"{{DECISION_OWNER}}\",\n    \"status\": \"open\",\n    \"refs\": [\n     \"x.md:10\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-items.json",
+    "--payload",
+    "items"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-locations.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"angle\": \"code-contracts\",\n  \"locations\": [\n   {\n    \"path\": \"services/export/csv.py\",\n    \"start\": 40,\n    \"end\": 88,\n    \"why\": \"組欄位順序的函式，日期欄在這裡排\"\n   }\n  ],\n  \"queries\": [\n   \"kb.py query 匯出 CSV 日期\",\n   \"Grep write_row\"\n  ],\n  \"gaps\": []\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-locations.json",
+    "--payload",
+    "locations"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-merge-decision-queued.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"示範客戶 ACME：PR 3 gate 判 merge，但只進了 merge queue\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"gate 判 merge\",\n   \"source\": \"python3 .claude/teams/tools/merge_gate.py check --decision d.json ...\",\n   \"result\": \"merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"merge\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [\n     \"results.json REQ-2 pass\"\n    ],\n    \"result\": \"match\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": [\n   \"全部檢查通過\"\n  ],\n  \"merge_state\": \"queued\"\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-merge-decision-queued.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-merge-decision.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"示範客戶 ACME：PR 3 的需求對照全部一致\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"gate 判 merge\",\n   \"source\": \"python3 .claude/teams/tools/merge_gate.py check --decision d.json ...\",\n   \"result\": \"merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"merge\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [\n     \"results.json REQ-2 pass\"\n    ],\n    \"result\": \"match\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": [\n   \"全部檢查通過\"\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-merge-decision.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-plan-outline.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"split\": true,\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"api\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   },\n   {\n    \"id\": \"ui\",\n    \"title\": \"匯出按鈕\",\n    \"scope\": \"前端按鈕與下載；不含後端\",\n    \"owns\": [\n     \"web/src/export/\"\n    ],\n    \"depends_on\": [\n     \"api\"\n    ],\n    \"story_ids\": [\n     \"S2\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-plan-outline.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.85\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-subtasks-expected-red.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"ui-t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [\n     \"@api\"\n    ],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"sub_plan\": \"ui\",\n    \"spec_refs\": [\n     \"spec.md#匯出 API\",\n     \"驗收條件\"\n    ],\n    \"expected_red\": [\n     \"e2e/tests/shell.spec.ts 的截圖比對\"\n    ]\n   },\n   {\n    \"id\": \"ui-t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"ui-t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ],\n    \"sub_plan\": \"ui\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-subtasks-expected-red.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-subtasks-spec-refs.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"ui-t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [\n     \"@api\"\n    ],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"sub_plan\": \"ui\",\n    \"spec_refs\": [\n     \"spec.md#匯出 API\",\n     \"驗收條件\"\n    ]\n   },\n   {\n    \"id\": \"ui-t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"ui-t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ],\n    \"sub_plan\": \"ui\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-subtasks-spec-refs.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-subtasks-subplan-dep.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"ui-t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [\n     \"@api\"\n    ],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"sub_plan\": \"ui\"\n   },\n   {\n    \"id\": \"ui-t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"ui-t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ],\n    \"sub_plan\": \"ui\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-subtasks-subplan-dep.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-subtasks-wave.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"wave\": 1\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ],\n    \"wave\": 2\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-subtasks-wave.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-subtasks.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ]\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-subtasks.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-triage-model-plan.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"understanding\": \"示範客戶 ACME 回報匯出 CSV 時日期欄位錯位\",\n  \"kind\": \"bugfix\",\n  \"size\": \"small\",\n  \"modifiers\": [],\n  \"reasons\": [\n   {\n    \"claim\": \"需求描述的是既有功能的錯誤行為\",\n    \"evidence\": \"需求原文：「匯出後日期跑到金額欄」\"\n   }\n  ],\n  \"confidence\": 0.85,\n  \"alternatives\": [\n   {\n    \"kind\": \"change\",\n    \"why\": \"若其實是要改匯出格式\"\n   }\n  ],\n  \"angles\": [\n   \"code-contracts\"\n  ],\n  \"model_plan\": [\n   {\n    \"role\": \"tpm-researcher\",\n    \"tier\": \"light\",\n    \"reason\": \"只要定位一支匯出程式，範圍很小\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-triage-model-plan.json",
+    "--payload",
+    "triage"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-triage.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"understanding\": \"示範客戶 ACME 回報匯出 CSV 時日期欄位錯位\",\n  \"kind\": \"bugfix\",\n  \"size\": \"small\",\n  \"modifiers\": [],\n  \"reasons\": [\n   {\n    \"claim\": \"需求描述的是既有功能的錯誤行為\",\n    \"evidence\": \"需求原文：「匯出後日期跑到金額欄」\"\n   }\n  ],\n  \"confidence\": 0.85,\n  \"alternatives\": [\n   {\n    \"kind\": \"change\",\n    \"why\": \"若其實是要改匯出格式\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-triage.json",
+    "--payload",
+    "triage"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/valid-verdicts.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"verdicts\": [\n   {\n    \"target_id\": \"f1\",\n    \"refuted\": false,\n    \"reason\": \"重現成功\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/valid-verdicts.json",
+    "--payload",
+    "verdicts"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "信封合格：status=done，confidence=0.9\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-build-result-sync-strategy.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"task_id\": \"sync\",\n  \"branch\": \"merge/x-into-main-20261103\",\n  \"commits\": [\n   \"abc fix\"\n  ],\n  \"files_changed\": [\n   \"src/a.ts\"\n  ],\n  \"tests\": [\n   {\n    \"command\": \"vitest\",\n    \"result\": \"pass\"\n   }\n  ],\n  \"conflicts\": [\n   {\n    \"file\": \"src/a.ts\",\n    \"kind\": \"seam\",\n    \"resolution\": \"兩邊的參數都保留\"\n   }\n  ],\n  \"sync\": {\n   \"strategy\": \"squash\",\n   \"behind\": 3,\n   \"published\": true,\n   \"conflicts\": [\n    \"src/a.ts\"\n   ],\n   \"transit_branch\": \"merge/x-into-main-20261103\",\n   \"head_branch\": \"merge/x-into-main-20261103\",\n   \"head_sha\": \"0000000000000000000000000000000000000000\"\n  }\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-build-result-sync-strategy.json",
+    "--payload",
+    "build-result"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.sync.strategy：值 'squash' 不在 ['none', 'rebase', 'merge', 'transit']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-build-result.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"task_id\": \"t1\",\n  \"branch\": \"feature/x--t1\",\n  \"commits\": [\n   \"abc fix\"\n  ],\n  \"files_changed\": [\n   \"src/a.ts\"\n  ],\n  \"tests\": [\n   {\n    \"command\": \"vitest\",\n    \"result\": \"ok\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-build-result.json",
+    "--payload",
+    "build-result"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.tests[0].result：值 'ok' 不在 ['pass', 'fail', 'red_as_expected', 'not_run']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-criteria.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"commit\": \"abc1234\",\n  \"scope_covered\": \"all\",\n  \"scope_skipped\": \"none\",\n  \"criteria\": [\n   {\n    \"id\": \"T1\",\n    \"criterion\": \"402\",\n    \"command\": \"pytest\",\n    \"result\": \"通過\",\n    \"evidence\": \"1 passed\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-criteria.json",
+    "--payload",
+    "criteria"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.criteria[0].result：值 '通過' 不在 ['pass', 'fail', 'not_verifiable']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-docs.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"documents\": []\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-docs.json",
+    "--payload",
+    "docs"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.documents：至少要 1 項\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-blocking-one-option.json",
+   "text": "{\n \"status\": \"needs_decision\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [\n  {\n   \"question\": \"q\",\n   \"blocking\": true,\n   \"options\": [\n    {\n     \"choice\": \"A\",\n     \"cost\": \"x\"\n    }\n   ],\n   \"recommendation\": \"A\",\n   \"default_applied\": \"none\"\n  }\n ],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {}\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-blocking-one-option.json"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- open_questions[0]：blocking 問題要附 2–3 個選項與代價\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-confidence.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 85,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {}\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-confidence.json"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.confidence：大於 1\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-done-with-blocking.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [\n  {\n   \"question\": \"q\",\n   \"blocking\": true,\n   \"options\": [\n    {\n     \"choice\": \"A\",\n     \"cost\": \"x\"\n    },\n    {\n     \"choice\": \"B\",\n     \"cost\": \"y\"\n    }\n   ],\n   \"recommendation\": \"A\",\n   \"default_applied\": \"none\"\n  }\n ],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {}\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-done-with-blocking.json"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 有 blocking 的 open_questions 時 status 不能是 done\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-evidence-result-too-long.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"verdicts\": [\n   {\n    \"target_id\": \"f1\",\n    \"refuted\": false,\n    \"reason\": \"重現成功\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-evidence-result-too-long.json",
+    "--payload",
+    "verdicts"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.evidence[0].result：長度 301 超過上限 300（細節寫進檔案，信封只放摘要與路徑）\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-evidence-too-many.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  },\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"verdicts\": [\n   {\n    \"target_id\": \"f1\",\n    \"refuted\": false,\n    \"reason\": \"重現成功\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-evidence-too-many.json",
+    "--payload",
+    "verdicts"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.evidence：13 項，超過上限 12（其餘寫進檔案）\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-missing-evidence.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {}\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-missing-evidence.json"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：缺欄位 evidence\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-status.json",
+   "text": "{\n \"status\": \"完成\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {}\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-status.json"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.status：值 '完成' 不在 ['done', 'blocked', 'needs_decision']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-env-summary-too-long.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"verdicts\": [\n   {\n    \"target_id\": \"f1\",\n    \"refuted\": false,\n    \"reason\": \"重現成功\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-env-summary-too-long.json",
+    "--payload",
+    "verdicts"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.summary：長度 401 超過上限 400（細節寫進檔案，信封只放摘要與路徑）\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-findings.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"lens\": \"bugs\",\n  \"findings\": [\n   {\n    \"id\": \"f1\",\n    \"severity\": \"critical\",\n    \"claim\": \"x\",\n    \"location\": \"a.ts:3\",\n    \"recommendation\": \"y\",\n    \"confidence\": 0.85\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-findings.json",
+    "--payload",
+    "findings"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.findings[0].severity：值 'critical' 不在 ['important', 'nit', 'pre_existing', 'info', 'blocker', 'should_fix']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-items.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"source\": \"_tpm/meetings/x.md\",\n  \"items\": [\n   {\n    \"id\": \"i1\",\n    \"type\": \"action\",\n    \"text\": \"做 a\",\n    \"status\": \"open\",\n    \"refs\": [\n     \"x.md:10\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-items.json",
+    "--payload",
+    "items"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.items[0]：缺欄位 owner\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-locations-no-lines.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"angle\": \"code-contracts\",\n  \"locations\": [\n   {\n    \"path\": \"services/export/csv.py\",\n    \"why\": \"沒有行號\"\n   }\n  ],\n  \"queries\": []\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-locations-no-lines.json",
+    "--payload",
+    "locations"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.locations[0]：缺欄位 start\n- $.payload.locations[0]：缺欄位 end\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-merge-decision-match-no-evidence.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"示範客戶 ACME：PR 3 的需求對照全部一致\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"gate 判 merge\",\n   \"source\": \"python3 .claude/teams/tools/merge_gate.py check --decision d.json ...\",\n   \"result\": \"merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"merge\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [],\n    \"result\": \"match\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": [\n   \"全部檢查通過\"\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-merge-decision-match-no-evidence.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- traceability：需求 REQ-2 判 match 卻沒有證據\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-merge-decision-merge-followups.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"示範客戶 ACME：PR 3 的需求對照全部一致\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"gate 判 merge\",\n   \"source\": \"python3 .claude/teams/tools/merge_gate.py check --decision d.json ...\",\n   \"result\": \"merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"merge\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [\n     \"results.json REQ-2 pass\"\n    ],\n    \"result\": \"match\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"expected\": \"超過一萬筆時提示\",\n    \"actual\": \"已提示\",\n    \"adjustment\": \"補文案\"\n   }\n  ],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": [\n   \"全部檢查通過\"\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-merge-decision-merge-followups.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- decision=merge 時不得有 followups\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-merge-decision-merge-needs-sync.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"示範客戶 ACME：PR 落後 base 卻判 merge（應被語意規則擋）\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"gate 判 merge\",\n   \"source\": \"python3 .claude/teams/tools/merge_gate.py check --decision d.json ...\",\n   \"result\": \"merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"merge\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [\n     \"results.json REQ-2 pass\"\n    ],\n    \"result\": \"match\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": [\n   \"全部檢查通過\"\n  ],\n  \"needs_sync\": true\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-merge-decision-merge-needs-sync.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- needs_sync=true（PR 落後或有衝突）時 decision 不能是 merge\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-merge-decision-merged-on-hold.json",
+   "text": "{\n \"status\": \"needs_decision\",\n \"summary\": \"示範客戶 ACME：判 hold 卻宣稱已合併（應被語意規則擋）\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"gate 判 merge\",\n   \"source\": \"python3 .claude/teams/tools/merge_gate.py check --decision d.json ...\",\n   \"result\": \"merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [\n  {\n   \"question\": \"q\",\n   \"blocking\": true,\n   \"why_blocking\": \"w\",\n   \"options\": [\n    {\n     \"choice\": \"A\",\n     \"cost\": \"x\"\n    },\n    {\n     \"choice\": \"B\",\n     \"cost\": \"y\"\n    }\n   ],\n   \"recommendation\": \"A\",\n   \"default_applied\": \"none\"\n  }\n ],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"hold\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [\n     \"results.json REQ-2 pass\"\n    ],\n    \"result\": \"mismatch\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"expected\": \"提示縮小範圍\",\n    \"actual\": \"沒有提示\",\n    \"adjustment\": \"補提示\"\n   }\n  ],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": [\n   \"全部檢查通過\"\n  ],\n  \"merge_state\": \"merged\"\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-merge-decision-merged-on-hold.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- merge_state=merged 時 decision 必須是 merge\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-merge-decision-trace-dup.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"示範客戶 ACME：PR 3 的需求對照全部一致\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"gate 判 merge\",\n   \"source\": \"python3 .claude/teams/tools/merge_gate.py check --decision d.json ...\",\n   \"result\": \"merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"merge\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [\n     \"results.json REQ-2 pass\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\",\n     \"tests/test_export.py:8\"\n    ],\n    \"result\": \"match\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": [\n   \"全部檢查通過\"\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-merge-decision-trace-dup.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- traceability：需求 REQ-1 重複出現\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-merge-decision.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"示範客戶 ACME：宣稱可合併，但對照表有一條不一致（應被語意規則擋下）\",\n \"artifacts\": [\n  \"_tpm/runs/x/merge-decision.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"對照完成\",\n   \"source\": \"_tpm/runs/x/merge-decision.md:1\",\n   \"result\": \"宣稱 merge\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"decision\": \"merge\",\n  \"repo\": \"acme-fork/app\",\n  \"pr\": 3,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"requirements_source\": \"json:_tpm/runs/x/requirements.json\",\n  \"traceability\": [\n   {\n    \"requirement_id\": \"REQ-1\",\n    \"requirement\": \"匯出按鈕下載 CSV\",\n    \"evidence\": [\n     \"results.json REQ-1 pass\"\n    ],\n    \"result\": \"match\"\n   },\n   {\n    \"requirement_id\": \"REQ-2\",\n    \"requirement\": \"超過一萬筆時提示縮小範圍\",\n    \"evidence\": [\n     \"results.json REQ-2 fail：沒有提示\"\n    ],\n    \"result\": \"mismatch\"\n   }\n  ],\n  \"out_of_scope\": [],\n  \"followups\": [],\n  \"risk_tier\": \"low\",\n  \"gate_reasons\": []\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-merge-decision.json",
+    "--payload",
+    "merge-decision"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- decision=merge 時不得有 mismatch／missing：['REQ-2']\n- 需求 REQ-2 不一致或缺證據，卻沒有對應的 followup（新需求）\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-plan-outline-semantic.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"split\": true,\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"api\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [\n     \"ui\"\n    ],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   },\n   {\n    \"id\": \"ui\",\n    \"title\": \"匯出按鈕\",\n    \"scope\": \"前端按鈕與下載；不含後端\",\n    \"owns\": [\n     \"services/export/web/\"\n    ],\n    \"depends_on\": [\n     \"api\"\n    ],\n    \"story_ids\": [\n     \"S2\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-plan-outline-semantic.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子計劃相依有循環：api、ui\n- 子計劃 api 與 ui 的範圍重疊：services/export/／services/export/web/\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-plan-outline-split-mismatch-false.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"split\": false,\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"api\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   },\n   {\n    \"id\": \"ui\",\n    \"title\": \"匯出按鈕\",\n    \"scope\": \"前端按鈕與下載；不含後端\",\n    \"owns\": [\n     \"web/src/export/\"\n    ],\n    \"depends_on\": [\n     \"api\"\n    ],\n    \"story_ids\": [\n     \"S2\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-plan-outline-split-mismatch-false.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- split=false 時 sub_plans 要留空\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-plan-outline-split-mismatch.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"split\": true,\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"api\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-plan-outline-split-mismatch.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- split=true 時至少要 2 個子計劃\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-plan-outline-subplan-dup.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"split\": true,\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"api\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   },\n   {\n    \"id\": \"api\",\n    \"title\": \"匯出按鈕\",\n    \"scope\": \"前端按鈕與下載；不含後端\",\n    \"owns\": [\n     \"web/src/export/\"\n    ],\n    \"depends_on\": [],\n    \"story_ids\": [\n     \"S2\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-plan-outline-subplan-dup.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子計劃 id api 重複\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-plan-outline-subplan-id-pattern.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"split\": true,\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"../api\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   },\n   {\n    \"id\": \"ui\",\n    \"title\": \"匯出按鈕\",\n    \"scope\": \"前端按鈕與下載；不含後端\",\n    \"owns\": [\n     \"web/src/export/\"\n    ],\n    \"depends_on\": [\n     \"../api\"\n    ],\n    \"story_ids\": [\n     \"S2\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-plan-outline-subplan-id-pattern.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.sub_plans[0].id：'../api' 不符合格式 ^[a-z0-9][a-z0-9-]*$\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-plan-outline-subplan-self-dep.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"split\": true,\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"api\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [\n     \"api\"\n    ],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   },\n   {\n    \"id\": \"ui\",\n    \"title\": \"匯出按鈕\",\n    \"scope\": \"前端按鈕與下載；不含後端\",\n    \"owns\": [\n     \"web/src/export/\"\n    ],\n    \"depends_on\": [\n     \"api\"\n    ],\n    \"story_ids\": [\n     \"S2\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-plan-outline-subplan-self-dep.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子計劃 api 依賴自己\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-plan-outline.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例：示範客戶 ACME 的匯出功能範圍大，拆成 api 與 ui 兩個子計劃\",\n \"artifacts\": [\n  \"specs/demo-200-x/outline.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"預估 11 個子任務\",\n   \"source\": \"specs/demo-200-x/intent.md:12\",\n   \"result\": \"超過門檻 8\"\n  }\n ],\n \"confidence\": 0.85,\n \"open_questions\": [],\n \"derived_work\": [],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"reason\": \"預估 11 個子任務，api 與 ui 可獨立交付\",\n  \"estimated_subtasks\": 11,\n  \"sub_plans\": [\n   {\n    \"id\": \"API 子計劃\",\n    \"title\": \"匯出 API\",\n    \"scope\": \"匯出端點與資料轉換；不含畫面\",\n    \"owns\": [\n     \"services/export/\"\n    ],\n    \"depends_on\": [],\n    \"story_ids\": [\n     \"S1\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   },\n   {\n    \"id\": \"ui\",\n    \"title\": \"匯出按鈕\",\n    \"scope\": \"前端按鈕與下載；不含後端\",\n    \"owns\": [\n     \"web/src/export/\"\n    ],\n    \"depends_on\": [\n     \"api\"\n    ],\n    \"story_ids\": [\n     \"S2\"\n    ],\n    \"interfaces\": [\n     \"GET /export.csv\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-plan-outline.json",
+    "--payload",
+    "plan-outline"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload：缺欄位 split\n- $.payload.sub_plans[0].id：'API 子計劃' 不符合格式 ^[a-z0-9][a-z0-9-]*$\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks-complexity.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"complexity\": \"huge\"\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks-complexity.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].complexity：值 'huge' 不在 ['light', 'standard', 'strong']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks-dep-missing-bad-subplan-ref.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ]\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"@../api\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks-dep-missing-bad-subplan-ref.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t2 的子計劃依賴格式不合法（要是 @<子計劃 id>）：@../api\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks-dep-missing.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ]\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"t-nope\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks-dep-missing.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t2 依賴不存在的 t-nope\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks-expected-red-not-array.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"ui-t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [\n     \"@api\"\n    ],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"sub_plan\": \"ui\",\n    \"expected_red\": \"截圖比對\"\n   },\n   {\n    \"id\": \"ui-t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"ui-t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ],\n    \"sub_plan\": \"ui\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks-expected-red-not-array.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].expected_red：型別應為 array\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks-spec-refs-not-array.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"ui-t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [\n     \"@api\"\n    ],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"sub_plan\": \"ui\",\n    \"spec_refs\": \"spec.md#匯出 API\"\n   },\n   {\n    \"id\": \"ui-t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"ui-t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ],\n    \"sub_plan\": \"ui\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks-spec-refs-not-array.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].spec_refs：型別應為 array\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks-wave-depends-later.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"wave\": 2\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ],\n    \"wave\": 1\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks-wave-depends-later.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t2（第 1 波）依賴第 2 波的 t1：不能依賴比自己晚的波次\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks-wave-zero.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ],\n    \"wave\": 0\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"e2e/b.spec.ts\"\n    ],\n    \"depends_on\": [\n     \"t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks-wave-zero.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].wave：小於 1\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-subtasks.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"epic\": \"demo-200-x\",\n  \"subtasks\": [\n   {\n    \"id\": \"t1\",\n    \"title\": \"a\",\n    \"kind\": \"code\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [],\n    \"acceptance\": [\n     \"vitest a\"\n    ]\n   },\n   {\n    \"id\": \"t2\",\n    \"title\": \"b\",\n    \"kind\": \"test\",\n    \"owns\": [\n     \"src/a.ts\"\n    ],\n    \"depends_on\": [\n     \"t1\"\n    ],\n    \"acceptance\": [\n     \"e2e b\"\n    ]\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-subtasks.json",
+    "--payload",
+    "subtasks"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t1 與 t2 同時擁有 src/a.ts（檔案所有權不得重疊）\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-triage-empty-evidence.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"understanding\": \"示範客戶 ACME 回報匯出 CSV 時日期欄位錯位\",\n  \"kind\": \"bugfix\",\n  \"size\": \"small\",\n  \"modifiers\": [],\n  \"reasons\": [\n   {\n    \"claim\": \"x\",\n    \"evidence\": \"\"\n   }\n  ],\n  \"confidence\": 0.85,\n  \"alternatives\": [\n   {\n    \"kind\": \"change\",\n    \"why\": \"若其實是要改匯出格式\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-triage-empty-evidence.json",
+    "--payload",
+    "triage"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.reasons[0].evidence：不能是空字串\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-triage-model-plan-no-reason.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"understanding\": \"示範客戶 ACME 回報匯出 CSV 時日期欄位錯位\",\n  \"kind\": \"bugfix\",\n  \"size\": \"small\",\n  \"modifiers\": [],\n  \"reasons\": [\n   {\n    \"claim\": \"需求描述的是既有功能的錯誤行為\",\n    \"evidence\": \"需求原文：「匯出後日期跑到金額欄」\"\n   }\n  ],\n  \"confidence\": 0.85,\n  \"alternatives\": [\n   {\n    \"kind\": \"change\",\n    \"why\": \"若其實是要改匯出格式\"\n   }\n  ],\n  \"angles\": [\n   \"code-contracts\"\n  ],\n  \"model_plan\": [\n   {\n    \"role\": \"tpm-researcher\",\n    \"tier\": \"light\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-triage-model-plan-no-reason.json",
+    "--payload",
+    "triage"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.model_plan[0]：缺欄位 reason\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-triage-model-plan-tier.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"understanding\": \"示範客戶 ACME 回報匯出 CSV 時日期欄位錯位\",\n  \"kind\": \"bugfix\",\n  \"size\": \"small\",\n  \"modifiers\": [],\n  \"reasons\": [\n   {\n    \"claim\": \"需求描述的是既有功能的錯誤行為\",\n    \"evidence\": \"需求原文：「匯出後日期跑到金額欄」\"\n   }\n  ],\n  \"confidence\": 0.85,\n  \"alternatives\": [\n   {\n    \"kind\": \"change\",\n    \"why\": \"若其實是要改匯出格式\"\n   }\n  ],\n  \"angles\": [\n   \"code-contracts\"\n  ],\n  \"model_plan\": [\n   {\n    \"role\": \"tpm-researcher\",\n    \"tier\": \"ultra\",\n    \"reason\": \"只要定位一支匯出程式，範圍很小\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-triage-model-plan-tier.json",
+    "--payload",
+    "triage"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.model_plan[0].tier：值 'ultra' 不在 ['light', 'standard', 'strong']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-triage-no-reason.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"understanding\": \"示範客戶 ACME 回報匯出 CSV 時日期欄位錯位\",\n  \"kind\": \"bugfix\",\n  \"size\": \"small\",\n  \"modifiers\": [],\n  \"reasons\": [],\n  \"confidence\": 0.85,\n  \"alternatives\": [\n   {\n    \"kind\": \"change\",\n    \"why\": \"若其實是要改匯出格式\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-triage-no-reason.json",
+    "--payload",
+    "triage"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.reasons：至少要 1 項\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-triage-size.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"understanding\": \"示範客戶 ACME 回報匯出 CSV 時日期欄位錯位\",\n  \"kind\": \"bugfix\",\n  \"size\": \"huge\",\n  \"modifiers\": [],\n  \"reasons\": [\n   {\n    \"claim\": \"需求描述的是既有功能的錯誤行為\",\n    \"evidence\": \"需求原文：「匯出後日期跑到金額欄」\"\n   }\n  ],\n  \"confidence\": 0.85,\n  \"alternatives\": [\n   {\n    \"kind\": \"change\",\n    \"why\": \"若其實是要改匯出格式\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-triage-size.json",
+    "--payload",
+    "triage"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.size：值 'huge' 不在 ['small', 'medium', 'large']\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/env/invalid-verdicts.json",
+   "text": "{\n \"status\": \"done\",\n \"summary\": \"範例\",\n \"artifacts\": [\n  \"_tpm/runs/x/a.md\"\n ],\n \"evidence\": [\n  {\n   \"claim\": \"c\",\n   \"source\": \"a.md:1\",\n   \"result\": \"ok\"\n  }\n ],\n \"confidence\": 0.9,\n \"open_questions\": [],\n \"derived_work\": [\n  \"補文件\"\n ],\n \"payload\": {\n  \"verdicts\": [\n   {\n    \"target_id\": \"f1\",\n    \"reason\": \"重現成功\"\n   }\n  ]\n }\n}"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/invalid-verdicts.json",
+    "--payload",
+    "verdicts"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.verdicts[0]：缺欄位 refuted\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-"
+   ],
+   "stdin": "前言\n```json\n{\"壞\": \n```\n中間\n```json\n{\"status\": \"done\", \"summary\": \"示範客戶 ACME 的交件\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}\n```\n結尾\n",
+   "rc": 1,
+   "out": "",
+   "err": "找不到交件信封：回報最後要有一個 ```json 區塊（格式見 .claude/teams/schemas/envelope.schema.json）\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-",
+    "--payload",
+    "findings"
+   ],
+   "stdin": "前言\n```json\n{\"壞\": \n```\n中間\n```json\n{\"status\": \"done\", \"summary\": \"示範客戶 ACME 的交件\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}\n```\n結尾\n",
+   "rc": 1,
+   "out": "",
+   "err": "找不到交件信封：回報最後要有一個 ```json 區塊（格式見 .claude/teams/schemas/envelope.schema.json）\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-"
+   ],
+   "stdin": "{\"status\": \"done\", \"summary\": \"示範客戶 ACME 的交件\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}",
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：缺欄位 payload\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-"
+   ],
+   "stdin": "沒有信封",
+   "rc": 1,
+   "out": "",
+   "err": "找不到交件信封：回報最後要有一個 ```json 區塊（格式見 .claude/teams/schemas/envelope.schema.json）\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-"
+   ],
+   "stdin": "null",
+   "rc": 1,
+   "out": "",
+   "err": "找不到交件信封：回報最後要有一個 ```json 區塊（格式見 .claude/teams/schemas/envelope.schema.json）\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-"
+   ],
+   "stdin": "[]",
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：型別應為 object\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-"
+   ],
+   "stdin": "3",
+   "rc": 1,
+   "out": "",
+   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：型別應為 object\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-"
+   ],
+   "stdin": "",
+   "rc": 1,
+   "out": "",
+   "err": "找不到交件信封：回報最後要有一個 ```json 區塊（格式見 .claude/teams/schemas/envelope.schema.json）\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [],
+   "stdin": null,
+   "rc": 2,
+   "out": "",
+   "err": "驗證一份交件信封：schema＋交接語意規則。\n\n用法：\n    python3 check_envelope.py <file.json> [--payload findings]\n    echo '<回報文字，最後一個 ```json 區塊是信封>' | python3 check_envelope.py - [--payload ...]\n不帶 --payload 時，若信封裡有 \"payload_type\" 以外的提示也不猜，只驗信封本體。\n通過 exit 0；不通過 exit 1，原因印到 stderr。\n\n"
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "@TMP@/env/沒有這個檔.json"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-",
+    "--payload",
+    "no-such-payload"
+   ],
+   "stdin": "{\"status\": \"done\", \"summary\": \"\\u793a\\u7bc4\\u5ba2\\u6236 ACME \\u7684\\u4ea4\\u4ef6\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}",
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "envelope",
+   "argv": [
+    "-",
+    "--payload"
+   ],
+   "stdin": "{\"status\": \"done\", \"summary\": \"\\u793a\\u7bc4\\u5ba2\\u6236 ACME \\u7684\\u4ea4\\u4ef6\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}",
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p1/doc.md",
+   "text": "# 示範客戶 ACME 的週報\n這項工作預估要 3 人天，另一項 2.5 man-days，還有約 5 小時 工時。\n規則：不寫人天。\nCo-Authored-By: someone\nco-authored-by: lower\n  Co-Authored-By: indented\n對方能力不足，而且很差勁。\nTASK-0001 已完成，TASK-9999 是新的；xTASK-0002 與 A-TASK-0003 不算。\n內部代號 int-12、req-7、Z5、xZ6。\nSigned-off-by: Demo\nGenerated-By: tool\n一行有兩個：1 人月、2 person days\n分隔\u000b同一行\u001c另一行\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p1/clean.md",
+   "text": "# 沒問題\n內容\n"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "@TMP@/p1/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p1/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p1/doc.md:4：用 Assisted-by，不用 Co-Authored-By\nR4 @TMP@/p1/doc.md:5：用 Assisted-by，不用 Co-Authored-By\nR1 @TMP@/p1/doc.md:12：工時估算「1 人月」\n規則檢查：4 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "--audience",
+    "internal",
+    "@TMP@/p1/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p1/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p1/doc.md:4：用 Assisted-by，不用 Co-Authored-By\nR4 @TMP@/p1/doc.md:5：用 Assisted-by，不用 Co-Authored-By\nR1 @TMP@/p1/doc.md:12：工時估算「1 人月」\n規則檢查：4 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "--audience",
+    "owner",
+    "@TMP@/p1/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p1/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p1/doc.md:4：用 Assisted-by，不用 Co-Authored-By\nR4 @TMP@/p1/doc.md:5：用 Assisted-by，不用 Co-Authored-By\nR5 @TMP@/p1/doc.md:7：評價人的用語「能力不足」\nR1 @TMP@/p1/doc.md:12：工時估算「1 人月」\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "--audience",
+    "external",
+    "@TMP@/p1/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p1/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p1/doc.md:4：用 Assisted-by，不用 Co-Authored-By\nR4 @TMP@/p1/doc.md:5：用 Assisted-by，不用 Co-Authored-By\nR5 @TMP@/p1/doc.md:7：評價人的用語「能力不足」\nR1 @TMP@/p1/doc.md:12：工時估算「1 人月」\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "--audience",
+    "nobody",
+    "@TMP@/p1/doc.md"
+   ],
+   "stdin": null,
+   "rc": 2,
+   "out": "--audience 只能是 internal、owner、external（收到 nobody）\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "@TMP@/p1/clean.md"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "規則檢查：通過\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "@TMP@/p1/clean.md",
+    "--audience",
+    "owner",
+    "@TMP@/p1/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p1/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p1/doc.md:4：用 Assisted-by，不用 Co-Authored-By\nR4 @TMP@/p1/doc.md:5：用 Assisted-by，不用 Co-Authored-By\nR5 @TMP@/p1/doc.md:7：評價人的用語「能力不足」\nR1 @TMP@/p1/doc.md:12：工時估算「1 人月」\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [],
+   "stdin": null,
+   "rc": 0,
+   "out": "規則檢查：通過\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "@TMP@/p1/沒有這個檔.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "--audience"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p1",
+   "argv": [
+    "--git"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p2/.claude/teams/guard.config.json",
+   "text": "{\"task_id_prefix\": \"TASK-\", \"backlog_file\": \"docs/backlog.md\", \"internal_id_patterns\": [\"int-\\\\d+\", \"(req)-(\\\\d+)\", \"(?<!x)Z(\\\\d)\"], \"attribution_line\": \" Signed-off-by: Demo <demo@example.com> \", \"forbidden_trailers\": [\"Co-Authored-By\", \"signed-off-by\", \"Generated-By\"]}"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p2/docs/backlog.md",
+   "text": "- id:TASK-0001 第一項\n- id:TASK-0002, id:other\n- id:xTASK-0005\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p2/doc.md",
+   "text": "# 示範客戶 ACME 的週報\n這項工作預估要 3 人天，另一項 2.5 man-days，還有約 5 小時 工時。\n規則：不寫人天。\nCo-Authored-By: someone\nco-authored-by: lower\n  Co-Authored-By: indented\n對方能力不足，而且很差勁。\nTASK-0001 已完成，TASK-9999 是新的；xTASK-0002 與 A-TASK-0003 不算。\n內部代號 int-12、req-7、Z5、xZ6。\nSigned-off-by: Demo\nGenerated-By: tool\n一行有兩個：1 人月、2 person days\n分隔\u000b同一行\u001c另一行\n"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p2/.claude/teams/methodology.json",
+   "text": "{\"conventions\": {\"commit\": {\"check_regex\": \"^(feat|fix)(\\\\(.+\\\\))?: .+\"}}}"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p2",
+   "argv": [
+    "--audience",
+    "internal",
+    "@TMP@/p2/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p2/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p2/doc.md:4：用 Signed-off-by，不用 Co-Authored-By\nR4 @TMP@/p2/doc.md:5：用 Signed-off-by，不用 Co-Authored-By\nR2 @TMP@/p2/doc.md:8：TASK-9999 不在 backlog，疑似自編任務編號\nR4 @TMP@/p2/doc.md:11：用 Signed-off-by，不用 Generated-By\nR1 @TMP@/p2/doc.md:12：工時估算「1 人月」\n規則檢查：6 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p2",
+   "argv": [
+    "--audience",
+    "owner",
+    "@TMP@/p2/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p2/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p2/doc.md:4：用 Signed-off-by，不用 Co-Authored-By\nR4 @TMP@/p2/doc.md:5：用 Signed-off-by，不用 Co-Authored-By\nR5 @TMP@/p2/doc.md:7：評價人的用語「能力不足」\nR3 @TMP@/p2/doc.md:8：給 owner 的文件不寫內部編號 TASK-0001\nR3 @TMP@/p2/doc.md:8：給 owner 的文件不寫內部編號 TASK-9999\nR3 @TMP@/p2/doc.md:9：給 owner 的文件不寫內部編號 int-12\nR3 @TMP@/p2/doc.md:9：給 owner 的文件不寫內部編號 ('req', '7')\nR3 @TMP@/p2/doc.md:9：給 owner 的文件不寫內部編號 5\nR4 @TMP@/p2/doc.md:11：用 Signed-off-by，不用 Generated-By\nR1 @TMP@/p2/doc.md:12：工時估算「1 人月」\n規則檢查：11 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p2",
+   "argv": [
+    "--audience",
+    "external",
+    "@TMP@/p2/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p2/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p2/doc.md:4：用 Signed-off-by，不用 Co-Authored-By\nR4 @TMP@/p2/doc.md:5：用 Signed-off-by，不用 Co-Authored-By\nR5 @TMP@/p2/doc.md:7：評價人的用語「能力不足」\nR3 @TMP@/p2/doc.md:8：給 external 的文件不寫內部編號 TASK-0001\nR3 @TMP@/p2/doc.md:8：給 external 的文件不寫內部編號 TASK-9999\nR3 @TMP@/p2/doc.md:9：給 external 的文件不寫內部編號 int-12\nR3 @TMP@/p2/doc.md:9：給 external 的文件不寫內部編號 ('req', '7')\nR3 @TMP@/p2/doc.md:9：給 external 的文件不寫內部編號 5\nR4 @TMP@/p2/doc.md:11：用 Signed-off-by，不用 Generated-By\nR1 @TMP@/p2/doc.md:12：工時估算「1 人月」\n規則檢查：11 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "git",
+   "cwd": "@TMP@/p2/repo",
+   "args": [
+    "init",
+    "-q",
+    "-b",
+    "main"
+   ]
+  },
+  {
+   "op": "git",
+   "cwd": "@TMP@/p2/repo",
+   "args": [
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "chore: 起點"
+   ]
+  },
+  {
+   "op": "git",
+   "cwd": "@TMP@/p2/repo",
+   "args": [
+    "tag",
+    "base"
+   ]
+  },
+  {
+   "op": "git",
+   "cwd": "@TMP@/p2/repo",
+   "args": [
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "feat(core): 合格的標題\n\n內文\n\nSigned-off-by: Demo <demo@example.com>"
+   ]
+  },
+  {
+   "op": "git",
+   "cwd": "@TMP@/p2/repo",
+   "args": [
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "隨便寫的標題，而且很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長\n\nCo-Authored-By: X <x@example.com>"
+   ]
+  },
+  {
+   "op": "git",
+   "cwd": "@TMP@/p2/repo",
+   "args": [
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "fix: 缺署名"
+   ]
+  },
+  {
+   "op": "git",
+   "cwd": "@TMP@/p2/repo",
+   "args": [
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "fix: 兩種都有\n\nsigned-off-by: demo\ngenerated-by: tool"
+   ]
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p2",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "base..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R4 commit f5b20a7：用 Signed-off-by，不用 Generated-By\nR4 commit 533205b：缺 Signed-off-by trailer（署名行：Signed-off-by: Demo <demo@example.com>）\nR6 commit e8882f2：標題「隨便寫的標題，而且很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很長很」不符合開發規範 profile 的 commit 格式（^(feat|fix)(\\(.+\\))?: .+）\nR4 commit e8882f2：用 Signed-off-by，不用 Co-Authored-By\nR4 commit e8882f2：缺 Signed-off-by trailer（署名行：Signed-off-by: Demo <demo@example.com>）\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p2",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "HEAD..HEAD"
+   ],
+   "stdin": null,
+   "rc": 0,
+   "out": "規則檢查：通過\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p2",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "no-such-ref..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p2",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/.claude/teams/guard.config.json",
+   "text": "{\"task_id_prefix\": \"{{TASK_ID_PREFIX}}\", \"attribution_line\": \"\", \"forbidden_trailers\": []}"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/.claude/teams/methodology.json",
+   "text": "{\"conventions\": {\"commit\": {\"check_regex\": \"(\"}}}"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/doc.md",
+   "text": "# 示範客戶 ACME 的週報\n這項工作預估要 3 人天，另一項 2.5 man-days，還有約 5 小時 工時。\n規則：不寫人天。\nCo-Authored-By: someone\nco-authored-by: lower\n  Co-Authored-By: indented\n對方能力不足，而且很差勁。\nTASK-0001 已完成，TASK-9999 是新的；xTASK-0002 與 A-TASK-0003 不算。\n內部代號 int-12、req-7、Z5、xZ6。\nSigned-off-by: Demo\nGenerated-By: tool\n一行有兩個：1 人月、2 person days\n分隔\u000b同一行\u001c另一行\n"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p3",
+   "argv": [
+    "@TMP@/p3/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p3/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p3/doc.md:4：用 Assisted-by，不用 Co-Authored-By\nR4 @TMP@/p3/doc.md:5：用 Assisted-by，不用 Co-Authored-By\nR1 @TMP@/p3/doc.md:12：工時估算「1 人月」\n規則檢查：4 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p3",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "base..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "警告：@TMP@/p3/.claude/teams/methodology.json 的 conventions.commit.check_regex 不是合法的正規式，略過格式檢查\nR4 commit f5b20a7：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 533205b：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit e8882f2：用 Assisted-by，不用 Co-Authored-By\nR4 commit e8882f2：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 8d30e2e：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/.claude/teams/methodology.json",
+   "text": "不是 JSON"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p3",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "base..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R4 commit f5b20a7：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 533205b：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit e8882f2：用 Assisted-by，不用 Co-Authored-By\nR4 commit e8882f2：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 8d30e2e：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/.claude/teams/methodology.json",
+   "text": "{\"conventions\": null}"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p3",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "base..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R4 commit f5b20a7：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 533205b：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit e8882f2：用 Assisted-by，不用 Co-Authored-By\nR4 commit e8882f2：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 8d30e2e：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/.claude/teams/methodology.json",
+   "text": "{\"conventions\": {\"commit\": {\"check_regex\": \"  \"}}}"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p3",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "base..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R4 commit f5b20a7：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 533205b：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit e8882f2：用 Assisted-by，不用 Co-Authored-By\nR4 commit e8882f2：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 8d30e2e：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/.claude/teams/methodology.json",
+   "text": "{\"conventions\": {\"commit\": {\"check_regex\": 3}}}"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p3",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "base..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R4 commit f5b20a7：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 533205b：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit e8882f2：用 Assisted-by，不用 Co-Authored-By\nR4 commit e8882f2：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 8d30e2e：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p3/.claude/teams/methodology.json",
+   "text": "[1]"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p3",
+   "argv": [
+    "--git",
+    "@TMP@/p2/repo",
+    "base..HEAD"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R4 commit f5b20a7：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 533205b：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit e8882f2：用 Assisted-by，不用 Co-Authored-By\nR4 commit e8882f2：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\nR4 commit 8d30e2e：缺 Assisted-by trailer（署名行：Assisted-by: Claude）\n規則檢查：5 項違規\n",
+   "err": ""
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p4/.claude/teams/guard.config.json",
+   "text": "{\"internal_id_patterns\": [\"(\"]}"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p4/doc.md",
+   "text": "# 示範客戶 ACME 的週報\n這項工作預估要 3 人天，另一項 2.5 man-days，還有約 5 小時 工時。\n規則：不寫人天。\nCo-Authored-By: someone\nco-authored-by: lower\n  Co-Authored-By: indented\n對方能力不足，而且很差勁。\nTASK-0001 已完成，TASK-9999 是新的；xTASK-0002 與 A-TASK-0003 不算。\n內部代號 int-12、req-7、Z5、xZ6。\nSigned-off-by: Demo\nGenerated-By: tool\n一行有兩個：1 人月、2 person days\n分隔\u000b同一行\u001c另一行\n"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p4",
+   "argv": [
+    "--audience",
+    "owner",
+    "@TMP@/p4/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "",
+   "err_any": true
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p5/.claude/teams/guard.config.json",
+   "text": "壞掉的設定"
+  },
+  {
+   "op": "write",
+   "path": "@TMP@/p5/doc.md",
+   "text": "# 示範客戶 ACME 的週報\n這項工作預估要 3 人天，另一項 2.5 man-days，還有約 5 小時 工時。\n規則：不寫人天。\nCo-Authored-By: someone\nco-authored-by: lower\n  Co-Authored-By: indented\n對方能力不足，而且很差勁。\nTASK-0001 已完成，TASK-9999 是新的；xTASK-0002 與 A-TASK-0003 不算。\n內部代號 int-12、req-7、Z5、xZ6。\nSigned-off-by: Demo\nGenerated-By: tool\n一行有兩個：1 人月、2 person days\n分隔\u000b同一行\u001c另一行\n"
+  },
+  {
+   "op": "rules",
+   "project": "@TMP@/p5",
+   "argv": [
+    "--audience",
+    "external",
+    "@TMP@/p5/doc.md"
+   ],
+   "stdin": null,
+   "rc": 1,
+   "out": "R1 @TMP@/p5/doc.md:2：工時估算「3 人天」\nR4 @TMP@/p5/doc.md:4：用 Assisted-by，不用 Co-Authored-By\nR4 @TMP@/p5/doc.md:5：用 Assisted-by，不用 Co-Authored-By\nR5 @TMP@/p5/doc.md:7：評價人的用語「能力不足」\nR1 @TMP@/p5/doc.md:12：工時估算「1 人月」\n規則檢查：5 項違規\n",
+   "err": ""
+  }
+ ]
+}

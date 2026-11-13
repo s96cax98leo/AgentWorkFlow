@@ -31,6 +31,9 @@ fn main() -> ExitCode {
         Some("pack") => ExitCode::from(awf_core::pack::main(&args[1..]).clamp(0, 255) as u8),
         Some("cost") => ExitCode::from(awf_core::cost::main(&args[1..]).clamp(0, 255) as u8),
         Some("script") => ExitCode::from(awf_core::script::main(&args[1..]).clamp(0, 255) as u8),
+        Some("run-brief") => ExitCode::from(awf_core::run_brief::main(&args[1..]).clamp(0, 255) as u8),
+        Some("check-envelope") => ExitCode::from(awf_core::check_envelope::main(&args[1..]).clamp(0, 255) as u8),
+        Some("check-rules") => ExitCode::from(awf_core::check_rules::main(&args[1..]).clamp(0, 255) as u8),
         Some("hook") => ExitCode::from(awf_core::hooks::main(&args[1..]).clamp(0, 255) as u8),
         Some(other) => {
             eprintln!("awf：不認得的子指令「{other}」\n\n{}", usage());
