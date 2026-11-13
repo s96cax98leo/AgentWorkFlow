@@ -65,6 +65,18 @@ fn save_run(proj: &Path, argv: &[&str], stdin: &str) -> (i32, String, String) {
 }
 
 /// 工作區（init 在這裡）底下放目標 repo：`<work>/ws/repos/acme-orders`。這是模版預設的配置（guard.config.json 的 repos_dir）。
+/// `--hooks project` 要複製的 awf：已經建好的那一支（測試執行檔在 `deps/` 底下，往上一層找），沒有就先建。
+fn awf_for_hooks(root: &Path) -> Result<PathBuf, String> {
+    let exe = crate::awfbin::exe();
+    if exe.is_file() {
+        return Ok(exe);
+    }
+    if let Some(up) = exe.parent().and_then(Path::parent).map(|d| d.join(exe.file_name().unwrap_or_default())).filter(|p| p.is_file()) {
+        return Ok(up);
+    }
+    crate::awfbin::build(root)
+}
+
 pub fn setup(root: &Path, work: &Path) -> Result<PathBuf, String> {
     let proj = work.join("ws");
     let repo = proj.join("repos").join("acme-orders");
@@ -74,11 +86,11 @@ pub fn setup(root: &Path, work: &Path) -> Result<PathBuf, String> {
     // 讀取上限預設不啟用；基準要量「開啟時」的數字（和之前的實測同條件），所以用答案檔開 enforce
     let ans = work.join("bench-answers.json");
     std::fs::write(&ans, "{\"read_limits\": \"enforce\"}").map_err(|e| format!("寫不了 {}：{e}", ans.display()))?;
-    // `--hooks project` 要一個啟動 hook 的指令；init 找不到時用預設名字（selftest 不會真的執行 hook）
+    // `--hooks project` 會把 awf 執行檔複製進專案：用這個 repo 建出來的那一支（沒建過就先建）
     let env = awf_core::init::Env {
         source: Some(root.to_path_buf()),
         cwd: root.to_path_buf(),
-        python: awf_core::init::find_python().or_else(|| Some("python3".to_string())),
+        awf_bin: Some(awf_for_hooks(root)?),
         ..Default::default()
     };
     let args = vec!["--target".to_string(), posix(&proj), "--defaults".into(), "--hooks".into(), "project".into(), "--answers".into(), posix(&ans)];
