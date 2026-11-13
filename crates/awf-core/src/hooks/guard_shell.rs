@@ -1034,6 +1034,8 @@ impl Guard {
             };
         }
         let rest_cmd = segs.iter().enumerate().filter(|(i, _)| !allowed[*i]).map(|(_, s)| s.as_str()).collect::<Vec<_>>().join(" ; ");
+        // rest_cmd 在下面的迴圈裡不變：整條的判斷只算一次（上千段的指令原本每段重算，會拖到逾時）
+        let rest_merge = std::cell::OnceCell::new();
         let record_only = team && config::RECORD_ONLY_ROLES.contains(&config::team_role(&raw_agent, cfg).as_str());
 
         if record_only && !is_ps && INTERP.is_match(&cmd) && HEREDOC.is_match(&cmd) && INTERP_WRITE.is_match(&cmd) {
@@ -1142,7 +1144,7 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                     }
                 }
             }
-            if (gh_rules || am_on) && !ok && (is_merge_cmd(seg) || is_merge_cmd(&rest_cmd)) {
+            if (gh_rules || am_on) && !ok && (is_merge_cmd(seg) || *rest_merge.get_or_init(|| is_merge_cmd(&rest_cmd))) {
                 let why = if am.enabled && GH_PR_MERGE.is_match(seg) { self.merge_refusal(seg, data)? } else { None };
                 let why = why.filter(|w| !w.is_empty()).map(|w| format!("：{w}")).unwrap_or_default();
                 return Err(self.block(&format!("{who} 不能合併 PR（gh pr merge、gh api／curl 打 merge 端點）{why}；合併只由 auto_merge 的 merger_role 在 gate 通過後執行，其餘由人在 GitHub 上做")));
