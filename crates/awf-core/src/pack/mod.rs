@@ -663,6 +663,11 @@ pub fn verify_reuse(run: &str, repo: Option<&str>, result: &Value, requirement: 
     let key = requirement.map(|r| requirement_key(r, root));
     let mut errs: Vec<String> = Vec::new();
     for angle in reused.iter().filter_map(Value::as_str) {
+        // 比 Python 版嚴：角度名稱會拿去組紀錄檔路徑，帶路徑分隔或 .. 會對到 run 目錄外
+        if angle.contains('/') || angle.contains('\\') || angle.split('/').any(|p| p == "..") || angle == ".." {
+            errs.push(format!("沿用的調研角度 {angle} 的名稱不能含路徑分隔或 .."));
+            continue;
+        }
         let Some(e) = store.get(angle).filter(|e| e.is_object()) else {
             errs.push(format!("沿用的調研角度 {angle} 在 {STORE} 沒有紀錄"));
             continue;

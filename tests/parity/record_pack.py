@@ -479,6 +479,7 @@ def scenario_reuse(r):
     tamper("信封沒有 payload", lambda a: cc(a)["envelope"].pop("payload"))
     tamper("紀錄沒有信封、回傳也沒有這個角度", lambda a: cc(a).pop("envelope"), result={**plan_result(reused=["code-contracts"]), "research_by_angle": {}})
     tamper("紀錄不是物件", lambda a: a.update({"code-contracts": ["x"]}))
+    r.label = "angle-path"
     tamper("角度名稱帶 ..（中間那一層不存在，紀錄檔找不到）", lambda a: a.update({"../../x": cc(a), "/abs": cc(a)}),
            result={**plan_result(reused=["../../x", "/abs", "x/../code-contracts"]), "research_by_angle": {"../../x": env("code-contracts"), "/abs": env("code-contracts")}})
     # 角度名稱帶 ..、中間那一層剛好存在：紀錄檔會對到 run 目錄外的檔。Python 版不擋（紀錄在 reuse.json 裡，只有主 session 寫得到），這裡照樣
@@ -486,6 +487,7 @@ def scenario_reuse(r):
     r.mkdir("proj/_tpm/runs/r1/plan/research-x")
     tamper("角度名稱帶 ..，紀錄檔指到 run 目錄外", lambda a: a.update({"x/../../../research-x": cc(a)}),
            result={**plan_result(reused=["x/../../../research-x"]), "research_by_angle": {"x/../../../research-x": env("code-contracts")}})
+    r.label = None
     for body in ("{壞掉", "[]", '{"v": 1}', '{"v": 1, "angles": []}', '{"v": 1, "angles": {"x": 1}}', ""):
         r.write("proj/_tpm/runs/r1/plan/reuse.json", body)
         vr(reused)

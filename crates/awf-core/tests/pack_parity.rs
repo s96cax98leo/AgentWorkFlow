@@ -21,10 +21,11 @@ const LONG: usize = 4000;
 ///   只要求 `verify_reuse` 回傳的理由不是空的。
 /// - `lone-surrogate`：reuse.json 的原文有落單的代理字元跳脫。Python 讀得進來、判信封不一致；這裡整份當成沒有紀錄。同上。
 /// - `huge-int`：信封裡有超出 64 位元範圍的整數。Python 照整數比、判相符；這裡分不出原本是不是同一個數，判不符（更嚴）。
-const KNOWN: [(&str, &str); 4] = [
+const KNOWN: [(&str, &str); 5] = [
     ("nan-run", "run.json 有 NaN：整份當成讀不懂"),
     ("nan-store", "reuse.json 有 NaN：整份當成沒有紀錄（一樣判不符）"),
     ("lone-surrogate", "reuse.json 有落單的代理字元跳脫：整份當成沒有紀錄（一樣判不符）"),
+    ("angle-path", "沿用的角度名稱帶路徑分隔或 ..：一律判不符（Python 會拿它組紀錄檔路徑，可能對到 run 目錄外而判相符，這裡更嚴）"),
     ("huge-int", "信封裡有超出 64 位元範圍的整數：判不符（Python 判相符，這裡更嚴）"),
 ];
 
@@ -310,6 +311,11 @@ fn run_steps(exp: &Value, st: &Stage) -> (usize, usize, usize, Vec<String>) {
                     // 兩邊都判不符，理由不同：只要求有理由
                     if !rejected(&got) || !rejected(&step["result"]) {
                         diff.push(format!("要判不符（理由不是空的），得 {got}"));
+                    }
+                } else if label == Some("angle-path") {
+                    // Python 可能判相符（紀錄檔對到 run 目錄外），這裡一律判不符
+                    if !rejected(&got) {
+                        diff.push(format!("要判不符，得 {got}"));
                     }
                 } else if label == Some("huge-int") {
                     // Python 判相符，這裡更嚴

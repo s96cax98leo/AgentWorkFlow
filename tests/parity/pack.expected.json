@@ -12305,7 +12305,8 @@
      "沿用的調研角度 x/../code-contracts 在 reuse.json 沒有紀錄"
     ]
    },
-   "files": {}
+   "files": {},
+   "label": "angle-path"
   },
   {
    "op": "call",
@@ -12363,7 +12364,8 @@
      ]
     ]
    },
-   "files": {}
+   "files": {},
+   "label": "angle-path"
   },
   {
    "op": "write",
@@ -12459,7 +12461,8 @@
    "result": {
     "ok": []
    },
-   "files": {}
+   "files": {},
+   "label": "angle-path"
   },
   {
    "op": "call",
@@ -12532,7 +12535,8 @@
      ]
     ]
    },
-   "files": {}
+   "files": {},
+   "label": "angle-path"
   },
   {
    "op": "write",
