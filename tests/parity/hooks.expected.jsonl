@@ -2244,8 +2244,8 @@
 {"got": 2, "kind": "case", "name": "讀取預算：大檔整檔讀擋", "seq": 2243, "want": 2}
 {"got": true, "kind": "case", "name": "讀取預算：大檔整檔讀擋（訊息含「共 1000 行」）", "seq": 2244, "want": true}
 {"kind": "call", "mode": "guard-paths", "rc": 2, "seq": 2245, "stderr": "已被 agent-workflow hook 擋下：tpm-researcher 讀 @TMP@/rb1/big.md：這次要讀 1000 行，超過一次讀取的門檻 400 行（檔案共 1000 行）。先用 Grep 或 `awf kb query \"<問題>\"` 找到行段，再帶 offset／limit 讀，一次最多 400 行（設定：.claude/teams/methodology.json 的 limits）\n", "stdin_sha1": "648bbe7bb6d5e75c0ef43f782e6c7a218a975246", "stdout": ""}
-{"got": 2, "kind": "case", "name": "讀取預算：大檔整檔讀的訊息提示 kb.py", "seq": 2246, "want": 2}
-{"got": false, "kind": "case", "name": "讀取預算：大檔整檔讀的訊息提示 kb.py（訊息含「kb.py query」）", "seq": 2247, "want": true}
+{"got": 2, "kind": "case", "name": "讀取預算：大檔整檔讀的訊息提示知識層查詢", "seq": 2246, "want": 2}
+{"got": true, "kind": "case", "name": "讀取預算：大檔整檔讀的訊息提示知識層查詢（訊息含「awf kb query」）", "seq": 2247, "want": true}
 {"kind": "call", "mode": "guard-paths", "rc": 0, "seq": 2248, "stderr": "", "stdin_sha1": "81aa64cc7155c410e4f94ce0846e2d5b3ac5ca05", "stdout": ""}
 {"got": 0, "kind": "case", "name": "讀取預算：大檔帶 offset＋合理 limit 放", "seq": 2249, "want": 0}
 {"kind": "call", "mode": "guard-paths", "rc": 2, "seq": 2250, "stderr": "已被 agent-workflow hook 擋下：tpm-researcher 讀 @TMP@/rb1/big.md：這次要讀 1000 行，超過一次讀取的門檻 400 行（檔案共 1000 行）。先用 Grep 或 `awf kb query \"<問題>\"` 找到行段，再帶 offset／limit 讀，一次最多 400 行（設定：.claude/teams/methodology.json 的 limits）\n", "stdin_sha1": "cf865d5218d495ee5c14b2adf3c846b09c576605", "stdout": ""}
@@ -2600,16 +2600,17 @@
 {"got": true, "kind": "case", "name": "未知模式＝hook 失敗（非 0、非 2）", "seq": 2599, "want": true}
 {"got": true, "kind": "case", "name": "hooks.json：不呼叫 bash／.sh", "seq": 2600, "want": true}
 {"got": true, "kind": "case", "name": "hooks.json：shell 守門 matcher 是 Bash|PowerShell", "seq": 2601, "want": true}
-{"got": false, "kind": "case", "name": "hooks.json：guard-shell 走 awf_hook.py", "seq": 2602, "want": true}
-{"got": false, "kind": "case", "name": "hooks.json：guard-shell 涵蓋 Bash／PowerShell", "seq": 2603, "want": true}
-{"got": false, "kind": "case", "name": "hooks.json：guard-shell 的 onFailure 是 continue", "seq": 2604, "want": true}
-{"got": false, "kind": "case", "name": "hooks.json：guard-paths 走 awf_hook.py", "seq": 2605, "want": true}
-{"got": false, "kind": "case", "name": "hooks.json：guard-paths 涵蓋 Edit／Write／NotebookEdit", "seq": 2606, "want": true}
-{"got": false, "kind": "case", "name": "hooks.json：guard-paths 的 onFailure 是 continue", "seq": 2607, "want": true}
-{"got": "continue", "kind": "case", "name": "hooks.json：交件檢查出錯不擋（onFailure: continue）", "seq": 2608, "want": "continue"}
-{"got": false, "kind": "case", "name": "hooks.json：SubagentStop 走 awf_hook.py envelope", "seq": 2609, "want": true}
-{"got": false, "kind": "case", "name": "hooks.json：TaskCompleted 走 awf_hook.py envelope", "seq": 2610, "want": true}
-{"kind": "call", "mode": "guard-shell", "rc": 2, "seq": 2611, "stderr": "已被 agent-workflow hook 擋下：不直接 push 到受保護分支 main（protected_branches）；改推功能分支、開 PR 到 fork，合併走 PR 流程（規則：.claude/teams/rules.md；設定：.claude/teams/guard.config.json）\n", "stdin_sha1": "ae685259393885b34354bd7a6804faba7ea6d19f", "stdout": ""}
-{"got": 2, "kind": "case", "name": "guard-shell：轉呼叫 bash 版 repo guard：擋", "seq": 2612, "want": 2}
-{"kind": "call", "mode": "guard-shell", "rc": 0, "seq": 2613, "stderr": "", "stdin_sha1": "7384dc1d30e2b3cee126d077b0218ab5df80ee34", "stdout": ""}
-{"got": 0, "kind": "case", "name": "guard-shell：轉呼叫 bash 版 repo guard：放", "seq": 2614, "want": 0}
+{"got": true, "kind": "case", "name": "hooks.json：guard-shell 走 awf 的 hook 入口", "seq": 2602, "want": true}
+{"got": true, "kind": "case", "name": "hooks.json：guard-shell 涵蓋 Bash／PowerShell", "seq": 2603, "want": true}
+{"got": true, "kind": "case", "name": "hooks.json：guard-shell 的 onFailure 是 continue", "seq": 2604, "want": true}
+{"got": true, "kind": "case", "name": "hooks.json：guard-paths 走 awf 的 hook 入口", "seq": 2605, "want": true}
+{"got": true, "kind": "case", "name": "hooks.json：guard-paths 涵蓋 Edit／Write／NotebookEdit", "seq": 2606, "want": true}
+{"got": true, "kind": "case", "name": "hooks.json：guard-paths 的 onFailure 是 continue", "seq": 2607, "want": true}
+{"got": true, "kind": "case", "name": "hooks.json：Read／Grep 走 guard-paths", "seq": 2608, "want": true}
+{"got": "continue", "kind": "case", "name": "hooks.json：交件檢查出錯不擋（onFailure: continue）", "seq": 2609, "want": "continue"}
+{"got": true, "kind": "case", "name": "hooks.json：SubagentStop 走 hook 入口的 envelope", "seq": 2610, "want": true}
+{"got": true, "kind": "case", "name": "hooks.json：TaskCompleted 走 hook 入口的 envelope", "seq": 2611, "want": true}
+{"kind": "call", "mode": "guard-shell", "rc": 2, "seq": 2612, "stderr": "已被 agent-workflow hook 擋下：不直接 push 到受保護分支 main（protected_branches）；改推功能分支、開 PR 到 fork，合併走 PR 流程（規則：.claude/teams/rules.md；設定：.claude/teams/guard.config.json）\n", "stdin_sha1": "ae685259393885b34354bd7a6804faba7ea6d19f", "stdout": ""}
+{"got": 2, "kind": "case", "name": "guard-shell：轉呼叫 bash 版 repo guard：擋", "seq": 2613, "want": 2}
+{"kind": "call", "mode": "guard-shell", "rc": 0, "seq": 2614, "stderr": "", "stdin_sha1": "7384dc1d30e2b3cee126d077b0218ab5df80ee34", "stdout": ""}
+{"got": 0, "kind": "case", "name": "guard-shell：轉呼叫 bash 版 repo guard：放", "seq": 2615, "want": 0}

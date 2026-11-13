@@ -160,13 +160,14 @@ def t_launcher(ws: Path, repo: Path) -> None:
     hj = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
     every = [(ev, h) for ev, ms in hj["hooks"].items() for m in ms for h in m["hooks"]]
     guards = [h for ev, h in every if ev == "PreToolUse" and "guard-" in h["command"]]
-    check("hooks.json 有 guard-shell 與 guard-paths", all(any(f" {m};" in h["command"] for h in guards) for m in ("guard-shell", "guard-paths")), str(guards))
+    check("hooks.json 有 guard-shell 與 guard-paths", all(any(h["command"].rstrip(";").endswith(f" {m}") or f" {m};" in h["command"] for h in guards) for m in ("guard-shell", "guard-paths")), str(guards))
     for ev, h in every:
         t = h.get("timeout")
         check(f"{ev} 有 timeout（1–30 秒）", isinstance(t, int) and 1 <= t <= 30, str(h))
     for h in guards:
         c = h["command"]
-        check("守門 hook 用 command -v python3 判斷", "command -v python3" in c and "else python " in c, c)
+        # 1.0：直接跑 plugin 的啟動器（bin/awf 挑平台後執行執行檔），不再需要 Python
+        check("守門 hook 跑 plugin 的 bin/awf", c.startswith('"${CLAUDE_PLUGIN_ROOT}/bin/awf" hook '), c)
         check("守門 hook 不用 ||", "||" not in c, c)
         check("守門 hook onFailure=continue", h.get("onFailure") == "continue", str(h))
         check("守門 hook timeout ≤ 10 秒", h.get("timeout", 99) <= 10, str(h))
@@ -175,6 +176,9 @@ def t_launcher(ws: Path, repo: Path) -> None:
 
     if os.name == "nt" or not Path("/bin/sh").exists():
         print("略過 /bin/sh 啟動測試（非 POSIX）")
+        return
+    if "python" not in guards[0]["command"]:
+        print("略過「PATH 上只有哪一種 Python」的啟動測試：hook 已改成執行檔（啟動器的測試在 cargo xtask check-launchers）")
         return
     cmd = guards[0]["command"].replace("${CLAUDE_PLUGIN_ROOT}", str(HOOKS.parent))
     real = Path(PY).resolve()
@@ -306,7 +310,7 @@ def t_session_start() -> None:
     hj = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
     if "SessionStart" in hj["hooks"]:   # 複製進專案的 hooks 目錄沒有 hooks.json 的這一段也沒關係
         ss = [h for m in hj["hooks"]["SessionStart"] for h in m["hooks"]]
-        check("hooks.json 的 SessionStart 只跑 session-start、timeout ≤ 5 秒", len(ss) == 1 and " session-start;" in ss[0]["command"] and ss[0].get("timeout", 99) <= 5, str(ss))
+        check("hooks.json 的 SessionStart 只跑 session-start、timeout ≤ 5 秒", len(ss) == 1 and (" session-start;" in ss[0]["command"] or ss[0]["command"].endswith(" session-start")) and ss[0].get("timeout", 99) <= 5, str(ss))
     root = TMP / "ss-plugin"
     shutil.copytree(HOOKS, root / "hooks", ignore=shutil.ignore_patterns("__pycache__", "tests"))
     (root / ".claude-plugin").mkdir()

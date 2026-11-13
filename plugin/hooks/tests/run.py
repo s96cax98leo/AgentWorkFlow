@@ -1189,12 +1189,13 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
             d["agent_id"] = aid
         return d
 
-    def rb(want: int, name: str, w: Path, data: dict, mode: str = "guard-paths", expect: str = "") -> None:
+    def rb(want: int, name: str, w: Path, data: dict, mode: str = "guard-paths", expect="") -> None:
         r = hook(mode, data, w)
         err = r.stderr.decode("utf-8", "replace")
         check(f"讀取預算：{name}", want, r.returncode, err)
-        if expect:
-            check(f"讀取預算：{name}（訊息含「{expect}」）", True, expect in err, err)
+        if expect:   # 給 tuple 表示任一種寫法都算（Python 版講 kb.py，執行檔講 awf kb）
+            alts = expect if isinstance(expect, tuple) else (expect,)
+            check(f"讀取預算：{name}（訊息含「{alts[-1]}」）", True, any(a in err for a in alts), err)
 
     def rb_sh(w: Path, command: str, agent: str = RES, tool: str = "Bash") -> dict:
         d = sh_in(w, command, agent, tool)
@@ -1209,7 +1210,7 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     # 第 1 條：大檔要分段讀（額度不限，只看行數）
     R1 = rbws("rb1", rb_limits(), ext={"acme-db-reviewer": "tpm-reviewer"})
     rb(2, "大檔整檔讀擋", R1, rd(R1, "big.md"), expect="共 1000 行")
-    rb(2, "大檔整檔讀的訊息提示 kb.py", R1, rd(R1, "big.md"), expect="kb.py query")
+    rb(2, "大檔整檔讀的訊息提示知識層查詢", R1, rd(R1, "big.md"), expect=("kb.py query", "awf kb query"))
     rb(0, "大檔帶 offset＋合理 limit 放", R1, rd(R1, "big.md", offset=1, limit=200))
     rb(2, "limit 超過門檻擋", R1, rd(R1, "big.md", offset=1, limit=1000), expect="一次最多 400 行")
     rb(2, "只帶 offset、剩下的行數仍超過門檻擋", R1, rd(R1, "big.md", offset=100))
@@ -1457,6 +1458,9 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     check("未知模式＝hook 失敗（非 0、非 2）", True, r.returncode not in (0, 2))
 
     # ------------------------------------------------------------ 註冊設定：不用 bash、涵蓋 PowerShell、守門 fail-closed
+    def runs_hook(cmd: str, mode: str) -> bool:   # 舊：python … awf_hook.py" <種類>；1.0：執行檔 … awf" hook <種類>（或絕對路徑的 awf… hook <種類>）
+        return f"awf_hook.py\" {mode}" in cmd or re.search(r"awf[^ ]*\"? hook " + re.escape(mode) + r"(?![\w-])", cmd) is not None
+
     def check_registration(label: str, cfg: dict) -> None:
         text = json.dumps(cfg, ensure_ascii=False)
         check(f"{label}：不呼叫 bash／.sh", True, "bash " not in text and ".sh" not in text)
@@ -1467,8 +1471,8 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
         # 專案 settings（--hooks project，Python 絕對路徑）是 block
         want_fail = ("continue",) if label == "hooks.json" else ("block",)
         for tools, mode in ((("Bash", "PowerShell"), "guard-shell"), (("Edit", "Write", "NotebookEdit"), "guard-paths")):
-            ent = next((e for e in pre if f"awf_hook.py\" {mode}" in e["hooks"][0].get("command", "")), None)
-            check(f"{label}：{mode} 走 awf_hook.py", True, ent is not None)
+            ent = next((e for e in pre if runs_hook(e["hooks"][0].get("command", ""), mode)), None)
+            check(f"{label}：{mode} 走 awf 的 hook 入口", True, ent is not None)
             ms = set((ent or {}).get("matcher", "").split("|"))
             check(f"{label}：{mode} 涵蓋 {'／'.join(tools)}", True, set(tools) <= ms)
             check(f"{label}：{mode} 的 onFailure 是 {'／'.join(want_fail)}", True, ((ent or {}).get("hooks") or [{}])[0].get("onFailure") in want_fail)
@@ -1477,7 +1481,7 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
         h = by.get("SubagentHandback|StructuredOutput", {})
         check(f"{label}：交件檢查出錯不擋（onFailure: continue）", "continue", h.get("onFailure"))
         for ev in ("SubagentStop", "TaskCompleted"):
-            check(f"{label}：{ev} 走 awf_hook.py envelope", True, "awf_hook.py\" envelope" in cfg["hooks"][ev][0]["hooks"][0]["command"])
+            check(f"{label}：{ev} 走 hook 入口的 envelope", True, runs_hook(cfg["hooks"][ev][0]["hooks"][0]["command"], "envelope"))
 
     hooks_json = HOOKS / "hooks.json"
     if hooks_json.is_file():
