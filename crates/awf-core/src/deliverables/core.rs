@@ -760,10 +760,20 @@ pub fn privacy_text(text: &str) -> String {
     t.replace("\\-", "-")
 }
 
-/// 額外的隱私規則（種類, 正規式）；正規式是 None 時不比。
+/// 額外的隱私規則（種類, 一組字面值）：文字裡出現任何一個字面值就算命中。
 pub struct ExtraRule {
     pub name: String,
     rx: Option<Fx>,
+    /// 正規式編不出來時改用字面比對（只會一樣或更嚴）。
+    lits: Vec<String>,
+}
+
+impl ExtraRule {
+    /// 依序比對這些字面值（和 `"|".join(re.escape(n) …)` 編成的正規式相同）。
+    pub fn literals(name: &str, lits: &[String]) -> Self {
+        let pats: Vec<String> = lits.iter().map(|n| regex::escape(n)).collect();
+        ExtraRule { name: name.to_string(), rx: if pats.is_empty() { None } else { py::compile_raw(&pats.join("|")) }, lits: lits.to_vec() }
+    }
 }
 
 fn hit_any(rx: &Fx, text: &str, allowed: &[Fx]) -> bool {
@@ -779,12 +789,18 @@ pub fn privacy_hits(text: &str, allow: &[Value], extra: &[ExtraRule]) -> Vec<Str
     let allowed: Vec<Fx> = allow.iter().filter_map(Value::as_str).filter_map(py::compile_py).collect();
     let mut rules: Vec<(&str, &Fx)> = privacy_rules().iter().map(|(n, r)| (*n, r)).collect();
     rules.extend(extra.iter().filter_map(|x| x.rx.as_ref().map(|r| (x.name.as_str(), r))));
+    let fallback: Vec<&ExtraRule> = extra.iter().filter(|x| x.rx.is_none() && !x.lits.is_empty()).collect();
     let mut out = Vec::new();
     let norm_text = privacy_text(&text.replace("\r\n", "\n"));
     for (n, ln) in norm_text.split('\n').enumerate() {
         for (name, rx) in &rules {
             if hit_any(rx, ln, &allowed) {
                 out.push(format!("第 {} 行：{name}", n + 1));
+            }
+        }
+        for x in &fallback {
+            if x.lits.iter().any(|l| !l.is_empty() && ln.contains(l.as_str()) && !allowed.iter().any(|a| py::search(a, l))) {
+                out.push(format!("第 {} 行：{}", n + 1, x.name));
             }
         }
     }
@@ -811,9 +827,9 @@ pub fn run_name_rule(root: &str) -> ExtraRule {
         .unwrap_or_default();
     names.sort();
     let skip = names.len().saturating_sub(500);
-    let mut pats = vec![regex::escape(&rd)];
-    pats.extend(names.iter().skip(skip).map(|n| regex::escape(n)));
-    ExtraRule { name: "內部 run 目錄".to_string(), rx: py::compile_raw(&pats.join("|")) }
+    let mut lits = vec![rd];
+    lits.extend(names.into_iter().skip(skip));
+    ExtraRule::literals("內部 run 目錄", &lits)
 }
 
 // ------------------------------------------------------------------ check

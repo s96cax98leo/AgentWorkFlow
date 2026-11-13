@@ -55,7 +55,15 @@ pub(super) fn translate(pat: &str, ci: bool) -> String {
             match c {
                 ']' if i > class_start => {
                     if ci && class_has_i {
+                        // 類別結尾的 `-` 是字面的連字號：補的字元要放在它前面，不然會變成一段範圍
+                        let tail_hyphen = out.ends_with('-') && !out.ends_with("\\-");
+                        if tail_hyphen {
+                            out.pop();
+                        }
                         out.push_str("\u{130}\u{131}");
+                        if tail_hyphen {
+                            out.push_str("\\-");
+                        }
                     }
                     out.push(']');
                     in_class = false;
