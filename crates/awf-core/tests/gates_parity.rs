@@ -293,8 +293,15 @@ fn mg_diffs(c: &Value, got: &Got) -> Vec<String> {
     d
 }
 
+/// 有案例會切換整個行程的目前目錄，所以這個檔的測試一次只跑一個（平行時偶爾互相干擾）。
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn merge_gate_cases_match_python() {
+    let _serial = serial();
     let cases = expected()["mg"]["cases"].as_array().expect("cases");
     let (mut same, mut crash, mut stricter, mut help) = (0, 0, 0, 0);
     let mut bad = Vec::new();
@@ -334,6 +341,7 @@ fn merge_gate_cases_match_python() {
 /// 列為「只會更嚴」的案例必須真的存在於基準（改名後不會默默失效）。
 #[test]
 fn stricter_list_is_live() {
+    let _serial = serial();
     let names: Vec<&str> = expected()["mg"]["cases"].as_array().expect("cases").iter().map(|c| s(&c["name"])).collect();
     for (n, why) in STRICTER {
         assert!(names.contains(n), "STRICTER 的案例不在基準裡：{n}（{why}）");
@@ -380,6 +388,7 @@ fn probe(fn_name: &str, a: &[Value]) -> Result<Value, String> {
 
 #[test]
 fn function_probes_match_python() {
+    let _serial = serial();
     let probes = expected()["mg"]["probes"].as_array().expect("probes");
     let mut bad = Vec::new();
     for p in probes {
@@ -408,6 +417,7 @@ fn sha_re() -> &'static Regex {
 
 #[test]
 fn merge_gate_selftest_matches_python() {
+    let _serial = serial();
     let tmp = Tmp::new();
     tmp.write("gitconfig", b"");
     let ctx = mg::Ctx { teams: teams(), project_dir_env: None, env: git_env(&format!("{}/gitconfig", tmp.raw)), stdin: Some(String::new()) };
@@ -421,6 +431,7 @@ fn merge_gate_selftest_matches_python() {
 
 #[test]
 fn sync_branch_selftest_matches_python() {
+    let _serial = serial();
     let ctx = sb::Ctx { env: git_env("/dev/null") };
     let mut out = String::new();
     let code = sb::selftest(&ctx, &mut out);
@@ -433,6 +444,7 @@ fn sync_branch_selftest_matches_python() {
 
 #[test]
 fn sync_branch_steps_match_python() {
+    let _serial = serial();
     let tmp = Tmp::new();
     tmp.write("gitconfig", b"");
     let env = git_env(&format!("{}/gitconfig", tmp.raw));

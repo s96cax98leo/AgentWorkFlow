@@ -12,6 +12,7 @@
 | `gates.expected.json` | merge gate 298 例（selftest 轉出與 CLI）、純函式 465 例、sync-branch 86 例；和 Python 不同的案例只准更嚴，列在 `gates_parity.rs` 的 `STRICTER` | `python3 tests/parity/record_gates.py > tests/parity/gates.expected.json` |
 | `deliverables.expected.json` | 交付文件與工具先定位：625 步劇本（323 個指令）與 1,956 個函式探測（隱私規則、`body_hash`、過期判定） | `python3 tests/parity/record_deliverables.py > tests/parity/deliverables.expected.json` |
 | `tools.expected.json` | awf_cost 357 步、awf_script 455 步、check_agents 125 次執行 | `python3 tests/parity/record_tools.py > tests/parity/tools.expected.json` |
+| `build.expected.json` | 內嵌片段的 build 101 次執行、去客戶化掃描 41 次、文件核對 59 次（後兩支在 `crates/xtask`） | `python3 tests/parity/record_build.py > tests/parity/build.expected.json` |
 
 規則：
 
