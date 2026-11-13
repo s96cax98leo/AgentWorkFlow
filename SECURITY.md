@@ -27,13 +27,29 @@
 
 `plugin/hooks/` 的守門 hook（`awf hook guard-shell|guard-paths|envelope`）在使用者的電腦上執行，用來擋下 agent 的誤操作：推送受保護分支、寫上游、越權寫入、合併與核准 PR 等。它**可以被繞過**：使用者可以停用 plugin、改設定，有權限的程序也可以不經過 Claude Code 直接操作 git 與 GitHub。
 
-所以真正的信任邊界在**伺服器端**：
+所以真正的信任邊界在**伺服器端**（哪些寫法擋不住，見下面〈守門擋不住的寫法〉）：
 
 - base 分支的 ruleset（或 branch protection）：禁止直接 push、要求 PR、要求 review。
-- required status check：`scaffold/.github/workflows/agent-merge-gate.yml.tmpl` 產生的 merge gate CI，從受保護的 base 執行確定性 gate。
+- required status check：`plugin/scaffold/.github/workflows/agent-merge-gate.yml.tmpl` 產生的 merge gate CI，從受保護的 base 執行確定性 gate。
 - 合併用的身分（GitHub App 或專用帳號）只給需要的權限，搭配 CODEOWNERS。
 
 自動合併的完整信任模型見 `docs/自動合併信任模型.md` 與 `docs/adr-agent-auto-merge.md`。
+
+### 守門擋不住的寫法
+
+`awf hook guard-shell` 看的是「這次要執行的指令文字」。直接寫出來的 `git push`、`gh pr merge`、`gh api`、`awf save-run approve` 這類指令它認得；`bash -c`、`eval`、`pwsh -Command` 包住的內層指令會展開來看，`xargs` 這類看不到子指令的轉呼叫當成寫入處理。但是下面幾種寫法，從字面看不出最後會執行什麼，hook 擋不住，或只能擋到一部分：
+
+- **複製或改名執行檔再執行**：把 `awf`、`gh`、`git` 複製到別的路徑或換個檔名，再用新名字執行。
+- **alias、shell function、符號連結**：先替指令取別名，之後只出現別名。
+- **從 stdin 把指令餵給 shell 或直譯器**：指令內容不在指令列上（管線、here-doc、讀檔轉給 `sh`）。
+- **先寫成腳本檔再執行**：寫檔和執行分成兩步，各自看起來都無害。
+- **透過別的程式的設定間接執行**：git 的 alias 與 hook、`make` 的 target、套件管理工具的 scripts、編輯器或測試工具的設定檔等，讓另一個程式代為執行。
+
+這些不是待修的個別漏洞，而是「在使用者電腦上檢查指令文字」這種做法的極限：同一台機器上有 shell 權限的程序，總找得到 hook 沒看過的寫法。所以：
+
+- hook 只當輔助，用來擋下 agent 的誤操作與明顯的越權，不拿來當唯一的防線。
+- 合併、核准、推受保護分支能不能成功，由伺服器端決定（下一段的 ruleset、required check、CODEOWNERS、合併身分的權限）。本機的紀錄（`run.json`、`merge-audit.jsonl`）也不是信任來源：merge gate 的 CI 從受保護的 base 分支重新判定，不採信 PR 或本機帶來的結論。
+- 發現 hook 該擋而沒擋的**直接寫法**，仍然歡迎照上面的方式回報。
 
 ### hook 跑不起來時放行
 
@@ -54,11 +70,14 @@ hook 改在專案的 settings 註冊，寫入執行檔的絕對路徑，並可�
 
 ### plugin 在所有專案執行，所以 hook 的範圍要小
 
-- **單一執行檔**：hook 與工具都是 plugin 內附的 `awf`，執行時不需要安裝任何直譯器或套件。編譯時用到的 crate 鎖在 `Cargo.lock`；發佈的執行檔附 sha256 與原始碼雜湊（`plugin/bin/checksums.json`），核對方式見 `docs/建置與發佈.md`。
-- **不連網**：hook 不做任何網路呼叫；`awf` 只有在你執行會碰 GitHub 的子指令（例如 `awf publish`）時才透過 `git`／`gh` 連線。
+- **單一執行檔**：hook 與工具都是 plugin 內附的 `awf`（Rust），執行時不需要安裝任何直譯器或套件，plugin 裡也沒有會被執行的腳本（啟動器 `bin/awf`、`bin/awf.cmd` 只負責挑對應平台的執行檔）。
+- **相依來源固定**：編譯時用到的 crate 鎖在 `Cargo.lock`，只能來自 crates.io（不收 git 來源與 workspace 以外的 path 相依），名單要和允許清單 `crates/xtask/allowed-crates.txt` 完全一致，新增或間接帶進一個 crate 都要有人明確加進清單。
+- **發佈檔可核對**：發佈的執行檔附 sha256 與原始碼雜湊（`plugin/bin/checksums.json`，發佈時產生），核對方式見 `docs/建置與發佈.md`。merge gate 的 CI 執行 gate 之前也會先核對執行檔的 sha256。
+- **不連網**：hook 不做任何網路呼叫；`awf` 只有在你執行會碰 GitHub 的子指令（例如 `awf publish`）時才透過 `git`／`gh` 連線。乾跑 workflow 用的 Node 腳本只 import 內建模組與相對路徑，而且不用網路模組。
 - **不讀機敏檔**：hook 只讀 hook 輸入與專案的 `.claude/teams/guard.config.json`、執行紀錄，不讀 `.env`、憑證或私鑰。
+- **CI 的 action 釘版本**：這個 repo 的 CI 與給專案用的 merge gate CI 範本，action 一律釘 40 字元 commit SHA。
 
-以上由 `tests/check_supply.py` 在 CI 強制檢查（另外檢查 GitHub Actions 都釘 commit SHA、版控裡沒有 `.env`、私鑰與 `__pycache__`）。
+相依來源、允許清單、Node 腳本的 import、action 釘 SHA，以及版控裡沒有 `.env`、私鑰與直譯器快取檔，由 `cargo xtask check-supply` 在 CI 強制檢查。
 
 ## 安裝建議
 

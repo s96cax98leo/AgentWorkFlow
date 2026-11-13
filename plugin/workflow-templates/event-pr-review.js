@@ -18,7 +18,7 @@ for (const k of ['target', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 a
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 /*@snippet:recipe*/
-// ── 片段 recipe（.claude/teams/tools/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
+// ── 片段 recipe（workflow-templates/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 規則和 awf recipe 完全一致（golden-set/recipes/*.json 兩邊都跑，結果要相同）：
 //   profile 沒有 recipes（舊版）或指定的 recipe 不存在 → 當成 feature 完整流程（只會更嚴）；
@@ -180,7 +180,7 @@ function resolveModel(profile, role, stage, suggested, modifiers) {
 }
 /*@end*/
 /*@snippet:kernel*/
-// ── 片段 kernel（.claude/teams/tools/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
+// ── 片段 kernel（workflow-templates/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
 // @requires: challenge, recipe
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // awfAgent 在 tryAgent（challenge 片段：共同前綴、執行紀錄檔、trace、失敗當缺件）之上再做三件事：
@@ -283,7 +283,7 @@ awfKernelInit({ profile: METHODOLOGY, stage: 'pr-review', modifiers: [], max_age
 const LENSES = A.lenses || ['standards', 'spec', 'bugs', 'security', 'design', 'history']
 const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 gh pr diff／git diff，不 approve、不 merge、不 comment。`
 /*@snippet:challenge*/
-// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
 // 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
@@ -410,7 +410,7 @@ async function challengeList(list, o) {
 /*@end*/
 /*@snippet:review-skeptic*/
 // @requires: challenge
-// ── 片段 review-skeptic（.claude/teams/tools/snippets/review-skeptic.js）：審查 agent 交 findings 後，派 skeptic 逐則反駁 ──
+// ── 片段 review-skeptic（workflow-templates/snippets/review-skeptic.js）：審查 agent 交 findings 後，派 skeptic 逐則反駁 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 用到 challenge 片段的 judgeVerdicts 與 awfDispatch（有執行核心就經過它），引用本片段的 workflow 也要引用 challenge 片段。
 // 缺件（rules.md 規則 26）：審查或反駁的 agent 回 null 或交件無效時記進 missing（回傳的 missing 欄位是 label）；

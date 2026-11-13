@@ -1,0 +1,490 @@
+{
+  "$id": "methodology",
+  "title": "開發規範 profile：SDLC 各段的做法與專案慣例。模版只管工作流程，做法由這份 profile 決定",
+  "description": "awf init 把選定的 profile（模版的 methodologies/<名稱>.json）加上使用者回答的慣例，合併成目標專案的 .claude/teams/methodology.json；awf build 把它內嵌進 sdlc-*.js。改了 profile 要重跑 awf build。",
+  "type": "object",
+  "required": ["name", "description", "stages", "requirements", "conventions"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1, "description": "profile 名稱，例如 default、lightweight"},
+    "description": {"type": "string", "minLength": 1},
+    "stages": {
+      "type": "object",
+      "description": "SDLC 各段的做法；guidance 會原文放進該段的派工單",
+      "required": ["plan", "design", "build", "test", "deliver", "merge"],
+      "properties": {
+        "plan": {
+          "type": "object",
+          "required": ["artifacts", "guidance"],
+          "properties": {
+            "artifacts": {"type": "array", "items": {"type": "string"}, "description": "這一段的產出文件（檔名，放在 specs/<epic>/）"},
+            "template": {"type": "string", "description": "沒有專案範本時的格式說明"},
+            "guidance": {"type": "string"},
+            "required_sections": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "intent.md 一定要有的節（標題要含節名、節下要有內容）；省略＝目標、範圍、不做的事、驗收條件。awf save-run stage plan 會檢查"}
+          }
+        },
+        "design": {
+          "type": "object",
+          "required": ["artifacts", "requirement_style", "guidance"],
+          "properties": {
+            "artifacts": {"type": "array", "items": {"type": "string"}},
+            "requirement_style": {"type": "string", "minLength": 1, "description": "需求／驗收條件的寫法"},
+            "guidance": {"type": "string"},
+            "system_design": {
+              "type": ["object", "null"],
+              "description": "選填：SA／SD 的方法（預設 profile 依 System Design Primer）。有設時 sdlc-design 照它寫設計，並多派一個 skeptic 用 system-design lens 檢查；null 或不寫＝不套用",
+              "required": ["source", "steps", "feature_scope", "system_scope"],
+              "additionalProperties": false,
+              "properties": {
+                "source": {"type": "string", "minLength": 1, "description": "方法出處（網址與授權）"},
+                "steps": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "設計步驟，依序寫進設計文件"},
+                "feature_scope": {"type": "string", "minLength": 1, "description": "功能層 SD：每個需求都要做到哪裡"},
+                "system_scope": {"type": "string", "minLength": 1, "description": "系統層 SD：什麼情況算有系統面、要做到哪裡"},
+                "topics": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "擴展與取捨要逐項檢查的主題"},
+                "document": {"type": "string", "description": "寫在哪份文件、哪一節"}
+              }
+            }
+          }
+        },
+        "build": {
+          "type": "object",
+          "required": ["test_first", "guidance"],
+          "properties": {
+            "test_first": {"type": "boolean", "description": "true：先由 dev-acceptance-tester 寫會失敗的測試、合進整合分支後才實作；false：先實作，再補驗證測試"},
+            "unit_tests": {"type": "string", "description": "實作者寫單元測試的方式"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "test": {
+          "type": "object",
+          "required": ["verification", "guidance"],
+          "properties": {
+            "verification": {"type": "string", "minLength": 1, "description": "怎麼驗證需求（逐條驗收、手動清單、指令…）"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "deliver": {
+          "type": "object",
+          "required": ["guidance"],
+          "properties": {
+            "review_axes": {"type": "array", "items": {"type": "string"}, "description": "審查重點補充（四軸固定，這裡補專案特有的）"},
+            "guidance": {"type": "string"}
+          }
+        },
+        "merge": {
+          "type": "object",
+          "required": ["guidance"],
+          "properties": {
+            "guidance": {"type": "string"}
+          }
+        }
+      }
+    },
+    "parallelism": {
+      "type": "object",
+      "description": "工作流程參數（不是開發規範）：計劃太大時拆子計劃平行規劃、驗證分片平行跑。省略時用 workflow 內的預設值",
+      "properties": {
+        "split_threshold": {"type": "integer", "minimum": 2, "description": "預估子任務數超過這個值（或有多個可獨立交付的區塊）就拆成子計劃；預設 8"},
+        "max_sub_plans": {"type": "integer", "minimum": 2, "description": "子計劃數上限（同時也是平行規劃與分片驗證的 agent 數上限）；預設 4"},
+        "shard_verification": {"type": "boolean", "description": "有子計劃時，驗證是否每個子計劃派一個 dev-verifier 平行跑；預設 true"},
+        "wave_pause": {"type": "boolean", "description": "子任務有分波（subtasks[].wave）時，sdlc-build 每做完一波是否停下交人確認再做下一波；預設 false（一路做完）"}
+      }
+    },
+    "models": {
+      "type": "object",
+      "description": "選填：模型分級。AI（triage）建議各角色用哪個等級，工具守下限、只會往上調。省略或 mode=inherit 時全部沿用主對話模型",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["auto", "fixed", "inherit"], "description": "auto＝採 AI 建議（不低於下限）；fixed＝只用 defaults；inherit＝不指定模型"},
+        "tiers": {
+          "type": "object",
+          "description": "各等級對應的模型別名（haiku、sonnet、opus 或完整模型 ID）；寫 inherit 表示沿用主對話模型",
+          "additionalProperties": false,
+          "properties": {"light": {"type": "string", "minLength": 1}, "standard": {"type": "string", "minLength": 1}, "strong": {"type": "string", "minLength": 1}}
+        },
+        "defaults": {"type": "object", "description": "各角色的預設等級；鍵是角色名、「角色@段」或 *（其他全部）", "additionalProperties": {"type": "string", "enum": ["light", "standard", "strong"]}},
+        "floors": {"type": "object", "description": "各角色的最低等級（鍵同 defaults）；只能比內建下限更高，內建的閘門角色下限蓋不掉", "additionalProperties": {"type": "string", "enum": ["light", "standard", "strong"]}}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "description": "選填：讀取與擴散的上限。要不要啟用、門檻多少由使用者決定：mode 寫 enforce 或 warn 才啟用讀取上限，沒寫 mode 或省略整段都不限制讀取",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["enforce", "warn", "off"], "description": "enforce＝擋；warn＝只記錄本來會擋的（先觀察用）；off 或不寫＝不啟用"},
+        "whole_file_lines": {"type": "integer", "minimum": 0, "description": "一次 Read 最多讀幾行；超過要帶 offset／limit 分段讀。0＝不限"},
+        "read_budget": {
+          "type": "object",
+          "description": "每個 agent 一次派工累計可讀的位元組數",
+          "additionalProperties": false,
+          "properties": {
+            "default": {"type": "integer", "minimum": 0, "description": "沒有另外設定的角色；0＝不限"},
+            "roles": {"type": "object", "description": "各角色的額度（鍵是不帶命名空間的角色名）；0＝該角色不限", "additionalProperties": {"type": "integer", "minimum": 0}}
+          }
+        },
+        "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent（沒寫用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"}
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "description": "選填：知識庫（awf kb）要索引哪些文件。省略時用預設來源",
+      "additionalProperties": false,
+      "properties": {
+        "sources": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "相對專案根目錄的 glob"},
+        "exclude": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "dir": {"type": "string", "minLength": 1, "description": "索引與檢視（INDEX.md、cards/、hot.md）放哪；預設 _tpm/kb"}
+      }
+    },
+    "progress": {
+      "type": "object",
+      "description": "選填：進度監看（awf watch）。不設就只寫 <run_dir>/progress.jsonl，不呼叫任何外部指令",
+      "additionalProperties": false,
+      "properties": {
+        "notify": {
+          "type": "object",
+          "description": "選填：每個事件呼叫一次的外部指令（例如送到聊天室）。事件以 JSON 從 stdin 給，只含狀態與數字的白名單欄位；內容像機敏值就不送。指令失敗只警告",
+          "required": ["command"],
+          "additionalProperties": false,
+          "properties": {
+            "command": {"description": "指令：字串或參數陣列（不經 shell）", "type": ["string", "array"], "minLength": 1, "minItems": 1, "items": {"type": "string", "minLength": 1}},
+            "events": {"type": "array", "description": "只送這些事件類型；省略＝全部", "items": {"enum": ["run_state", "stage_started", "stage_saved", "waiting_gate", "stage_approved", "record_written", "agent_started", "agent_progress", "workflow_finished", "workflow_stalled", "watch_note"]}}
+          }
+        }
+      }
+    },
+    "events": {"type": "object", "description": "選填：自訂事件類型（共用 event.js：多個角度平行處理 → skeptic 反駁 → writer 寫文件）。鍵是事件名；和內建類型（meeting、decision、demo-check、reqs-change、upstream）同名時整筆取代。用法見 docs/事件處理.md", "additionalProperties": {"type": "object", "required": ["context", "gather", "challenge", "write"], "additionalProperties": false, "properties": {"title": {"type": "string", "minLength": 1, "description": "這個事件類型做什麼（給人看）"}, "args": {"type": "array", "maxItems": 8, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "description": "必要參數名；缺了 awf next 會回 need_input"}, "optional": {"type": "array", "maxItems": 8, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "description": "選填參數名；文字裡用 {名稱|沒給時的字} 引用"}, "context": {"type": "string", "minLength": 1, "description": "每張派工單開頭的背景；{參數名} 會換成 args 的值，{run_dir} 是 run 目錄"}, "payload": {"enum": ["items", "findings"], "description": "各角度交 items（預設）還是 findings"}, "before": {"type": "array", "maxItems": 3, "items": {"type": "object", "required": ["name", "label", "ask"], "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1, "description": "結果的名字（回傳的鍵，也可以給 data 的 from 引用）", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "label": {"type": "string", "minLength": 1, "description": "派工 label（執行紀錄檔名）", "pattern": "^[a-z][a-z0-9:-]{0,47}$"}, "ask": {"type": "string", "minLength": 1, "description": "派工單內容；{參數名} 會換成 args 的值"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，預設「派工單」"}, "halt": {"type": "string", "minLength": 1, "description": "這一步缺件時回報的 stage 名，預設同 label"}, "payload": {"enum": ["items", "findings"], "description": "交件用哪種 payload，預設同事件的 payload"}, "keep": {"enum": ["list", "envelope"], "description": "回傳只留清單（預設）還是整個信封"}, "stop_if_empty": {"type": "string", "minLength": 1, "description": "清單是空的就正常結束，回傳的 note 用這句話"}}}, "description": "前置步驟：依序、各派一個 tpm-researcher"}, "gather": {"type": "object", "required": ["angles"], "additionalProperties": false, "description": "各角度平行（各派一個 tpm-researcher）", "properties": {"label": {"type": "string", "minLength": 1, "description": "派工 label 的前綴（<label>:<角度 key>），預設 gather", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，可用 {key}；預設「派工單（{key}）」"}, "body": {"type": "string", "minLength": 1, "description": "派工單內容，可用 {ask}、{key} 與參數名；預設就是角度的 ask"}, "tail": {"type": "string", "minLength": 1, "description": "接在資料後面的最後一行"}, "data": {"type": "array", "maxItems": 6, "description": "附在派工單後面的資料（每筆一行「標籤：JSON」）", "items": {"type": "object", "required": ["label", "from"], "additionalProperties": false, "properties": {"label": {"type": "string", "minLength": 1, "description": "這份資料在派工單裡的標籤"}, "from": {"type": "string", "minLength": 1, "description": "資料來源：all（全部事項）、kept（skeptic 沒推翻的）、doubted（被推翻或沒被驗證的）、doubted_ids（同上，只有 id）、或 before／after 步驟的 name"}}}}, "angles": {"type": "array", "minItems": 1, "maxItems": 8, "description": "角度清單（最多 8 個）", "items": {"type": "object", "required": ["key", "ask"], "additionalProperties": false, "properties": {"key": {"type": "string", "minLength": 1, "description": "角度代號（事項 id 的前綴）", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "ask": {"type": "string", "minLength": 1, "description": "這個角度要找什麼"}, "type": {"type": "string", "minLength": 1, "description": "可以在 body 用 {type} 引用"}}}}}}, "challenge": {"type": "object", "required": ["ask"], "additionalProperties": false, "description": "tpm-skeptic 的派工單；事項清單會接在後面", "properties": {"ask": {"type": "string", "minLength": 1, "description": "要 skeptic 怎麼反駁"}, "only_status": {"type": "string", "minLength": 1, "description": "只反駁這個 status 的事項（例如 green）"}}}, "after": {"type": "array", "maxItems": 3, "items": {"type": "object", "required": ["name", "label", "ask"], "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1, "description": "結果的名字（回傳的鍵，也可以給 data 的 from 引用）", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "label": {"type": "string", "minLength": 1, "description": "派工 label（執行紀錄檔名）", "pattern": "^[a-z][a-z0-9:-]{0,47}$"}, "ask": {"type": "string", "minLength": 1, "description": "派工單內容；{參數名} 會換成 args 的值"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，預設「派工單」"}, "halt": {"type": "string", "minLength": 1, "description": "這一步缺件時回報的 stage 名，預設同 label"}, "payload": {"enum": ["items", "findings"], "description": "交件用哪種 payload，預設同事件的 payload"}, "keep": {"enum": ["list", "envelope"], "description": "回傳只留清單（預設）還是整個信封"}, "stop_if_empty": {"type": "string", "minLength": 1, "description": "清單是空的就正常結束，回傳的 note 用這句話"}}}, "description": "收尾步驟：寫文件之前依序執行"}, "write": {"type": "object", "required": ["ask"], "additionalProperties": false, "description": "tpm-writer 的派工單", "properties": {"ask": {"type": "string", "minLength": 1, "description": "要寫哪些文件、寫到哪裡"}, "data": {"type": "array", "maxItems": 6, "description": "附在派工單後面的資料（每筆一行「標籤：JSON」）", "items": {"type": "object", "required": ["label", "from"], "additionalProperties": false, "properties": {"label": {"type": "string", "minLength": 1, "description": "這份資料在派工單裡的標籤"}, "from": {"type": "string", "minLength": 1, "description": "資料來源：all（全部事項）、kept（skeptic 沒推翻的）、doubted（被推翻或沒被驗證的）、doubted_ids（同上，只有 id）、或 before／after 步驟的 name"}}}}, "owner_check": {"type": "boolean", "description": "true＝writer 要交出給決策者版並回報 awf check-rules 通過，否則停下交人"}}}, "returns": {"type": "object", "additionalProperties": false, "description": "回傳的鍵名", "properties": {"all": {"type": "string", "minLength": 1, "description": "全部事項的鍵名，預設 items", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "doubted": {"type": "string", "minLength": 1, "description": "被推翻或沒被驗證的 id 的鍵名，預設 refuted", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "challenge": {"type": "boolean", "description": "true＝回傳附上 skeptic 的信封"}}}}}},
+    "deliverables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documents"
+      ],
+      "description": "選填：交付文件（awf deliverables）。enabled 是 true 才啟用；專案有 .claude/teams/deliverables.json 時以那一份為準。沒啟用時流程不產生也不檢查交付文件。用法見 docs/交付文件.md",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "交付文件放哪（相對專案根目錄）；預設 docs/deliverables"
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "選填：原料 glob 的基準（相對專案根目錄）；不寫就用 run 的目標 repo 或專案根目錄"
+        },
+        "banned_terms_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "選填：禁用字清單（一行一個正規式），交付文件出現就檢查不過"
+        },
+        "show_approvers": {"type": "boolean", "description": "選填：功能開發紀錄的核准紀錄要不要寫核准者名字；預設 false（只寫「人工核准」或「依政策自動核准」）"},
+        "privacy_allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "選填：可以出現在交付文件的字串（正規式），例如對外的客服信箱"
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "型錄（.claude/teams/deliverables/catalog.json）的文件 id；型錄沒有的就是自訂文件"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "group": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "assisted",
+                  "external"
+                ],
+                "description": "auto＝可以從 SDLC 產物產生；assisted＝工具給範本與原料、人補內容；external＝外部證據，只檢查有沒有附"
+              },
+              "depth": {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "summary"
+                ]
+              },
+              "when": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "milestone",
+                  "close"
+                ],
+                "description": "run＝每次交付都更新受影響的小節；milestone、close＝只在里程碑或結案時更新"
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "原料：相對目標 repo 的 glob"
+              },
+              "on": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "哪類改動會影響它：改動分類（code、test、doc、migration、manifest）、mod:<modifier>、path:<glob>、stage:<段>、recipe:<名>、event:<事件>"
+              },
+              "section_on": {
+                "type": "object",
+                "description": "選填：某個小節只在特定改動時更新。鍵是小節標題，值同 on"
+              },
+              "design_sections": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "design.md 要先留的小節"
+              }
+            }
+          }
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "預設 false：列在這裡只是範例，要交哪些由使用者決定"
+        }
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "description": "選填：限制文件。使用者指定哪份文件（架構、設計、前後端規範、審查規範…）套用到哪些段、哪些路徑；workflow 只帶給對得上的 agent，閘門可以要求逐條對照或跑檢查指令",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file", "stages"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$", "description": "短代號（對照表用），例如 arch、design、frontend、review"},
+          "file": {"type": "string", "minLength": 1, "description": "文件路徑，相對專案根目錄或目標 repo（不能是絕對路徑或含 ..）"},
+          "note": {"type": "string", "maxLength": 200, "description": "一句話說明這份文件管什麼"},
+          "stages": {"type": "array", "minItems": 1, "items": {"enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}, "description": "套用到哪些段"},
+          "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "選填 glob：只適用於碰到這些路徑的工作。build 段只發給擁有的路徑對得上的子任務；其他段整段適用並註明範圍"},
+          "trace": {"enum": ["none", "table"], "description": "table＝該段的執行紀錄要有〈限制對照〉一列（符合／偏離／不適用），缺了或偏離不能政策核准；預設 none"},
+          "check": {"type": "string", "minLength": 1, "description": "選填：檢查指令（在目標 repo 執行）。awf save-run stage 存檔時執行，exit 非 0 不能政策核准"}
+        }
+      }
+    },
+    "extensions": {
+      "type": "array",
+      "description": "使用者自己的 agent 加進 SDLC 某一段（工作流程擴充，不是開發規範）：和該段內建的 agent 平行執行，交 findings；blocker／important 的發現會擋住政策核准。每個 agent 也要登記在 guard.config.json 的 extension_agents（awf build --check 會核對）。用 add-agent skill（/agent-workflow:add-agent）設定",
+      "items": {
+        "type": "object",
+        "required": ["name", "agent", "stage", "instructions"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "短名，也是 findings 的 lens 與報告檔名（ext-<name>.md）"},
+          "agent": {"type": "string", "minLength": 1, "description": "完整 agentType：專案 .claude/agents 裡的 agent 寫檔名（不含 .md）；其他 plugin 的寫 <plugin>:<agent>"},
+          "stage": {"type": "string", "enum": ["plan", "design", "test", "deliver"], "description": "加在哪一段：plan＝和調研平行、design＝和一致性檢查平行、test＝和驗證平行、deliver＝和 PR 審查平行（之後一樣經 skeptic 反駁）"},
+          "instructions": {"type": "string", "minLength": 1, "description": "派工單內容：要檢查或調研什麼、怎麼判定嚴重度"}
+        }
+      }
+    },
+    "recipes": {
+      "type": "object",
+      "description": "選填：依需求類型分流（feature、bugfix、change、hotfix…）。由 triage 建議、人在 plan 閘門核准後寫進 run.json 鎖定，之後只能用 awf save-run escalate 加嚴。省略＝一律走 feature 完整流程",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description", "stages", "plan_mode"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {"type": "string", "minLength": 1, "description": "什麼情境用這個 recipe（triage 依它分類）"},
+          "gate_mode": {"type": "string", "enum": ["strict", "plan-only"], "description": "選填：閘門模式。strict（預設）＝每個閘門都等人核准；plan-only＝plan 由人核准，其餘閘門由狀態機先試政策核准（結果乾淨才過，有問題就交人）。帶了任何 modifier 時一律 strict"},
+          "stages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]},
+            "description": "要走的段；一定要含 plan（intent 不能省），會寫程式的還要有 build、deliver、merge（驗證器的語意規則）"
+          },
+          "plan_mode": {
+            "type": "string",
+            "enum": ["feature", "diagnose", "impact", "invariants", "changelog", "baseline", "research", "revert"],
+            "description": "plan 段的做法：feature 一般需求、diagnose 除錯（重現、根因）、impact 需求變更（既有驗收條件改留刪）、invariants 重構（不能改變的行為）、changelog 依賴升級、baseline 效能基線、research 調研、revert 回退"
+          },
+          "research_angles": {"type": "array", "items": {"type": "string"}, "description": "plan 段平行調研的角度（sdlc-plan 的角度清單）"},
+          "design_lenses": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "design 段 skeptic 的檢查 lens（coverage、plan、system-design、delta、rollback、compat）"
+          },
+          "test": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "design_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "設計審查：never 不做、auto 依 has_ui、always 一定做"},
+              "security_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "安全審查：never、auto 依 has_security、always"},
+              "modes": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["verify", "regression", "equivalence", "benchmark"]},
+                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）"
+              }
+            }
+          },
+          "deliver_axes": {"type": "array", "items": {"type": "string", "enum": ["standards", "spec", "bugs", "history"]}, "description": "deliver 段的審查軸"},
+          "build_kinds": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["code", "test", "doc"]},
+            "description": "build 段允許的子任務種類；publish／merge_gate 依實際 diff 反查，超出就拒推／hold"
+          },
+          "publishable": {"type": "boolean", "description": "false＝不能推送（spike）"},
+          "followup": {"type": "boolean", "description": "true＝結案前一定要記錄後續 run（hotfix）"},
+          "split": {"type": "boolean", "description": "design 段可不可以拆子計劃"},
+          "small": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"research_angles": {"type": "array", "items": {"type": "string"}}, "split": {"type": "boolean"}},
+            "description": "size=small 時的覆寫（只能改調研角度與 split）"
+          }
+        }
+      }
+    },
+    "modifiers": {
+      "type": "object",
+      "description": "選填：疊在 recipe 上、只會加嚴的修飾（ui、security、migration、public_api、large）",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {"type": "string", "minLength": 1},
+          "add_stages": {"type": "array", "items": {"type": "string", "enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}},
+          "research_angles": {"type": "array", "items": {"type": "string"}},
+          "design_lenses": {"type": "array", "items": {"type": "string"}},
+          "deliver_axes": {"type": "array", "items": {"type": "string", "enum": ["standards", "spec", "bugs", "history"]}},
+          "model_floors": {"type": "object", "description": "疊上這個 modifier 時各角色的最低模型等級（只會往上）", "additionalProperties": {"type": "string", "enum": ["light", "standard", "strong"]}},
+          "test": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "design_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "設計審查：never 不做、auto 依 has_ui、always 一定做"},
+              "security_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "安全審查：never、auto 依 has_security、always"},
+              "modes": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["verify", "regression", "equivalence", "benchmark"]},
+                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）"
+              }
+            }
+          },
+          "split": {"type": "boolean"}
+        }
+      }
+    },
+    "plan_modes": {
+      "type": "object",
+      "description": "選填：各 plan_mode 的 intent 另外要有的節（覆寫內建值）",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["sections"],
+        "additionalProperties": false,
+        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}}
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "description": "需求來源；格式同 awf merge-gate 的 adapter（guard.config.json 的 requirements）。guard.config.json 沒設 path／command 時，merge_gate 讀這裡",
+      "required": ["source"],
+      "properties": {
+        "source": {"type": "string", "enum": ["json", "command", "spec-md"]},
+        "path": {"type": "string"},
+        "command": {"type": "string"},
+        "id_pattern": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "description": "專案慣例：code style、commit、分支、PR 大小、文件格式",
+      "required": ["code_style", "commit", "branch", "pr_size", "doc_format"],
+      "properties": {
+        "code_style": {
+          "type": "object",
+          "required": ["description"],
+          "properties": {
+            "description": {"type": "string", "minLength": 1},
+            "tool": {"type": ["string", "null"]},
+            "command": {"type": ["string", "null"], "description": "檢查指令；null＝沒有，照 description"}
+          }
+        },
+        "commit": {
+          "type": "object",
+          "required": ["format", "examples"],
+          "properties": {
+            "format": {"type": "string", "minLength": 1},
+            "examples": {
+              "type": "object",
+              "description": "各類 commit 的範例；<epic>、<Story> 由 workflow 或 agent 換成實際值",
+              "properties": {
+                "docs": {"type": "string"},
+                "test": {"type": "string"},
+                "feat": {"type": "string"},
+                "fix": {"type": "string"}
+              }
+            },
+            "check_regex": {"type": ["string", "null"], "description": "commit 標題要符合的正規式；null＝不檢查（awf check-rules --git 只查署名行）"}
+          }
+        },
+        "branch": {
+          "type": "object",
+          "required": ["prefix"],
+          "properties": {
+            "prefix": {"type": "string", "minLength": 1, "description": "epic 與子任務分支的前綴（同 BRANCH_PREFIX）"},
+            "naming": {"type": "string"}
+          }
+        },
+        "pr_size": {
+          "type": "object",
+          "required": ["max_lines", "max_files"],
+          "properties": {
+            "max_lines": {"type": ["integer", "null"], "minimum": 1, "description": "null＝不限"},
+            "max_files": {"type": ["integer", "null"], "minimum": 1, "description": "null＝不限"},
+            "scope": {"type": "string", "description": "怎麼量，例如只算修改既有檔"}
+          }
+        },
+        "doc_format": {
+          "type": "object",
+          "required": ["format"],
+          "properties": {
+            "format": {"type": "string", "minLength": 1},
+            "notes": {"type": "string"}
+          }
+        },
+        "sync": {
+          "type": "object",
+          "description": "選填：分支怎麼跟上 base（sdlc-sync 與 awf sync-branch 讀它）。沒寫＝auto",
+          "properties": {
+            "strategy": {"enum": ["auto", "rebase", "merge", "transit"], "description": "auto＝已跟上不動；未推送且無衝突 rebase；已推送且無衝突把 base merge 進來；有衝突走中轉分支。固定值遇到做不到的情況一律停下交人"},
+            "transit_naming": {"type": "string", "minLength": 1, "description": "中轉分支命名，可用 <短名>、<base>、<YYYYMMDD>；前綴要在 guard.config 的 allowed_branch_prefixes 裡"}
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}

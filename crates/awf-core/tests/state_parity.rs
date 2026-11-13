@@ -1,4 +1,4 @@
-//! 狀態機的對跑：照 Python 版錄下來的劇本（tests/parity/state.expected.json）做一遍，逐字比對。
+//! 狀態機的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/state.expected.json）做一遍，逐字比對。
 //!
 //! 劇本的 `steps` 是檔案操作（copytree、copy、write、rm、utime）、指令（run：比 exit code、stdout、stderr 與這一步改了哪些檔）、
 //! 只能在程式內呼叫的函式（call）與 selftest。暫存路徑換成 `@TMP@`、模版 repo 換成 `@SRC@` 再比。
@@ -401,14 +401,14 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
     t
 }
 
-/// 產生的 12 支腳本用 node 乾跑（同 tests/smoke_init.py：check_workflows.mjs 載入 tools/scenarios/ 的情境）。沒有 node 就略過。
+/// 產生的 12 支腳本用 node 乾跑（check_workflows.mjs 載入 plugin/workflow-templates/scenarios/ 的情境）。沒有 node 就略過。
 fn dry_run(st: &Stage) -> Option<String> {
     if std::process::Command::new("node").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
         return None;
     }
     let src = Path::new(&st.src);
     let o = std::process::Command::new("node")
-        .arg(src.join("scaffold/.claude/teams/tools/check_workflows.mjs"))
+        .arg(src.join("plugin/workflow-templates/check_workflows.mjs"))
         .arg("--agents-dir")
         .arg(src.join("plugin/agents"))
         .arg("--wf-dir")

@@ -7,7 +7,7 @@ const USAGE: &str = "用法：cargo xtask <指令>
 
   check-all [--verbose] [--allow-skip] [--only <名稱片段>]
                   依序跑下面全部檢查、片段與範本的漂移檢查、各子指令的 selftest、workflow 乾跑，最後印總結。
-                  不包含 cargo test --workspace（另外跑）。沒有 node 時相關步驟印「略過」並 exit 1（--allow-skip 才放行）
+                  全部檢查＝cargo test --workspace＋cargo xtask check-all（這支不包含 cargo test）。沒有 node 時相關步驟印「略過」並 exit 1（--allow-skip 才放行）
   scrub [路徑…]   去客戶化掃描（檔案內容與路徑名；不給路徑就掃整個 repo）
   golden [--verbose]
                   golden set：schema 的正例要零錯誤、反例要有錯誤（valid/、invalid/ 與內建 profile）
@@ -18,7 +18,7 @@ const USAGE: &str = "用法：cargo xtask <指令>
   check-budget [--update] [--budget <檔>]
                   派工數與派工單字數對 golden-set/token-budget.json（超過 10% 失敗；--update 寫回基準）
   check-supply    供應鏈：action 釘 SHA、版控沒有快取與私鑰、Cargo.lock 在版控、相依都來自 crates.io 且和允許清單一致、
-                  Node 腳本只用內建模組（Python 檔還在的期間另掃：只用標準庫、plugin 不連網）
+                  Node 腳本只用內建模組
   check-launchers 啟動器（plugin/bin/awf、awf.cmd）：用假的執行檔核對挑檔、參數、exit code、錯誤訊息
   gen-legacy [--write]
                   從 git 歷史算 plugin/workflow-templates/legacy.json（預設只比對；--write 才寫）

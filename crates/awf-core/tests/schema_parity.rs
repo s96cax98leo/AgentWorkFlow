@@ -1,4 +1,4 @@
-//! schema 驗證的對跑：和 Python 版錄下來的基準（tests/parity/schema.expected.json）逐字比對。
+//! schema 驗證的對跑：和 0.x 的 Python 版錄下來的基準（tests/parity/schema.expected.json）逐字比對。
 
 use awf_core::schema::{self, Schemas};
 use serde_json::Value;
@@ -24,13 +24,13 @@ fn load(rel: &str) -> Value {
 #[test]
 fn golden_cases_match_python() {
     let expected = load("tests/parity/schema.expected.json");
-    let teams = root().join("scaffold/.claude/teams");
+    let teams = root().join("plugin/scaffold/.claude/teams");
     let mut bad = Vec::new();
     let cases = expected["cases"].as_array().expect("cases");
     assert!(cases.len() >= 100, "案例數不對：{}", cases.len());
     for c in cases {
         let file = c["file"].as_str().unwrap();
-        let raw = load(&format!("scaffold/.claude/teams/{file}"));
+        let raw = load(&format!("plugin/scaffold/.claude/teams/{file}"));
         let case = if c["kind"] == "profile" { serde_json::json!({"schema": "methodology", "data": raw}) } else { raw };
         let mut s = Schemas::new(&teams);
         s.config_override = case.get("config").and_then(Value::as_object).cloned();

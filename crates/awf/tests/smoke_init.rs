@@ -1,7 +1,7 @@
-//! init 煙霧測試：`tests/smoke_init.py` 的 1.0 版。實際執行編好的 `awf`（`CARGO_BIN_EXE_awf`），在暫存目錄跑 `awf init`，
+//! init 煙霧測試：原本是 0.x 的 `tests/smoke_init.py`。實際執行編好的 `awf`（`CARGO_BIN_EXE_awf`），在暫存目錄跑 `awf init`，
 //! 再在產出的專案裡跑各個子指令。
 //!
-//! 和 `tests/smoke_init.py`（0.x，測 `init.py`；仍留著、沒有改）的對照：
+//! 和 0.x 的 `tests/smoke_init.py`（測 `init.py`；兩個都已經移除，留著對照是為了說明每個測試在守什麼）的對照：
 //!
 //! | smoke_init.py 的檢查 | 這裡的測試 | 1.0 的差別 |
 //! |---|---|---|
@@ -11,8 +11,8 @@
 //! | `check_tools`：golden-set | 沒有對應 | `awf` 沒有跑 golden-set 的子指令（`run.py` 不再複製進專案）；正反例由 awf-core 的測試跑 |
 //! | `check_tools`：`build.py --check` | `fresh_init`（`awf build --check`） | 片段從模版找（專案沒有 tools/snippets） |
 //! | `check_tools`：預設沒有 `.claude/workflows/`、`render --all` 產生 12 支 | `fresh_init`（`awf render --all`） | 相同 |
-//! | `check_tools`：`check_workflows.mjs` 乾跑（有 node 才跑） | `fresh_init` | `.mjs` 用模版 repo 的那一份（不在專案） |
-//! | `check_tools`：有 `--selftest` 的工具全部跑 | `fresh_init`（`SELFTESTS` 列的子指令） | `awf state --selftest` 在 init 過的專案裡會失敗（它從專案的 tools/snippets 複製片段），另列 `state_selftest_in_project`（ignored）記這件事；在沒 init 的目錄跑會過，`fresh_init` 跑那一種 |
+//! | `check_tools`：`check_workflows.mjs` 乾跑（有 node 才跑） | `fresh_init` | `.mjs` 用模版的那一份（`plugin/workflow-templates/`，不在專案） |
+//! | `check_tools`：有 `--selftest` 的工具全部跑 | `fresh_init`（`SELFTESTS` 列的子指令） | `awf state --selftest` 在沒 init 的目錄跑（`fresh_init`），在 init 過的專案裡另由 `state_selftest_in_project` 跑（片段從模版找） |
 //! | `check_tools`：`check_agents.py --plugin-dir` | `fresh_init`（`awf check-agents`） | 相同 |
 //! | `check_default_methodology` | `fresh_init` | 相同 |
 //! | `check_merge_gate_optin` | `fresh_init`、`merge_gate_needs_binary` | yml 改成核對 sha256 後跑 `awf merge-gate`；多放 `.claude/teams/bin/` 兩個檔；沒有執行檔時拒絕 |
@@ -140,7 +140,7 @@ fn init_with(target: &Path, config: &Path, extra: &[&str]) -> Out {
 }
 
 fn init(target: &Path, extra: &[&str]) -> Out {
-    init_with(target, &root().join("workflow.config.example"), extra)
+    init_with(target, &root().join("plugin/workflow.config.example"), extra)
 }
 
 fn read(p: &Path) -> String {
@@ -288,12 +288,12 @@ fn wf_text(target: &Path, name: &str) -> String {
     read(&render_all(target).join(format!("{name}.js")))
 }
 
-/// 用模版 repo 的 `check_workflows.mjs` 乾跑專案產生的腳本；沒有 node 回 None。
+/// 用模版的 `check_workflows.mjs`（`plugin/workflow-templates/`）乾跑專案產生的腳本；沒有 node 回 None。
 fn dry_run(target: &Path) -> Option<Out> {
     let node = which("node")?;
     let wf = render_all(target);
     let r = root();
-    Some(exec(s(&node), &[s(&r.join("scaffold/.claude/teams/tools/check_workflows.mjs")), "--agents-dir", s(&r.join("plugin/agents")), "--wf-dir", s(&wf)], target, &[], None))
+    Some(exec(s(&node), &[s(&r.join("plugin/workflow-templates/check_workflows.mjs")), "--project", s(target), "--agents-dir", s(&r.join("plugin/agents")), "--wf-dir", s(&wf)], target, &[], None))
 }
 
 fn phases(out: &str, workflow: &str) -> String {
@@ -398,8 +398,7 @@ fn fresh_init() {
     }
 }
 
-/// 記錄已知問題：`awf state --selftest` 在 1.0 init 過的專案裡會失敗（`state/selftest.rs` 從專案的 `tools/snippets` 複製片段，
-/// 1.0 的專案沒有這個目錄）。`state/` 不在 init 這次改動的範圍；那邊改成從模版找片段之後，拿掉 ignore。
+/// `awf state --selftest` 在 1.0 init 過的專案裡也要過：專案沒有 `tools/snippets`，片段從模版找。
 #[test]
 fn state_selftest_in_project() {
     let w = Work::new("state");
@@ -440,7 +439,7 @@ fn merge_gate_needs_binary() {
 fn placeholders_match_example() {
     let r = root();
     let mut used = BTreeSet::new();
-    for p in files(&r.join("scaffold")) {
+    for p in files(&r.join("plugin/scaffold")) {
         if rel(&r, &p).contains("__pycache__") {
             continue;
         }
@@ -448,7 +447,7 @@ fn placeholders_match_example() {
             placeholders(&text, &mut used);
         }
     }
-    let conf: BTreeSet<String> = read(&r.join("workflow.config.example"))
+    let conf: BTreeSet<String> = read(&r.join("plugin/workflow.config.example"))
         .lines()
         .filter_map(|l| {
             let t = l.trim();
@@ -484,19 +483,17 @@ fn extensions() {
     dump(&teams.join("guard.config.json"), &guard);
     write(&t.join(".claude/agents/acme-db-reviewer.md"), "---\nname: acme-db-reviewer\ndescription: 示範客戶 ACME 的 migration 審查\ntools: Read, Grep, Glob, Bash\n---\n檢查 migration。\n");
     awf(&["build"], &t).ok("登記後 awf build");
-    // check_workflows.mjs 從自己的位置往上找專案的 .claude/agents；1.0 的專案裡沒有這支工具，
-    // 所以把模版的 .mjs 與情境檔放到一個暫存的「.claude/teams/tools/」，旁邊放使用者 agent 的定義檔
+    // check_workflows.mjs 在 plugin 裡；擴充 agent 的定義檔在專案的 .claude/agents，用 --project 指過去。
+    // 目前目錄故意不是專案（確認真的是 --project 在起作用）
     if let Some(node) = which("node") {
-        let h = w.dir("harness");
-        let src = root().join("scaffold/.claude/teams/tools");
-        std::fs::create_dir_all(h.join(".claude/teams/tools")).unwrap();
-        std::fs::copy(src.join("check_workflows.mjs"), h.join(".claude/teams/tools/check_workflows.mjs")).unwrap();
-        copy_tree(&src.join("scenarios"), &h.join(".claude/teams/tools/scenarios"));
-        copy_tree(&t.join(".claude/agents"), &h.join(".claude/agents"));
-        copy_tree(&root().join("scaffold/.claude/teams/methodologies"), &h.join(".claude/teams/methodologies"));
+        let mjs = plugin.join("workflow-templates/check_workflows.mjs");
         let wf = render_all(&t);
-        let o = exec(s(&node), &[s(&h.join(".claude/teams/tools/check_workflows.mjs")), "--agents-dir", s(&plugin.join("agents")), "--wf-dir", s(&wf)], &t, &[], None);
+        let o = exec(s(&node), &[s(&mjs), "--project", s(&t), "--agents-dir", s(&plugin.join("agents")), "--wf-dir", s(&wf)], &w.0, &[], None);
         o.ok("擴充 agent：workflow 乾跑");
+        // 指到沒有這個定義檔的專案：要指出來
+        let empty = w.dir("no-agents");
+        let o = exec(s(&node), &[s(&mjs), "--project", s(&empty), "--agents-dir", s(&plugin.join("agents")), "--wf-dir", s(&wf)], &w.0, &[], None);
+        assert!(o.code != 0 && o.all().contains("擴充 agent acme-db-reviewer 的定義檔不存在"), "--project 指到別的專案時要找不到擴充 agent：\n{}", o.all());
         assert!(read(&wf.join("sdlc-test.js")).contains("acme-db-reviewer"), "sdlc-test.js 要內嵌擴充 agent");
     } else {
         eprintln!("[略過] 擴充 agent：沒有 node，略過 workflow 乾跑");
@@ -655,7 +652,7 @@ fn hooks_project() {
     let mut f = std::fs::OpenOptions::new().append(true).open(&other).unwrap();
     f.write_all(b"\n# other\n").unwrap();
     drop(f);
-    let r = exec(EXE, &["init", "--target", s(&t2), "--config", s(&root().join("workflow.config.example")), "--hooks", "project"], &w.0, &[("AWF_BIN", s(&other))], None);
+    let r = exec(EXE, &["init", "--target", s(&t2), "--config", s(&root().join("plugin/workflow.config.example")), "--hooks", "project"], &w.0, &[("AWF_BIN", s(&other))], None);
     r.ok("awf init --hooks project（AWF_BIN）");
     assert_eq!(std::fs::read(t2.join(".claude/hooks/bin").join(name)).unwrap(), std::fs::read(&other).unwrap(), "AWF_BIN 指到別的檔時要複製它");
     assert!(!r.all().contains(".gitignore"), "已經忽略時不該再提示：\n{}", r.all());
@@ -760,7 +757,7 @@ fn upgrade() {
 
     // 0.x 留下的工具：一支改過的模版工具、一支使用者自己的（兩支都不能被動；真的 0.6 專案見 upgrade_real_06_project）
     let tool = teams.join("tools/schemalib.py");
-    let tool_body = format!("{}\n# 舊版殘留\n", read(&root().join("scaffold/.claude/teams/tools/schemalib.py")));
+    let tool_body = "\"\"\"0.x 的驗證器（示範：內容和任何一版的指紋都對不上，等同使用者改過）。\"\"\"\nimport json\n\n# 舊版殘留\n".to_string();
     write(&tool, &tool_body);
     write(&teams.join("tools/old_tool.py"), "# 使用者自己的工具\n");
 
@@ -852,7 +849,7 @@ fn force_keeps_values() {
     let w = Work::new("force");
     let t = w.dir("project-force-values");
     let custom_runs = "_acme/agent-runs";
-    let lines: Vec<String> = read(&root().join("workflow.config.example"))
+    let lines: Vec<String> = read(&root().join("plugin/workflow.config.example"))
         .lines()
         .map(|l| if l.trim().starts_with("RUNS_DIR") && l.contains('=') { format!("RUNS_DIR={custom_runs}") } else { l.to_string() })
         .collect();

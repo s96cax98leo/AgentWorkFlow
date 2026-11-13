@@ -5,7 +5,7 @@
 
 use crate::pyfmt::repr_str;
 
-/// 解析完的選項（欄位名對應 Python 版的 `a.<名>`）。
+/// 解析完的選項（欄位名對應 0.x 的 Python 版的 `a.<名>`）。
 #[derive(Debug, Default, Clone)]
 pub struct Args {
     pub positional: Option<String>,
@@ -23,7 +23,7 @@ pub struct Args {
     pub defaults: bool,
     /// 0.x 的選項（`--hooks project` 用的 Python）。1.0 不再需要：收下、提示一行、忽略，舊的腳本才不會壞。
     pub python: Option<String>,
-    /// 模版根目錄（Rust 版新增；Python 版用 init.py 自己的位置）。
+    /// 模版在哪（plugin 目錄，或底下有 `plugin/` 的 repo 根目錄）。
     pub source: Option<String>,
     /// `--with-merge-gate` 要放進專案的 linux-x64 執行檔（沒給用模版的 `plugin/bin/awf-linux-x64`）。
     pub merge_gate_bin: Option<String>,
@@ -39,7 +39,7 @@ pub enum ArgStop {
     Error(String),
 }
 
-/// （選項名, 要不要帶值）。順序同 Python 版 `add_argument` 的順序（「ambiguous option」訊息照這個順序列）。
+/// （選項名, 要不要帶值）。順序同 0.x 的 Python 版 `add_argument` 的順序（「ambiguous option」訊息照這個順序列）。
 const OPTS: &[(&str, bool)] = &[
     ("--target", true),
     ("--config", true),

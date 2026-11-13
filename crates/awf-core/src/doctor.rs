@@ -1,9 +1,9 @@
-//! 安裝檢查。由 `scaffold/.claude/teams/tools/awf_doctor.py` 移植。
+//! 安裝檢查。原本是 0.x 的 Python 工具 `awf_doctor.py`。
 //!
 //! 只讀、不改任何檔案、不連網。結束碼：有「問題」是 1，其餘 0（「注意」不算失敗）。
 //! Claude Code 的 installed_plugins.json、known_marketplaces.json 格式沒有承諾穩定：讀不懂就略過那一項並說明。
 //!
-//! 和 Python 版不同的地方（對跑測試把這兩項濾掉再比）：
+//! 和 0.x 的 Python 版不同的地方（對跑測試把這兩項濾掉再比）：
 //! - 沒有 `python` 這一項：執行檔不需要 Python。
 //! - 沒有 `hooks-compile` 這一項：那是「hook 的 .py 編譯得過」，hook 改註冊成執行檔之後換成執行檔的檢查。
 //!
@@ -318,7 +318,7 @@ fn schema_teams(env: &Env) -> Option<String> {
     if has(&own) {
         return Some(own);
     }
-    let tpl = pyish::pjoin(env.template.as_deref()?, "scaffold/.claude/teams");
+    let tpl = crate::template::teams_str(env.template.as_deref()?);
     has(&tpl).then_some(tpl)
 }
 
@@ -550,7 +550,7 @@ fn selftest_in(root: &Path) -> i32 {
 
     // ── 假的 plugin 與專案
     let from = Env::from_env();
-    let good = from.template.as_deref().map(|t| pyish::pjoin(t, "scaffold/.claude/teams")).filter(|t| is_dir(t)).or_else(|| Some(from.teams()).filter(|t| is_dir(t)));
+    let good = from.template.as_deref().map(crate::template::teams_str).filter(|t| is_dir(t)).or_else(|| Some(from.teams()).filter(|t| is_dir(t)));
     let Some(src_teams) = good else {
         println!("awf doctor selftest：找不到內建 profile 與 schema（要在模版 repo 或已 init 的專案裡跑）");
         return 1;

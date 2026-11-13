@@ -1,4 +1,4 @@
-//! recipe 解析的一致性檢查。由 `tests/check_recipes.py` 移植，對跑的一邊從 Python 版 `recipe.py` 換成 Rust 版
+//! recipe 解析的一致性檢查。原本是 0.x 的 Python 工具 `check_recipes.py`，對跑的一邊從 0.x 的 Python 版 `recipe.py` 換成 Rust 版
 //! [`awf_core::recipe`]：
 //!   1. `awf_core::recipe` 的 selftest 通過。
 //!   2. `snippets/recipe.js`（workflow 用）和 `awf_core::recipe` 對 `golden-set/recipes/*.json` 的每個案例解析結果
@@ -6,9 +6,9 @@
 //!   3. 兩份內建 profile（`methodologies/*.json`）的 recipes／modifiers 和內建的一致
 //!      （lightweight 的 feature 可以有自己的調研角度，其餘相同）。
 //!
-//! 沒有 node 時第 2 項判失敗（不略過）。和 Python 版不同的地方（只會更嚴）：golden 案例或 profile 讀不懂、
-//! 解析時出錯，Python 版直接當掉（traceback、exit 1），這裡列成一條失敗；node 回的案例數和送去的不同也算失敗
-//! （Python 版的 zip 會默默截短）。
+//! 沒有 node 時第 2 項判失敗（不略過）。和 0.x 的 Python 版不同的地方（只會更嚴）：golden 案例或 profile 讀不懂、
+//! 解析時出錯，0.x 的 Python 版直接當掉（traceback、exit 1），這裡列成一條失敗；node 回的案例數和送去的不同也算失敗
+//! （0.x 的 Python 版的 zip 會默默截短）。
 
 use crate::util::{self, Captured};
 use awf_core::merge_gate::pyutil;

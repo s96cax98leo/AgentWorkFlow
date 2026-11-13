@@ -1,4 +1,4 @@
-//! 知識層的對跑：照 Python 版錄下來的劇本（tests/parity/kb.expected.json）做一遍，逐字比對。
+//! 知識層的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/kb.expected.json）做一遍，逐字比對。
 //!
 //! 劇本的 `steps` 是檔案操作與指令；指令比 exit code、stdout、stderr，以及索引目錄的檢視檔與資料表內容。
 //! `probes` 是直接呼叫函式的案例。暫存路徑換成 `@TMP@` 再比。劇本用到符號連結，所以只在 unix 上跑。

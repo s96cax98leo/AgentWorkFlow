@@ -1,4 +1,4 @@
-//! watcher：進度事件、通知、狀態列。由 `scaffold/.claude/teams/tools/awf_watch.py` 移植。
+//! watcher：進度事件、通知、狀態列。原本是 0.x 的 Python 工具 `awf_watch.py`。
 //!
 //! 這支是輔助工具，不參與任何閘門：它壞掉、沒開、`progress.jsonl` 被改，流程與核准都不受影響。
 //! 所以任何失敗都只警告；唯二不能放鬆的是送給外部指令的內容：只送 [`NOTIFY_FIELDS`] 的欄位，
@@ -7,7 +7,7 @@
 //! 快照與記憶都用 `serde_json::Value` 表示（鍵的順序和 Python 的 dict 相同），對記憶檔（任何人都寫得到）
 //! 的每個操作照 Python 的語意回 [`PyErr`]，警告裡印的例外類別才會一樣。
 //!
-//! 和 Python 版的差別（都列在 `tests/watch_parity.rs`）：
+//! 和 0.x 的 Python 版的差別（都列在 `tests/watch_parity.rs`）：
 //! - JSON 照閘門的規則讀（NaN、超出 64 位元的整數、巢狀太深、落單的代理字元都當成讀不懂）。
 //! - 「現在」可以固定：[`Env::now`]（命令列讀環境變數 `AWF_NOW`），測試用。
 
@@ -59,7 +59,7 @@ pub static SECRETISH: Re = Re::new(
     r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.|(?i:password|passwd|secret|token|api[_-]?key)\s*[=:]\s*\S{6,}",
     "",
 );
-/// 送給外部指令的文字欄位：不含路徑分隔、引號、換行（Python 版用 fullmatch；這裡錨在開頭、再看是不是吃到結尾）。
+/// 送給外部指令的文字欄位：不含路徑分隔、引號、換行（0.x 的 Python 版用 fullmatch；這裡錨在開頭、再看是不是吃到結尾）。
 pub static SAFE_TEXT: Re = Re::new(r"^[\w:.#@+\- 一-鿿]{0,80}", "");
 /// 同一個 agent 每多這麼多 token 才再記一筆 agent_progress。
 pub const PROGRESS_STEP: i128 = 50_000;
@@ -362,7 +362,7 @@ impl Transcripts {
         let mut total: i64 = 0;
         for name in agent_files(wf_dir) {
             let path = pyish::pjoin(wf_dir, &name);
-            // Python 版把狀態原地累加：第一次讀就丟例外時狀態不留，之後才丟的留著已經讀進去的部分
+            // 0.x 的 Python 版把狀態原地累加：第一次讀就丟例外時狀態不留，之後才丟的留著已經讀進去的部分
             let existed = self.tails.contains_key(&path);
             let mut st = self.tails.remove(&path).unwrap_or_default();
             let read = cost::tail_agent(&path, &mut st);
@@ -836,7 +836,7 @@ pub fn run(env: &mut Env, argv: &[String], out: &mut dyn Write, err: &mut dyn Wr
     match run_inner(env, argv, out, err) {
         Ok(code) => code,
         Err(e) => {
-            // Python 版在這裡是沒接住的例外（traceback、exit 1）
+            // 0.x 的 Python 版在這裡是沒接住的例外（traceback、exit 1）
             let _ = writeln!(err, "awf watch：{}：{}", e.class, e.msg);
             1
         }
@@ -937,7 +937,7 @@ impl Tester<'_> {
 }
 
 /// 暫存目錄裡把每種事件、停住、重啟、notify、狀態列走一遍。`ctx.teams` 要有 schema（在 `scaffold/` 或已 init 的專案根目錄跑）。
-/// schema 讀不到時 Python 版是沒接住的例外，這裡回錯誤。
+/// schema 讀不到時 0.x 的 Python 版是沒接住的例外，這裡回錯誤。
 pub fn selftest(ctx: &Ctx, out: &mut String) -> R<i32> {
     out.push_str("awf_watch selftest（暫存目錄，不碰 repo）\n");
     let schema = ctx.load_json(&pj(&ctx.teams, "schemas/progress-event.schema.json"))?;

@@ -1,7 +1,7 @@
 //! Python 語意的小工具（save_run 私有）。
 //!
 //! save_run.py 對形狀不對的輸入（欄位是別的型別、缺鍵）多半直接丟例外結束（exit 1、不記核准）。
-//! 這裡照同樣的規則回 [`PyErr`]（類別名照 Python），由最外層印訊息、exit 1：Python 版會丟例外的地方不能變成放行。
+//! 這裡照同樣的規則回 [`PyErr`]（類別名照 Python），由最外層印訊息、exit 1：0.x 的 Python 版會丟例外的地方不能變成放行。
 
 use crate::kb::pyish;
 use crate::kb::PyErr;

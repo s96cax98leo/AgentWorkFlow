@@ -1,5 +1,5 @@
 //! 規格層（`awf spec`）的整合測試：在暫存目錄建虛構的規格與變更（示範客戶 ACME 的訂單與登入），
-//! 走過讀目錄、穩定 id、validate、apply 的每一條規則。沒有 Python 版，不對跑。
+//! 走過讀目錄、穩定 id、validate、apply 的每一條規則。沒有 0.x 的 Python 版，不對跑。
 
 use awf_core::spec::{self, ChangeState, IdOptions};
 use serde_json::Value;

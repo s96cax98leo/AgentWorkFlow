@@ -1,6 +1,6 @@
-//! guard-shell：Bash 與 PowerShell 工具共用的 shell 守門。由 `plugin/hooks/guard.py` 的 `_check_shell_rules` 與相關函式移植。
+//! guard-shell：Bash 與 PowerShell 工具共用的 shell 守門。原本是 0.x 的 Python 工具 `guard.py` 的 `_check_shell_rules` 與相關函式。
 //!
-//! 樣式字串照 Python 版逐字搬過來（差異由 `re.rs` 對齊）；判斷順序、訊息文字都不變。
+//! 樣式字串照 0.x 的 Python 版逐字搬過來（差異由 `re.rs` 對齊）；判斷順序、訊息文字都不變。
 
 use super::awf_cli::{self, Deny};
 use super::guard::{cmd_name, err, fold, is_secret_path, norm, run_git, splitlines, str_or_empty, tool_input, Guard, Stop, AUDIT_FILES, GIT_GLOBAL_OPTS, R, SLUG};

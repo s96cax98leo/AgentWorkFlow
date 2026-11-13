@@ -1,4 +1,4 @@
-//! 三支小工具（run_brief、check_envelope、check_rules）的對跑：照 Python 版錄下來的劇本
+//! 三支小工具（run_brief、check_envelope、check_rules）的對跑：照 0.x 的 Python 版錄下來的劇本
 //! （tests/parity/small.expected.json）做一遍，逐字比對。劇本的指令用 sh 與 git，所以只在 unix 上跑。
 //! 整份劇本放在同一個測試裡：它會改環境變數（AWF_LOG_DIR、git 的固定身分），不能和別的測試平行。
 #![cfg(unix)]
@@ -27,7 +27,7 @@ fn small_tools_match_python() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let text = std::fs::read_to_string(root.join("tests/parity/small.expected.json")).expect("讀不到基準");
     let doc: Value = serde_json::from_str(&text).expect("JSON");
-    let teams = root.join("scaffold/.claude/teams");
+    let teams = root.join("plugin/scaffold/.claude/teams");
     let base = std::env::temp_dir().join(format!("awf-small-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).expect("建暫存目錄");

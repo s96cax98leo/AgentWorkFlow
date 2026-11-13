@@ -1,4 +1,4 @@
-// check-patterns 的端到端：執行一支組裝好的自訂腳本，印出 {calls, out} 或 {error}。由 tests/check_patterns.py 原樣搬來。
+// check-patterns 的端到端：執行一支組裝好的自訂腳本，印出 {calls, out} 或 {error}。原本在 0.x 的 tests/check_patterns.py 裡。
 // 用法：node -e <本檔> <組裝好的腳本>。
 const fs = require('fs')
 const body = fs.readFileSync(process.argv[1], 'utf8').replace(/^export const meta/, 'const meta')

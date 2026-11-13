@@ -1,12 +1,12 @@
-//! 去客戶化掃描與文件核對的對跑：照 Python 版錄下來的劇本（tests/parity/build.expected.json 的 `scrub` 與 `docs`）
+//! 去客戶化掃描與文件核對的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/build.expected.json 的 `scrub` 與 `docs`）
 //! 做一遍，逐字比對 exit code、stdout、stderr。
-//! err_any 的步驟只比 exit code 與 stdout（Python 版在那裡直接當掉）；unordered 的步驟 stdout 逐行排序後再比
-//! （Python 版用 set 走訪，同一輪有兩則以上錯誤時順序不固定）。
+//! err_any 的步驟只比 exit code 與 stdout（0.x 的 Python 版在那裡直接當掉）；unordered 的步驟 stdout 逐行排序後再比
+//! （0.x 的 Python 版用 set 走訪，同一輪有兩則以上錯誤時順序不固定）。
 #![cfg(unix)]
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use xtask::{check_docs, pyre, scrub};
+use xtask::{check_docs, scrub, termre};
 
 fn s(v: &Value) -> &str {
     v.as_str().unwrap_or_default()
@@ -24,10 +24,10 @@ fn sorted_lines(x: &str) -> String {
 
 /// 文件核對的常數現在取自 awf-core，不再讀 repo 裡的 Python 檔。劇本的迷你 repo 有自己的角色與段落（寫在它的
 /// `check_agents.py`、`save_run.py`），這裡照劇本寫進去的內容給對應的常數；「Python 檔裡讀不到常數」的三個案例
-/// 只對 Python 版有意義（回 None，由呼叫端列出並排除）。
+/// 只對 0.x 的 Python 版有意義（回 None，由呼叫端列出並排除）。
 fn mini_consts(check_agents: &str, save_run: &str) -> Option<check_docs::Consts> {
     let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    // 只對 Python 版有意義：沒有 CORE、沒有 ALIASES、沒有 SDLC
+    // 只對 0.x 的 Python 版有意義：沒有 CORE、沒有 ALIASES、沒有 SDLC
     if check_agents == "ALIASES = {}\nCORES = {'dev-alpha'}\n" || check_agents == "CORE = {'dev-alpha', 'dev-beta-gamma', 'tpm-one'}\n" || save_run == "sdlc = []\n" {
         return None;
     }
@@ -180,7 +180,7 @@ fn public_terms_catch_their_shapes() {
 #[test]
 fn unsupported_patterns_fail_loudly() {
     for bad in ["(?a)x", "[a--b]", "x\\", "[abc", "\\N{DIGIT ONE}", "(a)\\10", "\\pL", "[\\1x]"] {
-        assert!(pyre::compile(bad).is_err(), "應該編不過：{bad}");
+        assert!(termre::compile(bad).is_err(), "應該編不過：{bad}");
     }
     let base = std::env::temp_dir().join(format!("awf-xtask-bad-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
@@ -197,7 +197,7 @@ fn unsupported_patterns_fail_loudly() {
 /// 改寫後的意思和 Python 相同的幾個邊界。
 #[test]
 fn translated_classes_follow_python() {
-    let hit = |pat: &str, text: &str| pyre::compile(pat).expect("編得過").search(text).expect("跑得動");
+    let hit = |pat: &str, text: &str| termre::compile(pat).expect("編得過").search(text).expect("跑得動");
     // 字元類別裡的 [ 是一般字元；Python 把 [[x]y 讀成「[ 或 x」接 y
     assert!(hit("[[x]y", "[y") && hit("[[x]y", "xy") && !hit("[[x]y", "y"));
     // && 在類別裡是兩個 &
@@ -213,6 +213,6 @@ fn translated_classes_follow_python() {
     // (?x) 模式下 \s 仍然含一般空白
     assert!(hit(r"(?x) a \s b", "a b"));
     // 路徑名結尾有換行時，$ 也要配到換行之前
-    let p = pyre::compile("name$").expect("編得過");
+    let p = termre::compile("name$").expect("編得過");
     assert!(!p.search("./name\n").expect("跑得動") && p.search_name("./name\n").expect("跑得動"));
 }

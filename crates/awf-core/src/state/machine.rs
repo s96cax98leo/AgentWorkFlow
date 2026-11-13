@@ -321,7 +321,7 @@ pub fn workflow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage:
             notes.push("上次的 workflow 是在別的 session 跑的，不能從中斷處續跑；這次整段重跑（plan 段會沿用來源沒變的調研）".to_string());
         }
     }
-    // notes 在 Python 版的 dict 裡排在 then 後面、override 前面
+    // notes 在 0.x 的 Python 版的 dict 裡排在 then 後面、override 前面
     let mut ordered = Map::new();
     for (k, v) in act {
         if k == "override" {

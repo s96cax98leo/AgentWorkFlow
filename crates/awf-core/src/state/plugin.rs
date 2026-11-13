@@ -79,7 +79,7 @@ pub fn plugin_candidates(env: &Env, home: Option<&str>) -> R<Vec<Candidate>> {
     Ok(out)
 }
 
-/// plugin 目錄（要有 workflow-templates/）：--plugin-dir、環境變數、模版 repo 自己、Claude Code 登記的安裝。
+/// plugin 目錄（要有 workflow-templates/）：--plugin-dir、環境變數、執行檔自己所在的 plugin（或模版 repo 的）、Claude Code 登記的安裝。
 /// 回傳（plugin 目錄或 None, 說明）。
 pub fn find_plugin(env: &Env, explicit: &str) -> A<(Option<String>, Vec<String>)> {
     let mut notes: Vec<String> = Vec::new();
@@ -92,7 +92,7 @@ pub fn find_plugin(env: &Env, explicit: &str) -> A<(Option<String>, Vec<String>)
         return awf_err(format!("--plugin-dir {explicit} 底下沒有 {TEMPLATES}/"));
     }
     if let Some(p) = env.template_plugin() {
-        // 在模版 repo 裡直接跑
+        // 執行檔自己所在的 plugin，或在模版 repo 裡直接跑
         return Ok((Some(p), notes));
     }
     let mut cands: Vec<Candidate> = plugin_candidates(env, None)?.into_iter().filter(|c| !c.other_project).collect();
@@ -275,14 +275,14 @@ pub fn custom_roles(env: &Env) -> R<Vec<String>> {
     Ok(out)
 }
 
-/// 片段的目錄：專案的 `.claude/teams/tools/snippets`；沒有時用模版 repo 的。
+/// 片段的目錄：專案的 `.claude/teams/tools/snippets`（0.x 的專案才有）；沒有時用模版的 `workflow-templates/snippets`。
 fn snippet_dir(env: &Env) -> String {
     let own = pj(&env.teams(), "tools/snippets");
     if is_dir(&own) {
         return own;
     }
     match &env.template {
-        Some(t) => pj(t, "scaffold/.claude/teams/tools/snippets"),
+        Some(t) => crate::template::snippets_str(t),
         None => own,
     }
 }

@@ -12,16 +12,17 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 
 每一步先說明要做什麼，等使用者同意再執行。提問用選項式（AskUserQuestion），每題附預設值，使用者可以直接接受。
 
-**先用預設值套用（零設定起步）**：使用者說「先用預設值」「之後再調」時，不問第 3、4 步。做完第 1、2 步後，把會做的事列給使用者（新增 `.claude/teams/`、`CLAUDE.md` 追加一行引用、settings 深度合併；開發規範用 default profile；repo 與目錄用預設值），同意後執行 `awf init --target <目標專案> --defaults`（`awf` 自己找不到模版時加 `--source <模版根目錄>`），再做最後的驗證步驟。提醒使用者：`UPSTREAM_REPO`、`FORK_REPO` 等值是空的，推送與合併之前要補（改 `workflow.config` 後跑 `awf init --upgrade`），開發規範之後可以改 `.claude/teams/methodology.json`。
+**先用預設值套用（零設定起步）**：使用者說「先用預設值」「之後再調」時，不問第 3、4 步。做完第 1、2 步後，把會做的事列給使用者（新增 `.claude/teams/`、`CLAUDE.md` 追加一行引用、settings 深度合併；開發規範用 default profile；repo 與目錄用預設值），同意後執行 `awf init --target <目標專案> --defaults`，再做最後的驗證步驟。提醒使用者：`UPSTREAM_REPO`、`FORK_REPO` 等值是空的，推送與合併之前要補（改 `workflow.config` 後跑 `awf init --upgrade`），開發規範之後可以改 `.claude/teams/methodology.json`。
 
 ## 1. 確認位置
-找到 AgentWorkFlow 模版根目錄（有 `scaffold/`、`plugin/`、`workflow.config.example` 的那個目錄）。`awf init` 會自己找（`--source`、環境變數 `AWF_TEMPLATE_DIR`、plugin 目錄的上一層）；`${CLAUDE_PLUGIN_ROOT}` 指向 plugin 快取（`~/.claude/plugins/cache/…`）時裡面只有 plugin 目錄、沒有 `scaffold/`，要用 `--source <模版根目錄>` 指定。依序試：
+模版就是 plugin 目錄本身（底下有 `scaffold/`、`workflow-templates/`、`workflow.config.example`），`awf init` 會自己找到執行檔所在的 plugin，從 marketplace 安裝後不用另外 clone，也不用指定位置。下面幾步要讀模版裡的檔時，用這個 skill 所在的 plugin 目錄（`${CLAUDE_PLUGIN_ROOT}`，也就是這份 SKILL.md 往上兩層）。
 
-1. 讀 `~/.claude/plugins/known_marketplaces.json`（Windows：`%USERPROFILE%\.claude\plugins\known_marketplaces.json`），取 `agentworkflow` 這一項的 `installLocation`。從本機路徑加入的 marketplace，這就是模版 repo 本身。
-2. 試 `~/.claude/plugins/marketplaces/agentworkflow/`（從 GitHub 加入的 marketplace clone 在這裡）。
-3. 都找不到，或找到的目錄裡沒有 `scaffold/` 與 `plugin/`，就問使用者模版 repo 在哪裡（例如自己 clone 的位置）。
+只有兩種情況要指定：
 
-找到後讀 `plugin/.claude-plugin/plugin.json` 的 `version`，告訴使用者要套用的模版版本。
+1. 使用者要用自己 clone 的模版 repo（開發中的版本）：加 `--source <位置>`，給 repo 根目錄或它的 `plugin/` 都可以；也可以設環境變數 `AWF_TEMPLATE_DIR`。
+2. `awf init` 回報「找不到模版」：plugin 沒裝好。請使用者跑 `/agent-workflow:doctor`，或重新安裝 plugin。
+
+讀 plugin 目錄的 `.claude-plugin/plugin.json` 的 `version`，告訴使用者要套用的模版版本。
 
 ## 2. 檢查目標專案
 目標專案已經有 `.claude/teams/` 時，它已 init 過：讀 `.claude/teams/VERSION`（沒有＝0.2.0 以前的版本），和第 1 步的模版版本比較，建議改走升級（第 5 步的 `--upgrade`），不要重新問一輪設定。
@@ -29,7 +30,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 列出目標專案已存在的 `.claude/teams/`（含 `methodology.json`）、`.claude/workflows/`（0.4 以前的副本或使用者的覆寫檔）、`.claude/settings.json`、`CLAUDE.md`、`.mcp.json`。已存在的檔案**不覆蓋**，先列給使用者決定。awf init 對既有專案的預設做法：`.claude/agents`、`skills`、`commands` 不碰；既有的 `CLAUDE.md` 只在結尾追加一行 `@.claude/teams/agent-workflow.CLAUDE.md` 引用；既有的 `settings.json` 深度合併（使用者的值優先）；不是模版產生的同名 workflow 保留。使用者要整份換成模版版本時才加 `--overwrite-user-files`。也列出專案 `.claude/agents/` 裡叫 `dev-*`／`tpm-*` 的 agent，告訴使用者它們不會被當成模版角色（模版角色都帶 `agent-workflow:` 命名空間）。
 
 ## 3. 問專案設定（workflow.config）
-把 `workflow.config.example` 複製成目標專案的 `workflow.config`，逐項確認：
+把 plugin 目錄的 `workflow.config.example` 複製成目標專案的 `workflow.config`，逐項確認：
 - 專案與客戶泛稱（`PROJECT_NAME`、`CLIENT_NAME`；範例一律用虛構的「示範客戶 ACME」）
 - 目錄：`REPOS_DIR`、`RUNS_DIR`（預設 `_tpm/runs`）、`BRIEFS_DIR`（預設 `_tpm/briefs`）
 - repo：`UPSTREAM_REPO`（唯讀）、`FORK_REPO`（推送目標）、`FORBIDDEN_REPOS`（絕對不能碰）
@@ -38,7 +39,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 - 設計系統：`DESIGN_SYSTEM_NAME`（沒有就留空）
 
 ## 4. 問開發習慣（開發規範 profile）
-先讀 `scaffold/.claude/teams/methodologies/*.json`，把每個內建 profile 的 `description` 列給使用者看，再逐項問。使用者說「照我們 repo 現在的做法」時，先讀目標 repo 的 CLAUDE.md、CONTRIBUTING、lint 設定、最近的 commit 與 PR，整理成建議值再請使用者確認，不要猜。
+先讀 plugin 目錄的 `scaffold/.claude/teams/methodologies/*.json`，把每個內建 profile 的 `description` 列給使用者看，再逐項問。使用者說「照我們 repo 現在的做法」時，先讀目標 repo 的 CLAUDE.md、CONTRIBUTING、lint 設定、最近的 commit 與 PR，整理成建議值再請使用者確認，不要猜。
 
 | 項目 | 要問的 | 預設 | 答案檔鍵 |
 |---|---|---|---|
@@ -77,7 +78,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 - `sync_strategy` 是 `auto` 或 `transit` 時會用到中轉分支（預設前綴 `merge/`），`ALLOWED_BRANCH_PREFIXES` 要保留它。
 
 ## 5. 跑 init
-`awf init --target <目標專案> --config <目標專案>/workflow.config --answers <答案檔>`（`awf` 自己找不到模版時加 `--source <模版根目錄>`）。執行前把指令列給使用者看。可選參數：
+`awf init --target <目標專案> --config <目標專案>/workflow.config --answers <答案檔>`。執行前把指令列給使用者看。可選參數：
 - `--upgrade`：升級已 init 的專案（第 2 步發現舊版時用）。模版檔換成新版；`methodology.json` 不動、`guard.config.json` 保留使用者的值只補新鍵、`rules.md` 的〈專案規則〉段之後保留；沒給 `--config` 時沿用 init 記下的 `.claude/teams/workflow.config`。輸出會列出新版內建 profile 有、專案 profile 沒有的欄位，給使用者看過、同意後再加 `--adopt-new-fields` 重跑補上（只補缺的，既有值不改）
 - `--force`：覆蓋已存在的模版檔（`.claude/teams/` 等；只有在第 2 步使用者同意覆蓋時才加）。使用者設定的保留規則同 `--upgrade`：`methodology.json`、`guard.config.json`、〈專案規則〉不會被整份換掉。沒給 `--config` 時一樣沿用 `.claude/teams/workflow.config`。使用者的 `CLAUDE.md`、`settings.json` 加 `--force` 也只會合併
 - `--overwrite-user-files`：連使用者的檔案也整份覆蓋，包括 `methodology.json`、`guard.config.json`、〈專案規則〉（只有使用者明確要求重設時才加）
@@ -91,7 +92,7 @@ init 會把 profile 與答案合併成 `.claude/teams/methodology.json`，用 sc
 - 產出的檔案裡不應再有未替換的 `{{…}}`：`grep -rn '{{[A-Z_]*}}' <目標專案>/.claude <目標專案>/CLAUDE.md`。
 - `.claude/teams/methodology.json` 的內容跟使用者確認的習慣一致；`awf render --all --out _tpm/wf-check` 能產生 12 支腳本。
 - `.claude/teams/rules.md` 有〈專案規則〉段、`.claude/teams/guard.config.json` 是合法 JSON。
-- 跑 golden-set、`check_workflows.mjs`、`awf check-agents`（指令見 awf init 最後印出的「下一步」）。
+- 跑 `awf doctor`、`awf render --all`、`awf check-agents`（指令見 awf init 最後印出的「下一步」）。
 
 ## 7. 後續
 - 告訴使用者：之後要改開發規範或慣例，直接改 `.claude/teams/methodology.json`，下一段開跑時就生效（不用再跑 `awf build`）；格式與新增 profile 的方式見模版的 `docs/自訂與擴充.md`〈自訂開發規範〉。

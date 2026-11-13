@@ -1,4 +1,4 @@
-//! 閘門工具（save_run）的對跑：照 Python 版錄下來的劇本（tests/parity/save_run.expected.json）做一遍，逐字比對。
+//! 閘門工具（save_run）的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/save_run.expected.json）做一遍，逐字比對。
 //!
 //! 劇本的 `steps` 是檔案操作、指令（比 exit code、stdout、stderr 與這一步改了哪些檔）和只能在程式內呼叫的函式（call）。
 //! `probes` 是不碰檔案的函式探測。暫存路徑換成 `@TMP@` 再比。
@@ -48,7 +48,7 @@ fn expected() -> Value {
 }
 
 fn teams() -> String {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scaffold/.claude/teams");
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugin/scaffold/.claude/teams");
     p.canonicalize().expect("scaffold 的 teams 目錄").to_string_lossy().into_owned()
 }
 

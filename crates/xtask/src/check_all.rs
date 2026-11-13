@@ -1,18 +1,18 @@
 //! `cargo xtask check-all`：依序跑 repo 的全部維護檢查，每一步印「通過／失敗／略過 <名稱>」，最後印總結。
-//! 取代 `tests/run_all.py`。不需要 Python；要 cargo、git，node 見下。
+//! 要 cargo、git，node 見下。
+//!
+//! 全部檢查＝`cargo test --workspace`＋`cargo xtask check-all`，兩個都過才算通過：這支不包含 `cargo test`
+//! （單元測試、回歸基準、hook 案例、init 的煙霧測試都在那邊）。
 //!
 //! 步驟（順序固定）：
 //!   1. scrub、golden、check-docs、check-recipes、check-kernel、check-patterns、check-budget、check-supply、
 //!      check-launchers、gen-legacy（只比對）——和各自的 `cargo xtask <指令>` 相同，在行程內呼叫。
 //!   2. build --check：片段與範本沒有漂移（`awf build --check` 對模版 repo 做的事）。
 //!   3. 建置 `awf`（`cargo build -p awf`），之後幾步用建出來的執行檔。
-//!   4. check-agents：`awf check-agents --plugin-dir plugin`（在 `scaffold/` 下跑，schema 取自 scaffold）。
-//!   5. 各子指令的 selftest：`awf <子指令> --selftest`（在 `scaffold/` 下跑），清單見 [`SELFTESTS`]。
+//!   4. check-agents：`awf check-agents --plugin-dir plugin`（在 `plugin/scaffold/` 下跑，schema 取自 scaffold）。
+//!   5. 各子指令的 selftest：`awf <子指令> --selftest`（在 `plugin/scaffold/` 下跑），清單見 [`SELFTESTS`]。
 //!   6. bench --selftest：基準實跑不花 token 的部分。
 //!   7. workflow 乾跑：暫存專案 init、產生 12 支腳本，`node check_workflows.mjs` 把每支與全部情境走一遍。
-//!   8. smoke-init：留位，還沒接上（不算通過、不算失敗，總結會列出）。
-//!
-//! 不包含 `cargo test --workspace`（對跑基準與單元測試）：那個另外跑，兩個都過才算全部檢查通過。
 //!
 //! 沒有 node 時：需要 node 的步驟（check-recipes、check-kernel、check-patterns、check-budget、workflow 乾跑）印「略過」、
 //! 不執行，總結列出；略過不算通過，所以整體 exit 1。確定要在沒有 node 的機器上只看其餘步驟時加 `--allow-skip`
@@ -26,7 +26,6 @@ use crate::util::{self, Captured};
 use crate::{awfbin, bench, check_budget, check_docs, check_kernel, check_patterns, check_recipes, check_supply, gen_legacy, golden, launchers, scrub, tempproj};
 use awf_core::merge_gate::pyutil;
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 /// 有 `--selftest` 的子指令（實跑確認過；`statusline --selftest` 和 `watch` 是同一支，不重複跑）。
@@ -41,8 +40,6 @@ enum Outcome {
     Fail(String),
     /// 沒執行（缺工具）：理由。
     Skip(String),
-    /// 還沒接上的位置：說明。
-    Todo(String),
 }
 
 fn from_captured((code, out, err): Captured) -> Outcome {
@@ -61,16 +58,13 @@ fn build_awf(root: &Path) -> Outcome {
     }
 }
 
-/// 在 `scaffold/` 下跑 `awf <args…>`。
-fn awf(root: &Path, args: &[&str], template_dir: Option<&Path>) -> Outcome {
+/// 在 `plugin/scaffold/` 下跑 `awf <args…>`。
+fn awf(root: &Path, args: &[&str]) -> Outcome {
     if !awfbin::exe().is_file() {
         return Outcome::Fail(format!("沒有 awf 執行檔（{}；「建置 awf」那一步沒過）\n", awfbin::exe().display()));
     }
-    let mut cmd = awfbin::command(&root.join("scaffold"));
+    let mut cmd = awfbin::command(&awf_core::template::scaffold(&util::plugin_dir(root)));
     cmd.args(args);
-    if let Some(t) = template_dir {
-        cmd.env("AWF_TEMPLATE_DIR", t);
-    }
     match util::run(&mut cmd, None) {
         Ok(r) => from_captured((r.code, r.stdout, r.stderr)),
         Err(e) => Outcome::Fail(format!("{e}\n")),
@@ -78,16 +72,7 @@ fn awf(root: &Path, args: &[&str], template_dir: Option<&Path>) -> Outcome {
 }
 
 fn selftest(root: &Path, sub: &str) -> Outcome {
-    if sub != "state" {
-        return awf(root, &[sub, "--selftest"], None);
-    }
-    // state 的 selftest 有一項「從 installed_plugins.json 找 plugin」：執行檔放在模版 repo 裡（target/ 底下）時，
-    // awf 會先找到 repo 自己的 plugin，那一項就不成立。這裡把模版位置指到一個空目錄，等同執行檔裝在 repo 以外。
-    let tmp = match util::TempDir::new("awf-no-template.") {
-        Ok(t) => t,
-        Err(e) => return Outcome::Fail(format!("{e}\n")),
-    };
-    awf(root, &[sub, "--selftest"], Some(tmp.path()))
+    awf(root, &[sub, "--selftest"])
 }
 
 fn dry_run(root: &Path) -> Outcome {
@@ -95,8 +80,7 @@ fn dry_run(root: &Path) -> Outcome {
         Ok(r) => r,
         Err(e) => return Outcome::Fail(format!("{e}\n")),
     };
-    let mut cmd = Command::new("node");
-    cmd.arg(tempproj::check_workflows(root, &r.proj)).arg("--agents-dir").arg(root.join("plugin").join("agents")).arg("--wf-dir").arg(&r.wf_dir).current_dir(&r.proj);
+    let mut cmd = tempproj::check_workflows(root, &r.proj, &r.wf_dir);
     match util::run(&mut cmd, None) {
         Ok(p) => from_captured((p.code, p.stdout, p.stderr)),
         Err(e) => Outcome::Fail(format!("{e}\n")),
@@ -126,16 +110,15 @@ fn steps<'a>(root: &'a Path) -> Vec<Step<'a>> {
     add(&mut v, "check-launchers", false, Box::new(move || from_captured(launchers::run_captured(root))));
     add(&mut v, "gen-legacy（只比對）", false, Box::new(move || from_captured(gen_legacy::run_captured(root, &[]))));
     add(&mut v, "build --check（片段與範本沒有漂移）", false, Box::new(move || {
-        from_captured(awf_core::build::run_captured(&["--check".to_string()], &awf_core::build::Paths::template_repo(root)))
+        from_captured(awf_core::build::run_captured(&["--check".to_string()], &awf_core::build::Paths::template(&util::plugin_dir(root))))
     }));
     add(&mut v, "建置 awf", false, Box::new(move || build_awf(root)));
-    add(&mut v, "check-agents", false, Box::new(move || awf(root, &["check-agents", "--plugin-dir", "../plugin"], None)));
+    add(&mut v, "check-agents", false, Box::new(move || awf(root, &["check-agents", "--plugin-dir", ".."])));
     for sub in SELFTESTS {
         add(&mut v, &format!("selftest：{sub}"), false, Box::new(move || selftest(root, sub)));
     }
     add(&mut v, "bench --selftest", false, Box::new(move || from_captured(bench::run_captured(root, &["--selftest".to_string()]))));
     add(&mut v, "workflow 乾跑（check_workflows.mjs）", true, Box::new(move || dry_run(root)));
-    add(&mut v, "smoke-init", false, Box::new(move || Outcome::Todo("還沒接上：init 的煙霧測試另外移植，接上之前請另外確認 init".to_string())));
     v
 }
 
@@ -161,7 +144,7 @@ pub fn run(root: &Path, args: &[String]) -> i32 {
     let has_node = util::which("node").is_some();
     let all = steps(root);
     let total = all.len();
-    let (mut passed, mut failed, mut skipped, mut todo): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) = Default::default();
+    let (mut passed, mut failed, mut skipped): (Vec<String>, Vec<String>, Vec<String>) = Default::default();
     let mut ran = 0;
     let start = Instant::now();
     for st in all {
@@ -191,15 +174,11 @@ pub fn run(root: &Path, args: &[String]) -> i32 {
                 println!("略過  {name}（{why}，沒有執行）");
                 skipped.push(format!("{name}（{why}）"));
             }
-            Outcome::Todo(why) => {
-                println!("未接  {name}（{why}）");
-                todo.push(name);
-            }
         }
     }
     println!("\n================ 總結 ================");
-    println!("通過 {}、失敗 {}、略過 {}、未接上 {}（共 {ran} 步，{:.0} 秒）", passed.len(), failed.len(), skipped.len(), todo.len(), start.elapsed().as_secs_f64());
-    for (label, list) in [("失敗", &failed), ("略過（沒有執行，不算通過）", &skipped), ("未接上（不算通過、不算失敗）", &todo)] {
+    println!("通過 {}、失敗 {}、略過 {}（共 {ran} 步，{:.0} 秒）", passed.len(), failed.len(), skipped.len(), start.elapsed().as_secs_f64());
+    for (label, list) in [("失敗", &failed), ("略過（沒有執行，不算通過）", &skipped)] {
         if !list.is_empty() {
             println!("{label}：");
             for x in list {
@@ -210,7 +189,7 @@ pub fn run(root: &Path, args: &[String]) -> i32 {
     if only.is_some() {
         println!("注意：用了 --only，只跑了 {ran}／{total} 步，不是全部檢查。");
     }
-    println!("不包含 cargo test --workspace（對跑基準與單元測試）：另外跑，兩個都過才算全部檢查通過。");
+    println!("全部檢查＝cargo test --workspace＋cargo xtask check-all：這裡不包含 cargo test（單元測試、回歸基準、hook 案例、init 煙霧測試），要另外跑，兩個都過才算通過。");
     if ran == 0 {
         println!("沒有任何步驟符合 --only");
         return 2;

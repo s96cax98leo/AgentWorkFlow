@@ -1,7 +1,7 @@
 //! 掃描產出是否違反硬規則（`.claude/teams/rules.md`），只做機械判定。設定讀 `.claude/teams/guard.config.json`。
-//! 由 `scaffold/.claude/teams/tools/check_rules.py` 移植；訊息文字是對跑基準的一部分（`tests/parity/small.expected.json`）。
+//! 原本是 0.x 的 Python 工具 `check_rules.py`；訊息文字是對跑基準的一部分（`tests/parity/small.expected.json`）。
 //!
-//! 和 Python 版的已知差異：`internal_id_patterns`、`check_regex` 由 fancy-regex 解讀；寫壞時 Python 版直接當掉，
+//! 和 0.x 的 Python 版的已知差異：`internal_id_patterns`、`check_regex` 由 fancy-regex 解讀；寫壞時 0.x 的 Python 版直接當掉，
 //! 這裡印一行說明後 exit 1（`check_regex` 照舊只警告）。
 
 use crate::kb::pyish::{self, ppath, WS_CLASS};

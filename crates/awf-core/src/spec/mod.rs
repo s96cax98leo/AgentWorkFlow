@@ -1,4 +1,4 @@
-//! 規格層：讀 OpenSpec 目錄（現行規格與變更）、穩定 id、validate、apply。1.0 的新功能，沒有 Python 版。
+//! 規格層：讀 OpenSpec 目錄（現行規格與變更）、穩定 id、validate、apply。1.0 的新功能，沒有 0.x 的 Python 版。
 //!
 //! 自己實作，不相依 OpenSpec 的套件；只讀它的目錄與 Markdown 格式。說明在 `docs/規格層.md`。
 //!

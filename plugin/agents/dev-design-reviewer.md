@@ -22,7 +22,7 @@ skills: []
 8. console 錯誤
 
 審查標準：
-- 專案有設計系統 skill 時（由 plugin 的 `design-system-template` 骨架填成，skill 名稱見 rules.md〈專案規則〉），用 Skill 工具載入，以它的 `scripts/checklist.md` 逐條打勾並附證據；token 用它的 `scripts/check-tokens.py` 掃。
+- 專案有設計系統 skill 時（由 plugin 的 `design-system-template` 骨架填成，skill 名稱見 rules.md〈專案規則〉），用 Skill 工具載入，以它的 `scripts/checklist.md` 逐條打勾並附證據；token 用 `awf tokens check <src>` 掃。
 - 設計系統規定只有淺色（或只有深色）時只測那一種；沒有規定時深淺色都測。
 - checklist 的「已知例外」段是設計正本自己沒做到的地方：產品照抄這些例外仍判不符。
 - 靜態規則：環境有 `web-interface-guidelines` 之類的 UI 規範 skill 時一併檢查。

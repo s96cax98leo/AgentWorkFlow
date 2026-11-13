@@ -1,4 +1,4 @@
-// check-recipes 的 node 那一邊：對每個 golden 案例跑 snippets/recipe.js。由 tests/check_recipes.py 原樣搬來；
+// check-recipes 的 node 那一邊：對每個 golden 案例跑 snippets/recipe.js。原本在 0.x 的 tests/check_recipes.py 裡；
 // KEYS 由 xtask 換成欄位清單（和 Rust 那邊比對的同一份）。用法：node -e <本檔> <recipe.js>，案例從 stdin 給。
 const fs = require('fs')
 const src = fs.readFileSync(process.argv[1], 'utf8')

@@ -1,6 +1,6 @@
 //! 把模版套進專案（複製 scaffold 的設定、替換佔位符、合併既有設定、升級）。
 //!
-//! 起點是 Python 版 `init.py` 的移植；1.0 起行為不同了（對跑基準 `tests/parity/init.expected.json` 改當這個實作的回歸基準）：
+//! 起點是 0.x 的 Python 版 `init.py` 的移植；1.0 起行為不同了（對跑基準 `tests/parity/init.expected.json` 改當這個實作的回歸基準）：
 //! - **工具不複製進專案**：`scaffold/.claude/teams/tools/` 與 scaffold 裡的 `.py` 不放（工具都在 `awf` 執行檔裡）。
 //!   覆寫檔（`--with-workflows`）要的片段，內嵌時先找專案自己的 `tools/snippets/`（舊專案還有時），再找模版的。
 //! - **`--hooks project`**：把這支執行檔複製到 `<專案>/.claude/hooks/bin/`，settings 用它的絕對路徑註冊 `awf hook <種類>`。
@@ -10,8 +10,9 @@
 //! - **`--with-merge-gate`**：另外把 linux-x64 的執行檔與 `checksums.json` 放進 `.claude/teams/bin/`（CI 從受保護的 base 取出來跑）。
 //!
 //! 其他細節：
-//! - 模版根目錄依序看 `--source`、環境變數 `AWF_TEMPLATE_DIR`、`CLAUDE_PLUGIN_ROOT`／`AWF_PLUGIN_DIR` 的上一層、
-//!   執行檔往上找到含 `scaffold/` 與 `plugin/` 的目錄（[`find_template_root`]）。
+//! - 模版根目錄就是 plugin 目錄（底下有 `scaffold/`、`workflow-templates/`、`workflow.config.example`）：`--source` 優先，
+//!   其餘照 [`crate::template::find`]（`AWF_TEMPLATE_DIR` → `AWF_PLUGIN_DIR`／`CLAUDE_PLUGIN_ROOT` → 從執行檔往上找）。
+//!   `--source` 與 `AWF_TEMPLATE_DIR` 給 plugin 目錄或 repo 根（底下有 `plugin/`）都可以。
 //! - 最後的內嵌（build）在程式內呼叫 [`crate::build`]。
 //! - 檔案不是 UTF-8、設定的形狀不對、寫不進檔案：在 stderr 印一行說明，exit code 1。
 //! - JSON 裡的 `NaN`、`Infinity` 當成不合法：對使用者的檔案只會變成「沒有合併、原樣保留」。
@@ -31,12 +32,13 @@ pub use legacy::{pristine_legacy_workflow, tidy_old_workflows, Tidy};
 pub use legacy_tools::{tidy_old_tools, ToolsTidy};
 pub use merge::{deep_merge, hook_forms, merge_hooks, merge_settings, migrate_allow, missing_fields, set_missing};
 pub use profile::{apply_answers, parse_constraints};
-pub use writer::{dest_for, hook_bin_rel, hook_command, not_copied, scaffold_plan, workflow_plan, Item, Writer, GATE_BIN_NAME, GATE_BIN_REL, GATE_SUMS_REL};
+pub use writer::{dest_for, hook_bin_rel, hook_command, is_generated_claude_md, not_copied, scaffold_plan, workflow_plan, Item, Writer, CLAUDE_MARK, CLAUDE_MARK_0X, GATE_BIN_NAME, GATE_BIN_REL, GATE_SUMS_REL};
 
 use crate::kb::pyish::WS_CLASS;
 use crate::merge_gate::pyutil::{self, ReadErr};
 use crate::merge_gate::pyjson;
 use crate::pyfmt;
+use crate::template;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -173,7 +175,7 @@ pub struct Shown {
 /// 行程層級的輸入：模版在哪、目前目錄、家目錄、這支執行檔。測試直接給值，不碰行程狀態。
 #[derive(Debug, Clone, Default)]
 pub struct Env {
-    /// 模版根目錄（底下有 `scaffold/`、`plugin/`、`workflow.config.example`）；`--source` 優先。
+    /// 模版根目錄（plugin 目錄，或底下有 `plugin/` 的 repo 根；見 [`crate::template`]）；`--source` 優先。
     pub source: Option<PathBuf>,
     /// 相對路徑的基準，也是找 `./workflow.config` 的地方。
     pub cwd: PathBuf,
@@ -183,33 +185,13 @@ pub struct Env {
     pub awf_bin: Option<PathBuf>,
 }
 
-/// 模版根目錄（底下有 `scaffold/` 與 `plugin/`）：`AWF_TEMPLATE_DIR` → `CLAUDE_PLUGIN_ROOT`／`AWF_PLUGIN_DIR` 的上一層 → 執行檔往上找。
-pub fn find_template_root() -> Option<PathBuf> {
-    let var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
-    if let Some(p) = var("AWF_TEMPLATE_DIR") {
-        return Some(PathBuf::from(p));
-    }
-    let from_plugin = ["CLAUDE_PLUGIN_ROOT", "AWF_PLUGIN_DIR"].iter().filter_map(|k| var(k))
-        .filter_map(|p| Path::new(&p).parent().map(Path::to_path_buf))
-        .find(|d| is_template_root(d));
-    if from_plugin.is_some() {
-        return from_plugin;
-    }
-    let exe = std::env::current_exe().ok().and_then(|p| p.canonicalize().ok());
-    exe.as_deref().and_then(|p| p.ancestors().skip(1).find(|d| is_template_root(d)).map(Path::to_path_buf))
-}
-
-fn is_template_root(d: &Path) -> bool {
-    d.join("scaffold").is_dir() && d.join("plugin").is_dir()
-}
-
 impl Env {
-    /// 從行程的環境收集（模版根目錄見 [`find_template_root`]）。
+    /// 從行程的環境收集（模版根目錄見 [`crate::template::find`]）。
     pub fn from_process() -> Self {
         let var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
         let awf_bin = var("AWF_BIN").map(PathBuf::from).or_else(|| std::env::current_exe().ok()).map(|p| p.canonicalize().unwrap_or(p));
         Self {
-            source: find_template_root(),
+            source: crate::template::find(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             home: var("HOME").or_else(|| var("USERPROFILE")),
             awf_bin,
@@ -220,7 +202,7 @@ impl Env {
 /// 模版根目錄與解析路徑要用的東西。核心函式都收這個，不自己找模版。
 #[derive(Debug, Clone)]
 pub struct Site {
-    /// 模版根目錄（已解開符號連結；Python 版的 `HERE`）。
+    /// 模版根目錄＝plugin 目錄（已解開符號連結）。
     pub here: PathBuf,
     pub cwd: PathBuf,
     pub home: Option<String>,
@@ -228,25 +210,25 @@ pub struct Site {
 
 impl Site {
     pub fn scaffold(&self) -> PathBuf {
-        self.here.join("scaffold")
+        template::scaffold(&self.here)
     }
 
     pub fn scaffold_teams(&self) -> PathBuf {
-        self.scaffold().join(".claude").join("teams")
+        template::teams(&self.here)
     }
 
     pub fn example(&self) -> PathBuf {
-        self.here.join("workflow.config.example")
+        template::config_example(&self.here)
     }
 
     /// 發佈用的執行檔與 `checksums.json` 所在的目錄。
     pub fn plugin_bin(&self) -> PathBuf {
-        self.here.join("plugin").join("bin")
+        template::bin(&self.here)
     }
 
-    /// 共用片段在模版裡的位置（由 [`crate::build::template_snippet_dir`] 決定）。
+    /// 共用片段在模版裡的位置。
     pub fn snippets(&self) -> PathBuf {
-        crate::build::template_snippet_dir(&self.here)
+        template::snippets(&self.here)
     }
 
     pub fn methodologies(&self) -> PathBuf {
@@ -254,11 +236,16 @@ impl Site {
     }
 
     pub fn plugin_json(&self) -> PathBuf {
-        self.here.join("plugin").join(".claude-plugin").join("plugin.json")
+        template::plugin_json(&self.here)
     }
 
     pub fn wf_templates(&self) -> PathBuf {
-        self.here.join("plugin").join("workflow-templates")
+        template::workflow_templates(&self.here)
+    }
+
+    /// 模版所在的 repo 根目錄（有 marketplace 清單時）：從 clone 下來的 repo 跑才有；只裝 plugin 時沒有。
+    pub fn repo(&self) -> Option<PathBuf> {
+        self.here.parent().filter(|d| d.join(".claude-plugin").join("marketplace.json").is_file()).map(Path::to_path_buf)
     }
 
     /// `Path(s).expanduser()`：顯示用的文字照 pathlib 的規則整理，相對路徑接在 cwd 後面。
@@ -584,9 +571,9 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         None => env.source.clone().map(|p| if p.is_absolute() { p } else { env.cwd.join(p) }),
     };
     let Some(source) = source else {
-        return die("找不到模版（要有 scaffold/ 與 plugin/）；用 --source <模版根目錄> 或環境變數 AWF_TEMPLATE_DIR 指定");
+        return die("找不到模版（plugin 目錄，底下要有 scaffold/ 與 workflow-templates/）；用 --source <plugin 目錄> 或環境變數 AWF_TEMPLATE_DIR 指定");
     };
-    site.here = PathBuf::from(pyutil::resolve(&source.to_string_lossy()));
+    site.here = template::normalize(Path::new(&pyutil::resolve(&source.to_string_lossy())));
     if !site.scaffold().is_dir() {
         return die(format!("找不到 {}", site.scaffold().display()));
     }
@@ -954,13 +941,22 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
 fn next_steps(con: &mut Console, site: &Site, target: &Path, hooks: &str) {
     let here = &site.here;
     let teams = target.join(".claude").join("teams");
-    let plugin = here.join("plugin");
-    let trust = here.join("docs").join("自動合併信任模型.md");
+    let plugin = here;
+    // 從 clone 下來的 repo 跑：文件就在旁邊的 docs/；只裝 plugin 時沒有文件，改指 repo 裡的位置
+    let repo = site.repo();
+    let doc = |name: &str| match &repo {
+        Some(r) => r.join("docs").join(name).display().to_string(),
+        None => format!("AgentWorkFlow repo 的 docs/{name}"),
+    };
+    let trust = doc("自動合併信任模型.md");
     con.say("\n下一步：");
     if hooks == "plugin" {
+        let install = match &repo {
+            Some(r) => format!("       /plugin marketplace add {}\n       /plugin install agent-workflow@agentworkflow", r.display()),
+            None => format!("       這支 awf 來自 {}；還沒在 Claude Code 啟用時：/plugin install agent-workflow@agentworkflow", here.display()),
+        };
         con.say(&format!(
-            "  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add {}\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：{} 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。",
-            here.display(),
+            "  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n{install}\n  2. 確認 hooks 只註冊一次：{} 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。",
             target.join(".claude").join("settings.json").display()
         ));
     } else {
@@ -985,15 +981,15 @@ fn next_steps(con: &mut Console, site: &Site, target: &Path, hooks: &str) {
             "  6. merge gate CI 已放在 {}，它用的執行檔與 sha256 在 {}（三個檔要一起進受保護的 base 分支）。\n     在 GitHub 設好 gate App、ruleset 綁定來源之前，它會讓 PR 的 check 失敗；啟用前檢查清單見 {}。",
             gate.display(),
             target.join(".claude").join("teams").join("bin").display(),
-            trust.display()
+            trust
         ));
     } else {
         con.say(&format!(
             "  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 {}\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。",
-            trust.display()
+            trust
         ));
     }
-    con.say(&format!("  套用到既有專案時保留了什麼、怎麼移除模版：見 {}〈套用到既有專案〉。", here.join("docs").join("自訂與擴充.md").display()));
+    con.say(&format!("  套用到既有專案時保留了什麼、怎麼移除模版：見 {}〈套用到既有專案〉。", doc("自訂與擴充.md")));
 }
 
 /// 指令本體：`args` 是 `awf init` 後面的參數；輸出寫到 `out`／`err`，問答從 `input` 讀（`tty` 為真才詢問）。回 exit code。

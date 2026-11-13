@@ -1,5 +1,5 @@
 //! 交付文件：型錄、交付設定、逐節的來源標記與過期判定、需求追溯矩陣。
-//! 由 `scaffold/.claude/teams/tools/deliverables.py` 移植，輸出、結束碼、訊息文字、寫出的檔案內容和 Python 版逐字相同
+//! 原本是 0.x 的 Python 工具 `deliverables.py`，輸出、結束碼、訊息文字、寫出的檔案內容和 0.x 的 Python 版逐字相同
 //! （對跑基準在 `tests/parity/deliverables.expected.json`；訊息裡的指令已改成 `awf deliverables`，基準檔的對應字串一起換過）。
 //!
 //! 設計：

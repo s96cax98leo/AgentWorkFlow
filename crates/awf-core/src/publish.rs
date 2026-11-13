@@ -1,5 +1,5 @@
-//! 確定性推送工具。由 `scaffold/.claude/teams/tools/publish.py` 移植：每一個拒絕條件、exit code、訊息文字、
-//! 稽核紀錄的內容都和 Python 版相同（對跑基準在 `tests/parity/publish.expected.json`）。
+//! 確定性推送工具。原本是 0.x 的 Python 工具 `publish.py`：每一個拒絕條件、exit code、訊息文字、
+//! 稽核紀錄的內容都和 0.x 的 Python 版相同（對跑基準在 `tests/parity/publish.expected.json`）。
 //!
 //! 無人值守時由主 session 呼叫這支推分支、開 PR（不交給 agent）。它自己把關：
 //!
@@ -15,11 +15,11 @@
 //!
 //! 結束碼：0＝已推送（或 dry-run 檢查全過）；1＝拒絕或推送／開 PR 失敗；2＝參數錯誤。
 //!
-//! 和 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
+//! 和 0.x 的 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
 //! - 讀進來的 JSON（run.json、各段的結果檔、profile）有 NaN、Infinity、落單的代理字元跳脫、超出 64 位元範圍的整數、
 //!   巢狀超過 200 層時一律當成讀不懂（拒絕）。
-//! - Python 版丟出沒接住的例外的地方（traceback、exit 1、不寫稽核紀錄），這裡印「awf publish：類別：訊息」、exit 1，同樣不推送。
-//! - 專案根目錄：沒給 `--project-dir` 時用 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄（Python 版是工具檔所在的專案）。
+//! - 0.x 的 Python 版丟出沒接住的例外的地方（traceback、exit 1、不寫稽核紀錄），這裡印「awf publish：類別：訊息」、exit 1，同樣不推送。
+//! - 專案根目錄：沒給 `--project-dir` 時用 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄（0.x 的 Python 版是工具檔所在的專案）。
 //! - `--supersedes` 只收 ASCII 數字、而且要在 64 位元範圍內。
 //! - 用法訊息的指令名是 `awf publish`。
 
@@ -57,7 +57,7 @@ static PLACEHOLDER: Re = Re::new(r"\{\{[A-Z_]+\}\}", "");
 static SLUG_IN_URL: Re = Re::new(r"[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$", "");
 static FORBIDDEN_SLUG: Re = Re::new(r"^[\w.-]+/[\w.-]+$", "");
 
-/// 常見金鑰樣式（只回報名稱，不印值）。樣式照 Python 版原樣，由 `hooks::re` 對齊 `\s`、`\w`、`\b`、`$` 的差異。
+/// 常見金鑰樣式（只回報名稱，不印值）。樣式照 0.x 的 Python 版原樣，由 `hooks::re` 對齊 `\s`、`\w`、`\b`、`$` 的差異。
 static SECRET_PATTERNS: [(&str, Re); 12] = [
     ("AWS access key", Re::new(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", "")),
     ("GitHub token", Re::new(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{60,}\b", "")),
@@ -79,8 +79,8 @@ static SECRET_FILES: Re =
     Re::new(r"(?:^|/)(?:\.env(?:\.[\w-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:pem|p12|pfx|key|keystore|jks)|\.npmrc|\.pypirc|credentials(?:\.json)?)$", "");
 static SECRET_FILE_OK: Re = Re::new(r"\.env\.(?:example|sample|template)$", "");
 
-/// 停下來的兩種：`Refused` 對應 Python 版的 Refused（記進稽核紀錄、exit 1）；
-/// `Crash` 是 Python 版丟出沒接住的例外的地方（這裡印訊息、exit 1，不寫稽核紀錄、不推送）。
+/// 停下來的兩種：`Refused` 對應 0.x 的 Python 版的 Refused（記進稽核紀錄、exit 1）；
+/// `Crash` 是 0.x 的 Python 版丟出沒接住的例外的地方（這裡印訊息、exit 1，不寫稽核紀錄、不推送）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stop {
     Refused(String),
@@ -161,7 +161,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// 和 Python 版 load_config 回傳的 dict 同形狀（對跑用）。
+    /// 和 0.x 的 Python 版 load_config 回傳的 dict 同形狀（對跑用）。
     pub fn to_value(&self) -> Value {
         json!({"fork_repo": self.fork_repo, "upstream_repos": self.upstream_repos, "forbidden": self.forbidden, "prefixes": self.prefixes, "protected": self.protected, "runs_dir": self.runs_dir})
     }
@@ -303,7 +303,7 @@ pub fn secret_file(path: &str) -> bool {
 ///
 /// diff 用 `merge_gate::parse_diff` 解析（和 gate 同一套）；機敏檔名從每個 diff --git 區塊比對，
 /// 所以沒有 ---／+++ 行的二進位檔與空檔也會命中。`names` 是 `git diff --name-only --diff-filter=ACMRT` 的結果，再比對一次。
-/// diff 解析不了就當成命中（無法確認沒有機敏值，fail-closed）。Err 是 Python 版在 parse_diff 丟例外的地方。
+/// diff 解析不了就當成命中（無法確認沒有機敏值，fail-closed）。Err 是 0.x 的 Python 版在 parse_diff 丟例外的地方。
 pub fn scan_secrets(diff: &str, literals: &[String], names: &[String]) -> Result<Vec<String>, String> {
     let parsed = parse_diff(diff)?;
     let mut hits: Vec<String> = parsed.errors.iter().map(|e| format!("diff：{e}，無法確認沒有機敏值")).collect();
@@ -324,7 +324,7 @@ pub fn scan_secrets(diff: &str, literals: &[String], names: &[String]) -> Result
     Ok(hits)
 }
 
-/// `json.loads(path.read_text())`，照 Python 版的 `except (OSError, json.JSONDecodeError)`：
+/// `json.loads(path.read_text())`，照 0.x 的 Python 版的 `except (OSError, json.JSONDecodeError)`：
 /// 讀不到、不是看得懂的 JSON 回 Err(訊息)；不是 UTF-8、巢狀太深是沒接住的例外。
 fn load_json(ctx: &Ctx, path: &str) -> R<Result<Value, String>> {
     match ctx.load_json(path) {
@@ -620,7 +620,7 @@ fn steps(env: &Env, a: &Args, cfg: &Config, repo: &str, run_dir: Option<&str>, r
     Ok(0)
 }
 
-/// 一次推送：回傳（exit code、稽核紀錄）。Err 是 Python 版丟出沒接住的例外的地方（不寫稽核紀錄）。
+/// 一次推送：回傳（exit code、稽核紀錄）。Err 是 0.x 的 Python 版丟出沒接住的例外的地方（不寫稽核紀錄）。
 pub fn publish(env: &Env, a: &Args) -> Result<(i32, Value), String> {
     let crash = |s: Stop| match s {
         Stop::Crash(m) | Stop::Refused(m) => m,
@@ -734,7 +734,7 @@ pub fn run(env: &Env, argv: &[String], out: &mut String, errs: &mut String) -> i
             code
         }
         Err(m) => {
-            // Python 版在這裡是沒接住的例外（traceback、exit 1）
+            // 0.x 的 Python 版在這裡是沒接住的例外（traceback、exit 1）
             errs.push_str(&format!("awf publish：{m}\n"));
             1
         }
@@ -743,7 +743,7 @@ pub fn run(env: &Env, argv: &[String], out: &mut String, errs: &mut String) -> i
 
 /// `awf publish …`
 pub fn main(args: &[String]) -> i32 {
-    // selftest 用的替身（對應 Python 版 selftest 臨時寫的 fake_git.py、fake_gh.py）
+    // selftest 用的替身（對應 0.x 的 Python 版 selftest 臨時寫的 fake_git.py、fake_gh.py）
     match args.first().map(String::as_str) {
         Some("--selftest-fake-git") => return fake_git(args.get(1..).unwrap_or_default()),
         Some("--selftest-fake-gh") => return fake_gh(args.get(1..).unwrap_or_default()),
@@ -801,7 +801,7 @@ fn put(path: &str, data: &[u8]) -> Result<(), String> {
 struct Tester<'a> {
     /// 被測的環境：假的 git 與 gh、專案的 profile 指到暫存專案。
     env: Env,
-    /// 建 run 用的 save_run 環境（Python 版是另外跑 save_run.py：它的專案是工具所在的專案）。
+    /// 建 run 用的 save_run 環境（0.x 的 Python 版是另外跑 save_run.py：它的專案是工具所在的專案）。
     tool: Ctx,
     proj: String,
     repo: String,

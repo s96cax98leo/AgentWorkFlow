@@ -1,4 +1,4 @@
-//! awf_cost 與 awf_script 的對跑：照 Python 版錄下來的劇本（tests/parity/tools.expected.json）做一遍，逐字比對。
+//! awf_cost 與 awf_script 的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/tools.expected.json）做一遍，逐字比對。
 //! check_agents 的劇本在同一份基準的 agents 段，由 `src/check_agents.rs` 檔內的測試讀。
 //!
 //! cost 的劇本會改目前目錄與 HOME（相對路徑、--project、~ 都靠它們），整份放在同一個測試裡；
@@ -69,11 +69,11 @@ fn iso(t: Option<cost::Ts>) -> Value {
     t.map(|t| json!(t.isoformat())).unwrap_or(Value::Null)
 }
 
-/// 函式探測的結果：`want`，或 Python 版當掉（`crash`）。
+/// 函式探測的結果：`want`，或 0.x 的 Python 版當掉（`crash`）。
 fn probe(d: &mut Diff, label: &str, st: &Value, got: Result<Value, cost::Crash>) {
     match (st.get("crash"), got) {
         (Some(_), Err(_)) => d.compared += 1,
-        (Some(c), Ok(v)) => d.bad.push(format!("{label}\n  Python 版在這裡當掉（{c}），這裡卻回了 {v}")),
+        (Some(c), Ok(v)) => d.bad.push(format!("{label}\n  0.x 的 Python 版在這裡當掉（{c}），這裡卻回了 {v}")),
         (None, Err(e)) => d.bad.push(format!("{label}\n  預期：{}\n  實際：當掉（{e}）", st["want"])),
         (None, Ok(v)) => d.value(label, &st["want"], &v),
     }
@@ -204,14 +204,14 @@ fn script_matches_python() {
         let text = s(&st["text"]);
         let short: String = text.chars().take(80).collect();
         let label = format!("script 步驟 {i} {op}（{}）{short:?}", s(&st["note"]));
-        // 讀不懂的腳本：Python 版丟 ScriptError，訊息要一樣
+        // 讀不懂的腳本：0.x 的 Python 版丟 ScriptError，訊息要一樣
         let fallible = |d: &mut Diff, got: Result<Value, script::ScriptError>| match (st.get("err"), got) {
             (Some(want), Err(e)) => d.text(&label, s(want), &e.0),
             (Some(want), Ok(v)) => d.bad.push(format!("{label}\n  預期：ScriptError（{want}）\n  實際：{v}")),
             (None, Err(e)) => d.bad.push(format!("{label}\n  預期：{}\n  實際：ScriptError（{e}）", st["want"])),
             (None, Ok(v)) => d.value(&label, &st["want"], &v),
         };
-        assert!(st.get("crash").is_none(), "{label}：Python 版在這裡當掉，基準不該有這種案例");
+        assert!(st.get("crash").is_none(), "{label}：0.x 的 Python 版在這裡當掉，基準不該有這種案例");
         match op {
             "consts" => {
                 let got = json!({
@@ -225,7 +225,7 @@ fn script_matches_python() {
             "check" => {
                 let pick = |k: &str| st.get(k).unwrap_or(&defaults[k]);
                 let got = script::check(text, &set(pick("allowed")), s(pick("ns")), &set(pick("reserved")));
-                // 守門性質：Python 版會擋的，這裡一定要擋
+                // 守門性質：0.x 的 Python 版會擋的，這裡一定要擋
                 if st["want"].as_array().is_some_and(|w| !w.is_empty()) && got.is_empty() {
                     looser.push(label.clone());
                 }
@@ -261,6 +261,6 @@ fn script_matches_python() {
             other => panic!("不認得的步驟 {other}"),
         }
     }
-    assert!(looser.is_empty(), "靜態檢查比 Python 版鬆（Python 版有擋、這裡放行）：\n{}", looser.join("\n"));
+    assert!(looser.is_empty(), "靜態檢查比 0.x 的 Python 版鬆（0.x 的 Python 版有擋、這裡放行）：\n{}", looser.join("\n"));
     d.finish("script", steps.len());
 }

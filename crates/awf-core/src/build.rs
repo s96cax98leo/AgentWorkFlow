@@ -1,5 +1,5 @@
 //! 把 schema、methodology 與共用片段內嵌進 workflow 腳本（Workflow 腳本不能 import 檔案）。
-//! 由 `scaffold/.claude/teams/tools/build.py` 移植；輸出與訊息是對跑基準的一部分（`tests/parity/build.expected.json`）。
+//! 原本是 0.x 的 Python 工具 `build.py`；輸出與訊息是對跑基準的一部分（`tests/parity/build.expected.json`）。
 //!
 //! 標記寫法（腳本內）：
 //!   - `/*@schema:<payload 名>*/ null /*@end*/`：換成信封＋payload 的完整 schema（`envelope` 代表 payload 不限形狀）。
@@ -10,13 +10,14 @@
 //! `// @requires: <名>[, <名>]`，引用它的 workflow 必須也引用這些片段。違反時 exit 1。
 //! profile 的 extensions（使用者自己的 agent）必須登記在 guard.config.json 的 extension_agents，否則不內嵌（exit 1）。
 //!
-//! 和 Python 版不同的地方：Python 版依工具檔的位置決定處理哪個目錄，這裡由呼叫端給 [`Paths`]；
-//! Python 版直接當掉（traceback）的情況（未知的 schema 名、檔案不是 UTF-8 等），這裡在 stderr 印一行說明，exit code 同樣是 1。
+//! 和 0.x 的 Python 版不同的地方：0.x 的 Python 版依工具檔的位置決定處理哪個目錄，這裡由呼叫端給 [`Paths`]；
+//! 0.x 的 Python 版直接當掉（traceback）的情況（未知的 schema 名、檔案不是 UTF-8 等），這裡在 stderr 印一行說明，exit code 同樣是 1。
 
 use crate::kb::pyish::{self, WS_CLASS};
 use crate::merge_gate::{pyjson, pyutil};
 use crate::pyfmt;
 use crate::schema::Schemas;
+use crate::template;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -30,23 +31,17 @@ pub struct Paths {
     pub wf_dir: PathBuf,
     /// `.claude/teams`：底下有 `schemas/`、`methodology.json`、`guard.config.json`。
     pub teams_dir: PathBuf,
-    /// 共用片段的目錄（`<teams>/tools/snippets`）。
+    /// 共用片段的目錄（模版：`workflow-templates/snippets`；專案：`.claude/teams/tools/snippets`，0.x 的專案才有）。
     pub snippet_dir: PathBuf,
     /// `snippet_dir` 裡沒有某個片段時，再到這裡找（專案模式：模版／plugin 的片段目錄）。
     pub snippet_fallback: Option<PathBuf>,
 }
 
-/// 模版的片段目錄在哪。`template_root` 是含 `scaffold/` 與 `plugin/` 的模版根目錄。
-/// 片段之後會搬進 `plugin/`；搬的時候只改這裡。
-pub fn template_snippet_dir(template_root: &Path) -> PathBuf {
-    template_root.join("scaffold").join(".claude").join("teams").join("tools").join("snippets")
-}
-
 impl Paths {
-    /// 模版 repo：處理 `plugin/workflow-templates/`，schema 與片段用 `scaffold/.claude/teams/` 的。
-    pub fn template_repo(root: &Path) -> Self {
-        let teams = root.join("scaffold").join(".claude").join("teams");
-        Self { wf_dir: root.join("plugin").join("workflow-templates"), snippet_dir: template_snippet_dir(root), teams_dir: teams, snippet_fallback: None }
+    /// 模版自己：`root` 是模版根目錄（plugin 目錄，見 [`crate::template`]）。處理 `workflow-templates/`，
+    /// 片段用 `workflow-templates/snippets/`，schema 用 `scaffold/.claude/teams/` 的。
+    pub fn template(root: &Path) -> Self {
+        Self { wf_dir: template::workflow_templates(root), snippet_dir: template::snippets(root), teams_dir: template::teams(root), snippet_fallback: None }
     }
 
     /// 已 init 的專案：處理 `.claude/workflows/`（使用者留在專案的覆寫檔，沒有就什麼都不做）。
@@ -67,8 +62,8 @@ impl Paths {
         std::iter::once(self.snippet_dir.as_path()).chain(self.snippet_fallback.as_deref()).collect()
     }
 
-    /// 從 `start` 判斷：`start` 自己是已 init 的專案（有 `.claude/teams/`、而且不是模版 repo）就當專案；
-    /// 否則 `start` 或它上層有 `plugin/workflow-templates/` 與 `scaffold/.claude/teams/` 時當模版 repo；都不是就當專案。
+    /// 從 `start` 判斷：`start` 自己是已 init 的專案（有 `.claude/teams/`、而且不是模版）就當專案；
+    /// 否則 `start` 或它上層是模版（plugin 目錄，或底下有 `plugin/` 的 repo 根；[`template::find_up`]）時處理模版；都不是就當專案。
     /// 當專案時，片段找不到會再找 `template_snippets`。
     pub fn detect_with(start: &Path, template_snippets: Option<PathBuf>) -> Self {
         let mut paths = Self::detect(start);
@@ -81,27 +76,23 @@ impl Paths {
     /// 同 [`Paths::detect_with`]，不給模版的片段目錄（專案模式只找專案自己的）。
     pub fn detect(start: &Path) -> Self {
         let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-        let is_template = |d: &Path| d.join("plugin").join("workflow-templates").is_dir() && d.join("scaffold").join(".claude").join("teams").is_dir();
+        let is_template = |d: &Path| template::is_root(d) || template::is_root(&d.join("plugin"));
         if !is_template(&start) && start.join(".claude").join("teams").is_dir() {
             return Self::project(&start);
         }
-        let mut cur: Option<&Path> = Some(&start);
-        while let Some(d) = cur {
-            if is_template(d) {
-                return Self::template_repo(d);
-            }
-            cur = d.parent();
+        match template::find_up(&start) {
+            Some(root) => Self::template(&root),
+            None => Self::project(&start),
         }
-        Self::project(&start)
     }
 }
 
 /// 內嵌失敗的原因。
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuildError {
-    /// 片段不合規則（Python 版的 SnippetError）：印在 stdout，前面加 workflow 檔名。
+    /// 片段不合規則（0.x 的 Python 版的 SnippetError）：印在 stdout，前面加 workflow 檔名。
     Snippet(String),
-    /// 其他（讀不到檔、未知的 schema）：Python 版在這裡直接當掉，這裡印在 stderr。
+    /// 其他（讀不到檔、未知的 schema）：0.x 的 Python 版在這裡直接當掉，這裡印在 stderr。
     Other(String),
 }
 
@@ -285,7 +276,7 @@ pub fn unregistered_extensions(methodology: Option<&Value>, teams_dir: &Path) ->
             (Some(Value::Array(a)), Some(x)) => a.iter().any(|y| pyfmt::eq(x, y)),
             (Some(Value::Array(a)), None) => a.iter().any(Value::is_null),
             (Some(Value::String(s)), Some(Value::String(a))) => s.contains(a.as_str()),
-            // Python 版在這裡當掉（對數字或字串做不合法的 in）；這裡當成沒登記，只會更嚴
+            // 0.x 的 Python 版在這裡當掉（對數字或字串做不合法的 in）；這裡當成沒登記，只會更嚴
             _ => false,
         };
         if !known {
@@ -418,7 +409,7 @@ pub fn run_captured(args: &[String], paths: &Paths) -> (i32, String, String) {
     }
     if check && !stale.is_empty() {
         out.push_str(&format!(
-            "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：{}（請跑 awf build）\n",
+            "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：{}（請跑 awf build）\n",
             stale.join("、")
         ));
         return (1, out, String::new());
@@ -437,7 +428,7 @@ pub fn main(args: &[String]) -> i32 {
     let start = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|s| !s.is_empty()).map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."));
     // 專案模式：片段先找專案自己的，再找模版／plugin 的（1.0 的專案沒有自己的片段）
-    let template_snippets = crate::init::find_template_root().map(|r| template_snippet_dir(&r));
+    let template_snippets = template::find().map(|r| template::snippets(&r));
     let (code, out, err) = run_captured(args, &Paths::detect_with(&start, template_snippets));
     print!("{out}");
     eprint!("{err}");

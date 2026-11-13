@@ -1,4 +1,4 @@
-//! watcher（watch、statusline）的對跑：照 Python 版錄下來的劇本（tests/parity/watch.expected.json）做一遍，逐字比對。
+//! watcher（watch、statusline）的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/watch.expected.json）做一遍，逐字比對。
 //!
 //! 劇本的 `steps` 是檔案操作（write、append、rm、mkdir、symlink、mtime）、建立 transcript 讀取器（tr）、看一次（tick：
 //! 快照、事件、警告、送出去的通知、progress.jsonl 與 .watch-state.json 的內容）、只能在程式內呼叫的函式（call）、
@@ -367,7 +367,7 @@ fn script_matches_python() {
             other => panic!("第 {i} 步：不認得的 op {other}"),
         }
     }
-    assert!(bad.is_empty(), "{} 步和 Python 版不同：\n{}", bad.len(), bad.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(bad.is_empty(), "{} 步和 0.x 的 Python 版不同：\n{}", bad.len(), bad.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
     // 兩張表沒有過時：表上的 label 都有一步真的不同
     for (l, _) in STRICTER.iter().chain(KNOWN.iter()) {
         assert!(labels.contains(*l), "表上的 label「{l}」劇本裡沒有");
@@ -384,11 +384,11 @@ fn script_matches_python() {
 #[test]
 fn selftest_matches_python() {
     let exp = expected();
-    let scaffold = format!("{}/scaffold", src_root());
+    let scaffold = format!("{}/plugin/scaffold", src_root());
     let ctx = Ctx::new(&scaffold, &scaffold);
     let mut out = String::new();
     let code = watch::selftest(&ctx, &mut out).map_err(|e| format!("{}：{}", e.class, e.msg)).expect("selftest 不該中斷");
-    assert_eq!(out, s(&exp["selftest"]["stdout"]), "selftest 的輸出和 Python 版不同");
+    assert_eq!(out, s(&exp["selftest"]["stdout"]), "selftest 的輸出和 0.x 的 Python 版不同");
     assert_eq!(Some(i64::from(code)), exp["selftest"]["code"].as_i64());
     assert!(out.lines().filter(|l| l.contains("[通過]")).count() >= 30 && !out.contains("[失敗]"));
 }

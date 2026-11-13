@@ -1,4 +1,4 @@
-//! 交付文件與工具先定位的對跑：照 Python 版錄下來的劇本（tests/parity/deliverables.expected.json）做一遍，逐字比對。
+//! 交付文件與工具先定位的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/deliverables.expected.json）做一遍，逐字比對。
 //!
 //! 劇本的 `steps` 是檔案操作、指令（比 exit code、stdout、stderr 與這一步改了哪些檔）和只能在程式內呼叫的函式（call）。
 //! `probes` 是不碰檔案的函式探測。暫存路徑換成 `@TMP@` 再比。劇本用到 chmod 與 /bin/sh 的假 pandoc，所以只在 unix 上跑。

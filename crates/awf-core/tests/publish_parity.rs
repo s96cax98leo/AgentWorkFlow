@@ -1,4 +1,4 @@
-//! 確定性推送工具（publish）的對跑：照 Python 版錄下來的劇本（tests/parity/publish.expected.json）做一遍，逐字比對。
+//! 確定性推送工具（publish）的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/publish.expected.json）做一遍，逐字比對。
 //!
 //! 劇本的 `steps` 是檔案操作（write、rm）、git 指令、publish 的指令（比 exit code、stdout 與這一步改了哪些檔）
 //! 和只能在程式內呼叫的函式（call）。暫存路徑換成 `@TMP@` 再比。
@@ -59,7 +59,7 @@ fn src_root() -> String {
 }
 
 fn teams() -> String {
-    format!("{}/scaffold/.claude/teams", src_root())
+    format!("{}/plugin/scaffold/.claude/teams", src_root())
 }
 
 fn s(v: &Value) -> &str {
@@ -400,7 +400,7 @@ fn script_matches_python() {
             other => panic!("第 {i} 步：不認得的 op {other}"),
         }
     }
-    assert!(bad.is_empty(), "{} 步和 Python 版不同：\n{}", bad.len(), bad.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(bad.is_empty(), "{} 步和 0.x 的 Python 版不同：\n{}", bad.len(), bad.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
     // 兩張表沒有過時：表上的 label 都有一步真的不同
     for (l, _) in STRICTER.iter().chain(KNOWN.iter()) {
         assert!(labels.contains(*l), "表上的 label「{l}」劇本裡沒有");
@@ -423,13 +423,13 @@ fn selftest_matches_python() {
     let fake_gh = dir.join("fake_gh.sh");
     std::fs::write(&fake_gh, "base=\"$1\"\nshift\necho \"$*\" >> \"$base.log\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--body-file\" ]; then cp \"$a\" \"$base.body\"; fi\n  prev=\"$a\"\ndone\necho \"https://github.com/acme-fork/app/pull/7\"\n").expect("write");
     let t = teams();
-    let ctx = Ctx { profile: format!("{t}/methodology.json"), pack_root: format!("{}/scaffold", src_root()), cwd: dir.to_string_lossy().into_owned(), teams: t, today: None };
-    let env = Env { ctx, project: format!("{}/scaffold", src_root()), git: vec!["git".into()], gh: vec!["gh".into()], env: Vec::new() };
+    let ctx = Ctx { profile: format!("{t}/methodology.json"), pack_root: format!("{}/plugin/scaffold", src_root()), cwd: dir.to_string_lossy().into_owned(), teams: t, today: None };
+    let env = Env { ctx, project: format!("{}/plugin/scaffold", src_root()), git: vec!["git".into()], gh: vec!["gh".into()], env: Vec::new() };
     let sh = |p: &Path| vec!["sh".to_string(), p.to_string_lossy().into_owned()];
     let mut out = String::new();
     let code = pb::selftest_with(&env, &sh(&fake_git), &sh(&fake_gh), &mut out);
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(out, s(&exp["selftest"]["stdout"]), "selftest 的輸出和 Python 版不同");
+    assert_eq!(out, s(&exp["selftest"]["stdout"]), "selftest 的輸出和 0.x 的 Python 版不同");
     assert_eq!(Some(code as i64), exp["selftest"]["code"].as_i64());
     assert!(out.lines().filter(|l| l.contains("[通過]")).count() >= 35 && !out.contains("[失敗]"));
 }

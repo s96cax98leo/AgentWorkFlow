@@ -3,32 +3,32 @@
  "build": [
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/schemas/envelope.schema.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/schemas/envelope.schema.json",
    "text": "{\n  \"$id\": \"envelope\",\n  \"title\": \"交件信封\",\n  \"description\": \"示範用\",\n  \"type\": \"object\",\n  \"required\": [\n    \"status\",\n    \"payload\"\n  ],\n  \"properties\": {\n    \"status\": {\n      \"enum\": [\n        \"ok\",\n        \"blocked\"\n      ],\n      \"description\": \"狀態\"\n    },\n    \"title\": {\n      \"type\": \"string\",\n      \"title\": \"欄位名是 title，不能刪\",\n      \"maxLength\": 80\n    },\n    \"confidence\": {\n      \"type\": \"number\",\n      \"minimum\": 0.0,\n      \"maximum\": 1.0\n    },\n    \"payload\": {\n      \"type\": \"object\"\n    }\n  }\n}\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/schemas/methodology.schema.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/schemas/methodology.schema.json",
    "text": "{\n  \"$id\": \"methodology\",\n  \"type\": \"object\",\n  \"required\": [\n    \"name\"\n  ],\n  \"properties\": {\n    \"name\": {\n      \"type\": \"string\"\n    },\n    \"note\": {\n      \"type\": \"string\"\n    },\n    \"extensions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\"\n      }\n    }\n  }\n}\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/schemas/payloads/subtasks.schema.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/schemas/payloads/subtasks.schema.json",
    "text": "{\n  \"$id\": \"subtasks\",\n  \"title\": \"子任務\",\n  \"type\": \"object\",\n  \"required\": [\n    \"items\"\n  ],\n  \"properties\": {\n    \"items\": {\n      \"type\": \"array\",\n      \"minItems\": 1,\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"description\": {\n            \"type\": \"string\",\n            \"description\": \"欄位名是 description\"\n          },\n          \"pattern\": {\n            \"type\": \"string\",\n            \"pattern\": \"^[a-z\\\\\\\\]+\\\"$\"\n          },\n          \"weight\": {\n            \"type\": \"number\",\n            \"minimum\": 1.5,\n            \"maximum\": 1e+22\n          }\n        }\n      }\n    }\n  }\n}\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/schemas/payloads/notes.schema.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/schemas/payloads/notes.schema.json",
    "text": "{\n  \"type\": \"object\",\n  \"description\": \"筆記\",\n  \"properties\": {\n    \"text\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ]\n    }\n  },\n  \"additionalProperties\": false\n}\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/alpha.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/alpha.js",
    "text": "// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/beta.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/beta.js",
    "text": "\n\n// 片段 beta\nfunction betaFn(x) {\n  return x * 2 // await 只在註解裡\n}\n\n"
   },
   {
@@ -86,7 +86,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ null /*@end*/\nconst SUB = /*@schema:subtasks*/ null /*@end*/, NOTES = /*@schema:notes*/ null /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n/*@end*/\n/*@snippet:beta*/\n舊的內容\n跨了兩行\n/*@end*/\nconst MP2 = /*@methodology*/\n  null\n/*@end*/\nreturn { ok: true }\n",
     "w2.js": "// 沒有任何標記的 workflow\nreturn 1\n",
@@ -157,7 +157,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/beta.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/beta.js",
    "text": "\n\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n\n"
   },
   {
@@ -168,7 +168,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 2 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "// 沒有任何標記的 workflow\nreturn 1\n",
@@ -208,7 +208,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/schemas/payloads/notes.schema.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/schemas/payloads/notes.schema.json",
    "text": "{\n  \"type\": \"object\",\n  \"description\": \"筆記\",\n  \"properties\": {\n    \"text\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ]\n    }\n  },\n  \"additionalProperties\": false,\n  \"required\": [\n    \"text\"\n  ]\n}\n"
   },
   {
@@ -219,7 +219,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "// 沒有任何標記的 workflow\nreturn 1\n",
@@ -243,7 +243,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/schemas/envelope.schema.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/schemas/envelope.schema.json",
    "text": "{\n  \"$id\": \"envelope\",\n  \"title\": \"交件信封\",\n  \"description\": \"示範用\",\n  \"type\": \"object\",\n  \"required\": [\n    \"status\"\n  ],\n  \"properties\": {\n    \"status\": {\n      \"enum\": [\n        \"ok\",\n        \"blocked\"\n      ],\n      \"description\": \"狀態\"\n    },\n    \"title\": {\n      \"type\": \"string\",\n      \"title\": \"欄位名是 title，不能刪\",\n      \"maxLength\": 80\n    },\n    \"confidence\": {\n      \"type\": \"number\",\n      \"minimum\": 0.0,\n      \"maximum\": 1.0\n    },\n    \"payload\": {\n      \"type\": \"object\"\n    }\n  }\n}\n"
   },
   {
@@ -254,7 +254,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w1.js、w3.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\",\"payload\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "// 沒有任何標記的 workflow\nreturn 1\n",
@@ -278,7 +278,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\n  \"name\": \"示範 profile\",\n  \"note\": \"引號 \\\" 與反斜線 \\\\ 與 </script>\"\n}\n"
   },
   {
@@ -289,7 +289,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w1.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w1.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "// 沒有任何標記的 workflow\nreturn 1\n",
@@ -329,7 +329,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\n  \"name\": \"示範 profile\",\n  \"note\": \"改過\"\n}\n"
   },
   {
@@ -340,7 +340,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w1.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w1.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ {\"name\":\"示範 profile\",\"note\":\"引號 \\\" 與反斜線 \\\\ 與 </script>\"} /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ {\"name\":\"示範 profile\",\"note\":\"引號 \\\" 與反斜線 \\\\ 與 </script>\"} /*@end*/\nreturn { ok: true }\n",
     "w2.js": "// 沒有任何標記的 workflow\nreturn 1\n",
@@ -375,7 +375,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w2.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w2.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ {\"name\":\"示範 profile\",\"note\":\"改過\"} /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ {\"name\":\"示範 profile\",\"note\":\"改過\"} /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"手改\":1} /*@end*/\nreturn 1\n",
@@ -415,7 +415,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{ 不是 JSON"
   },
   {
@@ -432,7 +432,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting property name enclosed in double quotes: line 1 column 3 (char 2)\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting property name enclosed in double quotes: line 1 column 3 (char 2)\n"
   },
   {
    "op": "build",
@@ -446,11 +446,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting property name enclosed in double quotes: line 1 column 3 (char 2)\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting property name enclosed in double quotes: line 1 column 3 (char 2)\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": ""
   },
   {
@@ -467,7 +467,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting value: line 1 column 1 (char 0)\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting value: line 1 column 1 (char 0)\n"
   },
   {
    "op": "build",
@@ -481,11 +481,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting value: line 1 column 1 (char 0)\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不是合法 JSON：Expecting value: line 1 column 1 (char 0)\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\n  \"note\": \"少了 name\"\n}\n"
   },
   {
@@ -502,7 +502,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：缺欄位 name\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：缺欄位 name\n"
   },
   {
    "op": "build",
@@ -516,11 +516,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：缺欄位 name\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：缺欄位 name\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\n  \"name\": 3,\n  \"note\": 4,\n  \"extensions\": {}\n}\n"
   },
   {
@@ -537,7 +537,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.name：型別應為 string；$.note：型別應為 string；$.extensions：型別應為 array\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.name：型別應為 string；$.note：型別應為 string；$.extensions：型別應為 array\n"
   },
   {
    "op": "build",
@@ -551,11 +551,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.name：型別應為 string；$.note：型別應為 string；$.extensions：型別應為 array\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.name：型別應為 string；$.note：型別應為 string；$.extensions：型別應為 array\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "[]\n"
   },
   {
@@ -572,7 +572,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
   },
   {
    "op": "build",
@@ -586,11 +586,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "null\n"
   },
   {
@@ -607,7 +607,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
   },
   {
    "op": "build",
@@ -621,11 +621,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\"name\": \"x\"} 多的\n"
   },
   {
@@ -642,7 +642,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不是合法 JSON：Extra data: line 1 column 15 (char 14)\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不是合法 JSON：Extra data: line 1 column 15 (char 14)\n"
   },
   {
    "op": "build",
@@ -656,11 +656,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不是合法 JSON：Extra data: line 1 column 15 (char 14)\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不是合法 JSON：Extra data: line 1 column 15 (char 14)\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\n  \"name\": \"有擴充\",\n  \"extensions\": [\n    {\n      \"name\": \"合規審查\",\n      \"agent\": \"acme:compliance\",\n      \"stage\": \"deliver\"\n    },\n    {\n      \"name\": \"效能\",\n      \"agent\": \"perf-bot\",\n      \"stage\": \"test\"\n    },\n    \"不是物件\"\n  ]\n}\n"
   },
   {
@@ -675,11 +675,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"extension_agents\": {\n    \"acme:compliance\": \"tpm-reviewer\"\n  }\n}\n"
   },
   {
@@ -696,7 +696,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -710,11 +710,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"extension_agents\": {\n    \"acme:compliance\": \"tpm-reviewer\",\n    \"perf-bot\": \"tpm-reviewer\"\n  }\n}\n"
   },
   {
@@ -731,7 +731,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -745,11 +745,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"extension_agents\": {}\n}\n"
   },
   {
@@ -766,7 +766,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -780,11 +780,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"其他\": 1\n}\n"
   },
   {
@@ -801,7 +801,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -815,11 +815,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"extension_agents\": [\n    \"acme:compliance\",\n    \"perf-bot\"\n  ]\n}\n"
   },
   {
@@ -836,7 +836,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -850,11 +850,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"extension_agents\": [\n    \"perf-bot\"\n  ]\n}\n"
   },
   {
@@ -871,7 +871,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -885,11 +885,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "[1, 2]\n"
   },
   {
@@ -906,7 +906,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -920,11 +920,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{ 壞掉\n"
   },
   {
@@ -941,7 +941,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -955,11 +955,11 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"extension_agents\": null\n}\n"
   },
   {
@@ -976,7 +976,7 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "build",
@@ -990,16 +990,16 @@
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
     "w3.js": "const A = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nreturn 2\n"
    },
-   "err": "@TMP@/tpl/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
+   "err": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json 不符合 schemas/methodology.schema.json：$.extensions[2]：型別應為 object\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\n  \"name\": \"少欄位的擴充\",\n  \"extensions\": [\n    {\n      \"stage\": \"plan\"\n    },\n    {\n      \"name\": \"只有名字\"\n    }\n  ]\n}\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json",
    "text": "{\n  \"extension_agents\": {\n    \"x\": \"tpm-reviewer\"\n  }\n}\n"
   },
   {
@@ -1018,7 +1018,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json",
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json",
    "text": "{\n  \"name\": \"沒有擴充\",\n  \"extensions\": []\n}\n"
   },
   {
@@ -1037,11 +1037,11 @@
   },
   {
    "op": "remove",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/guard.config.json"
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/guard.config.json"
   },
   {
    "op": "remove",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/methodology.json"
+   "path": "@TMP@/tpl/plugin/scaffold/.claude/teams/methodology.json"
   },
   {
    "op": "build",
@@ -1086,7 +1086,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "w4.js：片段檔不存在：@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js\n",
+   "out": "w4.js：片段檔不存在：@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
@@ -1101,7 +1101,7 @@
    "root": "@TMP@/tpl",
    "argv": [],
    "rc": 1,
-   "out": "w4.js：片段檔不存在：@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js\n",
+   "out": "w4.js：片段檔不存在：@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
@@ -1112,7 +1112,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "function g() {\n  return /*@schema:notes*/ 1\n}\n"
   },
   {
@@ -1149,7 +1149,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "function g() {\n  return '{{AGENT_NS}}'\n}\n"
   },
   {
@@ -1186,7 +1186,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "function g() { return 1 }\nconst v = await g()\n"
   },
   {
@@ -1223,7 +1223,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "await g()\n"
   },
   {
@@ -1260,7 +1260,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "x = awaited + 1\nconst awaiting = 1\nlet y = 'await_x'\nfunction g() { return 1 }\n"
   },
   {
@@ -1271,7 +1271,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w4.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w4.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
@@ -1297,7 +1297,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "function g() {\n  await h()\n\tawait h()\n}\n// await 註解\n/* await */\n* await\n) await\n] await\n} await x\n"
   },
   {
@@ -1308,7 +1308,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w4.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w4.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
@@ -1334,7 +1334,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "// @requires: delta\nfunction g() { return 1 }\n"
   },
   {
@@ -1371,7 +1371,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "// @requires: beta, delta ,, alpha\nfunction g() { return 1 }\n"
   },
   {
@@ -1408,7 +1408,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "//@requires:beta\nfunction g() { return 1 }\n"
   },
   {
@@ -1445,7 +1445,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "  // @requires: beta（縮排的不算）\nfunction g() { return 1 }\n"
   },
   {
@@ -1456,7 +1456,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w4.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w4.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
@@ -1482,7 +1482,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "function g() { return 1 }\r\n\r\n// 行尾是 CRLF\r\n"
   },
   {
@@ -1493,7 +1493,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w4.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w4.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
@@ -1524,12 +1524,12 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/delta.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/delta.js",
    "text": "// @requires: gamma\nfunction d() { return g() }\n"
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/gamma.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/gamma.js",
    "text": "// @requires: delta\nfunction g() { return d() }\n"
   },
   {
@@ -1540,7 +1540,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：w4.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：w4.js（請跑 awf build）\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 3 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "const X = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nreturn 1\n",
@@ -1583,7 +1583,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/tpl/scaffold/.claude/teams/tools/snippets/beta.js",
+   "path": "@TMP@/tpl/plugin/workflow-templates/snippets/beta.js",
    "text": "\n\n// 片段 beta\nfunction betaFn(x) {\n  return x * 5 // await 只在註解裡\n}\n\n"
   },
   {
@@ -1597,7 +1597,7 @@
    "root": "@TMP@/tpl",
    "argv": [],
    "rc": 1,
-   "out": "w2.js：片段檔不存在：@TMP@/tpl/scaffold/.claude/teams/tools/snippets/nope.js\n",
+   "out": "w2.js：片段檔不存在：@TMP@/tpl/plugin/workflow-templates/snippets/nope.js\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 5 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "/*@snippet:nope*/\n/*@end*/\n",
@@ -1614,7 +1614,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "w2.js：片段檔不存在：@TMP@/tpl/scaffold/.claude/teams/tools/snippets/nope.js\n",
+   "out": "w2.js：片段檔不存在：@TMP@/tpl/plugin/workflow-templates/snippets/nope.js\n",
    "files": {
     "w1.js": "export const meta = { name: 'w1' }\nconst ENV = /*@schema:envelope*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\"}}} /*@end*/\nconst SUB = /*@schema:subtasks*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\",\"pattern\":\"^[a-z\\\\\\\\]+\\\"$\"},\"weight\":{\"type\":\"number\",\"minimum\":1.5,\"maximum\":1e+22}}}}}}}} /*@end*/, NOTES = /*@schema:notes*/ {\"type\":\"object\",\"required\":[\"status\"],\"properties\":{\"status\":{\"enum\":[\"ok\",\"blocked\"]},\"title\":{\"type\":\"string\",\"maxLength\":80},\"confidence\":{\"type\":\"number\",\"minimum\":0.0,\"maximum\":1.0},\"payload\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":[\"string\",\"null\"]}},\"additionalProperties\":false,\"required\":[\"text\"]}}} /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\nconst UPPER = /*@schema:Upper*/ null /*@end*/\n/*@snippet:alpha*/\n// @requires: beta\n// 片段 alpha\nfunction alphaFn(x) {\n  return betaFn(x) + 1\n}\n\nasync function alphaAsync(x) {\n  const y = await x\n  return y\n}\n/*@end*/\n/*@snippet:beta*/\n// 片段 beta\nfunction betaFn(x) {\n  return x * 5 // await 只在註解裡\n}\n/*@end*/\nconst MP2 = /*@methodology*/ null /*@end*/\nreturn { ok: true }\n",
     "w2.js": "/*@snippet:nope*/\n/*@end*/\n",
@@ -1819,7 +1819,7 @@
     "--check"
    ],
    "rc": 1,
-   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：.hidden.js、sdlc-plan.js（請跑 awf build）\n",
+   "out": "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、snippets/ 不一致：.hidden.js、sdlc-plan.js（請跑 awf build）\n",
    "files": {
     ".hidden.js": "const MP = /*@methodology*/ null /*@end*/\n",
     "sdlc-plan.js": "const N = /*@schema:notes*/ null /*@end*/\nconst MP = /*@methodology*/ null /*@end*/\n/*@snippet:beta*/\n/*@end*/\n// awf-override: 1.0.0\n"
@@ -2599,7 +2599,7 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/doc/scaffold/.claude/teams/README.md",
+   "path": "@TMP@/doc/plugin/scaffold/.claude/teams/README.md",
    "text": "# teams\n\n角色：dev-alpha、dev-beta-gamma、tpm-one。\n"
   },
   {
@@ -2911,19 +2911,19 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/doc/scaffold/.claude/teams/README.md",
+   "path": "@TMP@/doc/plugin/scaffold/.claude/teams/README.md",
    "text": "# teams\n\n角色：dev-alpha、dev-beta-gamma、tpm-one。\ntpm-ghost\n"
   },
   {
    "op": "docs",
    "root": "@TMP@/doc",
    "rc": 1,
-   "out": "文件與實際檔案不一致：\n  - scaffold/.claude/teams/README.md:4 提到不存在的角色 tpm-ghost\n",
+   "out": "文件與實際檔案不一致：\n  - plugin/scaffold/.claude/teams/README.md:4 提到不存在的角色 tpm-ghost\n",
    "err": ""
   },
   {
    "op": "write",
-   "path": "@TMP@/doc/scaffold/.claude/teams/README.md",
+   "path": "@TMP@/doc/plugin/scaffold/.claude/teams/README.md",
    "text": "# teams\n\n角色：dev-alpha、dev-beta-gamma、tpm-one。\n"
   },
   {
@@ -3320,19 +3320,19 @@
   },
   {
    "op": "write",
-   "path": "@TMP@/doc/scaffold/.claude/teams/README.md",
+   "path": "@TMP@/doc/plugin/scaffold/.claude/teams/README.md",
    "text": "# teams\n\n角色：dev-alpha、tpm-one。\n"
   },
   {
    "op": "docs",
    "root": "@TMP@/doc",
    "rc": 1,
-   "out": "文件與實際檔案不一致：\n  - scaffold/.claude/teams/README.md 少了核心角色 dev-beta-gamma\n",
+   "out": "文件與實際檔案不一致：\n  - plugin/scaffold/.claude/teams/README.md 少了核心角色 dev-beta-gamma\n",
    "err": ""
   },
   {
    "op": "write",
-   "path": "@TMP@/doc/scaffold/.claude/teams/README.md",
+   "path": "@TMP@/doc/plugin/scaffold/.claude/teams/README.md",
    "text": "# teams\n\n角色：dev-alpha、dev-beta-gamma、tpm-one。\n"
   },
   {
@@ -3394,7 +3394,7 @@
    "op": "docs",
    "root": "@TMP@/doc",
    "rc": 1,
-   "out": "文件與實際檔案不一致：\n  - README.md:3 agent 檔總數寫 5，實際 4：'agent 檔共 5 個'\n  - README.md:5 提到不存在的角色 dev-beta-gamma\n  - scaffold/.claude/teams/README.md:3 提到不存在的角色 dev-beta-gamma\n",
+   "out": "文件與實際檔案不一致：\n  - README.md:3 agent 檔總數寫 5，實際 4：'agent 檔共 5 個'\n  - README.md:5 提到不存在的角色 dev-beta-gamma\n  - plugin/scaffold/.claude/teams/README.md:3 提到不存在的角色 dev-beta-gamma\n",
    "err": ""
   },
   {

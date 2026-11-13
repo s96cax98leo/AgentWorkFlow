@@ -26,7 +26,7 @@ for (const k of ['brief', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 /*@snippet:recipe*/
-// ── 片段 recipe（.claude/teams/tools/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
+// ── 片段 recipe（workflow-templates/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 規則和 awf recipe 完全一致（golden-set/recipes/*.json 兩邊都跑，結果要相同）：
 //   profile 沒有 recipes（舊版）或指定的 recipe 不存在 → 當成 feature 完整流程（只會更嚴）；
@@ -188,7 +188,7 @@ function resolveModel(profile, role, stage, suggested, modifiers) {
 }
 /*@end*/
 /*@snippet:kernel*/
-// ── 片段 kernel（.claude/teams/tools/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
+// ── 片段 kernel（workflow-templates/snippets/kernel.js）：執行核心。所有派工都經過 awfAgent ──
 // @requires: challenge, recipe
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // awfAgent 在 tryAgent（challenge 片段：共同前綴、執行紀錄檔、trace、失敗當缺件）之上再做三件事：
@@ -292,7 +292,7 @@ const CTX = `簡報（唯一指示來源）：${A.brief}\nrun 目錄：${A.run_d
 const brief = (env) => env ? `狀態 ${env.status}；摘要：${env.summary || ''}${(env.artifacts || []).length ? `；細節見 ${env.artifacts.join('、')}` : ''}${(env.open_questions || []).length ? `；待釐清 ${env.open_questions.length} 則（見信封）` : ''}` : '（沒有）'
 // 規則 26：agent 沒交件記為 missing，不當成空清單或「沒有被推翻」；缺件一律 halted，halt_reason 寫出 label
 /*@snippet:challenge*/
-// ── 片段 challenge（.claude/teams/tools/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
+// ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 缺件（rules.md 規則 26）：agent 回 null 或交件無效時把 label 記進 missing；
 // 反駁類缺件不是「全部沒被推翻」，呼叫端要回 halted:true，halt_reason 寫出 label（haltMissing）。
@@ -418,7 +418,7 @@ async function challengeList(list, o) {
 }
 /*@end*/
 /*@snippet:layers*/
-// ── 片段 layers（.claude/teams/tools/snippets/layers.js）：依 depends_on 把子任務拓撲分層 ──
+// ── 片段 layers（workflow-templates/snippets/layers.js）：依 depends_on 把子任務拓撲分層 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 碰到循環或指向不存在的子任務就停下：回傳的 cycle／unknown 不是空的，呼叫端要停（throw 或回 halted:true）。
 // 這裡不派 agent，所以沒有 agent 缺件（missing）的問題；缺的是相依目標時列在 unknown。

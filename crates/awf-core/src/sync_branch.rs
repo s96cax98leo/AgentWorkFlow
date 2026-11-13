@@ -1,5 +1,5 @@
 //! 確定性分支同步工具：讓 epic／功能分支跟上 base（預設 origin/main），策略自動判定或固定。
-//! 由 `scaffold/.claude/teams/tools/sync_branch.py` 移植；判定、exit code、輸出的 JSON 照 Python 版。
+//! 原本是 0.x 的 Python 工具 `sync_branch.py`；判定、exit code、輸出的 JSON 照 0.x 的 Python 版。
 //!
 //! 策略（methodology.json 的 conventions.sync.strategy；沒寫＝auto，--strategy 可覆蓋）：
 //!   auto     已跟上 → none；未推送且無衝突 → rebase；已推送且無衝突 → merge（把 base merge 進來）；有衝突 → transit。
@@ -12,7 +12,7 @@
 //! 結束碼：0＝成功；1＝停下交人或檢查不通過；2＝apply transit 有衝突，已留在中轉分支的 worktree；
 //!         3＝apply rebase／merge 失敗，已 abort 回原狀。
 //!
-//! 和 Python 版的差別：執行不了 git、設定值形狀讓 Python 丟例外的地方，這裡一律停下（halted、exit 1），不印 traceback。
+//! 和 0.x 的 Python 版的差別：執行不了 git、設定值形狀讓 Python 丟例外的地方，這裡一律停下（halted、exit 1），不印 traceback。
 
 use crate::merge_gate::pyargs::{self, opt, req, ArgErr, Kind, Opt, Parsed};
 use crate::merge_gate::{pyjson, pyutil};

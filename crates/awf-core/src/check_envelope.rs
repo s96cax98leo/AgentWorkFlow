@@ -1,4 +1,4 @@
-//! 驗證一份交件信封：schema＋交接語意規則。由 `scaffold/.claude/teams/tools/check_envelope.py` 移植。
+//! 驗證一份交件信封：schema＋交接語意規則。原本是 0.x 的 Python 工具 `check_envelope.py`。
 //!
 //! 訊息文字是對跑基準的一部分（`tests/parity/small.expected.json`）；裡面提到的舊工具路徑等引用全部改寫時一起換。
 

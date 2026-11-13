@@ -4,10 +4,10 @@ AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，�
 
   awf init --target <專案目錄>（或直接寫 <專案目錄>） [--config <檔>] [--answers <檔>] [--upgrade] [--adopt-new-fields]
            [--force] [--overwrite-user-files] [--hooks plugin|project] [--with-mcp] [--with-workflows]
-           [--with-merge-gate [--merge-gate-bin <檔> [--merge-gate-checksums <檔>]]] [--defaults] [--source <模版根目錄>]
+           [--with-merge-gate [--merge-gate-bin <檔> [--merge-gate-checksums <檔>]]] [--defaults] [--source <plugin 目錄>]
 
   --target    要初始化的專案目錄（不存在會建立）
-  --config    設定檔（格式見 workflow.config.example）；預設依序找 ./workflow.config、模版根目錄的 workflow.config；
+  --config    設定檔（格式見 workflow.config.example）；預設依序找 ./workflow.config、plugin 目錄的 workflow.config；
               都沒有時互動詢問（非互動環境或加 --defaults 時直接用預設值）
   --answers   開發規範與慣例的答案檔（JSON，格式見 docs/自訂與擴充.md〈自訂開發規範〉）；給了就不詢問，直接套用
               （選哪個 methodology profile、code style、commit 格式、分支前綴、PR 大小上限、文件格式）
@@ -50,7 +50,8 @@ AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，�
   --merge-gate-checksums
               搭配 --merge-gate-bin：記這個執行檔 sha256 的 checksums.json；沒給就依執行檔產生一份
   --defaults  沒有設定檔時不詢問，全部用預設值（開發規範用 default profile；主 session 的 git／GitHub 限制維持開啟）
-  --source    模版根目錄（底下有 scaffold/ 與 plugin/）；預設看環境變數 AWF_TEMPLATE_DIR、plugin 的上一層、執行檔的上層
+  --source    模版在哪：plugin 目錄（底下有 scaffold/ 與 workflow-templates/），或底下有 plugin/ 的 repo 根目錄。
+              預設依序看環境變數 AWF_TEMPLATE_DIR、AWF_PLUGIN_DIR、CLAUDE_PLUGIN_ROOT，再從執行檔往上找（裝好的 plugin 不用指定）
   --python    0.x 的選項。1.0 不再需要 Python：給了會提示一行並忽略
 
 套用到既有專案：使用者 .claude/ 下的 agents、skills、commands 一律不動；既有的 CLAUDE.md 不覆蓋，

@@ -46,10 +46,11 @@ fn copy_tree(src: &Path, dst: &Path) {
     }
 }
 
-/// 模版的複本（沒有 `plugin/bin/awf-linux-x64`：和還沒發佈的 repo 一樣）。
+/// 模版的複本：只有 plugin 目錄的內容（和從 marketplace 安裝的一樣，旁邊沒有 repo 的其他東西）。
+/// 沒有 `bin/awf-linux-x64`：和還沒發佈的 repo 一樣。
 fn template_copy(dst: &Path) {
-    for rel in ["scaffold", "plugin/.claude-plugin", "plugin/workflow-templates", "plugin/legacy-tools.json", "workflow.config.example"] {
-        copy_tree(&repo().join(rel), &dst.join(rel));
+    for rel in ["scaffold", ".claude-plugin", "workflow-templates", "legacy-tools.json", "workflow.config.example"] {
+        copy_tree(&repo().join("plugin").join(rel), &dst.join(rel));
     }
 }
 
@@ -187,6 +188,44 @@ fn a_fresh_init_copies_settings_but_no_tools() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// CLAUDE.md 的標記：新產生的寫「由 awf init 從模版產生」；0.x 寫的「由 init.py 從模版產生」照樣認成 init 自己產生的。
+#[test]
+fn a_claude_md_mark_new_and_0x_are_both_recognized() {
+    use awf_core::init::{is_generated_claude_md, CLAUDE_MARK, CLAUDE_MARK_0X};
+    let d = tmp("a-mark");
+    let r = run(&d, None, &["--target", "p", "--defaults"]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    let md = d.join("p/CLAUDE.md");
+    let fresh = read(&md);
+    assert!(fresh.starts_with("<!-- agent-workflow：由 awf init 從模版產生（"), "{}", fresh.lines().next().unwrap_or_default());
+    assert!(!fresh.contains("init.py"), "新產生的 CLAUDE.md 不該再提 init.py");
+    assert!(is_generated_claude_md(&fresh) && is_generated_claude_md(&format!("{CLAUDE_MARK_0X}（…） -->\n# x\n")));
+    assert!(!is_generated_claude_md("# 使用者自己的 CLAUDE.md\n") && CLAUDE_MARK != CLAUDE_MARK_0X);
+
+    // 兩種標記的既有檔都走「init 自己產生的」那條路：不加 --force 原樣略過、不另寫引用檔；--force 更新標記之前的內容並保留〈專案特定〉
+    for (name, mark) in [("old", CLAUDE_MARK_0X), ("new", CLAUDE_MARK)] {
+        let p = d.join(name);
+        let body = format!("{mark}（舊的說明） -->\n# 舊標題\n\n舊內容\n\n## 專案特定\n\n我自己加的規則\n");
+        write(&p.join("CLAUDE.md"), &body);
+        let r = run(&d, None, &["--target", name, "--defaults"]);
+        assert_eq!(r.code, 0, "{name}：{}", r.err);
+        assert_eq!(read(&p.join("CLAUDE.md")), body, "{name}：沒有 --force 不該動");
+        assert!(!p.join(".claude/teams/agent-workflow.CLAUDE.md").exists(), "{name}：被當成使用者的檔了");
+        let r = run(&d, None, &["--target", name, "--defaults", "--force"]);
+        assert_eq!(r.code, 0, "{name}：{}", r.err);
+        let now = read(&p.join("CLAUDE.md"));
+        assert!(now.starts_with(CLAUDE_MARK) && !now.contains("舊內容") && now.contains("我自己加的規則"), "{name}：{now}");
+        assert!(!p.join(".claude/teams/agent-workflow.CLAUDE.md").exists(), "{name}：被當成使用者的檔了");
+    }
+    // 沒有標記的是使用者的檔：不覆蓋，改寫引用檔
+    let u = d.join("user");
+    write(&u.join("CLAUDE.md"), "# 我的專案\n");
+    let r = run(&d, None, &["--target", "user", "--defaults"]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(read(&u.join("CLAUDE.md")).starts_with("# 我的專案\n") && u.join(".claude/teams/agent-workflow.CLAUDE.md").is_file());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn a_python_option_is_ignored_with_a_note() {
     let d = tmp("a2");
@@ -208,9 +247,9 @@ fn a_snippets_come_from_the_project_first_then_the_template() {
     let r = run(&d, None, &["--target", "p", "--defaults", "--with-workflows"]);
     assert_eq!(r.code, 0, "{}\n{}", r.out, r.err);
     let p = d.join("p");
-    let tpl_snips = build::template_snippet_dir(template());
+    let tpl_snips = awf_core::template::snippets(template());
     assert!(tpl_snips.join("kernel.js").is_file(), "模版的片段目錄不對：{}", tpl_snips.display());
-    assert_eq!(tpl_snips, template().join("scaffold/.claude/teams/tools/snippets"));
+    assert_eq!(tpl_snips, template().join("workflow-templates/snippets"));
     // 1.0 的專案沒有自己的片段：覆寫檔內嵌的是模版的
     assert!(!p.join(".claude/teams/tools").exists());
     let wf = p.join(".claude/workflows/sdlc-plan.js");
@@ -473,7 +512,7 @@ fn git_ok(args: &[&str]) -> Option<Vec<u8>> {
 
 /// 指紋檔記的 rev（最後一個 0.x 版本）；git 歷史裡沒有就回 None（測試略過）。
 fn legacy_rev() -> Option<String> {
-    let doc = json_of(&repo().join(legacy_tools::FILE));
+    let doc = json_of(&repo().join(legacy_tools::REPO_FILE));
     let rev = doc["revs"].as_array()?.first()?.as_str()?.to_string();
     git_ok(&["cat-file", "-e", &format!("{rev}^{{commit}}")])?;
     Some(rev)
@@ -683,7 +722,7 @@ fn c_user_owned_gate_yml_is_not_taken_over() {
 #[test]
 fn c_fingerprints_cover_every_06_file() {
     let Some(rev) = legacy_rev() else { return skip("指紋對得上 0.6 的內容") };
-    let index = legacy_tools::load_index(&repo()).expect("plugin/legacy-tools.json");
+    let index = legacy_tools::load_index(&repo().join("plugin")).expect("plugin/legacy-tools.json");
     let listing = String::from_utf8(git_ok(&["ls-tree", "-r", "--name-only", &rev, "--", "scaffold/.claude/teams/tools", "plugin/hooks", "scaffold/.claude/teams/golden-set/run.py"]).expect("ls-tree")).expect("UTF-8");
     let mut vals = init::Kv::default();
     vals.set("RUNS_DIR", "_acme/agent-runs");
@@ -711,7 +750,7 @@ fn c_fingerprints_cover_every_06_file() {
 
 #[test]
 fn legacy_tools_json_matches_git_history() {
-    let path = repo().join(legacy_tools::FILE);
+    let path = repo().join(legacy_tools::REPO_FILE);
     if std::env::var("AWF_GEN_LEGACY").is_ok_and(|v| !v.is_empty() && v != "0") {
         // 重新產生：AWF_GEN_LEGACY=1 用檔案裡記的 revs；其他值當成 rev（逗號分隔），例如 AWF_GEN_LEGACY=main
         let v = std::env::var("AWF_GEN_LEGACY").unwrap_or_default();
@@ -746,8 +785,8 @@ fn c_broken_or_missing_index_removes_nothing() {
     write(&p.join(".claude/teams/tools/awf.py"), "# 0.x 的工具\n");
     for broken in [Some("{ 壞掉"), Some("{\"files\": []}"), None] {
         match broken {
-            Some(t) => write(&tpl.join("plugin/legacy-tools.json"), t),
-            None => std::fs::remove_file(tpl.join("plugin/legacy-tools.json")).expect("刪"),
+            Some(t) => write(&tpl.join("legacy-tools.json"), t),
+            None => std::fs::remove_file(tpl.join("legacy-tools.json")).expect("刪"),
         }
         let r = run_from(&tpl, &d, None, &["--target", "p", "--upgrade"]);
         assert_eq!(r.code, 0, "{}", r.err);
@@ -762,10 +801,10 @@ fn c_broken_or_missing_index_removes_nothing() {
 #[test]
 fn d_merge_gate_needs_a_linux_x64_binary() {
     let d = tmp("d1");
-    // 模版沒有 plugin/bin/awf-linux-x64（還沒發佈）：明確失敗，專案不動
+    // 模版沒有 bin/awf-linux-x64（還沒發佈）：明確失敗，專案不動
     let r = run(&d, None, &["--target", "p", "--defaults", "--with-merge-gate"]);
     assert_eq!(r.code, 1);
-    assert!(r.err.contains("--with-merge-gate 要把 linux-x64 的執行檔放進專案") && r.err.contains("plugin/bin/awf-linux-x64") && r.err.contains("--merge-gate-bin"), "{}", r.err);
+    assert!(r.err.contains("--with-merge-gate 要把 linux-x64 的執行檔放進專案") && r.err.contains("bin/awf-linux-x64") && r.err.contains("--merge-gate-bin"), "{}", r.err);
     assert!(!d.join("p").exists(), "失敗時不該建立專案");
     // 指定的檔不存在、不是 ELF、是別的平台或架構的執行檔：拒絕
     write(&d.join("script"), "#!/bin/sh\necho hi\n");
@@ -846,17 +885,17 @@ fn d_merge_gate_places_binary_checksums_and_ci() {
     // 三、模版自己有執行檔與 checksums（發佈版的樣子）：不用指定
     let tpl = d.join("tpl");
     template_copy(&tpl);
-    std::fs::create_dir_all(tpl.join("plugin/bin")).expect("建目錄");
-    std::fs::write(tpl.join("plugin/bin/awf-linux-x64"), fake_elf()).expect("寫");
-    write(&tpl.join("plugin/bin/checksums.json"), &sums);
+    std::fs::create_dir_all(tpl.join("bin")).expect("建目錄");
+    std::fs::write(tpl.join("bin/awf-linux-x64"), fake_elf()).expect("寫");
+    write(&tpl.join("bin/checksums.json"), &sums);
     let r = run_from(&tpl, &d, None, &["--target", "r", "--defaults", "--with-merge-gate"]);
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(read(&d.join("r/.claude/teams/bin/checksums.json")), sums);
     // 模版的 checksums 對不上或不見了：拒絕
-    write(&tpl.join("plugin/bin/checksums.json"), &sums.replace(&sum, "00"));
+    write(&tpl.join("bin/checksums.json"), &sums.replace(&sum, "00"));
     let r = run_from(&tpl, &d, None, &["--target", "s", "--defaults", "--with-merge-gate"]);
     assert!(r.code == 1 && r.err.contains("不符") && !d.join("s").exists(), "{}", r.err);
-    std::fs::remove_file(tpl.join("plugin/bin/checksums.json")).expect("刪");
+    std::fs::remove_file(tpl.join("bin/checksums.json")).expect("刪");
     let r = run_from(&tpl, &d, None, &["--target", "s", "--defaults", "--with-merge-gate"]);
     assert!(r.code == 1 && r.err.contains("checksums.json") && !d.join("s").exists(), "{}", r.err);
 

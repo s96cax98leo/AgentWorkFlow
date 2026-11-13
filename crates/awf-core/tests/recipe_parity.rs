@@ -1,6 +1,6 @@
-//! recipe 解析與模型分級的對跑：和 Python 版錄下來的基準（tests/parity/recipe.expected.json）逐字比對。
+//! recipe 解析與模型分級的對跑：和 0.x 的 Python 版錄下來的基準（tests/parity/recipe.expected.json）逐字比對。
 //!
-//! 基準的格式見 `tests/parity/record_recipe.py` 開頭的說明。比對一律比序列化後的文字，所以物件的鍵順序、
+//! 基準的格式見 `tests/parity/README.md`。比對一律比序列化後的文字，所以物件的鍵順序、
 //! 整數與浮點數的差別（1 和 1.0）也算在內。
 
 use awf_core::recipe::{self, GitOut, PyErr};
@@ -14,7 +14,7 @@ fn root() -> PathBuf {
 }
 
 fn teams() -> PathBuf {
-    root().join("scaffold/.claude/teams")
+    root().join("plugin/scaffold/.claude/teams")
 }
 
 fn expected() -> &'static Value {

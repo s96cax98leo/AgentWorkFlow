@@ -1,7 +1,7 @@
 //! 文件與實際檔案的一致性檢查：角色、workflow、command 的數量與名單，以及 SDLC 段落順序。
-//! 由 `tests/check_docs.py` 移植。
+//! 原本是 0.x 的 Python 工具 `check_docs.py`。
 //!
-//! 檢查的文件：README.md、CLAUDE.md、scaffold/.claude/teams/README.md、.claude-plugin/marketplace.json 與
+//! 檢查的文件：README.md、CLAUDE.md、plugin/scaffold/.claude/teams/README.md、.claude-plugin/marketplace.json 與
 //! plugin/.claude-plugin/plugin.json 的 description。實際狀態從檔案算：
 //!   - agent：plugin/agents/*.md；核心角色與舊名取自 `awf_core::check_agents` 的 `CORE`、`ALIASES`，
 //!     其餘是網站分析 agent。
@@ -16,10 +16,10 @@
 //!   3. 斜線指令：文件裡的 `/名稱` 只能是 plugin 的 command、Claude Code 內建指令，或 `/agent-workflow:<skill 或 command>`。
 //!   4. SDLC 段落：寫到「plan → design → build」的地方要照完整順序（含 sync）；marketplace 的 plugin 描述要提到每一段。
 //!
-//! 和 Python 版不同的地方：Python 版用 set 走訪同一行的多個名稱、斜線指令與網站分析 agent，順序每次執行不固定；
-//! 這裡固定成「先出現的先報」（網站分析 agent 依名稱排序）。檔案讀不到時 Python 版當掉，這裡印一行說明，exit code 同樣是 1。
+//! 和 0.x 的 Python 版不同的地方：0.x 的 Python 版用 set 走訪同一行的多個名稱、斜線指令與網站分析 agent，順序每次執行不固定；
+//! 這裡固定成「先出現的先報」（網站分析 agent 依名稱排序）。檔案讀不到時 0.x 的 Python 版當掉，這裡印一行說明，exit code 同樣是 1。
 
-use crate::pyre::{self, Pat};
+use crate::termre::{self, Pat};
 use awf_core::merge_gate::pyutil;
 use awf_core::pyfmt;
 use serde_json::Value;
@@ -107,7 +107,7 @@ fn docs(root: &Path) -> Result<Vec<(String, String)>, String> {
         Some(slot) => slot.1 = v,
         None => out.push((k, v)),
     };
-    for rel in ["README.md", "CLAUDE.md", "scaffold/.claude/teams/README.md"] {
+    for rel in ["README.md", "CLAUDE.md", "plugin/scaffold/.claude/teams/README.md"] {
         let text = read_text(root, rel)?;
         put(&mut out, rel.to_string(), text);
     }
@@ -126,7 +126,7 @@ fn docs(root: &Path) -> Result<Vec<(String, String)>, String> {
 }
 
 // ------------------------------------------------------------------ 規則
-/// 固定的正規式（Python 寫法，由 pyre 改寫）。
+/// 固定的正規式（寫法照 [`crate::termre`] 的方言）。
 struct Rules {
     counts: Vec<(Pat, &'static str)>,
     role: Pat,
@@ -154,7 +154,7 @@ const COUNT_RULES: &[(&str, &str)] = &[
 ];
 
 fn rules() -> Result<Rules, String> {
-    let c = |p: &str| pyre::compile(p).map_err(|e| format!("內建的正規式編不過（{e}）：{p}"));
+    let c = |p: &str| termre::compile(p).map_err(|e| format!("內建的正規式編不過（{e}）：{p}"));
     let mut counts = Vec::new();
     for (pat, what) in COUNT_RULES {
         counts.push((c(pat)?, *what));
@@ -275,13 +275,13 @@ fn check(root: &Path, consts: &Consts) -> Result<(Facts, Vec<String>), String> {
         check_sdlc(&f, &r, name, text, &mut errs)?;
     }
     let get = |k: &str| d.iter().find(|(n, _)| n == k).map(|(_, t)| t.as_str()).unwrap_or_default();
-    let (readme, teams) = (get("README.md"), get("scaffold/.claude/teams/README.md"));
+    let (readme, teams) = (get("README.md"), get("plugin/scaffold/.claude/teams/README.md"));
     for role in &f.core {
         if !readme.contains(&format!("`{role}`")) {
             errs.push(format!("README.md 的角色表少了核心角色 `{role}`"));
         }
         if !teams.contains(role.as_str()) {
-            errs.push(format!("scaffold/.claude/teams/README.md 少了核心角色 {role}"));
+            errs.push(format!("plugin/scaffold/.claude/teams/README.md 少了核心角色 {role}"));
         }
     }
     for role in &f.site {

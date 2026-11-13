@@ -1,6 +1,6 @@
-//! build（內嵌 schema、methodology 與片段）的對跑：照 Python 版錄下來的劇本（tests/parity/build.expected.json 的 `build`）
+//! build（內嵌 schema、methodology 與片段）的對跑：照 0.x 的 Python 版錄下來的劇本（tests/parity/build.expected.json 的 `build`）
 //! 做一遍，逐字比對 exit code、stdout、stderr 與跑完之後每支 workflow 的內容。
-//! err_any 的步驟只比 exit code 與 stdout：Python 版在那裡直接當掉（traceback），這裡要有自己的說明。
+//! err_any 的步驟只比 exit code 與 stdout：0.x 的 Python 版在那裡直接當掉（traceback），這裡要有自己的說明。
 #![cfg(unix)]
 
 use awf_core::build::{self, Paths};
@@ -68,9 +68,9 @@ fn build_matches_python() {
                 runs += 1;
                 let argv: Vec<String> = st["argv"].as_array().map(|a| a.iter().map(|x| s(x).to_string()).collect()).unwrap_or_default();
                 let paths = if op == "build_real" {
-                    Paths::template_repo(&root.canonicalize().expect("repo 根目錄"))
+                    Paths::template(&root.canonicalize().expect("repo 根目錄").join("plugin"))
                 } else if s(&st["mode"]) == "template" {
-                    Paths::template_repo(Path::new(&real(s(&st["root"]))))
+                    Paths::template(&Path::new(&real(s(&st["root"]))).join("plugin"))
                 } else {
                     Paths::project(Path::new(&real(s(&st["root"]))))
                 };
@@ -101,26 +101,26 @@ fn build_matches_python() {
     }
     let _ = std::fs::remove_dir_all(&base);
     assert!(runs > 100, "劇本太短：{runs}");
-    println!("build：{runs} 次執行，{} 次逐字相同，{loose} 次只比 exit code 與 stdout（Python 版當掉）", runs - loose);
+    println!("build：{runs} 次執行，{} 次逐字相同，{loose} 次只比 exit code 與 stdout（0.x 的 Python 版當掉）", runs - loose);
     assert!(bad.is_empty(), "{} 處不同（共 {} 步）：\n{}", bad.len(), steps.len(), bad.join("\n"));
 }
 
-/// 偵測模版 repo 與專案（Python 版依工具檔的位置判斷，這裡依目錄內容）。
+/// 偵測模版 repo 與專案（0.x 的 Python 版依工具檔的位置判斷，這裡依目錄內容）。
 #[test]
 fn detect_paths() {
     let base = std::env::temp_dir().join(format!("awf-build-detect-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let mk = |p: &str| std::fs::create_dir_all(base.join(p)).expect("mkdir");
     mk("tpl/plugin/workflow-templates");
-    mk("tpl/scaffold/.claude/teams");
+    mk("tpl/plugin/scaffold/.claude/teams");
     mk("tpl/crates/deep");
     mk("tpl/_tpm/proj/.claude/teams");
     mk("plain/sub");
     let base = base.canonicalize().expect("canonicalize");
     let tpl = base.join("tpl");
     assert_eq!(Paths::detect(&tpl).wf_dir, tpl.join("plugin/workflow-templates"));
-    assert_eq!(Paths::detect(&tpl).teams_dir, tpl.join("scaffold/.claude/teams"));
-    assert_eq!(Paths::detect(&tpl).snippet_dir, tpl.join("scaffold/.claude/teams/tools/snippets"));
+    assert_eq!(Paths::detect(&tpl).teams_dir, tpl.join("plugin/scaffold/.claude/teams"));
+    assert_eq!(Paths::detect(&tpl).snippet_dir, tpl.join("plugin/workflow-templates/snippets"));
     // 模版 repo 的子目錄：往上找
     assert_eq!(Paths::detect(&tpl.join("crates/deep")).wf_dir, tpl.join("plugin/workflow-templates"));
     // 模版 repo 底下的已 init 專案：當專案

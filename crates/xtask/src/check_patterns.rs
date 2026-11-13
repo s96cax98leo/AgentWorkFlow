@@ -1,4 +1,4 @@
-//! pattern 庫（`snippets/patterns.js`）的單元檢查。由 `tests/check_patterns.py` 移植。
+//! pattern 庫（`snippets/patterns.js`）的單元檢查。原本是 0.x 的 Python 工具 `check_patterns.py`。
 //!
 //! 用 node 載入 challenge、recipe、kernel、patterns 四個片段，給假的 agent()（本體在 `js/patterns.cjs`，原樣搬來），
 //! 六個 pattern 各檢查：沒給上限會 throw、正常、達上限回 halted、缺件回 halted；另檢查執行核心的派工數上限在 pattern
@@ -7,8 +7,8 @@
 //! 自訂腳本端到端：組裝出來的腳本真的能跑（片段之間沒有撞名）、派工經過核心、上限在執行時生效，而且靜態檢查被繞過
 //! 之後包裝仍然擋得住。檢查與組裝直接呼叫狀態機的 [`awf_core::state::render_custom`]（和 `awf next --script` 同一支）。
 //!
-//! 沒有 node 時判失敗（不略過）。和 Python 版不同的地方（只會更嚴）：node 回的結果缺 `calls`／`out`、格式不對時，
-//! Python 版直接當掉，這裡列成一條失敗。
+//! 沒有 node 時判失敗（不略過）。和 0.x 的 Python 版不同的地方（只會更嚴）：node 回的結果缺 `calls`／`out`、格式不對時，
+//! 0.x 的 Python 版直接當掉，這裡列成一條失敗。
 
 use crate::tempproj;
 use crate::util::{self, Captured, TempDir};
@@ -41,7 +41,7 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
 ///
 /// 組裝用的是狀態機自己的 [`awf_core::state::render_custom`]（`awf next --script` 走的那一支），不另抄一份 preamble：
 /// 在暫存目錄擺一個最小的專案（測試用的 AGENT_NS、輸出語言、給定的 profile、沒有擴充 agent；schema 取自 `root`），
-/// 片段取自 `root` 的 scaffold。
+/// 片段取自 `root` 的 `plugin/workflow-templates/snippets/`。
 fn render_custom(root: &Path, text: &str, stage: &str, args: &Value, methodology: &Value) -> Result<String, String> {
     let tmp = TempDir::new("awf-cs-proj.")?;
     let proj = tmp.path();

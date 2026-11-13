@@ -1,6 +1,6 @@
 //! 交付文件工具用到的 Python 標準庫行為：`re` 的語意、`html.unescape`、`str.splitlines`、`json.dumps`。
 //!
-//! 這些是 deliverables 模組私有的實作。隱私規則靠它們和 Python 版判定一致，改動前先跑對跑基準。
+//! 這些是 deliverables 模組私有的實作。隱私規則靠它們和 0.x 的 Python 版判定一致，改動前先跑對跑基準。
 
 use super::html5::{HTML5, INVALID_CHARREFS, INVALID_CODEPOINTS};
 use crate::kb::pyish::WS_CLASS;

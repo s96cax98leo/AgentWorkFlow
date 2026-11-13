@@ -42,7 +42,7 @@ pub fn state_env(root: &Path, proj: &Path) -> awf_core::state::Env {
         project: posix(proj),
         cwd: posix(proj),
         home: posix(&proj.join(".no-claude-home")),
-        template: Some(posix(root)),
+        template: Some(posix(&util::plugin_dir(root))),
         ..Default::default()
     }
 }
@@ -59,12 +59,10 @@ pub fn rendered(root: &Path, prefix: &str) -> Result<Rendered, String> {
     Ok(Rendered { tmp, proj, wf_dir })
 }
 
-/// 乾跑用的 `check_workflows.mjs`：專案裡有就用專案的（init 複製的那一份），否則用模版的。
-pub fn check_workflows(root: &Path, proj: &Path) -> PathBuf {
-    let own = proj.join(".claude").join("teams").join("tools").join("check_workflows.mjs");
-    if own.is_file() {
-        own
-    } else {
-        util::teams_dir(root).join("tools").join("check_workflows.mjs")
-    }
+/// 乾跑的指令：`node <模版>/workflow-templates/check_workflows.mjs --project <proj> --agents-dir <模版>/agents --wf-dir <wf_dir>`。
+pub fn check_workflows(root: &Path, proj: &Path, wf_dir: &Path) -> Command {
+    let plugin = util::plugin_dir(root);
+    let mut cmd = Command::new("node");
+    cmd.arg(awf_core::template::check_workflows(&plugin)).arg("--project").arg(proj).arg("--agents-dir").arg(plugin.join("agents")).arg("--wf-dir").arg(wf_dir).current_dir(proj);
+    cmd
 }

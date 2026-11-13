@@ -1,4 +1,4 @@
-//! 產生基準用的虛構專案（示範客戶 ACME 的訂單中心）。由 `tests/bench/make_fixture.py` 移植。
+//! 產生基準用的虛構專案（示範客戶 ACME 的訂單中心）。原本是 0.x 的 Python 工具 `make_fixture.py`。
 //! 內容全部虛構、完全由這支程式決定：同一版產出的檔案逐位元組相同。
 //!
 //! 為什麼要有：量 token 要有一個固定的情境才能前後比較。真實專案的 transcript 不能進版控，所以用一個規模接近的虛構
@@ -7,9 +7,9 @@
 //! 虛構專案本身是一個 Python 專案（它是被分析的對象，不是我們的工具）：這裡只是把它的檔案內容當文字寫出來，
 //! 不執行、也不需要 Python。固定不變的幾個檔放在 `bench_data/*.txt`。
 //!
-//! 產出要和 Python 版逐檔相同：每個檔的 sha1 記在 `tests/fixtures/bench-fixture.sha1.json`（Python 版還在時記下來的），
-//! selftest 逐檔核對。Python 版的 selftest 另有一項「所有 .py 都能編譯」，這裡沒有 Python 可以編譯，改成核對那份清單
-//! （清單記錄時 Python 版確認過都能編譯）。
+//! 產出要和 0.x 的 Python 版逐檔相同：每個檔的 sha1 記在 `tests/fixtures/bench-fixture.sha1.json`（0.x 的 Python 版還在時記下來的），
+//! selftest 逐檔核對。0.x 的 Python 版的 selftest 另有一項「所有 .py 都能編譯」，這裡沒有 Python 可以編譯，改成核對那份清單
+//! （清單記錄時 0.x 的 Python 版確認過都能編譯）。
 
 use crate::util::{self, TempDir};
 use sha1::{Digest, Sha1};
@@ -51,7 +51,7 @@ const TEST_EXPORT: &str = include_str!("bench_data/test_export.txt");
 const MANIFEST: &str = include_str!("../tests/fixtures/bench-fixture.sha1.json");
 /// 清單檔的位置（相對 repo 根目錄）與開頭的說明。
 pub const MANIFEST_REL: &str = "crates/xtask/tests/fixtures/bench-fixture.sha1.json";
-const MANIFEST_NOTE: &str = "基準用虛構專案每個檔的 sha1。最初由 Python 版 tests/bench/make_fixture.py 的產出記下來（當時每個 .py 都確認過能編譯）；cargo xtask bench --selftest 核對現在的產出和它逐檔相同。內容確實該變時用 cargo xtask bench manifest --write 重寫，並在 commit 說明。";
+const MANIFEST_NOTE: &str = "基準用虛構專案每個檔的 sha1。最初由 0.x 的 Python 版 tests/bench/make_fixture.py 的產出記下來（當時每個 .py 都確認過能編譯）；cargo xtask bench --selftest 核對現在的產出和它逐檔相同。內容確實該變時用 cargo xtask bench manifest --write 重寫，並在 commit 說明。";
 
 /// 類別名：去掉結尾的 s、第一個字母大寫（名稱都是小寫英文字）。
 fn cls(domain: &str) -> String {
@@ -380,7 +380,7 @@ pub fn files() -> BTreeMap<String, String> {
     out.insert(s("docs/系統架構.md"), doc_architecture());
     out.insert(s("docs/維運手冊.md"), doc_ops());
     out.insert(s("docs/批次作業.md"), doc_jobs());
-    // README 的字面和 Python 版相同（裡面提到的是當初產生它的腳本）；改了它，虛構專案就變了、前後的量測不能比較
+    // README 的字面和 0.x 的 Python 版相同（裡面提到的是當初產生它的腳本）；改了它，虛構專案就變了、前後的量測不能比較
     out.insert(s("README.md"), s(concat!(
         "# ACME 訂單中心（虛構）\n\n示範客戶 ACME 的訂單、客戶、庫存、帳務、出貨、通知、報表與批次作業。",
         "這個 repo 由 AgentWorkFlow 的 `tests/bench/make_fixture.py` 產生，只用來量工作流程的成本。\n\n",
@@ -502,7 +502,7 @@ pub fn selftest() -> (bool, String) {
     check("規模：至少 50 個檔、6000 行", st.files >= 50 && st.lines >= 6000, format!("{} 個檔、{} 行", st.files, st.lines));
     check("至少 3 個檔超過 400 行（讀取預算的整檔門檻）", st.big_files.len() >= 3, st.big_files.join("、"));
     let diff = manifest_diff();
-    check("和記下來的清單逐檔相同（清單取自 Python 版的產出，當時所有 .py 都能編譯）", diff.is_empty(), diff.iter().take(3).cloned().collect::<Vec<_>>().join("；"));
+    check("和記下來的清單逐檔相同（清單取自 0.x 的 Python 版的產出，當時所有 .py 都能編譯）", diff.is_empty(), diff.iter().take(3).cloned().collect::<Vec<_>>().join("；"));
     let no_cr = sa.keys().all(|rel| std::fs::read(full(&a, rel)).map(|d| !d.contains(&b'\r')).unwrap_or(false));
     check("沒有 CRLF", no_cr, String::new());
     (ok, out)

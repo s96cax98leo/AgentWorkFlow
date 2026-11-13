@@ -1,5 +1,5 @@
 //! 先壓縮、再給模型讀：跑一個指令，完整輸出寫進 log 檔，終端只印重點。
-//! 由 `scaffold/.claude/teams/tools/run_brief.py` 移植；摘要的文字是對跑基準的一部分
+//! 原本是 0.x 的 Python 工具 `run_brief.py`；摘要的文字是對跑基準的一部分
 //! （`tests/parity/small.expected.json`）。
 //!
 //! 做法參考 caveman（Apache-2.0）的「Read less」，用自己的寫法。
@@ -214,7 +214,7 @@ fn py_int(s: &str) -> Option<i64> {
     t.replace('_', "").parse::<i64>().ok()
 }
 
-/// selftest 用的假指令（取代 Python 版臨時寫的小腳本）：`awf run-brief --selftest-emit <種類>`。
+/// selftest 用的假指令（取代 0.x 的 Python 版臨時寫的小腳本）：`awf run-brief --selftest-emit <種類>`。
 fn emit(kind: &str) -> i32 {
     match kind {
         "lines" => {

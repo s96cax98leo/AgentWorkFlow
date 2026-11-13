@@ -1,4 +1,4 @@
-//! hook 的入口與規則（guard-shell、guard-paths、envelope、session-start）。由 `plugin/hooks/*.py` 移植。
+//! hook 的入口與規則（guard-shell、guard-paths、envelope、session-start）。原本是 0.x 的 Python hook（`guard.py`、`envelope_hook.py` 等）。
 //!
 //! 用法：`awf hook <guard-shell|guard-paths|envelope|session-start> < hook-input.json`
 //!
@@ -14,7 +14,7 @@
 //!   1. hook 跑不起來（找不到執行檔、逾時）：hooks.json 設 onFailure=continue，放行。
 //!   2. 跑得起來但輸入壞掉（空、不是 JSON、缺 tool_name／tool_input、shell 指令超過 [`MAX_SHELL_COMMAND`]）：
 //!      守門類一律擋（exit 2），交件類放行（exit 0）。
-//!   3. 設定載入失敗（Python 版是 guard.py／awf_config.py 載入失敗），或程式內部 panic：改用本檔內建的最小規則
+//!   3. 設定載入失敗（0.x 的 Python 版是 guard.py／awf_config.py 載入失敗），或程式內部 panic：改用本檔內建的最小規則
 //!      （[`fallback_shell`]），只擋 push／send-pack、gh pr merge、--approve、gh api 寫入、curl 等打 merge／reviews；
 //!      其他放行，guard-paths 一律放行。stderr 印一行提示。最小規則刻意不依賴其他模組的狀態。
 //!   4. 守門規則執行中出現意外錯誤（對應 Python 的例外）：守門類擋（exit 2），交件類放行（exit 0）。
@@ -286,7 +286,7 @@ pub fn main(args: &[String]) -> i32 {
 }
 
 /// 守門類 hook 的內部期限（毫秒）。plugin 的 hooks.json 給 10 秒、逾時算「跑不起來」而放行；
-/// 一條切得出上千段的長指令可以把檢查拖過 10 秒，所以在那之前自己擋下。Python 版沒有這一層（只會更嚴）。
+/// 一條切得出上千段的長指令可以把檢查拖過 10 秒，所以在那之前自己擋下。0.x 的 Python 版沒有這一層（只會更嚴）。
 const GUARD_DEADLINE_MS: u64 = 8000;
 
 /// 交件類（envelope）與提示類不設期限：它們出問題時本來就放行。

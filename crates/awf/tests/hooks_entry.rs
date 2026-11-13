@@ -1,7 +1,7 @@
-//! `awf hook` 入口層的整合測試：對應 `plugin/hooks/tests/test_entry.py`（啟動器那一段不在這裡）。
+//! `awf hook` 入口層的整合測試：原本是 0.x 的 `plugin/hooks/tests/test_entry.py`（啟動器那一段不在這裡）。
 //!
 //! 1. 守門模組壞掉（設定載入失敗、內部 panic）：改用內建最小規則，一般指令與寫檔放行，push／merge／approve 擋。
-//! 2. 延遲：量 guard-shell 典型指令並印出 p95（門檻同 Python 版：預設 300ms、CI 1000ms、`AWF_HOOK_P95_MS` 可自訂）。
+//! 2. 延遲：量 guard-shell 典型指令並印出 p95（門檻同 0.x 的 Python 版：預設 300ms、CI 1000ms、`AWF_HOOK_P95_MS` 可自訂）。
 //! 3. 沒有 guard.config.json 的專案：主 session 放行；tpm-／dev- agent 推送仍擋。
 //! 4. PATH 上沒有 git：一般指令與寫檔放行，純字串規則仍擋，而且不是「意外錯誤」。
 //! 5. 壞輸入：守門 exit 2、交件 exit 0；用法錯誤 exit 1。
@@ -10,7 +10,7 @@
 //!    guard-paths 涵蓋 Read／Grep、SessionStart 只跑 session-start。
 //!    （守門規則本身的案例在 `hooks_cases.rs`，照 `tests/hooks/cases.jsonl` 重放；專案 settings 範本的註冊檢查也在那裡。）
 //!
-//! Python 版另有「PATH 上只有 python／python3 是商店空殼／沒有 Python」的啟動測試：hook 改成執行檔之後不適用，
+//! 0.x 的 Python 版另有「PATH 上只有 python／python3 是商店空殼／沒有 Python」的啟動測試：hook 改成執行檔之後不適用，
 //! 啟動器（bin/awf 挑平台）的測試在 `cargo xtask check-launchers`。
 //!
 //! 故障注入（`AWF_HOOK_TEST_FAULT`）只有除錯版的執行檔才有，所以第 1 段在 release 設定下略過。
@@ -207,7 +207,7 @@ fn config_with_wrong_types_never_opens_the_gate() {
     expect("型別錯誤：交件放行", &r, 0);
 }
 
-/// 對應 Python 版「envelope 模組壞掉：放行」：交件檢查自己跑不下去（這裡是設定檔讀不懂）時不能卡住 agent 交件。
+/// 對應 0.x 的 Python 版「envelope 模組壞掉：放行」：交件檢查自己跑不下去（這裡是設定檔讀不懂）時不能卡住 agent 交件。
 #[test]
 fn envelope_never_blocks_when_it_cannot_run() {
     let tmp = Tmp::new("envbroken");
@@ -443,7 +443,7 @@ fn session_start_version_hint() {
     for (label, raw) in inputs {
         one_line(&format!("輸入壞掉（{label}）照樣提示、不擋"), &start(&old, p, raw), &["0.4.1"]);
     }
-    // 找不到 plugin.json（對應 Python 版「複製進專案的 hook」）：不提示
+    // 找不到 plugin.json（對應 0.x 的 Python 版「複製進專案的 hook」）：不提示
     let bare = tmp.path().join("ss-project-mode");
     std::fs::create_dir_all(&bare).unwrap();
     quiet("plugin 目錄沒有 plugin.json", &start(&old, Some(&bare), START));

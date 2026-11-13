@@ -1,7 +1,7 @@
 //! 把模版檔寫進專案：替換佔位符、去掉 `.tmpl`，以及「不破壞使用者的既有設定」的每一條規則。
 //!
 //! - 「複製哪些檔」：[`scaffold_plan`]、[`workflow_plan`]（回傳來源與目的地的清單）。1.0 起工具都在 `awf` 執行檔裡，
-//!   `scaffold/.claude/teams/tools/` 與 scaffold 裡的 `.py` 不複製（[`not_copied`]）。
+//!   scaffold 裡萬一還有 `.claude/teams/tools/` 或 `.py`（0.x 的模版）也不複製（[`not_copied`]）。
 //! - 「hook 怎麼註冊」：[`hook_command`]（寫進 settings 的指令）與 [`dest_for`] 裡選哪一份 settings 模版；
 //!   `--hooks project` 用的執行檔與 merge gate 的執行檔由 [`Writer::put_bytes`] 放。
 
@@ -19,7 +19,14 @@ use std::sync::OnceLock;
 
 pub const CLAUDE_IMPORT: &str = ".claude/teams/agent-workflow.CLAUDE.md";
 /// 模版 CLAUDE.md 第一行的標記，用來認出 init 自己產生的 CLAUDE.md。
-pub const CLAUDE_MARK: &str = "<!-- agent-workflow：由 init.py 從模版產生";
+pub const CLAUDE_MARK: &str = "<!-- agent-workflow：由 awf init 從模版產生";
+/// 0.x 的 init 寫的標記：既有專案的 CLAUDE.md 還是這一行，照樣認（`--force` 更新時會換成新的）。
+pub const CLAUDE_MARK_0X: &str = "<!-- agent-workflow：由 init.py 從模版產生";
+
+/// 這份 CLAUDE.md 是不是 init 產生的（新舊兩種標記都認）。
+pub fn is_generated_claude_md(body: &str) -> bool {
+    body.contains(CLAUDE_MARK) || body.contains(CLAUDE_MARK_0X)
+}
 /// 使用者的檔案：已存在時不整份覆蓋（`--force` 也一樣），改走合併；只有 `--overwrite-user-files` 才整份覆蓋。
 pub const MERGE_JSON: &[&str] = &[".claude/settings.json", ".mcp.json"];
 /// 和使用者共用的目錄：同名檔案要看得出是模版產生的，`--force` 才覆蓋（否則當成使用者的檔案保留）。
@@ -148,8 +155,8 @@ pub fn dest_for(rel: &Path, target: &Path, runs: &str, hooks: &str, with_mcp: bo
     Some(target.join(rel))
 }
 
-/// 1.0 不複製進專案的 scaffold 檔（相對 scaffold 的路徑）：`.claude/teams/tools/` 整個目錄，以及其他地方的 `.py`
-/// （例如 `golden-set/run.py`：它要靠 tools 裡的模組，專案也不需要 Python）。
+/// 不複製進專案的 scaffold 檔（相對 scaffold 的路徑）：`.claude/teams/tools/` 整個目錄與任何 `.py`。
+/// 這個 repo 的 scaffold 已經沒有這些檔；規則留著，`--source` 指到還帶著 0.x 工具的模版時一樣不會放進專案。
 pub fn not_copied(rel: &Path) -> bool {
     let p = posix(rel);
     p.starts_with(".claude/teams/tools/") || p.ends_with(".py")
@@ -347,7 +354,7 @@ impl<'a> Writer<'a> {
     /// 模版內容寫成 `.claude/teams/agent-workflow.CLAUDE.md`，再在結尾追加一段 @ 引用（已引用過就不再追加）。
     fn put_claude_md(&mut self, src: &Path, dst: &Path) -> R<()> {
         let body = os_or_crash(read_raw(dst), dst)?;
-        if body.contains(CLAUDE_MARK) {
+        if is_generated_claude_md(&body) {
             // 先前 init 在空專案產生的 CLAUDE.md
             if self.force {
                 self.put_splice(src, dst, "## 專案特定")?;

@@ -1,6 +1,6 @@
 //! 狀態機：主 session 每一段只做兩件事——`awf next`（照它說的做）與 `awf done`（把結果存起來）。
-//! 由 `scaffold/.claude/teams/tools/awf.py` 移植：動作的 JSON、訊息文字、exit code、寫出的檔
-//! （run.json、`<run>/.wf/<名>.js`、`接手摘要.md`、資料包）都和 Python 版逐字相同
+//! 原本是 0.x 的 Python 工具 `awf.py`：動作的 JSON、訊息文字、exit code、寫出的檔
+//! （run.json、`<run>/.wf/<名>.js`、`接手摘要.md`、資料包）都和 0.x 的 Python 版逐字相同
 //! （對跑基準在 `tests/parity/state.expected.json`）。訊息與動作裡的指令已改成 `awf <子指令>`，基準檔的對應字串一起換過。
 //!
 //! 這支只排順序、組參數、取時間、產生腳本，**不放寬任何閘門**：存檔與驗證仍然是 [`crate::save_run::stage`]，
@@ -10,12 +10,12 @@
 //! - `machine`：下一個動作（decide）、閘門重點、政策核准、自訂腳本、接手摘要。
 //! - `selftest`：`awf state --selftest`。
 //!
-//! 和 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
-//! - 專案根目錄取 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄（Python 版從工具檔的位置往上推）。
-//! - 「模版 repo 自己」：環境變數 `AWF_TEMPLATE_DIR`，否則從執行檔往上找到有 `plugin/.claude-plugin/plugin.json` 的目錄。
+//! 和 0.x 的 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
+//! - 專案根目錄取 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄（0.x 的 Python 版從工具檔的位置往上推）。
+//! - 「模版自己」：[`crate::template::find`]（`AWF_TEMPLATE_DIR` → plugin 的環境變數 → 從執行檔往上找到 plugin 目錄）。
 //! - 時間可以用環境變數 `AWF_NOW`（`YYYY-MM-DDTHH:MM:SSZ` 或 epoch 秒數）固定，方便對跑。
 //! - 讀進來的 JSON 有 NaN、Infinity、落單的代理字元跳脫、超出 64 位元範圍的整數時當成讀不懂；巢狀超過 200 層當成沒接住的例外。
-//! - Python 版丟出沒接住的例外的地方（traceback、exit 1），這裡印「awf：類別：訊息」、exit 1。
+//! - 0.x 的 Python 版丟出沒接住的例外的地方（traceback、exit 1），這裡印「awf：類別：訊息」、exit 1。
 //! - 用法訊息的指令名是 `awf`。
 
 mod args;
@@ -115,7 +115,7 @@ plan 段的核准一律由人。recipe 的 gate_mode 是 plan-only（內建：do
 （save-run approve --by policy，條件完全由它判）；不乾淨就照常交人。其他 recipe（strict）每個閘門都等人。
 ";
 
-/// 失敗：`Awf` 是 Python 版的 AwfError（印「awf：訊息」、exit 1）；`Py` 是 Python 版沒接住的例外（那邊是 traceback、exit 1）。
+/// 失敗：`Awf` 是 0.x 的 Python 版的 AwfError（印「awf：訊息」、exit 1）；`Py` 是 0.x 的 Python 版沒接住的例外（那邊是 traceback、exit 1）。
 #[derive(Debug, Clone)]
 pub enum Fail {
     Awf(String),
@@ -145,13 +145,14 @@ pub(crate) fn awf_err<T>(msg: impl Into<String>) -> A<T> {
 pub struct Env {
     /// 專案根目錄（絕對路徑）。
     pub project: String,
-    /// 相對路徑的基準（Python 版的目前目錄）：`--out`、`--output`、`--plugin-dir`。
+    /// 相對路徑的基準（0.x 的 Python 版的目前目錄）：`--out`、`--output`、`--plugin-dir`。
     pub cwd: String,
     /// Claude Code 的設定目錄（`CLAUDE_CONFIG_DIR`，沒有就是 `~/.claude`）：找 `plugins/installed_plugins.json`。
     pub home: String,
     /// `AWF_PLUGIN_DIR`、`CLAUDE_PLUGIN_ROOT`（依序）。
     pub plugin_env: [Option<String>; 2],
-    /// 模版 repo 的根目錄（底下有 `plugin/` 與 `scaffold/`）：在模版 repo 裡直接跑時用它的 plugin。
+    /// 模版根目錄＝plugin 目錄（底下有 `scaffold/` 與 `workflow-templates/`，見 [`crate::template`]）：
+    /// 執行檔自己所在的 plugin（或在模版 repo 裡直接跑時 repo 的 `plugin/`）。
     pub template: Option<String>,
     /// workflow 紀錄的根目錄（`AWF_TRANSCRIPTS_DIR`）；None 用 Claude Code 的專案目錄（`~/.claude/projects/<專案>`）。
     pub transcripts: Option<String>,
@@ -186,20 +187,6 @@ fn parse_now(raw: &str) -> Option<f64> {
     Some((days * 86_400 + hh * 3600 + mm * 60 + ss) as f64)
 }
 
-/// 從執行檔往上找模版 repo（有 `plugin/.claude-plugin/plugin.json` 的目錄）。
-fn template_from_exe() -> Option<String> {
-    let exe = std::env::current_exe().ok()?;
-    let exe = exe.canonicalize().unwrap_or(exe);
-    let mut cur = exe.parent();
-    while let Some(d) = cur {
-        if d.join("plugin").join(".claude-plugin").join("plugin.json").is_file() {
-            return d.to_str().map(|s| s.replace('\\', "/"));
-        }
-        cur = d.parent();
-    }
-    None
-}
-
 impl Env {
     /// 命令列用：從行程的環境收集。
     pub fn from_env() -> Env {
@@ -219,7 +206,7 @@ impl Env {
             cwd,
             home,
             plugin_env: [var("AWF_PLUGIN_DIR"), var("CLAUDE_PLUGIN_ROOT")],
-            template: var("AWF_TEMPLATE_DIR").or_else(template_from_exe),
+            template: crate::template::find_str(),
             transcripts: var("AWF_TRANSCRIPTS_DIR"),
             now,
             today,
@@ -259,9 +246,9 @@ impl Env {
         ctx
     }
 
-    /// 模版 repo 的 plugin 目錄（有 workflow-templates/ 才算）。
+    /// 模版自己的 plugin 目錄（有 workflow-templates/ 才算）。
     pub(crate) fn template_plugin(&self) -> Option<String> {
-        let p = pyish::pjoin(self.template.as_deref()?, "plugin");
+        let p = self.template.clone()?;
         is_dir(&pyish::pjoin(&p, TEMPLATES)).then_some(p)
     }
 }
@@ -402,7 +389,7 @@ fn load_run(env: &Env, run: &str) -> A<Value> {
     Ok(sr::load(&env.sr(), run)?)
 }
 
-/// 把 `save_run stage` 的 stdout 與 stderr 接回 Python 版印出來的先後順序（那邊兩個串流導到同一個緩衝區）。
+/// 把 `save_run stage` 的 stdout 與 stderr 接回 0.x 的 Python 版印出來的先後順序（那邊兩個串流導到同一個緩衝區）。
 /// stage 的輸出順序是固定的：[stderr] halted、限制文件、拆工檢查 → [stdout] 執行紀錄索引、代寫 → [stderr] 紀錄缺件、錯誤、警告
 /// → [stdout] 其餘。前面那一組 stderr 的內容可以從存檔後的 run.json 逐字重組；對不上就不拆（stderr 全部放在索引那一行前面）。
 fn merge_stage_output(stage: &str, st: &Value, out: &str, err: &str) -> String {
@@ -802,7 +789,7 @@ pub fn run(env: &Env, argv: &[String], out: &mut String, err: &mut String) -> i3
             1
         }
         Err(Fail::Py(e)) => {
-            // Python 版在這裡是沒接住的例外（traceback、exit 1）
+            // 0.x 的 Python 版在這裡是沒接住的例外（traceback、exit 1）
             err.push_str(&format!("awf：{}：{}\n", e.class, e.msg));
             1
         }

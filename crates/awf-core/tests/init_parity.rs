@@ -1,6 +1,6 @@
 //! init 的回歸基準：照劇本（tests/parity/init.expected.json）做一遍，逐字比對。
 //!
-//! 劇本原本是 Python 版 `init.py` 錄的；1.0 起 init 的行為不同了（工具不複製進專案、hook 改成執行檔、升級會整理舊工具、
+//! 劇本原本是 0.x 的 Python 版 `init.py` 錄的；1.0 起 init 的行為不同了（工具不複製進專案、hook 改成執行檔、升級會整理舊工具、
 //! merge gate 帶執行檔），基準改由這個實作重錄，當成回歸基準：行為或訊息一改，這裡就會指出是哪個案例的哪一步。
 //!
 //! 劇本的每個案例有自己的暫存目錄（`@TMP@`）；`steps` 是檔案操作與指令（run）。每個 run 比 exit code、stdout、stderr
@@ -73,6 +73,7 @@ fn copy_template(exp: &Value, dst: &Path) {
     for rel in exp["template"].as_array().expect("template") {
         copy_tree(&repo().join(s(rel)), &dst.join(s(rel)));
     }
+    // repo 的 marketplace 清單在 `.claude-plugin/`（本機的 Claude Code 設定在 `.claude/`，不要混到）
     let pj = dst.join("plugin/.claude-plugin/plugin.json");
     std::fs::write(&pj, format!("{{\"name\": \"agent-workflow\", \"version\": \"{}\"}}\n", s(&exp["version"]))).expect("寫 plugin.json");
     // 發佈版才有的 linux-x64 執行檔：放一個只有 ELF 檔頭的假檔與對得上的 checksums.json

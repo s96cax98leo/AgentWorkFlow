@@ -1,4 +1,4 @@
-// check-kernel 的測試本體：對執行核心片段（challenge、recipe、kernel）直接測。由 tests/check_kernel.py 原樣搬來。
+// check-kernel 的測試本體：對執行核心片段（challenge、recipe、kernel）直接測。原本在 0.x 的 tests/check_kernel.py 裡。
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
