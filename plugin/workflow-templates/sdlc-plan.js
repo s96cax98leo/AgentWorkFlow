@@ -509,7 +509,7 @@ if (TRIAGE_TRUSTED) awfSetModelPlan(triage.model_plan)
 const MODE = recipe.plan_mode || 'feature'
 const RECIPE_NOTE = `\n這次的 recipe：${recipeSummary(recipe)}（${recipe.description || ''}）`
 
-// ── intent 必要節：基本節（profile stages.plan.required_sections，沒有就內建）＋ plan_mode 的節（profile plan_modes 覆寫，否則內建；和 awf recipe 的 MODE_SECTIONS 一致）──
+// ── intent 必要節：基本節（profile stages.plan.required_sections，沒有就內建）＋ plan_mode 的節（profile plan_modes 覆寫，否則內建；和 awf recipe 內建的各 plan_mode 的節一致）──
 const BASE_SECTIONS = ['目標', '範圍', '不做的事', '驗收條件']
 const MODE_SECTIONS = {
   feature: [], diagnose: ['現象', '重現步驟', '預期行為', '根因'], impact: ['既有驗收條件異動'], invariants: ['不可改變的行為'],
