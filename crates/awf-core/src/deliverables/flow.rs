@@ -197,7 +197,7 @@ pub fn pack_args(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &
     }
     let hints = list("hints");
     for h in &hints {
-        notes.push(format!("交付文件：建議把「{}」加進交付設定（{}）；要加請跑 deliverables.py configure --add {} --write", fmt(get(h, "title")), fmt(get(h, "why")), fmt(get(h, "id"))));
+        notes.push(format!("交付文件：建議把「{}」加進交付設定（{}）；要加請跑 awf deliverables configure --add {} --write", fmt(get(h, "title")), fmt(get(h, "why")), fmt(get(h, "id"))));
     }
     for d in list("deferred") {
         notes.push(format!("交付文件：「{}」受影響，但設定成 {} 才更新，這次不動", fmt(get(&d, "title")), if sget(&d, "when") == "milestone" { "里程碑" } else { "結案" }));
@@ -406,7 +406,7 @@ pub fn write_matrix(root: &str, run: &str) -> (i32, Vec<String>) {
     let Some(cfg) = cfg else { return (0, vec![note]) };
     let cat = load_catalog(root);
     let Some((doc, p)) = ensure_doc(&cfg, &cat, root, MATRIX_ID) else {
-        return (0, vec![format!("交付設定沒有列需求追溯矩陣（{MATRIX_ID}）；要加請跑 deliverables.py configure --add {MATRIX_ID} --write")]);
+        return (0, vec![format!("交付設定沒有列需求追溯矩陣（{MATRIX_ID}）；要加請跑 awf deliverables configure --add {MATRIX_ID} --write")]);
     };
     let data = load_obj(&pyish::pjoin(run, "run.json"));
     let (block, gaps) = matrix_block(run, &title_of(&data));
@@ -805,7 +805,7 @@ pub fn configure(root: &str, argv: &[String]) -> (i32, Value, Vec<String>) {
         write_lf(&cfg_path, &format!("{}\n", py::dumps(&Value::Object(new.clone()), Some(1))));
         out.insert("config".into(), Value::Object(new));
         out.insert("written".into(), json!(true));
-        notes.push(format!("已寫入 .claude/teams/{CONFIG_NAME}（{} 份文件）。接著跑 deliverables.py init 建骨架。", docs.len()));
+        notes.push(format!("已寫入 .claude/teams/{CONFIG_NAME}（{} 份文件）。接著跑 awf deliverables init 建骨架。", docs.len()));
     } else {
         out.insert("written".into(), json!(false));
         notes.push("這是提案，還沒寫入。確認後加 --write --by <誰> 重跑同一個指令。".to_string());

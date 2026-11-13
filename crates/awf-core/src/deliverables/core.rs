@@ -383,7 +383,7 @@ pub fn load_config(root: &str) -> (Option<Value>, String) {
         let errs = config_errors(d);
         return if errs.is_empty() { (Some(d.clone()), "methodology.json 的 deliverables".to_string()) } else { (None, format!("profile 的 deliverables 有問題：{}", join_head(&errs))) };
     }
-    (None, "沒有交付設定（用 deliverables.py configure 產生；沒有時流程不產生也不檢查交付文件）".to_string())
+    (None, "沒有交付設定（用 awf deliverables configure 產生；沒有時流程不產生也不檢查交付文件）".to_string())
 }
 
 /// 設定裡的每份文件＝型錄的預設內容，被設定裡寫的欄位蓋掉。型錄沒有的 id 是自訂文件（預設 assisted）。
@@ -587,7 +587,7 @@ pub fn section_state(doc_id: &str, sec: &Section, state: &Value, files: &[String
         _ => &NULL,
     };
     let Some(rec_src) = rec.as_object().and_then(|r| r.get("sources")) else {
-        return ("unstamped", "有內容但沒有來源紀錄（跑 deliverables.py sync 記錄）".to_string());
+        return ("unstamped", "有內容但沒有來源紀錄（跑 awf deliverables sync 記錄）".to_string());
     };
     let cur = section_sources(&sec.sources, files, src_root);
     let empty = Map::new();
@@ -601,7 +601,7 @@ pub fn section_state(doc_id: &str, sec: &Section, state: &Value, files: &[String
     if get(rec, "body").as_str() == Some(body_hash(&sec.body).as_str()) {
         return ("stale", format!("來源改了、內文沒動：{}", changed.join("、")));
     }
-    ("unstamped", "內文改過，還沒記錄來源（跑 deliverables.py sync）".to_string())
+    ("unstamped", "內文改過，還沒記錄來源（跑 awf deliverables sync）".to_string())
 }
 
 // ------------------------------------------------------------------ status
@@ -637,7 +637,7 @@ pub fn doc_status(doc: &Value, cfg: &Value, root: &str, state: &Value, files: &[
     }
     let have_material = !match_files(files, &iter_any(sources)).is_empty();
     let Some(text) = (if is_file(&p) { read_text(&p) } else { None }) else {
-        let detail = if have_material || !truthy(sources) { "文件還沒建立（跑 deliverables.py init）".to_string() } else { format!("文件還沒建立，也找不到原料（{}）", src_head(None)) };
+        let detail = if have_material || !truthy(sources) { "文件還沒建立（跑 awf deliverables init）".to_string() } else { format!("文件還沒建立，也找不到原料（{}）", src_head(None)) };
         return done(out, vec![], "missing", detail);
     };
     let parsed = doc_sections(doc, &text);
@@ -709,7 +709,7 @@ pub fn index_text(cfg: &Value, cat: &Value) -> String {
         Some("close") => "結案".to_string(),
         _ => fmt(v),
     };
-    let mut lines: Vec<String> = vec!["# 交付文件總目錄".into(), String::new(), "這份目錄由 `deliverables.py index` 產生，請不要手改。".into(), String::new()];
+    let mut lines: Vec<String> = vec!["# 交付文件總目錄".into(), String::new(), "這份目錄由 `awf deliverables index` 產生，請不要手改。".into(), String::new()];
     let docs = resolve_docs(cfg, cat);
     let mut order: Vec<String> = cat_groups.iter().map(|g| sget(g, "id").to_string()).collect();
     order.push("custom".to_string());
@@ -914,7 +914,7 @@ pub fn check_all(root: &str, repo: Option<&str>) -> (Option<Vec<String>>, String
         let p = doc_path(&cfg, root, doc);
         let rel = rel_to(&p, root);
         let Some(text) = (if is_file(&p) { read_text(&p) } else { None }) else {
-            errs.push(format!("{rel}：文件不存在（跑 deliverables.py init）"));
+            errs.push(format!("{rel}：文件不存在（跑 awf deliverables init）"));
             continue;
         };
         let parsed = doc_sections(doc, &text);
@@ -942,8 +942,8 @@ pub fn check_all(root: &str, repo: Option<&str>) -> (Option<Vec<String>>, String
     }
     let idx = pyish::pjoin(&d_out, INDEX_NAME);
     match if is_file(&idx) { read_text(&idx) } else { None } {
-        None => errs.push(format!("{}：總目錄不存在（跑 deliverables.py index）", rel_to(&idx, root))),
-        Some(t) if t.replace("\r\n", "\n") != index_text(&cfg, &cat) => errs.push(format!("{}：總目錄和交付設定不一致（跑 deliverables.py index）", rel_to(&idx, root))),
+        None => errs.push(format!("{}：總目錄不存在（跑 awf deliverables index）", rel_to(&idx, root))),
+        Some(t) if t.replace("\r\n", "\n") != index_text(&cfg, &cat) => errs.push(format!("{}：總目錄和交付設定不一致（跑 awf deliverables index）", rel_to(&idx, root))),
         _ => {}
     }
     (Some(errs), note)

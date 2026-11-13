@@ -669,7 +669,7 @@ pub fn write_views(kb: &str) -> Result<(), PyErr> {
     }
 
     let mut out = vec!["# 知識庫索引".to_string(), String::new(), note.to_string(),
-        format!("共 {} 個檔。查詢用 `kb.py query \"<問題>\"`；每個檔的標題樹與行號在摘要卡。", files.len()), String::new()];
+        format!("共 {} 個檔。查詢用 `awf kb query \"<問題>\"`；每個檔的標題樹與行號在摘要卡。", files.len()), String::new()];
     let mut group: Option<&str> = None;
     for f in &files {
         let top = match f.path.split_once('/') {

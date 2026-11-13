@@ -8,9 +8,9 @@ use super::{selftest, swap_err_sink, warn, DB_NAME};
 use crate::pyfmt::repr_str;
 use std::io::Write;
 
-// 說明文字照 argparse 在 80 欄寬時的輸出（程式名沿用 kb.py）。
+// 說明文字照 argparse 在 80 欄寬時的輸出（程式名改成 awf kb，續行多縮一格）。
 const HELP_TOP: &str = concat!(
-    "usage: kb.py [-h] {build,query,lint} ...\n",
+    "usage: awf kb [-h] {build,query,lint} ...\n",
     "\n",
     "知識層：先查到哪個檔的哪幾行，再只讀那幾行\n",
     "\n",
@@ -24,9 +24,9 @@ const HELP_TOP: &str = concat!(
     "  -h, --help          show this help message and exit\n",
 );
 const HELP_BUILD: &str = concat!(
-    "usage: kb.py build [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
-    "                   [--sources SOURCES [SOURCES ...]]\n",
-    "                   [--exclude EXCLUDE [EXCLUDE ...]]\n",
+    "usage: awf kb build [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
+    "                    [--sources SOURCES [SOURCES ...]]\n",
+    "                    [--exclude EXCLUDE [EXCLUDE ...]]\n",
     "\n",
     "options:\n",
     "  -h, --help            show this help message and exit\n",
@@ -39,10 +39,10 @@ const HELP_BUILD: &str = concat!(
     "                        排除的 glob\n",
 );
 const HELP_QUERY: &str = concat!(
-    "usage: kb.py query [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
-    "                   [--top TOP] [--budget BUDGET] [--json]\n",
-    "                   [--engine {auto,fts5,bm25}]\n",
-    "                   text\n",
+    "usage: awf kb query [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
+    "                    [--top TOP] [--budget BUDGET] [--json]\n",
+    "                    [--engine {auto,fts5,bm25}]\n",
+    "                    text\n",
     "\n",
     "positional arguments:\n",
     "  text                  問題\n",
@@ -58,7 +58,7 @@ const HELP_QUERY: &str = concat!(
     "  --engine {auto,fts5,bm25}\n",
 );
 const HELP_LINT: &str = concat!(
-    "usage: kb.py lint [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
+    "usage: awf kb lint [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
     "\n",
     "options:\n",
     "  -h, --help         show this help message and exit\n",
@@ -347,7 +347,7 @@ fn run(argv: &[String], out: &mut String) -> Result<(), PyErr> {
         }
         Err(Stop::Error(msg)) => {
             // 參數錯也不擋流程：印一行，exit 0
-            out.push_str(&format!("kb：參數錯誤：{msg}（用法見 kb.py --help）\n"));
+            out.push_str(&format!("kb：參數錯誤：{msg}（用法見 awf kb --help）\n"));
             return Ok(());
         }
     };

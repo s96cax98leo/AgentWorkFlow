@@ -274,7 +274,7 @@ pub fn archive_text(ctx: &Ctx, run: &str, data: &Value) -> R<String> {
         out.extend(index.iter().map(|x| format!("- [{x}](../{x})")));
     }
     out.extend([String::new(), "## 成本".to_string(), String::new()]);
-    out.push("- 這份摘要不記 token（workflow 紀錄可能已經不在）。要看請跑：`python3 .claude/teams/tools/awf_cost.py --project . --run-dir <這個 run 的目錄>`".to_string());
+    out.push("- 這份摘要不記 token（workflow 紀錄可能已經不在）。要看請跑：`awf cost --project . --run-dir <這個 run 的目錄>`".to_string());
     let fr = get(data, "followup_run")?;
     if fr.is_object() && truthy(get(fr, "run")?) {
         let note = get(fr, "note")?;
@@ -295,7 +295,7 @@ pub fn write_archive(ctx: &Ctx, run: &str, data: &Value) -> String {
     };
     match attempt() {
         Ok(()) => String::new(),
-        Err(e) => format!("結案摘要沒寫成（{}：{}）；不影響結案，之後可以用 save_run.py archive <run_dir> 重寫", e.class, e.msg),
+        Err(e) => format!("結案摘要沒寫成（{}：{}）；不影響結案，之後可以用 awf save-run archive <run_dir> 重寫", e.class, e.msg),
     }
 }
 

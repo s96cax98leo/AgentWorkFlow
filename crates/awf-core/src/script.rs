@@ -48,7 +48,7 @@ pub const USAGE: &str = "自訂 workflow 腳本的靜態檢查與組裝（awf ne
   - 組裝時把腳本內容包成函式（assemble）：agent、tryAgent、awfState 等名字被參數遮蔽，內容裡拿不到；
     回傳的 stage、recipe、trace 由外層覆寫，trace 一律取自執行核心。
   - 執行核心在執行時再擋一次（角色白名單、派工數上限）。
-  - 閘門驗的是產出：save_run.py stage 的條件和標準腳本完全一樣，而且自訂腳本跑的段不能政策核准，一律交人。
+  - 閘門驗的是產出：awf save-run stage 的條件和標準腳本完全一樣，而且自訂腳本跑的段不能政策核准，一律交人。
 
 `awf script --selftest`。
 ";
@@ -68,8 +68,8 @@ pub const FORBIDDEN: [(&str, &str); 13] = [
     ("workflow", "不能呼叫別的 workflow"),
     ("awfState", "不能碰執行核心的內部狀態（awfState）"),
     ("awfKernel", "不能碰執行核心的內部狀態（awfKernel）"),
-    ("awfInit", "不要自己呼叫 awfInit：awf.py 已經接好了"),
-    ("awfKernelInit", "不要自己呼叫 awfKernelInit：awf.py 已經接好了（上限與角色白名單由它帶）"),
+    ("awfInit", "不要自己呼叫 awfInit：awf 已經接好了"),
+    ("awfKernelInit", "不要自己呼叫 awfKernelInit：awf 已經接好了（上限與角色白名單由它帶）"),
     ("awfSetModifiers", "不能改 modifiers（只會由 run.json 鎖定的 recipe 帶入）"),
     ("eval", "不能用 eval"),
     ("Function", "不能用 Function 建構式"),
@@ -508,7 +508,7 @@ fn patterns() -> &'static Patterns {
 /// 回傳不合格的理由（空清單＝合格）。
 pub fn check(text: &str, allowed_types: &BTreeSet<String>, ns: &str, reserved: &BTreeSet<String>) -> Vec<String> {
     if text.contains("/*@snippet") || text.contains("/*@methodology") {
-        return vec!["腳本不能自己放片段或 profile 的標記（awf.py 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用".into()];
+        return vec!["腳本不能自己放片段或 profile 的標記（awf 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用".into()];
     }
     if text.contains("{{") {
         return vec!["腳本不能有雙大括號的佔位符（要用的值從 A、NS、METHODOLOGY 取）".into()];
@@ -561,12 +561,12 @@ fn check_body(t: &[char], m: &[char], start: usize, allowed_types: &BTreeSet<Str
     if found(&pats.getter, &bt.s)? || quoted_key {
         errs.push("agentType 不能寫成加引號的鍵、計算出來的鍵或 getter（要是 agentType: NS + '<角色>'）".into());
     }
-    // 5：不能重新定義 awf.py 接上的名字
+    // 5：不能重新定義 awf 接上的名字
     let is_reserved = |name: &str| reserved.contains(name) || PREAMBLE_NAMES.contains(&name) || name.starts_with("awf");
     for (s, _, g1) in find_all(&pats.redefine, &bt.s)? {
         let name = g1.and_then(|(a, b)| bt.s.get(a..b)).unwrap_or_default();
         if is_reserved(name) {
-            errs.push(format!("{}：不能重新定義 {name}（awf.py 接上的名字；awf 開頭的名字保留給執行核心）", at(bt.c(s))));
+            errs.push(format!("{}：不能重新定義 {name}（awf 接上的名字；awf 開頭的名字保留給執行核心）", at(bt.c(s))));
         }
     }
     for (s, _, g1) in find_all(&pats.assign, &bt.s)? {

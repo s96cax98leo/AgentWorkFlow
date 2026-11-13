@@ -396,7 +396,7 @@ pub fn check_policy(ctx: &Ctx, run_dir: Option<&str>, stage: &str) -> R<String> 
             return refused(format!("{s} 狀態是 {}，不是 done", py::s(status)));
         }
         if (*s == MIN_STAGE || truthy(get(st, "gate")?)) && !truthy(get(st, "approved")?) {
-            return refused(format!("{s} 還沒核准（save_run.py approve）"));
+            return refused(format!("{s} 還沒核准（awf save-run approve）"));
         }
     }
     let appr = match idx(idx(stages, MIN_STAGE)?, "approved")? {
@@ -448,7 +448,7 @@ pub fn check_shape(ctx: &Ctx, run_dir: &str, paths: &[String]) -> R<String> {
     let short = recipe::diff_shortfalls(&r, &json!(paths)).map_err(py::from_recipe)?;
     if !short.is_empty() {
         return refused(format!(
-            "diff 形狀和 recipe {name} 不符：{}（要升級 recipe 用 save_run.py escalate {run_dir} --recipe <名> --by --at --reason，重跑缺的段後再推）",
+            "diff 形狀和 recipe {name} 不符：{}（要升級 recipe 用 awf save-run escalate {run_dir} --recipe <名> --by --at --reason，重跑缺的段後再推）",
             short.iter().take(5).cloned().collect::<Vec<_>>().join("；")
         ));
     }
@@ -1147,7 +1147,7 @@ fn selftest_body(env: &Env, fake_git: &[String], fake_gh: &[String], root: &str,
     put(&format!("{bug_gone}/run.json"), recipe::dumps(&data, None).as_bytes())?;
     t.case("recipe 閘門鏈：recipe 有的 build 段被拿掉 → 拒絕", "refused", Some("缺段"), code_on(&bug_gone));
     t.case("spike 拒推（recipe publishable=false）", "refused", Some("spike 拒推"), with_run(&spike_run));
-    t.case("diff 形狀：docs 改程式拒推（提示 escalate）", "refused", Some("save_run.py escalate"), code_on(&docs_run));
+    t.case("diff 形狀：docs 改程式拒推（提示 escalate）", "refused", Some("awf save-run escalate"), code_on(&docs_run));
     t.case("diff 形狀：相符放行（docs recipe 只改文件）→ 推送並開 PR", "published", Some("diff 形狀和 recipe docs 相符"), with_run(&docs_run));
     t.case("沒有 --run → 拒絕", "refused", None, Args { run: None, ..base.clone() });
     let mut cfg_up = cfg.clone();

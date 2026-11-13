@@ -461,7 +461,7 @@ pub fn selftest(ctx: &Ctx, out: &mut String) -> i32 {
     let after = s.load(&d);
     check!(
         "recipe 鎖定：核准後鎖定；再 stage plan 換 recipe → invalid、recipe 不變、核准清除",
-        c == 0 && locked == true && c2 != 0 && o2.contains("要改走 save_run.py escalate") && after["recipe"]["name"] == "bugfix" && !truthy(&after["stages"]["plan"]["approved"]),
+        c == 0 && locked == true && c2 != 0 && o2.contains("要改走 awf save-run escalate") && after["recipe"]["name"] == "bugfix" && !truthy(&after["stages"]["plan"]["approved"]),
         o2
     );
     let d = s.new_run(bugfix(), false, Some(with_root));
@@ -832,7 +832,7 @@ pub fn selftest(ctx: &Ctx, out: &mut String) -> i32 {
     let tx = slurp(&ar_feat);
     check!(
         "摘要：close 寫 <run>/archive/結案摘要.md（狀態、recipe、各段與核准、成本的查法）",
-        tx.contains("已結案（human @ t）") && tx.contains("recipe：feature") && tx.contains("| plan | done |") && tx.contains("| 段 | 狀態 | 核准 |") && tx.contains("awf_cost.py"),
+        tx.contains("已結案（human @ t）") && tx.contains("recipe：feature") && tx.contains("| plan | done |") && tx.contains("| 段 | 狀態 | 核准 |") && tx.contains("awf cost"),
         py::take(&tx, 600).to_string()
     );
     let tx_ab = slurp(&ar_ab);

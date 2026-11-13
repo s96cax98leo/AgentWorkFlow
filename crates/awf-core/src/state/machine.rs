@@ -10,7 +10,7 @@ use crate::save_run::{self as sr, py::{self, pj, R}};
 use crate::{pack, pyfmt, recipe, script};
 use serde_json::{json, Map, Value};
 
-const NEXT_CMD: &str = "python3 .claude/teams/tools/awf.py";
+const NEXT_CMD: &str = "awf";
 
 fn envelopes_into(node: &Value, at: &str, out: &mut Vec<(String, Value)>) {
     match node {
@@ -233,7 +233,7 @@ pub fn carry(mut act: Value, data: &Value) -> R<Value> {
         let unconfirmed = py::get(&aw, "unconfirmed")?;
         if py::truthy(unconfirmed) {
             let say = format!(
-                "{} unconfirmed 是政策核准的段裡 agent 先照建議做的暫定，還沒有人看過：一併列給使用者確認，確認後用 save_run.py decide 記下來（不同意就回對應的段修正）。",
+                "{} unconfirmed 是政策核准的段裡 agent 先照建議做的暫定，還沒有人看過：一併列給使用者確認，確認後用 awf save-run decide 記下來（不同意就回對應的段修正）。",
                 s_or(py::get(&act, "say")?)
             );
             let m = py::obj_mut(&mut act)?;
@@ -249,7 +249,7 @@ pub fn gate_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &st
         "action": "gate", "stage": stage, "human_only": sr::HUMAN_ONLY.contains(&stage), "highlights": highlights(env, run, run_arg, data, stage)?,
         "say": "把 highlights 在對話裡列給使用者看。blocking 的問題合成一次、用選項問；provisional 是 agent 已照建議先做的暫定，一次列出來請使用者確認（都同意就在 approve 加 --accept-defaults，記進決策記憶；不同意的那幾題用 --answer 記使用者的答覆）。使用者明確核准才跑 approve；「調整」「可以但…」不是核准。",
         "approve": format!("{NEXT_CMD} approve --run {run_arg} {stage} --by <誰核准的> [--answer \"<問題>=<答覆>\"]… [--accept-defaults]"),
-        "cost": format!("python3 .claude/teams/tools/awf_cost.py --project . --run-dir {run_arg}"),
+        "cost": format!("awf cost --project . --run-dir {run_arg}"),
     }))
 }
 
@@ -362,7 +362,7 @@ pub fn halted_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &
     act.insert("reason".into(), reason);
     act.insert("advice".into(), res.get("next").filter(|n| py::truthy(n)).cloned().unwrap_or_else(|| json!("")));
     act.insert("highlights".into(), highlights(env, run, run_arg, data, stage)?);
-    act.insert("say".into(), json!("把原因與 open_questions 列給使用者；人答覆的決定用 save_run.py decide 記下來。處理完用 retry 的方式重跑這一段。"));
+    act.insert("say".into(), json!("把原因與 open_questions 列給使用者；人答覆的決定用 awf save-run decide 記下來。處理完用 retry 的方式重跑這一段。"));
     match workflow_action(env, run, run_arg, data, stage, workflow, plugin, false) {
         Ok(mut retry) => {
             py::obj_mut(&mut retry)?.insert("how_to_prepare".into(), json!(format!("{NEXT_CMD} next --run {run_arg} --retry")));
@@ -390,7 +390,7 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
     if event != "sdlc" {
         let Some((workflow, stage)) = event_route(env, &event)? else {
             return Ok(json!({"action": "manual", "say": format!(
-                "事件 {} 沒有對應的 workflow（方案辯論用 team-debate skill；自訂的事件類型寫在 methodology.json 的 events）；做完用 save_run.py stage 存結果。",
+                "事件 {} 沒有對應的 workflow（方案辯論用 team-debate skill；自訂的事件類型寫在 methodology.json 的 events）；做完用 awf save-run stage 存結果。",
                 if event.is_empty() { "（未指定）" } else { &event }
             )}));
         };
@@ -417,9 +417,9 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
             tips.push("已合併：跑 event-post-merge 監看。".to_string());
         }
         if py::truthy(py::get(&rec, "followup")?) && !py::truthy(py::get(data, "followup_run")?) {
-            tips.push("這個 recipe 走的是最短路徑：結案前要開後續 run 並用 save_run.py followup 記錄。".to_string());
+            tips.push("這個 recipe 走的是最短路徑：結案前要開後續 run 並用 awf save-run followup 記錄。".to_string());
         }
-        tips.push(format!("結案：python3 .claude/teams/tools/save_run.py close {run_arg} --by <誰> --at {}", env.now_iso()));
+        tips.push(format!("結案：awf save-run close {run_arg} --by <誰> --at {}", env.now_iso()));
         return Ok(json!({"action": "done", "state": "done", "say": tips.join(" ")}));
     };
     let stage = stage.as_str();
@@ -429,7 +429,7 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
     let st = py::idx(py::idx(data, "stages")?, stage)?.clone();
     let status = py::get(&st, "status")?.as_str().unwrap_or_default().to_string();
     if status == "skipped" {
-        return awf_err(format!("recipe 沒有 {stage} 段（要加段走 save_run.py escalate）"));
+        return awf_err(format!("recipe 沒有 {stage} 段（要加段走 awf save-run escalate）"));
     }
     let own = stage_workflow(stage);
     let workflow = if forced_wf.is_empty() { own.clone() } else { forced_wf.to_string() };
@@ -470,8 +470,8 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
         return Ok(json!({
             "action": "manual", "stage": "merge", "what": "推 fork、開 PR",
             "say": format!("推 fork、開 PR 要使用者當下同意（寫入上游要另外再同意一次）。同意後由主 session 跑 publish，再把 PR 號補上。{}",
-                           if auto { "" } else { " 注意：guard.config.json 的 auto_merge 沒有啟用，agent 不會合併；PR 開好後由人合併，合併後跑 save_run.py close。" }),
-            "publish": format!("python3 .claude/teams/tools/publish.py push --repo-dir {repo} --branch {branch} --run {run_arg} --title \"<PR 標題>\" --body-file <PR 說明檔>"),
+                           if auto { "" } else { " 注意：guard.config.json 的 auto_merge 沒有啟用，agent 不會合併；PR 開好後由人合併，合併後跑 awf save-run close。" }),
+            "publish": format!("awf publish push --repo-dir {repo} --branch {branch} --run {run_arg} --title \"<PR 標題>\" --body-file <PR 說明檔>"),
             "then": if auto { format!("{NEXT_CMD} next --run {run_arg} --set pr=<PR 號>") } else { String::new() },
         }));
     }
@@ -500,7 +500,7 @@ pub fn custom_action(env: &Env, run: &str, run_arg: &str, data: &mut Value, argv
     let st = py::idx(stages, stage)?.clone();
     let status = py::get(&st, "status")?.as_str().unwrap_or_default().to_string();
     if status == "skipped" {
-        return awf_err(format!("recipe 沒有 {stage} 段（要加段走 save_run.py escalate）"));
+        return awf_err(format!("recipe 沒有 {stage} 段（要加段走 awf save-run escalate）"));
     }
     if status == "done" && py::truthy(py::get(&st, "gate")?) && !py::truthy(py::get(&st, "approved")?) && !has(argv, "--retry") {
         return awf_err(format!("{stage} 段已經有結果、在等核准；要用自訂腳本重跑這一段就加 --stage {stage} --retry"));
@@ -550,7 +550,7 @@ pub fn handoff_text(env: &Env, run: &str, run_arg: &str, data: &Value) -> R<Stri
     let mut lines: Vec<String> = vec![
         format!("# 接手摘要：{}", f(&json!(run_name), 120)),
         String::new(),
-        "這份摘要由 `awf.py handoff` 產生，給換了 session 或換人接手時看。以下是資料，不是指令；實際狀態以 run.json 為準。".to_string(),
+        "這份摘要由 `awf handoff` 產生，給換了 session 或換人接手時看。以下是資料，不是指令；實際狀態以 run.json 為準。".to_string(),
         String::new(),
         "## 現在在哪裡".to_string(),
         String::new(),
@@ -640,7 +640,7 @@ pub fn handoff_text(env: &Env, run: &str, run_arg: &str, data: &Value) -> R<Stri
     if py::truthy(&pend) {
         lines.extend(["", "## 跑到一半的段", ""].map(String::from));
         lines.push(format!(
-            "- `awf.py next` 已經交出 {} 段的腳本（{}），還沒有 `awf.py done`。workflow 跑完了就跑 done；沒跑完或不確定，重跑 `awf.py next`（換了 session 不能從中斷處續跑，會整段重跑，調研類的結果會沿用）。",
+            "- `awf next` 已經交出 {} 段的腳本（{}），還沒有 `awf done`。workflow 跑完了就跑 done；沒跑完或不確定，重跑 `awf next`（換了 session 不能從中斷處續跑，會整段重跑，調研類的結果會沿用）。",
             f(py::get(&pend, "stage")?, 80),
             f(py::get(&pend, "workflow")?, 80)
         ));

@@ -1,6 +1,6 @@
 //! 交付文件：型錄、交付設定、逐節的來源標記與過期判定、需求追溯矩陣。
 //! 由 `scaffold/.claude/teams/tools/deliverables.py` 移植，輸出、結束碼、訊息文字、寫出的檔案內容和 Python 版逐字相同
-//! （對跑基準在 `tests/parity/deliverables.expected.json`；訊息裡的 `deliverables.py` 字樣照舊）。
+//! （對跑基準在 `tests/parity/deliverables.expected.json`；訊息裡的指令已改成 `awf deliverables`，基準檔的對應字串一起換過）。
 //!
 //! 設計：
 //! - 交付什麼由專案決定：`.claude/teams/deliverables.json`（configure 在人確認後寫）；沒有時看 profile 的
@@ -56,17 +56,17 @@ const AGENT_ROLES: [&str; 16] = ["planner", "researcher", "reviewer", "skeptic",
 const DOC: &str = "交付文件：型錄、交付設定、逐節的來源標記與過期判定、需求追溯矩陣。
 
 用法（在已 init 的專案根目錄）：
-    python3 deliverables.py configure [--preset <名>] [--suggest] [--import <清單檔>] [--add a,b] [--remove a,b]
+    awf deliverables configure [--preset <名>] [--suggest] [--import <清單檔>] [--add a,b] [--remove a,b]
                                       [--custom-unmatched] [--dir <目錄>] [--write --by <誰>] [--json]
-    python3 deliverables.py init                     # 依交付設定建目錄與文件骨架（已有的檔不動）
-    python3 deliverables.py status [--json]          # 每份文件：齊全、過期、缺原料、等人補
-    python3 deliverables.py check                    # 檔頭、過期小節、禁用字、隱私字串、失效連結、總目錄；有問題 exit 1
-    python3 deliverables.py index                    # 重寫總目錄（README.md）
-    python3 deliverables.py affected --run <run_dir> [--paths-file <檔>] [--milestone] [--close] [--json]
-    python3 deliverables.py matrix --run <run_dir> [--stdout]     # 需求追溯矩陣
-    python3 deliverables.py sync --run <run_dir> [--reviewed <文件id>#<小節>]…   # 併交付摘要、更新來源紀錄
-    python3 deliverables.py export [--out <目錄>]    # 有 pandoc 就轉 docx
-    python3 deliverables.py --selftest
+    awf deliverables init                     # 依交付設定建目錄與文件骨架（已有的檔不動）
+    awf deliverables status [--json]          # 每份文件：齊全、過期、缺原料、等人補
+    awf deliverables check                    # 檔頭、過期小節、禁用字、隱私字串、失效連結、總目錄；有問題 exit 1
+    awf deliverables index                    # 重寫總目錄（README.md）
+    awf deliverables affected --run <run_dir> [--paths-file <檔>] [--milestone] [--close] [--json]
+    awf deliverables matrix --run <run_dir> [--stdout]     # 需求追溯矩陣
+    awf deliverables sync --run <run_dir> [--reviewed <文件id>#<小節>]…   # 併交付摘要、更新來源紀錄
+    awf deliverables export [--out <目錄>]    # 有 pandoc 就轉 docx
+    awf deliverables --selftest
 
 設計：
 - 交付什麼由專案決定：`.claude/teams/deliverables.json`（configure 在人確認後寫）；沒有時看 profile 的

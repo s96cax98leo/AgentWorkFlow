@@ -697,7 +697,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.sync.strategy：值 'squash' 不在 ['none', 'rebase', 'merge', 'transit']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.sync.strategy：值 'squash' 不在 ['none', 'rebase', 'merge', 'transit']\n"
   },
   {
    "op": "write",
@@ -714,7 +714,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.tests[0].result：值 'ok' 不在 ['pass', 'fail', 'red_as_expected', 'not_run']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.tests[0].result：值 'ok' 不在 ['pass', 'fail', 'red_as_expected', 'not_run']\n"
   },
   {
    "op": "write",
@@ -731,7 +731,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.criteria[0].result：值 '通過' 不在 ['pass', 'fail', 'not_verifiable']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.criteria[0].result：值 '通過' 不在 ['pass', 'fail', 'not_verifiable']\n"
   },
   {
    "op": "write",
@@ -748,7 +748,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.documents：至少要 1 項\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.documents：至少要 1 項\n"
   },
   {
    "op": "write",
@@ -763,7 +763,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- open_questions[0]：blocking 問題要附 2–3 個選項與代價\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- open_questions[0]：blocking 問題要附 2–3 個選項與代價\n"
   },
   {
    "op": "write",
@@ -778,7 +778,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.confidence：大於 1\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.confidence：大於 1\n"
   },
   {
    "op": "write",
@@ -793,7 +793,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 有 blocking 的 open_questions 時 status 不能是 done\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 有 blocking 的 open_questions 時 status 不能是 done\n"
   },
   {
    "op": "write",
@@ -810,7 +810,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.evidence[0].result：長度 301 超過上限 300（細節寫進檔案，信封只放摘要與路徑）\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.evidence[0].result：長度 301 超過上限 300（細節寫進檔案，信封只放摘要與路徑）\n"
   },
   {
    "op": "write",
@@ -827,7 +827,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.evidence：13 項，超過上限 12（其餘寫進檔案）\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.evidence：13 項，超過上限 12（其餘寫進檔案）\n"
   },
   {
    "op": "write",
@@ -842,7 +842,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：缺欄位 evidence\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $：缺欄位 evidence\n"
   },
   {
    "op": "write",
@@ -857,7 +857,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.status：值 '完成' 不在 ['done', 'blocked', 'needs_decision']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.status：值 '完成' 不在 ['done', 'blocked', 'needs_decision']\n"
   },
   {
    "op": "write",
@@ -874,7 +874,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.summary：長度 401 超過上限 400（細節寫進檔案，信封只放摘要與路徑）\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.summary：長度 401 超過上限 400（細節寫進檔案，信封只放摘要與路徑）\n"
   },
   {
    "op": "write",
@@ -891,7 +891,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.findings[0].severity：值 'critical' 不在 ['important', 'nit', 'pre_existing', 'info', 'blocker', 'should_fix']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.findings[0].severity：值 'critical' 不在 ['important', 'nit', 'pre_existing', 'info', 'blocker', 'should_fix']\n"
   },
   {
    "op": "write",
@@ -908,7 +908,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.items[0]：缺欄位 owner\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.items[0]：缺欄位 owner\n"
   },
   {
    "op": "write",
@@ -925,7 +925,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.locations[0]：缺欄位 start\n- $.payload.locations[0]：缺欄位 end\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.locations[0]：缺欄位 start\n- $.payload.locations[0]：缺欄位 end\n"
   },
   {
    "op": "write",
@@ -942,7 +942,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- traceability：需求 REQ-2 判 match 卻沒有證據\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- traceability：需求 REQ-2 判 match 卻沒有證據\n"
   },
   {
    "op": "write",
@@ -959,7 +959,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- decision=merge 時不得有 followups\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- decision=merge 時不得有 followups\n"
   },
   {
    "op": "write",
@@ -976,7 +976,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- needs_sync=true（PR 落後或有衝突）時 decision 不能是 merge\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- needs_sync=true（PR 落後或有衝突）時 decision 不能是 merge\n"
   },
   {
    "op": "write",
@@ -993,7 +993,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- merge_state=merged 時 decision 必須是 merge\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- merge_state=merged 時 decision 必須是 merge\n"
   },
   {
    "op": "write",
@@ -1010,7 +1010,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- traceability：需求 REQ-1 重複出現\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- traceability：需求 REQ-1 重複出現\n"
   },
   {
    "op": "write",
@@ -1027,7 +1027,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- decision=merge 時不得有 mismatch／missing：['REQ-2']\n- 需求 REQ-2 不一致或缺證據，卻沒有對應的 followup（新需求）\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- decision=merge 時不得有 mismatch／missing：['REQ-2']\n- 需求 REQ-2 不一致或缺證據，卻沒有對應的 followup（新需求）\n"
   },
   {
    "op": "write",
@@ -1044,7 +1044,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子計劃相依有循環：api、ui\n- 子計劃 api 與 ui 的範圍重疊：services/export/／services/export/web/\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 子計劃相依有循環：api、ui\n- 子計劃 api 與 ui 的範圍重疊：services/export/／services/export/web/\n"
   },
   {
    "op": "write",
@@ -1061,7 +1061,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- split=false 時 sub_plans 要留空\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- split=false 時 sub_plans 要留空\n"
   },
   {
    "op": "write",
@@ -1078,7 +1078,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- split=true 時至少要 2 個子計劃\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- split=true 時至少要 2 個子計劃\n"
   },
   {
    "op": "write",
@@ -1095,7 +1095,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子計劃 id api 重複\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 子計劃 id api 重複\n"
   },
   {
    "op": "write",
@@ -1112,7 +1112,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.sub_plans[0].id：'../api' 不符合格式 ^[a-z0-9][a-z0-9-]*$\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.sub_plans[0].id：'../api' 不符合格式 ^[a-z0-9][a-z0-9-]*$\n"
   },
   {
    "op": "write",
@@ -1129,7 +1129,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子計劃 api 依賴自己\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 子計劃 api 依賴自己\n"
   },
   {
    "op": "write",
@@ -1146,7 +1146,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload：缺欄位 split\n- $.payload.sub_plans[0].id：'API 子計劃' 不符合格式 ^[a-z0-9][a-z0-9-]*$\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload：缺欄位 split\n- $.payload.sub_plans[0].id：'API 子計劃' 不符合格式 ^[a-z0-9][a-z0-9-]*$\n"
   },
   {
    "op": "write",
@@ -1163,7 +1163,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].complexity：值 'huge' 不在 ['light', 'standard', 'strong']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.subtasks[0].complexity：值 'huge' 不在 ['light', 'standard', 'strong']\n"
   },
   {
    "op": "write",
@@ -1180,7 +1180,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t2 的子計劃依賴格式不合法（要是 @<子計劃 id>）：@../api\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 子任務 t2 的子計劃依賴格式不合法（要是 @<子計劃 id>）：@../api\n"
   },
   {
    "op": "write",
@@ -1197,7 +1197,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t2 依賴不存在的 t-nope\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 子任務 t2 依賴不存在的 t-nope\n"
   },
   {
    "op": "write",
@@ -1214,7 +1214,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].expected_red：型別應為 array\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.subtasks[0].expected_red：型別應為 array\n"
   },
   {
    "op": "write",
@@ -1231,7 +1231,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].spec_refs：型別應為 array\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.subtasks[0].spec_refs：型別應為 array\n"
   },
   {
    "op": "write",
@@ -1248,7 +1248,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t2（第 1 波）依賴第 2 波的 t1：不能依賴比自己晚的波次\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 子任務 t2（第 1 波）依賴第 2 波的 t1：不能依賴比自己晚的波次\n"
   },
   {
    "op": "write",
@@ -1265,7 +1265,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.subtasks[0].wave：小於 1\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.subtasks[0].wave：小於 1\n"
   },
   {
    "op": "write",
@@ -1282,7 +1282,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- 子任務 t1 與 t2 同時擁有 src/a.ts（檔案所有權不得重疊）\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- 子任務 t1 與 t2 同時擁有 src/a.ts（檔案所有權不得重疊）\n"
   },
   {
    "op": "write",
@@ -1299,7 +1299,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.reasons[0].evidence：不能是空字串\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.reasons[0].evidence：不能是空字串\n"
   },
   {
    "op": "write",
@@ -1316,7 +1316,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.model_plan[0]：缺欄位 reason\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.model_plan[0]：缺欄位 reason\n"
   },
   {
    "op": "write",
@@ -1333,7 +1333,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.model_plan[0].tier：值 'ultra' 不在 ['light', 'standard', 'strong']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.model_plan[0].tier：值 'ultra' 不在 ['light', 'standard', 'strong']\n"
   },
   {
    "op": "write",
@@ -1350,7 +1350,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.reasons：至少要 1 項\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.reasons：至少要 1 項\n"
   },
   {
    "op": "write",
@@ -1367,7 +1367,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.size：值 'huge' 不在 ['small', 'medium', 'large']\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.size：值 'huge' 不在 ['small', 'medium', 'large']\n"
   },
   {
    "op": "write",
@@ -1384,7 +1384,7 @@
    "stdin": null,
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $.payload.verdicts[0]：缺欄位 refuted\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $.payload.verdicts[0]：缺欄位 refuted\n"
   },
   {
    "op": "envelope",
@@ -1416,7 +1416,7 @@
    "stdin": "{\"status\": \"done\", \"summary\": \"示範客戶 ACME 的交件\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}",
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：缺欄位 payload\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $：缺欄位 payload\n"
   },
   {
    "op": "envelope",
@@ -1446,7 +1446,7 @@
    "stdin": "[]",
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：型別應為 object\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $：型別應為 object\n"
   },
   {
    "op": "envelope",
@@ -1456,7 +1456,7 @@
    "stdin": "3",
    "rc": 1,
    "out": "",
-   "err": "交件信封不合格（.claude/teams/tools/check_envelope.py）：\n- $：型別應為 object\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $：型別應為 object\n"
   },
   {
    "op": "envelope",
