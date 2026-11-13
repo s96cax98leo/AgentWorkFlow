@@ -13,6 +13,7 @@
 | `deliverables.expected.json` | 交付文件與工具先定位：625 步劇本（323 個指令）與 1,956 個函式探測（隱私規則、`body_hash`、過期判定） | `python3 tests/parity/record_deliverables.py > tests/parity/deliverables.expected.json` |
 | `tools.expected.json` | awf_cost 357 步、awf_script 455 步、check_agents 125 次執行 | `python3 tests/parity/record_tools.py > tests/parity/tools.expected.json` |
 | `build.expected.json` | 內嵌片段的 build 101 次執行、去客戶化掃描 41 次、文件核對 59 次（後兩支在 `crates/xtask`） | `python3 tests/parity/record_build.py > tests/parity/build.expected.json` |
+| `pack.expected.json` | 資料包、調研重用、決策記憶：585 步劇本與 1,389 個函式探測；已知差異 4 步列在 `pack_parity.rs` 的 `KNOWN` | `python3 tests/parity/record_pack.py > tests/parity/pack.expected.json` |
 
 規則：
 

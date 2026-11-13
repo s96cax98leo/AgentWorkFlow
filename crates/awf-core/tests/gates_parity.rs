@@ -293,10 +293,15 @@ fn mg_diffs(c: &Value, got: &Got) -> Vec<String> {
     d
 }
 
-/// 有案例會切換整個行程的目前目錄，所以這個檔的測試一次只跑一個（平行時偶爾互相干擾）。
+/// 有案例會切換整個行程的目前目錄，所以這個檔的測試一次只跑一個。
+/// 另外拿掉外面帶進來的 git 身分與日期：工具自己跑的 rebase 會沿用它們，commit SHA 就和基準不同。
 fn serial() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for k in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE"] {
+        std::env::remove_var(k);
+    }
+    guard
 }
 
 #[test]
