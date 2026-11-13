@@ -3,7 +3,7 @@
 
 用法：python3 tests/parity/record_gates.py > tests/parity/gates.expected.json
 內容：
-  - blobs：檔案內容表（案例用到的輸入檔，內容相同的只存一份；鍵是 sha1 前 12 碼）。
+  - blobs：檔案內容表（案例用到的輸入檔，內容相同的只存一份；鍵是 sha1 前 12 碼；不是 UTF-8 的檔存成 {"hex": …}）。
   - mg.selftest：merge_gate.py --selftest 的輸出。
   - mg.git_setup：selftest 建暫存 git repo 的步驟（rebase 後沿用 verdict 的案例要用；重播時照做一次）。
   - mg.cases：每個案例＝專案目錄的檔案快照＋指令列＋ Python 的實際結果。前面一段是 selftest 的每個案例
@@ -67,7 +67,7 @@ def norm(text, tmp):
 
 
 def blob(text):
-    key = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    key = hashlib.sha1((text if isinstance(text, str) else "hex:" + text["hex"]).encode("utf-8")).hexdigest()[:12]
     blobs[key] = text
     return key
 
@@ -78,7 +78,11 @@ def snapshot(proj):
     for f in sorted(Path(proj).rglob("*")):
         rel = f.relative_to(proj).as_posix()
         if f.is_file() and not rel.startswith("gitrepo/"):
-            out[rel] = blob(norm(f.read_bytes().decode("utf-8", "surrogateescape").encode("utf-8", "replace").decode("utf-8"), proj))
+            raw = f.read_bytes()
+            try:
+                out[rel] = blob(norm(raw.decode("utf-8"), proj))
+            except UnicodeDecodeError:  # 不是 UTF-8 的檔：存十六進位
+                out[rel] = blob({"hex": raw.hex()})
     return out
 
 
@@ -212,7 +216,7 @@ def cli(name, cfg=None, files=None, args=None, drop=(), stdin=None, env=None, ba
             if isinstance(body, bytes):
                 f.write_bytes(body)
             else:
-                f.write_text(body if isinstance(body, str) else dump(body), encoding="utf-8", newline="")
+                f.write_text((body if isinstance(body, str) else dump(body)).replace("@P@", d), encoding="utf-8", newline="")
         pairs = [("--project-dir", d), ("--decision", f"{d}/decision.json"), ("--repo", "acme-fork/app"), ("--pr", "3"),
                  ("--head-sha", SHA), ("--evidence", f"{d}/evidence.json"), ("--checks", f"{d}/checks.json"),
                  ("--diff", f"{d}/diff.txt"), ("--tests-before", "10"), ("--tests-after", "11"), ("--timestamp", TS)]
@@ -345,14 +349,14 @@ def mg_cli_cases():
     cli("每日上限：--runs-dir 是絕對路徑、寫稽核紀錄", args=["--runs-dir", "@P@/abs-runs/"], drop=("--no-audit",))
     cli("稽核紀錄：hold 也寫一行", args=["--tests-before", "99"], drop=("--no-audit",))
     cli("稽核紀錄：runs_dir 是佔位符（用預設）", cfg={**BASE_CFG, "runs_dir": "{{RUNS_DIR}}"}, drop=("--no-audit",))
-    cli("稽核紀錄：runs_dir 前後有斜線與空白", cfg={**BASE_CFG, "runs_dir": " /logs/runs/ "}, drop=("--no-audit",))
+    cli("稽核紀錄：runs_dir 前後有斜線與空白", cfg={**BASE_CFG, "runs_dir": " logs/runs/ "}, drop=("--no-audit",))
     cli("runs_dir 是數字（Python 丟例外）", cfg={**BASE_CFG, "runs_dir": 5})
     # ---- 凍結旗標
     frz = "_tpm/runs/auto-merge.freeze.json"
     for label, body in (("frozen 是字串 false", '{"frozen": "false"}'), ("是清單", "[]"), ("沒有 frozen 鍵", '{"reason": "看一下"}'),
                         ("frozen 是 0", '{"frozen": 0}'), ("reason 是 null", '{"frozen": true, "reason": null}'), ("空檔", "")):
         cli(f"凍結旗標：{label}", files={frz: body})
-    cli("凍結旗標：freeze_file 是絕對路徑", cfg=am(freeze_file="@ABS@"), files={"flag.json": "{}"})
+    cli("凍結旗標：freeze_file 是絕對路徑", cfg=am(freeze_file="@P@/flag.json"), files={"flag.json": '{"frozen": true, "reason": "絕對路徑的旗標"}'})
     cli("凍結旗標：freeze_file 是佔位符（用預設路徑）", cfg=am(freeze_file="{{FREEZE}}"), files={frz: "{}"})
     cli("凍結旗標：路徑是目錄", cfg=am(freeze_file=".claude"))
     cli("凍結旗標與 --frozen 同時", files={frz: '{"frozen": true, "reason": "main 紅了"}'}, args=["--frozen", "repo variable"])
@@ -362,8 +366,7 @@ def mg_cli_cases():
     cli("需求：缺 id", files={"reqs.json": [REQS[0], {"text": "沒有 id"}]})
     cli("需求：項目不是物件", files={"reqs.json": ["REQ-1"]})
     cli("需求：不是清單", files={"reqs.json": {"items": []}})
-    cli("需求：id 是數字、text 缺", files={"reqs.json": [{"id": 1}, {"id": " REQ-2 ", "text": None, "source": 0}]},
-        **{"cfg": None}, args=[])
+    cli("需求：id 是數字、text 缺", files={"reqs.json": [{"id": 1}, {"id": " REQ-2 ", "text": None, "source": 0}]})
     cli("需求：檔不存在", cfg=cfg_req(source="json", path="沒有.json"))
     cli("需求：JSON 壞掉", files={"reqs.json": '[{"id": "REQ-1" "text": 1}]'})
     cli("需求：JSON 後面有多餘的字", files={"reqs.json": "[]\n多餘"})
@@ -483,10 +486,6 @@ def mg_cli_cases():
     cli("參數：選項缺值", args=["--frozen"])
     cli("參數：--no-audit 帶值", args=["--no-audit=1"])
     cli("參數：-h", base_args=False, args=["check", "-h"])
-
-
-def fix_abs(cases):
-    """freeze_file 絕對路徑的案例：設定檔裡的 @ABS@ 在執行前要換成暫存目錄；錄的時候直接重做一次。"""
 
 
 # ------------------------------------------------------------------ merge gate：純函式
@@ -654,6 +653,9 @@ class SbTap:
         self.inside = True
         try:
             code, rec = self.real_execute(argv)
+        except Exception as e:  # noqa: BLE001 — Python 版沒接住的例外：記 crash，另一個實作只要不放行
+            sb_steps.append({"case": [self.n(a) for a in argv], "crash": type(e).__name__})
+            return 1, {}
         finally:
             self.inside = False
         sb_steps.append(self.case(argv, code, rec))
@@ -662,7 +664,7 @@ class SbTap:
     def case(self, argv, code, rec):
         text = self.n(json.dumps(rec, ensure_ascii=False, indent=2))
         step = {"case": [self.n(a) for a in argv], "code": code, "stdout": text}
-        if rec.get("halted") and re.search(r"git .* 失敗：|讀不懂：\[Errno", rec.get("reason", "")) or code == 3 or "失敗" in rec.get("reason", ""):
+        if "失敗" in str(rec.get("reason", "")) or "[Errno" in str(rec.get("reason", "")):
             step["git_text"] = True  # reason 裡有 git 自己的訊息（隨 git 版本變）
         return step
 

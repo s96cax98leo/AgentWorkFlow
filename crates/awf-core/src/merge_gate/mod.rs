@@ -155,6 +155,16 @@ fn hit(re: &FRegex, text: &str) -> bool {
     re.is_match(text).unwrap_or(true)
 }
 
+/// 路徑的分類（對跑用）：命中的高風險路徑說明、是不是文件、是不是測試。
+pub fn path_kind(path: &str) -> (Option<&'static str>, bool, bool) {
+    (sensitive().iter().find(|(re, _)| re.is_match(path)).map(|(_, what)| *what), doc_re().is_match(path), test_re().is_match(path))
+}
+
+/// 新增行的分類（對跑用）：是不是 skip／only 之類、是不是壓制註解。
+pub fn line_kind(line: &str) -> (bool, bool) {
+    (hit(skip_re(), line), hit(suppress_re(), line))
+}
+
 // ------------------------------------------------------------------ 執行環境與錯誤
 
 /// 執行環境：測試可以換掉 teams 目錄、環境變數與 stdin。
@@ -741,6 +751,12 @@ impl Diff {
         }
     }
 
+    /// 只有 files 的 Diff（對跑 risk_tier 用）。
+    pub fn from_files(files: Vec<(String, [u64; 2])>) -> Diff {
+        let index = files.iter().enumerate().map(|(i, (p, _))| (p.clone(), i)).collect();
+        Diff { files, index, ..Diff::default() }
+    }
+
     pub fn paths(&self) -> Vec<&str> {
         self.files.iter().map(|(p, _)| p.as_str()).collect()
     }
@@ -815,7 +831,8 @@ pub fn parse_diff(text: &str) -> Result<Diff, Crash> {
         } else if line.starts_with("@@") {
             let m = hunk_re().captures(line);
             let counts = m.as_ref().map(|m| {
-                let num = |i: usize| m.get(i).map_or(Some(1), |x| x.as_str().parse::<u64>().ok()); // 「-3」省略行數＝1
+                // 「-3」省略行數＝1；樣式保證全是數字，轉不成 u64 只會是太大（Python 的整數沒有上限），當成最大值
+                let num = |i: usize| m.get(i).map_or(Some(1), |x| Some(x.as_str().parse::<u64>().unwrap_or(u64::MAX)));
                 (num(1), num(2))
             });
             match counts {

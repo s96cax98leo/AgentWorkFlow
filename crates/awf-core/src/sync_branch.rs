@@ -280,6 +280,11 @@ fn decide(requested: &str, behind: u64, published: bool, conflicts: &[String]) -
     }
 }
 
+/// `decide` 的對跑入口：回傳（strategy、reason），停下時回停下的理由。
+pub fn decide_text(requested: &str, behind: u64, published: bool, conflicts: &[String]) -> Result<(String, String), String> {
+    decide(requested, behind, published, conflicts).map(|(s, r)| (s.to_string(), r)).map_err(|Halt(m)| m)
+}
+
 fn set(rec: &mut Rec, pairs: Value) {
     if let Value::Object(o) = pairs {
         for (k, v) in o { rec.insert(k, v); }
