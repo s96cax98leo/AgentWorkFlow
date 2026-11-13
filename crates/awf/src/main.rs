@@ -5,7 +5,7 @@ use std::process::ExitCode;
 const SOURCE_HASH: &str = env!("AWF_SOURCE_HASH");
 
 fn usage() -> &'static str {
-    "用法：awf <子指令> [參數…]\n\n  --version    版本與原始碼雜湊\n\n子指令在移植中，完成的會列在這裡。\n"
+    "用法：awf <子指令> [參數…]\n\n  --version    版本與原始碼雜湊\n\n已移植的子指令：\n  checklist    可驗證的 checklist（status、check）\n  hook         hook 入口（移植中）\n"
 }
 
 fn main() -> ExitCode {
@@ -19,6 +19,7 @@ fn main() -> ExitCode {
             print!("{}", usage());
             ExitCode::SUCCESS
         }
+        Some("checklist") => ExitCode::from(awf_core::checklist::main(&args[1..]).clamp(0, 255) as u8),
         Some("hook") => ExitCode::from(awf_core::hooks::main(&args[1..]).clamp(0, 255) as u8),
         Some(other) => {
             eprintln!("awf：不認得的子指令「{other}」\n\n{}", usage());
