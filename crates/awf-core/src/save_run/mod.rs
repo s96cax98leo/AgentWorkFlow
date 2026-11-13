@@ -25,7 +25,7 @@ mod checks;
 mod cli;
 mod decisions;
 mod policy;
-mod py;
+pub(crate) mod py;
 mod selftest;
 mod trace;
 
