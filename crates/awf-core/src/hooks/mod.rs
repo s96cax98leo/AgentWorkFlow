@@ -22,6 +22,7 @@
 //!
 //! release 是 `panic = "abort"`，所以不靠 `catch_unwind`：panic hook 裡直接套第 3 條並結束行程。
 
+pub mod awf_cli;
 pub mod envelope;
 pub mod guard;
 pub mod guard_paths;

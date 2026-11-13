@@ -1,17 +1,20 @@
 # `.claude/settings.json` 與 hooks
 
-init.py 依 `--hooks` 從兩份範本挑一份產生 `.claude/settings.json`：
+`awf init` 依 `--hooks` 從兩份範本挑一份產生 `.claude/settings.json`：
 
 | `--hooks` | 範本 | 內容 | 前提 |
 |---|---|---|---|
-| `plugin`（預設） | `settings.json.tmpl` | 只有權限 | 安裝並啟用 `agent-workflow` plugin，hooks 由 plugin 的 `hooks/hooks.json` 註冊 |
-| `project` | `settings.project-hooks.json.tmpl` | 權限＋hooks（指向 `.claude/hooks/awf_hook.py`，用 init 時的 Python 絕對路徑啟動） | init.py 會把 plugin 的 hooks 複製到 `.claude/hooks/`；**不要再啟用 plugin 的 hooks** |
+| `plugin`（預設） | `settings.json.tmpl` | 只有權限 | 安裝並啟用 `agent-workflow` plugin，hooks 由 plugin 的 `hooks/hooks.json` 註冊（跑 plugin 的 `bin/awf hook <種類>`） |
+| `project` | `settings.project-hooks.json.tmpl` | 權限＋hooks（用 init 時找到的 `awf` 執行檔的絕對路徑跑 `awf hook <種類>`） | **不要再啟用 plugin 的 hooks** |
 
-專案原本就有 `.claude/settings.json` 時，init.py 不覆蓋，改成深度合併：使用者的欄位、permissions、env、自己的 hooks 都保留，只補上模版沒有的鍵，並把 `awf_hook.py` 的 hooks 加進對應事件（每個模式只註冊一次，重跑時就地更新指令）。
+專案原本就有 `.claude/settings.json` 時，`awf init` 不覆蓋，改成深度合併：使用者的欄位、permissions、env、自己的 hooks 都保留，只補上模版沒有的鍵，並把 `awf hook` 的 hooks 加進對應事件（每個種類只註冊一次，重跑時就地更新指令）。
 
-**同一個 hook 只能註冊一次。** 兩邊都註冊時，每次 Bash／Edit／交件都會檢查兩次，擋下訊息也會重複出現。檢查方式：在 Claude Code 裡跑 `/hooks`，`awf_hook.py guard-shell` 應該只出現一次。
+**同一個 hook 只能註冊一次。** 兩邊都註冊時，每次 Bash／Edit／交件都會檢查兩次，擋下訊息也會重複出現。檢查方式：在 Claude Code 裡跑 `/hooks`，`awf hook guard-shell` 應該只出現一次。
 
-hooks 全是 Python（`awf_hook.py <guard-shell|guard-paths|envelope>`），不需要 bash。shell 守門的 matcher 是 `Bash|PowerShell`，Windows 上 PowerShell 工具送出的指令一樣會被檢查。守門類 hook 設了 `"onFailure": "block"`：Python 跑不起來時擋下而不是放行。換了 Python（例如移除 init 時用的那個版本）後，用 `init.py --hooks project` 重跑（會就地更新 settings.json 裡 awf_hook.py 的指令），或手動改 `settings.json` 裡的路徑。
+hooks 是同一支執行檔（`awf hook <guard-shell|guard-paths|envelope>`），不需要 Python。shell 守門的 matcher 是 `Bash|PowerShell`，Windows 上 PowerShell 工具送出的指令一樣會被檢查。兩種註冊方式在 hook 跑不起來時的行為不同：
+
+- `plugin`：plugin 的指令要經 `sh` 執行啟動器 `bin/awf`。找不到這個平台的執行檔、逾時，或 Windows 沒有 Git Bash（這一行跑不了）時**放行**（`onFailure: continue`），因為 plugin 會套在使用者所有專案，不能鎖死工具。
+- `project`：守門類 hook 設了 `"onFailure": "block"`，執行檔跑不起來時**擋下**。指令直接寫執行檔的絕對路徑，不經 `sh`；Windows（尤其沒有 Git Bash 時）建議用這個。plugin 更新或執行檔搬位置之後，用 `awf init --hooks project` 重跑（會就地更新 settings.json 裡的指令），或手動改 `settings.json` 裡的路徑。
 
 個人的權限放 `.claude/settings.local.json`（不提交），不要改這份共用設定。
 

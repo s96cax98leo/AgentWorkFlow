@@ -30,7 +30,7 @@ const SKIP_EXT: &[&str] = &[".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".
 const ENV_DIR: &str = "AWF_READ_BUDGET_DIR";
 
 fn hint(n: u64) -> String {
-    format!("先用 Grep 或 `python3 .claude/teams/tools/kb.py query \"<問題>\"` 找到行段，再帶 offset／limit 讀，一次最多 {n} 行（設定：.claude/teams/methodology.json 的 limits）")
+    format!("先用 Grep 或 `awf kb query \"<問題>\"` 找到行段，再帶 offset／limit 讀，一次最多 {n} 行（設定：.claude/teams/methodology.json 的 limits）")
 }
 
 /// 模版角色回傳角色名（套過 ROLE_ALIASES）；主 session、使用者自己的 agent、擴充 agent 回空字串。

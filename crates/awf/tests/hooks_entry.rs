@@ -408,7 +408,7 @@ fn session_start_version_hint() {
     let p = Some(root.as_path());
 
     quiet("版本一致", &start(&proj(Some(b"0.5.0\n")), p, START));
-    one_line("專案的工具比 plugin 舊", &start(&proj(Some(b"0.4.1\n")), p, START), &["0.5.0", "0.4.1", "--upgrade", "awf.py doctor"]);
+    one_line("專案的工具比 plugin 舊", &start(&proj(Some(b"0.4.1\n")), p, START), &["0.5.0", "0.4.1", "--upgrade", "awf doctor"]);
     one_line("plugin 比專案舊", &start(&proj(Some(b"0.6.0\n")), p, START), &["0.5.0", "0.6.0", "claude plugin update", "/reload-plugins"]);
     quiet("還沒套用的專案（沒有 VERSION）", &start(&proj(None), p, START));
     quiet("VERSION 是空的", &start(&proj(Some(b"\n")), p, START));

@@ -134,7 +134,7 @@ impl Guard {
             } else if cfg.configured && *pt == am.freeze_file && !self.write_is_freeze(data)? {
                 return Err(self.block(&format!("主 session 不解凍自動合併（刪除凍結檔、寫 frozen=false 或用 Edit 改）；解凍由人自己做（手動編輯 {pt}）")));
             } else if cfg.configured && (AUDIT_FILES.contains(&pt.as_str()) || (pt == "guard.config.json" && am.enabled)) {
-                return Err(self.block(&format!("主 session 不直接改 {pt}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")));
+                return Err(self.block(&format!("主 session 不直接改 {pt}（稽核紀錄只由 awf merge-gate、awf publish 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")));
             }
         }
         let frel = fold(rel.as_deref().unwrap_or(""));
@@ -145,19 +145,19 @@ impl Guard {
 守門設定、profile 與 workflow 腳本只由人或主 session 改）（{}）", shown(&rel))));
         }
         if has_role && fname == "run.json" && (runs.is_empty() || in_runs_fold) {
-            return Err(self.block(&format!("{agent} 不能寫 run.json（run 狀態只由 save_run.py 在主 session 寫）")));
+            return Err(self.block(&format!("{agent} 不能寫 run.json（run 狀態只由 awf save-run 在主 session 寫）")));
         }
         let is_state_file = fname == "run.json"
             || fname.strip_suffix(".json").is_some_and(|s| self.run_stages.iter().any(|x| x == s) || PACK_STATE.contains(&s));
         if has_role && in_runs_fold && is_state_file {
-            return Err(self.block(&format!("{agent} 不能寫 {pname}（{runs} 底下的 run.json、<段>.json 是 save_run.py 寫的閘門資料，publish.py 與政策核准會重讀）")));
+            return Err(self.block(&format!("{agent} 不能寫 {pname}（{runs} 底下的 run.json、<段>.json 是 awf save-run 寫的閘門資料，awf publish 與政策核准會重讀）")));
         }
         if has_role && ((in_runs_fold && SHARED_CONTEXT_NAMES.contains(&fname.as_str())) || fname == fold("執行紀錄索引.md")) {
             return Err(self.block(&format!("{agent} 不能寫 {pname}（runs_dir 底下的 context.md、pack.md、決策記憶、結案摘要是所有 agent 共用的背景、執行紀錄索引.md 是閘門核對用的索引，\
-都只由主 session 跑 save_run.py／pack.py 產生）")));
+都只由主 session 跑 awf save-run／awf pack 產生）")));
         }
         if has_role && in_runs_fold && format!("/{}", frel.replace('\\', "/")).contains("/archive/") {
-            return Err(self.block(&format!("{agent} 不能寫 run 目錄的 archive/（結案摘要只由主 session 跑 save_run.py 產生，會收進知識層）")));
+            return Err(self.block(&format!("{agent} 不能寫 run 目錄的 archive/（結案摘要只由主 session 跑 awf save-run 產生，會收進知識層）")));
         }
         let parent = path::parent(&p);
         if has_role && self.in_scratchpad(&p, data)? {
