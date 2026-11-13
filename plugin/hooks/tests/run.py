@@ -2,17 +2,24 @@
 """agent-workflow hooks 的腳本層測試：應擋＝exit 2，應放行＝exit 0。
 
 用法：python3 plugin/hooks/tests/run.py [--project <已 init 的專案目錄>] [--hooks-dir <hooks 目錄>]
+          [--entry-cmd "<指令>"] [--record <檔>]
   測試在暫存目錄建一個獨立工作區（自己的 guard.config.json、一個假 repo 與 worktree），不碰任何真的 repo。
   schema 與 schemalib 取自 --project 的 .claude/teams/；沒給時取 AgentWorkFlow repo 的 scaffold/.claude/teams/。
   --hooks-dir 指定要測的 hooks（預設是本檔上一層，也就是 plugin/hooks；測 --hooks project 複製出去的那份時用）。
+  --entry-cmd 換掉入口（預設是「python awf_hook.py」）：移植到別的實作時，用同一批案例測它，例如 --entry-cmd "awf hook"。
+  --record 把每次呼叫入口的結果（模式、輸入雜湊、exit code、stdout、stderr）與每個案例的判定寫成 JSONL，
+  暫存路徑換成 @TMP@；兩個實作各錄一份就能逐字比對。
 只用標準庫，macOS、Linux、Windows 都能跑；假 repo 的 guard 用 Python 寫，bash 版的轉呼叫只在有 bash 的 POSIX 系統上測。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -26,9 +33,25 @@ PY = sys.executable
 ap = argparse.ArgumentParser()
 ap.add_argument("--project")
 ap.add_argument("--hooks-dir", default=str(HERE.parent))
+ap.add_argument("--entry-cmd", default="")
+ap.add_argument("--record", default="")
 args = ap.parse_args()
 HOOKS = Path(args.hooks_dir).resolve()
 ENTRY = HOOKS / "awf_hook.py"
+ENTRY_CMD = shlex.split(args.entry_cmd) if args.entry_cmd else [PY, str(ENTRY)]
+RECORDS: list[dict] = []
+NORMALIZE: list[str] = []  # 要換成 @TMP@ 的路徑字串（暫存目錄與它的實體路徑）
+
+
+def norm(text: str) -> str:
+    for a in NORMALIZE:
+        text = text.replace(a, "@TMP@")
+    return text
+
+
+def record(kind: str, **kw) -> None:
+    if args.record:
+        RECORDS.append({"seq": len(RECORDS), "kind": kind, **kw})
 SRC_TEAMS = Path(args.project) / ".claude" / "teams" if args.project else REPO_ROOT / "scaffold" / ".claude" / "teams"
 if not (SRC_TEAMS / "tools" / "schemalib.py").is_file():
     print(f"找不到 {SRC_TEAMS / 'tools' / 'schemalib.py'}")
@@ -47,6 +70,7 @@ passed = failed = 0
 
 def check(name: str, want: int, got: int, detail: str = "") -> None:
     global passed, failed
+    record("case", name=re.sub(r"（(中位數|平均) [\d.]+ms）", r"（\1 @MS@）", name), want=want, got=got)
     if got == want:
         passed += 1
     else:
@@ -61,7 +85,10 @@ def git(*a: str, cwd: Path | None = None) -> None:
 def hook(mode: str, data: dict | str, proj: Path) -> subprocess.CompletedProcess:
     raw = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(proj), "PYTHONUTF8": "1"}
-    return subprocess.run([PY, str(ENTRY), mode], input=raw.encode("utf-8"), capture_output=True, env=env)
+    r = subprocess.run([*ENTRY_CMD, mode], input=raw.encode("utf-8"), capture_output=True, env=env)
+    record("call", mode=mode, stdin_sha1=hashlib.sha1(norm(raw).encode("utf-8")).hexdigest(), rc=r.returncode,
+           stdout=norm(r.stdout.decode("utf-8", "replace")), stderr=norm(r.stderr.decode("utf-8", "replace")))
+    return r
 
 
 def run(mode: str, want: int, name: str, data: dict | str, proj: Path | None = None) -> None:
@@ -88,6 +115,7 @@ def edit(path: Path | str, agent: str = "", cwd: Path | None = None) -> dict:
 
 
 tmp = Path(tempfile.mkdtemp(prefix="awf-hooktest."))
+NORMALIZE[:] = sorted({str(tmp), str(tmp.resolve()), tmp.as_posix(), tmp.resolve().as_posix()}, key=len, reverse=True)
 RB_STATE = tmp / "rb-state"  # 讀取預算的狀態目錄：放在暫存目錄裡，測完一起刪
 os.environ["AWF_READ_BUDGET_DIR"] = str(RB_STATE)
 try:
@@ -1425,7 +1453,7 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
     for mode in ("guard-shell", "guard-paths"):
         r = hook(mode, "不是 JSON", WS)
         check(f"{mode}：輸入壞掉不放行", True, r.returncode != 0)
-    r = subprocess.run([PY, str(ENTRY), "no-such-mode"], input=b"{}", capture_output=True)
+    r = subprocess.run([*ENTRY_CMD, "no-such-mode"], input=b"{}", capture_output=True)
     check("未知模式＝hook 失敗（非 0、非 2）", True, r.returncode not in (0, 2))
 
     # ------------------------------------------------------------ 註冊設定：不用 bash、涵蓋 PowerShell、守門 fail-closed
@@ -1475,5 +1503,7 @@ if a == "" and "/contracts/" in f: no("repo guard：契約產物不手改")
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
+if args.record:
+    Path(args.record).write_text("".join(json.dumps(x, ensure_ascii=False, sort_keys=True, default=lambda o: sorted(o) if isinstance(o, (set, frozenset)) else str(o)) + "\n" for x in RECORDS), encoding="utf-8")
 print(f"通過 {passed}，失敗 {failed}")
 sys.exit(0 if failed == 0 else 1)
