@@ -525,3 +525,46 @@ fn custom_script_assembly_matches_recorded_frame() {
         assert!(mine == want, "上限 {key}：組裝結果的骨架和預期檔 {} 不同\n--- 現在 ---\n{mine}\n--- 預期 ---\n{want}", file.display());
     }
 }
+
+// ------------------------------------------------------------------ golden
+
+#[test]
+fn golden_passes_on_repo() {
+    let (code, out, _) = xtask::golden::run_captured(&root(), &[]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("失敗 0"), "{out}");
+}
+
+#[test]
+fn golden_fails_when_an_invalid_case_is_filed_as_valid() {
+    let tmp = teams_copy("golden-swap");
+    let set = util::teams_dir(tmp.path()).join("golden-set");
+    let bad = std::fs::read_dir(set.join("invalid")).expect("invalid").flatten().map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .expect("至少一個反例");
+    std::fs::rename(&bad, set.join("valid").join("zz-moved.json")).expect("搬檔");
+    let (code, out, _) = xtask::golden::run_captured(tmp.path(), &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("FAIL valid/zz-moved.json"), "{out}");
+}
+
+#[test]
+fn golden_fails_when_a_semantic_case_loses_its_mark() {
+    let tmp = teams_copy("golden-semantic");
+    let dir = util::teams_dir(tmp.path()).join("golden-set").join("invalid");
+    let mark = "\"semantic\": true";
+    let file = std::fs::read_dir(&dir).expect("invalid").flatten().map(|e| e.path())
+        .find(|p| std::fs::read_to_string(p).is_ok_and(|t| t.contains(mark)))
+        .expect("至少一個語意反例");
+    edit(&file, mark, "\"semantic\": false");
+    let (code, out, _) = xtask::golden::run_captured(tmp.path(), &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("schema 應該擋但通過"), "{out}");
+}
+
+#[test]
+fn golden_fails_on_empty_set() {
+    let tmp = TempDir::new("awf-xtask-golden-empty-").expect("暫存目錄");
+    let (code, out, _) = xtask::golden::run_captured(tmp.path(), &[]);
+    assert_eq!(code, 1, "{out}");
+}

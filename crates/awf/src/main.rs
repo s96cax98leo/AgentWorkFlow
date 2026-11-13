@@ -5,7 +5,55 @@ use std::process::ExitCode;
 const SOURCE_HASH: &str = env!("AWF_SOURCE_HASH");
 
 fn usage() -> &'static str {
-    "用法：awf <子指令> [參數…]\n\n  --version    版本與原始碼雜湊\n\n已移植的子指令：\n  checklist    可驗證的 checklist（status、check）\n  hook         hook 入口（移植中）\n"
+    "用法：awf <子指令> [參數…]
+
+  --version        版本與原始碼雜湊
+  --help           這份說明
+
+流程（主 session 用）：
+  start            開一個新的 run，回第一個動作
+  next             回下一個動作（跑 workflow、閘門、要人補資料、結束）
+  done             收下這一段 workflow 的回傳並存檔
+  approve          核准一段閘門（轉給 save-run approve，時間自動取）
+  render           用範本與專案設定產生 workflow 腳本
+  handoff          寫這個 run 的接手摘要
+  state            狀態機本身的選項（例如 state --selftest）
+  save-run         存各段結果、核准、升級、結案與放棄
+  pack             備每一段的資料包與調研重用紀錄
+  watch            看 run 的進度，把變化記成進度事件並通知
+  statusline       印一行給狀態列用的進度
+
+閘門與推送：
+  merge-gate       確定性的合併閘門：複核需求對照、head、checks、風險後判 merge 或 hold
+  publish          確定性的推送：掃機敏值、確認閘門鏈都核准後推分支並開 PR
+  sync-branch      決定分支怎麼跟上 base（rebase、merge 或中轉分支）並檢查中轉分支
+
+查詢與輔助：
+  kb               知識層：建索引、查詢專案文件與結案摘要
+  locate           用需求的用詞在 repo 裡定位相關的檔案行段
+  recipe           依需求類型解析這次要跑哪些段、用什麼模型
+  deliverables     交付文件的設定、盤點、同步與匯出
+  cost             統計 workflow 花的 token 與時間
+  spec             規格層：讀規格目錄（現行規格與變更），做 validate 與 apply
+  run-brief        跑一個指令，完整輸出寫進 log 檔，終端只印重點
+  checklist        可驗證的 checklist：照驗證指令的實際結果打勾
+
+檢查：
+  doctor           檢查安裝：環境、版本、hook 註冊、專案設定
+  build            把片段、schema 與專案設定內嵌進 workflow（--check 只比對）
+  script           自訂 workflow 腳本的靜態檢查與組裝
+  check-agents     檢查 agent 檔的格式與角色名單
+  check-envelope   驗一份交件信封（schema 與交接的語意規則）
+  check-rules      掃描產出有沒有違反 rules.md 的硬規則（只做機械判定）
+
+安裝：
+  init             把模版套用到專案，或升級已套用的專案
+
+hook：
+  hook             hook 入口（guard-shell、guard-paths、envelope、session-start）
+
+大部分子指令可以加 --selftest 跑自己的檢查。
+"
 }
 
 fn main() -> ExitCode {

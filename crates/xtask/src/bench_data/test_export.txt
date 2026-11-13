@@ -1,0 +1,23 @@
+"""匯出的測試。"""
+from datetime import datetime
+
+from acme_orders.export.csv_export import EXPORT_COLUMNS, export_filename, export_orders_csv
+from acme_orders.orders.models import Order
+from acme_orders.orders.repository import OrderRepository
+
+
+def _order(no: str, at: datetime) -> Order:
+    return Order(order_no=no, customer_id="C001", placed_at=at, status="done", total_cents=1200, currency="TWD", channel="web")
+
+
+def test_export_has_header_and_sorted_rows():
+    repo = OrderRepository()
+    repo.save(_order("B", datetime(2026, 1, 2)))
+    repo.save(_order("A", datetime(2026, 1, 1)))
+    lines = export_orders_csv(repo).splitlines()
+    assert lines[0] == ",".join(EXPORT_COLUMNS)
+    assert [ln.split(",")[0] for ln in lines[1:]] == ["A", "B"]
+
+
+def test_export_filename_is_fixed():
+    assert export_filename() == "orders-all.csv"

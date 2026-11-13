@@ -1,0 +1,13 @@
+"""匯出的 HTTP 處理。GET /exports/orders.csv 直接回傳整份 CSV。"""
+from __future__ import annotations
+
+from ..orders.repository import OrderRepository
+from .csv_export import export_filename, export_orders_csv
+
+
+def download_orders(repo: OrderRepository, query: dict) -> tuple[int, dict, str]:
+    """回傳（狀態碼、標頭、內容）。query 目前沒有用到任何參數。"""
+    body = export_orders_csv(repo)
+    headers = {"Content-Type": "text/csv; charset=utf-8",
+               "Content-Disposition": f'attachment; filename="{export_filename()}"'}
+    return 200, headers, body

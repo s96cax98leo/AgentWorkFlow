@@ -1,0 +1,38 @@
+"""背景批次的佇列（示範用的記憶體實作）。排程與重試規則見 docs/批次作業.md。"""
+from __future__ import annotations
+
+import json
+from datetime import datetime
+
+from ..jobs.models import Job
+from ..jobs.repository import JobRepository
+
+KINDS = ("nightly_report", "inventory_sync", "invoice_batch")  # 允許排入的作業種類
+MAX_ATTEMPTS = 3
+
+
+def enqueue(repo: JobRepository, kind: str, payload: dict, now: datetime) -> Job:
+    """排入一個作業。kind 不在允許清單就丟 ValueError。"""
+    if kind not in KINDS:
+        raise ValueError(f"未知的作業種類：{kind}")
+    job = Job(job_id=f"{kind}-{now.strftime('%Y%m%d%H%M%S')}", kind=kind, payload=json.dumps(payload, ensure_ascii=False),
+              enqueued_at=now, finished_at=now, state="pending")
+    repo.save(job)
+    return job
+
+
+def run_next(repo: JobRepository, handlers: dict, now: datetime) -> Job | None:
+    """取一個 pending 的作業執行。handlers 是 {kind: callable(payload) -> None}。"""
+    for job in repo.by_state("pending"):
+        handler = handlers.get(job.kind)
+        if handler is None:
+            repo.save(job.with_state("failed"))
+            return job
+        try:
+            handler(json.loads(job.payload))
+        except Exception:  # noqa: BLE001 — 作業失敗只記狀態，不讓佇列停下
+            repo.save(job.with_state("failed"))
+            return job
+        repo.save(job.with_state("done").with_finished_at(now))
+        return job
+    return None

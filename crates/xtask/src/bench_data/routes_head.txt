@@ -1,0 +1,5 @@
+"""路由表：路徑 → 處理函式。新增端點要同步更新 docs/API規格.md。"""
+from __future__ import annotations
+
+ROUTES = [
+    ("GET", "/exports/orders.csv", "acme_orders.export.handlers:download_orders"),
