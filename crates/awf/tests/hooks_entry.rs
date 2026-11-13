@@ -6,6 +6,12 @@
 //! 4. PATH 上沒有 git：一般指令與寫檔放行，純字串規則仍擋，而且不是「意外錯誤」。
 //! 5. 壞輸入：守門 exit 2、交件 exit 0；用法錯誤 exit 1。
 //! 6. SessionStart 的版本提示：不一致只印一行 JSON，其餘情況都不印；永遠 exit 0。
+//! 7. plugin 的 hooks.json 的形狀：每個 hook 有 timeout、守門跑 bin/awf 而且 onFailure=continue、不用 `||`、
+//!    guard-paths 涵蓋 Read／Grep、SessionStart 只跑 session-start。
+//!    （守門規則本身的案例在 `hooks_cases.rs`，照 `tests/hooks/cases.jsonl` 重放；專案 settings 範本的註冊檢查也在那裡。）
+//!
+//! Python 版另有「PATH 上只有 python／python3 是商店空殼／沒有 Python」的啟動測試：hook 改成執行檔之後不適用，
+//! 啟動器（bin/awf 挑平台）的測試在 `cargo xtask check-launchers`。
 //!
 //! 故障注入（`AWF_HOOK_TEST_FAULT`）只有除錯版的執行檔才有，所以第 1 段在 release 設定下略過。
 
@@ -199,6 +205,18 @@ fn config_with_wrong_types_never_opens_the_gate() {
     expect("型別錯誤：gh pr merge 擋", &hook_json("guard-shell", &ws, &sh(&repo, "gh pr merge 3 --squash", "")), 2);
     let r = hook_json("envelope", &ws, &json!({"hook_event_name": "SubagentStop", "agent_type": AGENT, "last_assistant_message": "x"}));
     expect("型別錯誤：交件放行", &r, 0);
+}
+
+/// 對應 Python 版「envelope 模組壞掉：放行」：交件檢查自己跑不下去（這裡是設定檔讀不懂）時不能卡住 agent 交件。
+#[test]
+fn envelope_never_blocks_when_it_cannot_run() {
+    let tmp = Tmp::new("envbroken");
+    let (ws, _repo) = init_ws(tmp.path(), default_config());
+    std::fs::write(ws.join(".claude/teams/guard.config.json"), "{ 壞掉的 json").unwrap();
+    for event in ["SubagentStop", "TaskCompleted"] {
+        let r = hook_json("envelope", &ws, &json!({"hook_event_name": event, "agent_type": AGENT, "last_assistant_message": "x"}));
+        expect(&format!("設定讀不懂：{event} 交件放行"), &r, 0);
+    }
 }
 
 // ───────── 2. 延遲 ─────────
@@ -432,4 +450,49 @@ fn session_start_version_hint() {
     quiet("沒有指定 plugin 目錄（執行檔旁邊也沒有 plugin.json）", &start(&old, None, START));
     std::fs::write(&manifest, "{壞掉").unwrap();
     quiet("plugin.json 讀不懂", &start(&old, p, START));
+}
+
+// ───────── 7. hooks.json 的形狀 ─────────
+
+#[test]
+fn hooks_json_shape() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/hooks/hooks.json");
+    let hj: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("讀 plugin/hooks/hooks.json")).expect("hooks.json 是 JSON");
+    // (事件, hook 設定, 所在項目的 matcher)
+    let mut every: Vec<(String, Value, String)> = Vec::new();
+    for (ev, entries) in hj["hooks"].as_object().expect("hooks 是物件") {
+        for m in entries.as_array().expect("事件底下是陣列") {
+            for h in m["hooks"].as_array().expect("hooks 是陣列") {
+                every.push((ev.clone(), h.clone(), m["matcher"].as_str().unwrap_or("").to_string()));
+            }
+        }
+    }
+    let cmd = |h: &Value| h["command"].as_str().unwrap_or("").to_string();
+    let guards: Vec<&(String, Value, String)> = every.iter().filter(|(ev, h, _)| ev == "PreToolUse" && cmd(h).contains("guard-")).collect();
+    for mode in ["guard-shell", "guard-paths"] {
+        assert!(guards.iter().any(|(_, h, _)| cmd(h).ends_with(&format!(" {mode}"))), "hooks.json 要有 {mode}：{guards:?}");
+    }
+    for (ev, h, _) in &every {
+        let t = h["timeout"].as_i64();
+        assert!(t.is_some_and(|t| (1..=30).contains(&t)), "{ev} 要有 timeout（1–30 秒）：{h}");
+    }
+    for (_, h, _) in &guards {
+        let c = cmd(h);
+        assert!(c.starts_with("\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook "), "守門 hook 要跑 plugin 的 bin/awf：{c}");
+        assert!(!c.contains("||"), "守門 hook 不用 ||（失敗要交給 onFailure 決定）：{c}");
+        assert_eq!(h["onFailure"], "continue", "守門 hook onFailure=continue（跑不起來時不鎖死所有工具）：{h}");
+        assert!(h["timeout"].as_i64().is_some_and(|t| t <= 10), "守門 hook timeout ≤ 10 秒：{h}");
+    }
+    let path_tools: Vec<&str> = guards.iter().filter(|(_, h, _)| cmd(h).contains("guard-paths")).flat_map(|(_, _, m)| m.split('|')).collect();
+    for t in ["Edit", "Write", "NotebookEdit", "Read", "Grep"] {
+        assert!(path_tools.contains(&t), "guard-paths 要涵蓋 {t}：{path_tools:?}");
+    }
+    let shell_tools: Vec<&str> = guards.iter().filter(|(_, h, _)| cmd(h).contains("guard-shell")).flat_map(|(_, _, m)| m.split('|')).collect();
+    for t in ["Bash", "PowerShell"] {
+        assert!(shell_tools.contains(&t), "guard-shell 要涵蓋 {t}：{shell_tools:?}");
+    }
+    let ss: Vec<&(String, Value, String)> = every.iter().filter(|(ev, _, _)| ev == "SessionStart").collect();
+    assert_eq!(ss.len(), 1, "SessionStart 只跑一個 hook：{ss:?}");
+    assert!(cmd(&ss[0].1).ends_with(" session-start"), "SessionStart 只跑 session-start：{}", cmd(&ss[0].1));
+    assert!(ss[0].1["timeout"].as_i64().is_some_and(|t| t <= 5), "SessionStart 的 timeout ≤ 5 秒：{}", ss[0].1);
 }
