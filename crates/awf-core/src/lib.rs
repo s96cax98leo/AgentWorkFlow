@@ -4,6 +4,7 @@
 //! （對跑基準在 `tests/parity/`）。行為只能在確實該變的時候改，而且只能變嚴。
 
 pub mod build;
+pub mod check_agents;
 pub mod check_envelope;
 pub mod check_rules;
 pub mod checklist;

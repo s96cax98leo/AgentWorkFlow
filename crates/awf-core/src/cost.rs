@@ -1134,7 +1134,7 @@ mod tests {
         let iso = |s: &str| fromisoformat(s).map(|t| t.isoformat());
         assert_eq!(iso("2026-01-01T00:01:00+00:00").as_deref(), Some("2026-01-01T00:01:00+00:00"));
         assert_eq!(iso("2026-01-01").as_deref(), Some("2026-01-01T00:00:00"));
-        assert_eq!(iso("20260101T010203.5-0530").as_deref(), Some("2026-01-01T01:02:03.500000-05:30"));
+        assert_eq!(iso("20260101 010203.5-0530").as_deref(), Some("2026-01-01T01:02:03.500000-05:30"));
         assert_eq!(iso("2026-W01-1").as_deref(), Some("2025-12-29T00:00:00"));
         assert_eq!(iso("2026-13-01"), None);
         assert_eq!(iso("None"), None);
