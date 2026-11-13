@@ -26,6 +26,7 @@ mod selftest;
 pub use crate::kb::PyErr;
 pub use args::{apply_sets, current_session, deliverables_sync, find_wf_meta, run_pack, stage_args, transcripts_root};
 pub use machine::{carry, custom_action, decide, envelopes, gate_action, halted_action, handoff_text, highlights, provisional, text_of, try_policy, workflow_action};
+pub(crate) use plugin::{override_re, unregistered, version as plugin_version};
 pub use plugin::{custom_roles, find_plugin, find_template, plugin_candidates, read_config, render, render_custom, workflow_names, Candidate};
 pub use selftest::selftest;
 

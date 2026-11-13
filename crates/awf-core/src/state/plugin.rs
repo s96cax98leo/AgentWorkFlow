@@ -11,7 +11,7 @@ use sha1::{Digest, Sha1};
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-fn override_re() -> &'static Regex {
+pub(crate) fn override_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(&format!(r"(?m)^// awf-override: *([^{WS_CLASS}]+)[{WS_CLASS}]*$")).expect("固定的正規式"))
 }
@@ -26,7 +26,7 @@ fn read_text(env: &Env, p: &str) -> R<String> {
     env.sr().read_text(p)
 }
 
-fn version(env: &Env, plugin: Option<&str>) -> R<String> {
+pub(crate) fn version(env: &Env, plugin: Option<&str>) -> R<String> {
     let Some(plugin) = plugin else { return Ok(String::new()) };
     match load_json(env, &pj(plugin, ".claude-plugin/plugin.json"))? {
         Some(d @ Value::Object(_)) => Ok(s_or(py::get(&d, "version")?)),
@@ -204,7 +204,7 @@ fn methodology(env: &Env) -> A<Option<Value>> {
 }
 
 /// profile 的 extensions 裡、沒有登記在 guard.config.json `extension_agents` 的 agent。
-fn unregistered(env: &Env, methodology: Option<&Value>) -> R<Vec<String>> {
+pub(crate) fn unregistered(env: &Env, methodology: Option<&Value>) -> R<Vec<String>> {
     let Some(Value::Array(ext)) = methodology.and_then(|m| m.as_object()).and_then(|m| m.get("extensions")) else { return Ok(Vec::new()) };
     if ext.is_empty() {
         return Ok(Vec::new());
