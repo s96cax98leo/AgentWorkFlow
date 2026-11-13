@@ -9,59 +9,63 @@ use crate::pyfmt::repr_str;
 use std::io::Write;
 
 // 說明文字照 argparse 在 80 欄寬時的輸出（程式名沿用 kb.py）。
-const HELP_TOP: &str = "usage: kb.py [-h] {build,query,lint} ...\n\
-\n\
-知識層：先查到哪個檔的哪幾行，再只讀那幾行\n\
-\n\
-positional arguments:\n\
-  {build,query,lint}\n\
-    build             建立或增量更新索引\n\
-    query             查詢（唯讀）\n\
-    lint              壞連結與孤兒頁\n\
-\n\
-options:\n\
-  -h, --help          show this help message and exit\n\
-";
-const HELP_BUILD: &str = "usage: kb.py build [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n\
-                   [--sources SOURCES [SOURCES ...]]\n\
-                   [--exclude EXCLUDE [EXCLUDE ...]]\n\
-\n\
-options:\n\
-  -h, --help            show this help message and exit\n\
-  --root ROOT           專案根目錄（預設：工具往上三層）\n\
-  --profile PROFILE     開發規範 profile（預設 <root>/.claude/teams/methodology.json）\n\
-  --dir DIR             索引目錄（預設取 profile 的 knowledge.dir，再沒有就是 _tpm/kb）\n\
-  --sources SOURCES [SOURCES ...]\n\
-                        要索引的 glob（可多個，或用逗號分隔）\n\
-  --exclude EXCLUDE [EXCLUDE ...]\n\
-                        排除的 glob\n\
-";
-const HELP_QUERY: &str = "usage: kb.py query [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n\
-                   [--top TOP] [--budget BUDGET] [--json]\n\
-                   [--engine {auto,fts5,bm25}]\n\
-                   text\n\
-\n\
-positional arguments:\n\
-  text                  問題\n\
-\n\
-options:\n\
-  -h, --help            show this help message and exit\n\
-  --root ROOT           專案根目錄（預設：工具往上三層）\n\
-  --profile PROFILE     開發規範 profile（預設 <root>/.claude/teams/methodology.json）\n\
-  --dir DIR             索引目錄（預設取 profile 的 knowledge.dir，再沒有就是 _tpm/kb）\n\
-  --top TOP             最多幾筆（預設 8）\n\
-  --budget BUDGET       輸出總字數上限（預設 4000）\n\
-  --json                輸出 JSON\n\
-  --engine {auto,fts5,bm25}\n\
-";
-const HELP_LINT: &str = "usage: kb.py lint [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n\
-\n\
-options:\n\
-  -h, --help         show this help message and exit\n\
-  --root ROOT        專案根目錄（預設：工具往上三層）\n\
-  --profile PROFILE  開發規範 profile（預設 <root>/.claude/teams/methodology.json）\n\
-  --dir DIR          索引目錄（預設取 profile 的 knowledge.dir，再沒有就是 _tpm/kb）\n\
-";
+const HELP_TOP: &str = concat!(
+    "usage: kb.py [-h] {build,query,lint} ...\n",
+    "\n",
+    "知識層：先查到哪個檔的哪幾行，再只讀那幾行\n",
+    "\n",
+    "positional arguments:\n",
+    "  {build,query,lint}\n",
+    "    build             建立或增量更新索引\n",
+    "    query             查詢（唯讀）\n",
+    "    lint              壞連結與孤兒頁\n",
+    "\n",
+    "options:\n",
+    "  -h, --help          show this help message and exit\n",
+);
+const HELP_BUILD: &str = concat!(
+    "usage: kb.py build [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
+    "                   [--sources SOURCES [SOURCES ...]]\n",
+    "                   [--exclude EXCLUDE [EXCLUDE ...]]\n",
+    "\n",
+    "options:\n",
+    "  -h, --help            show this help message and exit\n",
+    "  --root ROOT           專案根目錄（預設：工具往上三層）\n",
+    "  --profile PROFILE     開發規範 profile（預設 <root>/.claude/teams/methodology.json）\n",
+    "  --dir DIR             索引目錄（預設取 profile 的 knowledge.dir，再沒有就是 _tpm/kb）\n",
+    "  --sources SOURCES [SOURCES ...]\n",
+    "                        要索引的 glob（可多個，或用逗號分隔）\n",
+    "  --exclude EXCLUDE [EXCLUDE ...]\n",
+    "                        排除的 glob\n",
+);
+const HELP_QUERY: &str = concat!(
+    "usage: kb.py query [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
+    "                   [--top TOP] [--budget BUDGET] [--json]\n",
+    "                   [--engine {auto,fts5,bm25}]\n",
+    "                   text\n",
+    "\n",
+    "positional arguments:\n",
+    "  text                  問題\n",
+    "\n",
+    "options:\n",
+    "  -h, --help            show this help message and exit\n",
+    "  --root ROOT           專案根目錄（預設：工具往上三層）\n",
+    "  --profile PROFILE     開發規範 profile（預設 <root>/.claude/teams/methodology.json）\n",
+    "  --dir DIR             索引目錄（預設取 profile 的 knowledge.dir，再沒有就是 _tpm/kb）\n",
+    "  --top TOP             最多幾筆（預設 8）\n",
+    "  --budget BUDGET       輸出總字數上限（預設 4000）\n",
+    "  --json                輸出 JSON\n",
+    "  --engine {auto,fts5,bm25}\n",
+);
+const HELP_LINT: &str = concat!(
+    "usage: kb.py lint [-h] [--root ROOT] [--profile PROFILE] [--dir DIR]\n",
+    "\n",
+    "options:\n",
+    "  -h, --help         show this help message and exit\n",
+    "  --root ROOT        專案根目錄（預設：工具往上三層）\n",
+    "  --profile PROFILE  開發規範 profile（預設 <root>/.claude/teams/methodology.json）\n",
+    "  --dir DIR          索引目錄（預設取 profile 的 knowledge.dir，再沒有就是 _tpm/kb）\n",
+);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
