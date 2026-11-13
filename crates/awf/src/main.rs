@@ -26,6 +26,11 @@ fn main() -> ExitCode {
         Some("sync-branch") => ExitCode::from(awf_core::sync_branch::main(&args[1..]).clamp(0, 255) as u8),
         Some("publish") => ExitCode::from(awf_core::publish::main(&args[1..]).clamp(0, 255) as u8),
         Some("save-run") => ExitCode::from(awf_core::save_run::main(&args[1..]).clamp(0, 255) as u8),
+        Some("deliverables") => ExitCode::from(awf_core::deliverables::main(&args[1..]).clamp(0, 255) as u8),
+        Some("locate") => ExitCode::from(awf_core::locate::main(&args[1..]).clamp(0, 255) as u8),
+        Some("pack") => ExitCode::from(awf_core::pack::main(&args[1..]).clamp(0, 255) as u8),
+        Some("cost") => ExitCode::from(awf_core::cost::main(&args[1..]).clamp(0, 255) as u8),
+        Some("script") => ExitCode::from(awf_core::script::main(&args[1..]).clamp(0, 255) as u8),
         Some("hook") => ExitCode::from(awf_core::hooks::main(&args[1..]).clamp(0, 255) as u8),
         Some(other) => {
             eprintln!("awf：不認得的子指令「{other}」\n\n{}", usage());

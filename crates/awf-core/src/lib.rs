@@ -5,14 +5,19 @@
 
 pub mod checklist;
 pub mod config;
+pub mod cost;
+pub mod deliverables;
 pub mod hooks;
 pub mod kb;
+pub mod locate;
 pub mod merge_gate;
+pub mod pack;
 pub mod publish;
 pub mod pyfmt;
 pub mod recipe;
 pub mod save_run;
 pub mod schema;
+pub mod script;
 pub mod sync_branch;
 
 /// 版本（workspace 的版本）。
