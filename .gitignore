@@ -33,3 +33,6 @@ node_modules/
 
 # 計畫與可驗證 checklist（本機工作紀錄），不進版控
 /plans/
+
+# Rust 建置產物
+/target/
