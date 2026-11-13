@@ -296,7 +296,23 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(st.status.success(), "git {args:?}：{}", String::from_utf8_lossy(&st.stderr));
 }
 
-const PASSING: &str = "[通過] 只用標準庫\n[通過] plugin 不連網\n[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n\n供應鏈檢查通過\n";
+/// Python 檔不在時沒有前兩條（`RUST_PASSING` 是其餘的）。
+const PASSING: &str = "[通過] 只用標準庫\n[通過] plugin 不連網\n[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n[通過] Cargo.lock 在版控裡\n\
+[通過] Rust 相依都來自 crates.io\n[通過] Rust 相依和允許清單一致\n[通過] Node 腳本只用內建模組\n\n供應鏈檢查通過\n";
+const RUST_PASSING: &str = "[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n[通過] Cargo.lock 在版控裡\n\
+[通過] Rust 相依都來自 crates.io\n[通過] Rust 相依和允許清單一致\n[通過] Node 腳本只用內建模組\n\n供應鏈檢查通過\n";
+const CRATES_IO: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+/// 迷你 workspace：一個成員 demo、一個來自 crates.io 的相依 serde，允許清單只有 serde。
+fn write_cargo(d: &Path) {
+    write(d, "Cargo.toml", "[workspace]\nresolver = \"2\"\nmembers = [\"crates/demo\"]\n");
+    write(d, "crates/demo/Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n");
+    write(d, "Cargo.lock", &format!("version = 4\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\n \"serde\",\n]\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"{CRATES_IO}\"\nchecksum = \"00\"\n"));
+    write(d, "crates/xtask/allowed-crates.txt", "# 說明\n\nserde\n");
+    write(d, "scaffold/.claude/teams/tools/check_workflows.mjs", "import { readFileSync } from 'node:fs'\nimport {\n  join,\n} from 'path'\nconst s = await import(somewhere)\n// 字串裡的 from 'left-pad' 不算\n");
+    write(d, "scaffold/.claude/teams/tools/scenarios/a.mjs", "import { X } from './_helpers.mjs'\nexport default []\n");
+    write(d, "crates/xtask/src/js/t.cjs", "const fs = require('fs')\n");
+}
 
 #[test]
 fn supply_passes_on_repo() {
@@ -318,6 +334,7 @@ fn supply_catches_each_kind() {
     write(d, "scaffold/.github/workflows/gate.yml.tmpl", &format!("steps:\n  - name: x\n    uses: \"actions/setup-node@{sha}\"\n"));
     write(d, ".env.example", "A=1\n");
     write(d, "README.md", "乾淨\n");
+    write_cargo(d);
     git(d, &["init", "-q"]);
     git(d, &["add", "-A"]);
     let (rc, out, err) = check_supply::run_captured(d);
@@ -340,6 +357,16 @@ fn supply_catches_each_kind() {
     // 私鑰標頭在執行時組出來，不以完整形狀寫在檔案裡
     let dashes = "-".repeat(5);
     write(d, "notes.txt", &format!("前面\n{dashes}{} RSA {} {}{dashes}\n後面\n", "BEGIN", "PRIVATE", "KEY"));
+    // Rust 相依：git 來源、workspace 以外的 path 相依、清單沒有的 crate、清單多出來的名字
+    let lock = std::fs::read_to_string(d.join("Cargo.lock")).expect("Cargo.lock");
+    write(d, "Cargo.lock", &format!(
+        "{lock}\n[[package]]\nname = \"evil\"\nversion = \"0.1.0\"\nsource = \"git+https://example.com/evil#abc\"\n\n[[package]]\nname = \"local-dep\"\nversion = \"0.1.0\"\n\n\
+         [[package]]\nname = \"extra\"\nversion = \"2.0.0\"\nsource = \"{CRATES_IO}\"\n"
+    ));
+    write(d, "crates/xtask/allowed-crates.txt", "serde\ngone\n");
+    // Node：外部套件、網路模組
+    write(d, "scaffold/.claude/teams/tools/scenarios/a.mjs", "import axios from 'axios'\nexport { y } from \"../up.mjs\"\n");
+    write(d, "crates/xtask/src/js/t.cjs", "const fs = require('fs')\nconst h = require('node:https')\n");
     git(d, &["add", "-A", "-f"]);
     let (rc, out, err) = check_supply::run_captured(d);
     assert_eq!(rc, 1, "{out}{err}");
@@ -364,12 +391,56 @@ fn supply_catches_each_kind() {
         "  - pkg/__pycache__/a.txt：版控裡不該有 Python 快取檔\n",
         "  - pkg/b.pyc：版控裡不該有 Python 快取檔\n",
         "  - notes.txt：內容含私鑰\n",
+        "[通過] Cargo.lock 在版控裡\n",
+        "[失敗] Rust 相依都來自 crates.io\n",
+        "  - evil：來源不是 crates.io（git+https://example.com/evil#abc）\n",
+        "  - local-dep：沒有來源（workspace 以外的 path 相依）\n",
+        "[失敗] Rust 相依和允許清單一致\n",
+        "  - evil：Cargo.lock 有、允許清單沒有（確認要用它之後加進 crates/xtask/allowed-crates.txt）\n",
+        "  - extra：Cargo.lock 有、允許清單沒有（確認要用它之後加進 crates/xtask/allowed-crates.txt）\n",
+        "  - gone：允許清單有、Cargo.lock 沒有（已經不用就從 crates/xtask/allowed-crates.txt 拿掉）\n",
+        "[失敗] Node 腳本只用內建模組\n",
+        "  - scaffold/.claude/teams/tools/scenarios/a.mjs:1：只能 import 內建模組（不含網路）或相對路徑（axios）\n",
+        "  - crates/xtask/src/js/t.cjs:2：只能 import 內建模組（不含網路）或相對路徑（node:https）\n",
     ] {
         assert!(out.contains(want), "少了「{want}」：\n{out}");
     }
-    assert_eq!(out.matches("  - ").count(), 16, "{out}");
-    assert!(out.ends_with("\n供應鏈檢查失敗：16 條\n"), "{out}");
+    assert_eq!(out.matches("  - ").count(), 23, "{out}");
+    assert!(out.ends_with("\n供應鏈檢查失敗：23 條\n"), "{out}");
     assert!(!out.contains(".env.example") && !out.contains("docker://") && !out.contains("helper"), "{out}");
+}
+
+/// Python 檔都不在時：沒有 Python 那兩條，其餘照常；Cargo.lock 沒進版控、不存在、workspace 成員沒跟上都要失敗。
+#[test]
+fn supply_without_python_checks_rust_side() {
+    let tmp = TempDir::new("awf-xtask-supply-rs-").expect("暫存目錄");
+    let d = tmp.path();
+    write_cargo(d);
+    write(d, "README.md", "乾淨\n");
+    git(d, &["init", "-q"]);
+    git(d, &["add", "-A"]);
+    let (rc, out, err) = check_supply::run_captured(d);
+    assert_eq!((rc, out.as_str()), (0, RUST_PASSING), "{err}");
+
+    git(d, &["rm", "-q", "--cached", "Cargo.lock"]);
+    let (rc, out, _) = check_supply::run_captured(d);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("[失敗] Cargo.lock 在版控裡\n  - Cargo.lock 不在版控裡（git ls-files 沒有它）\n"), "{out}");
+    assert!(out.ends_with("\n供應鏈檢查失敗：1 條\n"), "{out}");
+
+    git(d, &["add", "Cargo.lock"]);
+    write(d, "Cargo.toml", "[workspace]\nmembers = [\n  \"crates/demo\",\n  \"crates/other\",\n]\n");
+    write(d, "crates/other/Cargo.toml", "[package]\nname = \"other\"\n");
+    let (rc, out, _) = check_supply::run_captured(d);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("  - other：workspace 成員不在 Cargo.lock 裡（Cargo.lock 沒有跟上）\n"), "{out}");
+
+    std::fs::remove_file(d.join("Cargo.lock")).expect("rm");
+    let (rc, out, _) = check_supply::run_captured(d);
+    assert_eq!(rc, 1, "{out}");
+    for want in ["  - Cargo.lock 不存在\n", "[失敗] Rust 相依都來自 crates.io\n  - 讀不到 Cargo.lock\n", "[失敗] Rust 相依和允許清單一致\n  - 讀不到 Cargo.lock\n"] {
+        assert!(out.contains(want), "少了「{want}」：\n{out}");
+    }
 }
 
 #[test]
