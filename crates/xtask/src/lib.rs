@@ -1,8 +1,15 @@
 //! 只給這個 repo 用的維護工具（`cargo xtask <指令>`）的本體；`main.rs` 只分派指令。
 
+pub mod check_budget;
 pub mod check_docs;
+pub mod check_kernel;
+pub mod check_patterns;
+pub mod check_recipes;
+pub mod check_supply;
+pub mod pyimports;
 pub mod pyre;
 pub mod scrub;
+pub mod util;
 
 use std::path::PathBuf;
 
