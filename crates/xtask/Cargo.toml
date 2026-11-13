@@ -7,4 +7,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+awf-core = { path = "../awf-core" }
 serde_json.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
