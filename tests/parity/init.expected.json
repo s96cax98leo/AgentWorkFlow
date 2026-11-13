@@ -23,7 +23,7 @@
   "proj/.claude/settings.README.md": "-:dc5a3721dd69f308",
   "proj/.claude/settings.json": "-:249ce39aa1034b50",
   "proj/.claude/teams/": "d",
-  "proj/.claude/teams/README.md": "-:8fb0570c8058d46b",
+  "proj/.claude/teams/README.md": "-:8218caf59dee9c42",
   "proj/.claude/teams/VERSION": "-:73c7ff89a6c4a1f8",
   "proj/.claude/teams/deliverables/": "d",
   "proj/.claude/teams/deliverables/catalog.json": "-:17fe2096968f79c8",
@@ -457,7 +457,7 @@
        "-:acbd2027b3c6d51f",
        "﻿# 示範客戶 ACME 的設定\r\nPROJECT_NAME=acme-portal\r\nCLIENT_NAME=\"示範客戶 ACME\"\r\nREPOS_DIR=\r\nUPSTREAM_REPO=acme-upstream/portal,acme-upstream/lib\r\nFORK_REPO=acme-team/portal\r\nOUTPUT_LANGUAGE=English\r\nTASK_ID_PREFIX=REQ-\r\nBRANCH_PREFIX=feat/\r\nALLOWED_BRANCH_PREFIXES=feat/,fix/\r\nRUNS_DIR=/_acme/agent-runs/\r\nBRIEFS_DIR=\r\nATTRIBUTION_LINE=Assisted-by: \"ACME\" bot \\ tools\r\nNOT_IN_EXAMPLE=ignored\r\nlower_case=ignored\r\nPROJECT_NAME=acme-portal-2\r\n"
       ],
-      "proj/.claude/teams/README.md": "-:e12b19323d223581",
+      "proj/.claude/teams/README.md": "-:e064d7e0ff502953",
       "proj/.claude/teams/guard.config.json": "-:d1b7e0e602b65d6f",
       "proj/.claude/teams/methodology.json": "-:a27161083edea35c",
       "proj/.claude/teams/rules.md": "-:6a2588547aaf090d",
@@ -527,7 +527,7 @@
        "-:728960d394323dad",
        "PROJECT_NAME=rel-config\nRUNS_DIR=_runs_here\n"
       ],
-      "proj/.claude/teams/README.md": "-:a789337c57dd71cb",
+      "proj/.claude/teams/README.md": "-:b53d360db8c0f8fd",
       "proj/.claude/teams/guard.config.json": "-:a885715bb2960881",
       "proj/.claude/teams/rules.md": "-:d855df43e4019cb3",
       "proj/.claude/teams/workflow.config": [
@@ -571,7 +571,7 @@
        "-:1855e3e28f743f57",
        "PROJECT_NAME=from-cwd\nBRIEFS_DIR=_in/briefs\n"
       ],
-      "proj/.claude/teams/README.md": "-:731997e41e325ca5",
+      "proj/.claude/teams/README.md": "-:e0288ad39f2a52be",
       "proj/.claude/teams/guard.config.json": "-:eb318dd716be638d",
       "proj/.claude/teams/rules.md": "-:7c1f5e49c516bc7d",
       "proj/.claude/teams/workflow.config": [
@@ -608,7 +608,7 @@
        "-:c19d1dd5010fe029",
        "PROJECT_NAME=from-cwd-2\n"
       ],
-      "proj/.claude/teams/README.md": "-:59517f75ae77824e",
+      "proj/.claude/teams/README.md": "-:1937f8ee25ff2927",
       "proj/.claude/teams/guard.config.json": "-:fefd031378f276f3",
       "proj/.claude/teams/rules.md": "-:c0f6a32f7cacb54d",
       "proj/CLAUDE.md": "-:8e2f7d56ddfb966f"
@@ -639,7 +639,7 @@
      "stdout": "開發規範 profile：default（.claude/teams/methodology.json）\n寫入 174 個模版檔到 @TMP@/proj\n已更新：0 支 workflow（開發規範 profile：default），改了 0 支\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/teams/README.md": "-:32975ad8ace0bafa",
+      "proj/.claude/teams/README.md": "-:b99c57c772dd55bc",
       "proj/.claude/teams/guard.config.json": "-:863264f95f74ee13",
       "proj/.claude/teams/rules.md": "-:0f105f9fb998f780",
       "proj/.claude/teams/workflow.config": [
@@ -674,7 +674,7 @@
        "-:5dca5d995a22f45f",
        "PROJECT_NAME=cwd-wins\n"
       ],
-      "proj2/.claude/teams/README.md": "-:c6ed886ea35047d4",
+      "proj2/.claude/teams/README.md": "-:cf32ddf272025de5",
       "proj2/.claude/teams/guard.config.json": "-:77ab84fb983e0b66",
       "proj2/.claude/teams/rules.md": "-:e4d56161c9cd785d",
       "proj2/.claude/teams/workflow.config": [
@@ -716,7 +716,7 @@
        "-:3f1b9d39c755602c",
        "PROJECT_NAME={{NOPE}}\nCLIENT_NAME={{PROJECT_NAME}}\n"
       ],
-      "proj/.claude/teams/README.md": "-:f5c1bc12628b84bb",
+      "proj/.claude/teams/README.md": "-:370226035947dfe1",
       "proj/.claude/teams/guard.config.json": "-:b98ee29c04ebba3a",
       "proj/.claude/teams/rules.md": "-:a9a122aa4c58afb0",
       "proj/.claude/teams/workflow.config": [
@@ -757,7 +757,7 @@
        "-:1d431f848420eaaa",
        "PROJECT_NAME=a\"b\\c\td\nTASK_AUTHORITY=\"\nSTAKEHOLDER=\"需求方\nDECISION_OWNER=拍板\"\n"
       ],
-      "proj/.claude/teams/README.md": "-:03c31aa33a3d7670",
+      "proj/.claude/teams/README.md": "-:cd68b7b13b2ea973",
       "proj/.claude/teams/golden-set/valid/items.json": [
        "-:a2992871015dac8c",
        "{\n \"payload\": \"items\",\n \"data\": {\n  \"status\": \"done\",\n  \"summary\": \"範例\",\n  \"artifacts\": [\n   \"_tpm/runs/x/a.md\"\n  ],\n  \"evidence\": [\n   {\n    \"claim\": \"c\",\n    \"source\": \"a.md:1\",\n    \"result\": \"ok\"\n   }\n  ],\n  \"confidence\": 0.9,\n  \"open_questions\": [],\n  \"derived_work\": [\n   \"補文件\"\n  ],\n  \"payload\": {\n   \"source\": \"_tpm/meetings/x.md\",\n   \"items\": [\n    {\n     \"id\": \"i1\",\n     \"type\": \"action\",\n     \"text\": \"做 a\",\n     \"owner\": \"拍板\",\n     \"status\": \"open\",\n     \"refs\": [\n      \"x.md:10\"\n     ]\n    }\n   ]\n  }\n }\n}"
@@ -807,7 +807,7 @@
        "-:55c3a57320933c85",
        "METHODOLOGY=lightweight\nBRANCH_PREFIX=\n"
       ],
-      "proj/.claude/teams/README.md": "-:4cf05168e4cbf9ea",
+      "proj/.claude/teams/README.md": "-:403d11b1fef2e248",
       "proj/.claude/teams/methodology.json": "-:c6222ec7c5a39351",
       "proj/.claude/teams/rules.md": "-:d669566646bad109",
       "proj/.claude/teams/workflow.config": [
@@ -836,7 +836,7 @@
      "stderr": "",
      "base_at": "proj2",
      "files": {
-      "proj2/.claude/teams/README.md": "-:4cf05168e4cbf9ea",
+      "proj2/.claude/teams/README.md": "-:403d11b1fef2e248",
       "proj2/.claude/teams/rules.md": "-:d669566646bad109",
       "proj2/.claude/teams/workflow.config": [
        "-:217ed9e4f36d51ed",
@@ -1411,7 +1411,7 @@
        "-:b44cd5f4e6f0ba91",
        "{\"methodology\": \"lightweight\", \"code_style\": {\"tool\": \"ruff\", \"command\": \"ruff check .\", \"description\": \"提交前跑 ruff check，不得新增違規。\"}, \"commit\": \"類型: 摘要（示範客戶 ACME 的格式）\", \"commit_regex\": \"^(feat|fix): .+\", \"branch_prefix\": \"work/\", \"sync_strategy\": \"transit\", \"pr_size\": {\"max_lines\": 300, \"max_files\": \"不限\"}, \"doc_format\": \"AsciiDoc\", \"test_first\": true, \"requirements\": {\"source\": \"json\", \"path\": \"docs/requirements.json\"}, \"main_session_push_merge\": true}"
       ],
-      "proj/.claude/teams/README.md": "-:6139cafb79ba80b7",
+      "proj/.claude/teams/README.md": "-:13ab8baf5c39d629",
       "proj/.claude/teams/guard.config.json": "-:7769f5037207a0c7",
       "proj/.claude/teams/methodology.json": "-:c1839190f33f2bd7",
       "proj/.claude/teams/rules.md": "-:5a56ea4bec6b267b",
@@ -1829,7 +1829,7 @@
        "-:129eaf3a0e69c054",
        "{\"overrides\": {\"conventions\": {\"pr_size\": {\"max_files\": 3}, \"extra\": {\"k\": [1, 2.5, null, true]}}, \"description\": \"示範客戶 ACME 的做法\"}, \"branch_prefix\": \"x/\"}"
       ],
-      "proj/.claude/teams/README.md": "-:cb5e655f7e9c8ee4",
+      "proj/.claude/teams/README.md": "-:6aeefaf6b6252eee",
       "proj/.claude/teams/guard.config.json": "-:07f9320a2fd03836",
       "proj/.claude/teams/methodology.json": "-:a69c280f8e57aa0b",
       "proj/.claude/teams/rules.md": "-:f35debf2b3f99fa9",
@@ -2409,7 +2409,7 @@
        "-:3cdd1206c98c2f2a",
        "PROJECT_NAME=with-answers\nMETHODOLOGY=default\nALLOWED_BRANCH_PREFIXES= zz/ , yy/\n"
       ],
-      "proj/.claude/teams/README.md": "-:7c52901bd1ab0580",
+      "proj/.claude/teams/README.md": "-:16557cbdaf52464d",
       "proj/.claude/teams/guard.config.json": "-:1f704648623313cd",
       "proj/.claude/teams/methodology.json": "-:22aebb8e287aa151",
       "proj/.claude/teams/rules.md": "-:78e2211c3a75752c",
@@ -2440,7 +2440,7 @@
      "stderr": "",
      "base_at": "proj2",
      "files": {
-      "proj2/.claude/teams/README.md": "-:967c65020b8fa62a",
+      "proj2/.claude/teams/README.md": "-:46aba2279cad71e4",
       "proj2/.claude/teams/guard.config.json": "-:970dbd20b01aa67d",
       "proj2/.claude/teams/methodology.json": "-:22aebb8e287aa151",
       "proj2/.claude/teams/rules.md": "-:8ad42e74e7f6025d",
@@ -2790,7 +2790,7 @@
      "stdout": "沒有 workflow.config，逐一詢問（Enter＝用預設值；輸入 - ＝留空）：\n\n專案名（文件標題、guard.config.json 的 project_name）。預設：my-project\nPROJECT_NAME [my-project]: \n客戶泛稱（CLAUDE.md 的資料邊界段）。預設：示範客戶\nCLIENT_NAME [示範客戶]: \n我方 repo clone 所在的目錄（相對工作區）；留空＝工作區本身就是目標 repo。預設：repos\nREPOS_DIR [repos]: \n上游 repo（不可寫入；push 與 gh 寫入會被擋），格式 owner/repo，可多個用逗號分隔。預設：留空\nUPSTREAM_REPO []: \n我方 fork（推送目標；gh 寫入要明確寫 --repo 這個值），格式 owner/repo。預設：留空\nFORK_REPO []: \n絕對不能碰的目錄（相對工作區或絕對路徑）或 repo（owner/repo），逗號分隔。預設：留空\nFORBIDDEN_REPOS []: \n輸出語言（rules.md 的強約束、派工單）。預設：繁體中文\nOUTPUT_LANGUAGE [繁體中文]: \n任務編號前綴（上層系統發的編號長相：前綴＋數字，例如 TASK-0123）；留空＝不檢查自編編號。預設：TASK-\nTASK_ID_PREFIX [TASK-]: \n發任務編號的上層系統或角色名。預設：任務管理系統\nTASK_AUTHORITY [任務管理系統]: \n拍板的人（泛稱）。預設：使用者\nDECISION_OWNER [使用者]: \n需求方（泛稱）。預設：需求方\nSTAKEHOLDER [需求方]: \n開發分支前綴（epic 與子任務分支）。預設：feature/\nBRANCH_PREFIX [feature/]: \n允許的新分支前綴，逗號分隔（要包含 BRANCH_PREFIX）。預設：feature/,bugfix/,hotfix/,release/,merge/\nALLOWED_BRANCH_PREFIXES [feature/,bugfix/,hotfix/,release/,merge/]: \nrun 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs\nRUNS_DIR [_tpm/runs]: \n簡報目錄（上層系統發來的任務簡報，相對工作區）。預設：_tpm/briefs\nBRIEFS_DIR [_tpm/briefs]: \ncommit 結尾的署名行。預設：Assisted-by: Claude\nATTRIBUTION_LINE [Assisted-by: Claude]: \n設計系統名（設計系統 skill 的名稱）。預設：my-design-system\nDESIGN_SYSTEM_NAME [my-design-system]: \nworkflow 的 agentType 前綴：用 plugin 安裝 agents 時是「plugin 名:」；agents 放專案 .claude/agents 時留空。預設：agent-workflow:\nAGENT_NS [agent-workflow:]: \n== 開發規範與慣例（模版只管工作流程，做法由你決定；Enter＝用預設值） ==\n  - default：預設 profile（模版原本的做法）：spec 驅動，驗收條件用 EARS 句型，測試先行（先寫會失敗的驗收測試再實作），Conventional Commits 加 Story scope，PR 修改既有檔上限 300 行或 15 檔。\n  - lightweight：範例 profile（輕量）：需求來自 issue，驗收條件用清單即可，不強制測試先行（實作後補驗證測試），commit 格式自由，不限 PR 大小。\n開發規範 profile（上面的名稱，或自己的 profile JSON 路徑） [default]: build 段要不要先寫會失敗的測試再實作（y／n） [n]: code style 檢查指令或工具（例如 ruff format --check .；- ＝沒有，照 repo 既有設定） [-]: commit 格式說明 [格式自由：一行說清楚改了什麼；結尾署名行。]: commit 標題檢查 regex（- ＝不檢查） [-]: 分支前綴 [feat/]: 分支落後 main 時怎麼跟上（auto＝依情況選 rebase／merge／中轉分支；也可固定 rebase、merge、transit） [auto]: PR 大小上限：行數（0 ＝不限） [0]: PR 大小上限：檔案數（0 ＝不限） [0]: 文件格式 [Markdown]:   限制文件（可以不設）：你要 agent 遵守的文件，例如 ARCHITECTURE.md、DESIGN.md、REVIEW.md。寫法：路徑，或 路徑=段+段（段：plan、design、build、test、deliver…；沒寫＝design+deliver）。\n限制文件（逗號分隔；- ＝沒有） [-]:   讀取上限（省 token 用，可以不開）：限制模版 agent 整檔讀大檔與每個 agent 的讀取量；不限制 agent 的輸出。\n要不要啟用讀取上限（off＝不啟用；warn＝只提醒不擋；enforce＝擋） [off]: 超過幾行的檔要分段讀（0 ＝不限） [400]: 每個 agent 一次派工最多讀幾個位元組（0 ＝不限；各角色的額度之後可在 methodology.json 調） [800000]: \n== 主 session 的習慣 ==\n你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR（y／n） [n]: 主 session 的 git／GitHub 限制已放寬（main_session_git_rules、main_session_github_rules = false）。注意：之後啟用 auto_merge 時，主 session 仍不能合併、核准 PR（信任模型要求）。\n開發規範 profile：lightweight（.claude/teams/methodology.json）\n寫入 174 個模版檔到 @TMP@/proj\n已更新：0 支 workflow（開發規範 profile：lightweight），改了 0 支\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/teams/README.md": "-:43e3280101664124",
+      "proj/.claude/teams/README.md": "-:c180b8e3dac6266d",
       "proj/.claude/teams/golden-set/valid/items.json": [
        "-:3dfa901b7c6762fc",
        "{\n \"payload\": \"items\",\n \"data\": {\n  \"status\": \"done\",\n  \"summary\": \"範例\",\n  \"artifacts\": [\n   \"_tpm/runs/x/a.md\"\n  ],\n  \"evidence\": [\n   {\n    \"claim\": \"c\",\n    \"source\": \"a.md:1\",\n    \"result\": \"ok\"\n   }\n  ],\n  \"confidence\": 0.9,\n  \"open_questions\": [],\n  \"derived_work\": [\n   \"補文件\"\n  ],\n  \"payload\": {\n   \"source\": \"_tpm/meetings/x.md\",\n   \"items\": [\n    {\n     \"id\": \"i1\",\n     \"type\": \"action\",\n     \"text\": \"做 a\",\n     \"owner\": \"示範決策者\",\n     \"status\": \"open\",\n     \"refs\": [\n      \"x.md:10\"\n     ]\n    }\n   ]\n  }\n }\n}"
@@ -2837,7 +2837,7 @@
      "stdout": "沒有 workflow.config，逐一詢問（Enter＝用預設值；輸入 - ＝留空）：\n\n專案名（文件標題、guard.config.json 的 project_name）。預設：my-project\nPROJECT_NAME [my-project]: \n客戶泛稱（CLAUDE.md 的資料邊界段）。預設：示範客戶\nCLIENT_NAME [示範客戶]: \n我方 repo clone 所在的目錄（相對工作區）；留空＝工作區本身就是目標 repo。預設：repos\nREPOS_DIR [repos]: \n上游 repo（不可寫入；push 與 gh 寫入會被擋），格式 owner/repo，可多個用逗號分隔。預設：留空\nUPSTREAM_REPO []: \n我方 fork（推送目標；gh 寫入要明確寫 --repo 這個值），格式 owner/repo。預設：留空\nFORK_REPO []: \n絕對不能碰的目錄（相對工作區或絕對路徑）或 repo（owner/repo），逗號分隔。預設：留空\nFORBIDDEN_REPOS []: \n輸出語言（rules.md 的強約束、派工單）。預設：繁體中文\nOUTPUT_LANGUAGE [繁體中文]: \n任務編號前綴（上層系統發的編號長相：前綴＋數字，例如 TASK-0123）；留空＝不檢查自編編號。預設：TASK-\nTASK_ID_PREFIX [TASK-]: \n發任務編號的上層系統或角色名。預設：任務管理系統\nTASK_AUTHORITY [任務管理系統]: \n拍板的人（泛稱）。預設：使用者\nDECISION_OWNER [使用者]: \n需求方（泛稱）。預設：需求方\nSTAKEHOLDER [需求方]: \n開發分支前綴（epic 與子任務分支）。預設：feature/\nBRANCH_PREFIX [feature/]: \n允許的新分支前綴，逗號分隔（要包含 BRANCH_PREFIX）。預設：feature/,bugfix/,hotfix/,release/,merge/\nALLOWED_BRANCH_PREFIXES [feature/,bugfix/,hotfix/,release/,merge/]: \nrun 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs\nRUNS_DIR [_tpm/runs]: \n簡報目錄（上層系統發來的任務簡報，相對工作區）。預設：_tpm/briefs\nBRIEFS_DIR [_tpm/briefs]: \ncommit 結尾的署名行。預設：Assisted-by: Claude\nATTRIBUTION_LINE [Assisted-by: Claude]: \n設計系統名（設計系統 skill 的名稱）。預設：my-design-system\nDESIGN_SYSTEM_NAME [my-design-system]: \nworkflow 的 agentType 前綴：用 plugin 安裝 agents 時是「plugin 名:」；agents 放專案 .claude/agents 時留空。預設：agent-workflow:\nAGENT_NS [agent-workflow:]: \n== 開發規範與慣例（模版只管工作流程，做法由你決定；Enter＝用預設值） ==\n  - default：預設 profile（模版原本的做法）：spec 驅動，驗收條件用 EARS 句型，測試先行（先寫會失敗的驗收測試再實作），Conventional Commits 加 Story scope，PR 修改既有檔上限 300 行或 15 檔。\n  - lightweight：範例 profile（輕量）：需求來自 issue，驗收條件用清單即可，不強制測試先行（實作後補驗證測試），commit 格式自由，不限 PR 大小。\n開發規範 profile（上面的名稱，或自己的 profile JSON 路徑） [default]: build 段要不要先寫會失敗的測試再實作（y／n） [y]: code style 檢查指令或工具（例如 ruff format --check .；- ＝沒有，照 repo 既有設定） [-]: commit 格式說明 [Conventional Commits：<type>(<scope>): <摘要>，scope 放 Story ID（文件類放 epic）；結尾署名行。]: commit 標題檢查 regex（- ＝不檢查） [-]: 分支前綴 [feature/]: 分支落後 main 時怎麼跟上（auto＝依情況選 rebase／merge／中轉分支；也可固定 rebase、merge、transit） [auto]: PR 大小上限：行數（0 ＝不限） [300]: PR 大小上限：檔案數（0 ＝不限） [15]: 文件格式 [Markdown]:   限制文件（可以不設）：你要 agent 遵守的文件，例如 ARCHITECTURE.md、DESIGN.md、REVIEW.md。寫法：路徑，或 路徑=段+段（段：plan、design、build、test、deliver…；沒寫＝design+deliver）。\n限制文件（逗號分隔；- ＝沒有） [-]:   讀取上限（省 token 用，可以不開）：限制模版 agent 整檔讀大檔與每個 agent 的讀取量；不限制 agent 的輸出。\n要不要啟用讀取上限（off＝不啟用；warn＝只提醒不擋；enforce＝擋） [off]: 超過幾行的檔要分段讀（0 ＝不限） [400]: 每個 agent 一次派工最多讀幾個位元組（0 ＝不限；各角色的額度之後可在 methodology.json 調） [800000]: \n== 主 session 的習慣 ==\n你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR（y／n） [n]: 主 session 的 git／GitHub 限制已放寬（main_session_git_rules、main_session_github_rules = false）。注意：之後啟用 auto_merge 時，主 session 仍不能合併、核准 PR（信任模型要求）。\n開發規範 profile：default（.claude/teams/methodology.json）\n寫入 174 個模版檔到 @TMP@/proj\n已更新：0 支 workflow（開發規範 profile：default），改了 0 支\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/teams/README.md": "-:83cd324d194df96d",
+      "proj/.claude/teams/README.md": "-:a50f23258c664268",
       "proj/.claude/teams/guard.config.json": "-:bec0790cd3f3ddb6",
       "proj/.claude/teams/methodology.json": "-:60693a5a097c3cc5",
       "proj/.claude/teams/rules.md": "-:bc7cfc0530fcf6a7",
@@ -2912,7 +2912,7 @@
      "stdout": "沒有 workflow.config，逐一詢問（Enter＝用預設值；輸入 - ＝留空）：\n\n專案名（文件標題、guard.config.json 的 project_name）。預設：my-project\nPROJECT_NAME [my-project]: \n客戶泛稱（CLAUDE.md 的資料邊界段）。預設：示範客戶\nCLIENT_NAME [示範客戶]: \n我方 repo clone 所在的目錄（相對工作區）；留空＝工作區本身就是目標 repo。預設：repos\nREPOS_DIR [repos]: \n上游 repo（不可寫入；push 與 gh 寫入會被擋），格式 owner/repo，可多個用逗號分隔。預設：留空\nUPSTREAM_REPO []: \n我方 fork（推送目標；gh 寫入要明確寫 --repo 這個值），格式 owner/repo。預設：留空\nFORK_REPO []: \n絕對不能碰的目錄（相對工作區或絕對路徑）或 repo（owner/repo），逗號分隔。預設：留空\nFORBIDDEN_REPOS []: \n輸出語言（rules.md 的強約束、派工單）。預設：繁體中文\nOUTPUT_LANGUAGE [繁體中文]: \n任務編號前綴（上層系統發的編號長相：前綴＋數字，例如 TASK-0123）；留空＝不檢查自編編號。預設：TASK-\nTASK_ID_PREFIX [TASK-]: \n發任務編號的上層系統或角色名。預設：任務管理系統\nTASK_AUTHORITY [任務管理系統]: \n拍板的人（泛稱）。預設：使用者\nDECISION_OWNER [使用者]: \n需求方（泛稱）。預設：需求方\nSTAKEHOLDER [需求方]: \n開發分支前綴（epic 與子任務分支）。預設：feature/\nBRANCH_PREFIX [feature/]: \n允許的新分支前綴，逗號分隔（要包含 BRANCH_PREFIX）。預設：feature/,bugfix/,hotfix/,release/,merge/\nALLOWED_BRANCH_PREFIXES [feature/,bugfix/,hotfix/,release/,merge/]: \nrun 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs\nRUNS_DIR [_tpm/runs]: \n簡報目錄（上層系統發來的任務簡報，相對工作區）。預設：_tpm/briefs\nBRIEFS_DIR [_tpm/briefs]: \ncommit 結尾的署名行。預設：Assisted-by: Claude\nATTRIBUTION_LINE [Assisted-by: Claude]: \n設計系統名（設計系統 skill 的名稱）。預設：my-design-system\nDESIGN_SYSTEM_NAME [my-design-system]: \nworkflow 的 agentType 前綴：用 plugin 安裝 agents 時是「plugin 名:」；agents 放專案 .claude/agents 時留空。預設：agent-workflow:\nAGENT_NS [agent-workflow:]: \n== 開發規範與慣例（模版只管工作流程，做法由你決定；Enter＝用預設值） ==\n  - default：預設 profile（模版原本的做法）：spec 驅動，驗收條件用 EARS 句型，測試先行（先寫會失敗的驗收測試再實作），Conventional Commits 加 Story scope，PR 修改既有檔上限 300 行或 15 檔。\n  - lightweight：範例 profile（輕量）：需求來自 issue，驗收條件用清單即可，不強制測試先行（實作後補驗證測試），commit 格式自由，不限 PR 大小。\n開發規範 profile（上面的名稱，或自己的 profile JSON 路徑） [default]: build 段要不要先寫會失敗的測試再實作（y／n） [y]: code style 檢查指令或工具（例如 ruff format --check .；- ＝沒有，照 repo 既有設定） [-]: commit 格式說明 [Conventional Commits：<type>(<scope>): <摘要>，scope 放 Story ID（文件類放 epic）；結尾署名行。]: commit 標題檢查 regex（- ＝不檢查） [-]: 分支前綴 [feature/]: 分支落後 main 時怎麼跟上（auto＝依情況選 rebase／merge／中轉分支；也可固定 rebase、merge、transit） [auto]: PR 大小上限：行數（0 ＝不限） [300]: PR 大小上限：檔案數（0 ＝不限） [15]: 文件格式 [Markdown]:   限制文件（可以不設）：你要 agent 遵守的文件，例如 ARCHITECTURE.md、DESIGN.md、REVIEW.md。寫法：路徑，或 路徑=段+段（段：plan、design、build、test、deliver…；沒寫＝design+deliver）。\n限制文件（逗號分隔；- ＝沒有） [-]:   讀取上限（省 token 用，可以不開）：限制模版 agent 整檔讀大檔與每個 agent 的讀取量；不限制 agent 的輸出。\n要不要啟用讀取上限（off＝不啟用；warn＝只提醒不擋；enforce＝擋） [off]: \n== 主 session 的習慣 ==\n你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR（y／n） [n]: 開發規範 profile：default（.claude/teams/methodology.json）\n寫入 174 個模版檔到 @TMP@/proj\n已更新：0 支 workflow（開發規範 profile：default），改了 0 支\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/teams/README.md": "-:512e035a846374b6",
+      "proj/.claude/teams/README.md": "-:ce1e6213e51725f8",
       "proj/.claude/teams/guard.config.json": "-:9a8e2c9465285f63",
       "proj/.claude/teams/rules.md": "-:15c68f846ab39eae",
       "proj/.claude/teams/workflow.config": [
@@ -2977,7 +2977,7 @@
        "-:dea8db7f9566814d",
        "{\"methodology\": \"lightweight\", \"main_session_push_merge\": \"y\", \"test_first\": true}"
       ],
-      "proj/.claude/teams/README.md": "-:c16a6fed422bdb7a",
+      "proj/.claude/teams/README.md": "-:05a26a666fa7ae71",
       "proj/.claude/teams/guard.config.json": "-:a90161da5e6b13d3",
       "proj/.claude/teams/methodology.json": "-:3981cfd34ff77137",
       "proj/.claude/teams/rules.md": "-:61f125430e9adda0",
@@ -3105,7 +3105,7 @@
        "-:c7bbb06e71c3bd15",
        "PROJECT_NAME=tty-config\n"
       ],
-      "proj2/.claude/teams/README.md": "-:2515bc5bb81a864a",
+      "proj2/.claude/teams/README.md": "-:c07adcf22fab7212",
       "proj2/.claude/teams/guard.config.json": "-:c0033c84c7297f80",
       "proj2/.claude/teams/rules.md": "-:13bf9eba308a2122",
       "proj2/.claude/teams/workflow.config": [
@@ -3154,7 +3154,7 @@
      "stdout": "佔位符的值：找不到 init 時的設定（.claude/teams/workflow.config），用 workflow.config.example 的預設值；不對時加 --config 重跑\n沒有 workflow.config，逐一詢問（Enter＝用預設值；輸入 - ＝留空）：\n\n專案名（文件標題、guard.config.json 的 project_name）。預設：my-project\nPROJECT_NAME [my-project]: \n客戶泛稱（CLAUDE.md 的資料邊界段）。預設：示範客戶\nCLIENT_NAME [示範客戶]: \n我方 repo clone 所在的目錄（相對工作區）；留空＝工作區本身就是目標 repo。預設：repos\nREPOS_DIR [repos]: \n上游 repo（不可寫入；push 與 gh 寫入會被擋），格式 owner/repo，可多個用逗號分隔。預設：留空\nUPSTREAM_REPO []: \n我方 fork（推送目標；gh 寫入要明確寫 --repo 這個值），格式 owner/repo。預設：留空\nFORK_REPO []: \n絕對不能碰的目錄（相對工作區或絕對路徑）或 repo（owner/repo），逗號分隔。預設：留空\nFORBIDDEN_REPOS []: \n輸出語言（rules.md 的強約束、派工單）。預設：繁體中文\nOUTPUT_LANGUAGE [繁體中文]: \n任務編號前綴（上層系統發的編號長相：前綴＋數字，例如 TASK-0123）；留空＝不檢查自編編號。預設：TASK-\nTASK_ID_PREFIX [TASK-]: \n發任務編號的上層系統或角色名。預設：任務管理系統\nTASK_AUTHORITY [任務管理系統]: \n拍板的人（泛稱）。預設：使用者\nDECISION_OWNER [使用者]: \n需求方（泛稱）。預設：需求方\nSTAKEHOLDER [需求方]: \n開發分支前綴（epic 與子任務分支）。預設：feature/\nBRANCH_PREFIX [feature/]: \n允許的新分支前綴，逗號分隔（要包含 BRANCH_PREFIX）。預設：feature/,bugfix/,hotfix/,release/,merge/\nALLOWED_BRANCH_PREFIXES [feature/,bugfix/,hotfix/,release/,merge/]: \nrun 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs\nRUNS_DIR [_tpm/runs]: \n簡報目錄（上層系統發來的任務簡報，相對工作區）。預設：_tpm/briefs\nBRIEFS_DIR [_tpm/briefs]: \ncommit 結尾的署名行。預設：Assisted-by: Claude\nATTRIBUTION_LINE [Assisted-by: Claude]: \n設計系統名（設計系統 skill 的名稱）。預設：my-design-system\nDESIGN_SYSTEM_NAME [my-design-system]: \nworkflow 的 agentType 前綴：用 plugin 安裝 agents 時是「plugin 名:」；agents 放專案 .claude/agents 時留空。預設：agent-workflow:\nAGENT_NS [agent-workflow:]: \n== 開發規範與慣例（模版只管工作流程，做法由你決定；Enter＝用預設值） ==\n  - default：預設 profile（模版原本的做法）：spec 驅動，驗收條件用 EARS 句型，測試先行（先寫會失敗的驗收測試再實作），Conventional Commits 加 Story scope，PR 修改既有檔上限 300 行或 15 檔。\n  - lightweight：範例 profile（輕量）：需求來自 issue，驗收條件用清單即可，不強制測試先行（實作後補驗證測試），commit 格式自由，不限 PR 大小。\n開發規範 profile（上面的名稱，或自己的 profile JSON 路徑） [default]: build 段要不要先寫會失敗的測試再實作（y／n） [y]: code style 檢查指令或工具（例如 ruff format --check .；- ＝沒有，照 repo 既有設定） [-]: commit 格式說明 [Conventional Commits：<type>(<scope>): <摘要>，scope 放 Story ID（文件類放 epic）；結尾署名行。]: commit 標題檢查 regex（- ＝不檢查） [-]: 分支前綴 [feature/]: 分支落後 main 時怎麼跟上（auto＝依情況選 rebase／merge／中轉分支；也可固定 rebase、merge、transit） [auto]: PR 大小上限：行數（0 ＝不限） [300]: PR 大小上限：檔案數（0 ＝不限） [15]: 文件格式 [Markdown]:   限制文件（可以不設）：你要 agent 遵守的文件，例如 ARCHITECTURE.md、DESIGN.md、REVIEW.md。寫法：路徑，或 路徑=段+段（段：plan、design、build、test、deliver…；沒寫＝design+deliver）。\n限制文件（逗號分隔；- ＝沒有） [-]:   讀取上限（省 token 用，可以不開）：限制模版 agent 整檔讀大檔與每個 agent 的讀取量；不限制 agent 的輸出。\n要不要啟用讀取上限（off＝不啟用；warn＝只提醒不擋；enforce＝擋） [off]: \n== 主 session 的習慣 ==\n你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR（y／n） [n]: 開發規範 profile：保留 methodology.json，和內建 default 比對沒有缺少的欄位\n更新 169 個模版檔到 @TMP@/proj\n保留使用者設定（模版部分更新）3 個：\n  - .claude/teams/guard.config.json：你的值全部保留；沒有新欄位\n  - .claude/teams/rules.md：「專案規則」段之後保留，前面更新成新版\n  - CLAUDE.md：「專案特定」段之後保留，前面更新成新版\n保留 2 個使用者的檔案，沒有改動（--force／--upgrade 也不覆蓋；要整份換成模版版本加 --overwrite-user-files）：\n  - .claude/settings.json\n  - .claude/teams/methodology.json\n已更新：0 支 workflow（開發規範 profile：default），改了 0 支\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/teams/README.md": "-:19e426c4a1306bb8",
+      "proj/.claude/teams/README.md": "-:7a6a59dcc4e01bfd",
       "proj/.claude/teams/rules.md": "-:94dd1bd798b90517",
       "proj/.claude/teams/workflow.config": [
        "-:fba87e31631ec574",
@@ -5337,7 +5337,7 @@
        "-:f7627437f4226b36",
        "{\n  \"$schema\": \"https://json.schemastore.org/claude-code-settings.json\",\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(awf build:*)\",\n      \"Bash(awf check-envelope:*)\",\n      \"Bash(awf check-rules:*)\",\n      \"Bash(awf check-agents:*)\",\n      \"Bash(awf save-run:*)\",\n      \"Bash(git status:*)\",\n      \"Bash(git diff:*)\",\n      \"Bash(git log:*)\"\n    ],\n    \"deny\": [\n      \"Read(./.env)\",\n      \"Read(./.env.*)\",\n      \"Read(**/.env)\",\n      \"Read(**/.env.*)\",\n      \"Read(**/*.pem)\",\n      \"Read(**/*.key)\"\n    ]\n  },\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Bash|PowerShell\", \"hooks\": [{\"type\": \"command\", \"command\": \"\\\"@TMP@/proj/.claude/hooks/bin/awf\\\" hook guard-shell\", \"timeout\": 10, \"onFailure\": \"block\"}]},\n      {\"matcher\": \"Edit|Write|NotebookEdit|Read|Grep\", \"hooks\": [{\"type\": \"command\", \"command\": \"\\\"@TMP@/proj/.claude/hooks/bin/awf\\\" hook guard-paths\", \"timeout\": 10, \"onFailure\": \"block\"}]},\n      {\"matcher\": \"SubagentHandback|StructuredOutput\", \"hooks\": [{\"type\": \"command\", \"command\": \"\\\"@TMP@/proj/.claude/hooks/bin/awf\\\" hook envelope\", \"onFailure\": \"continue\"}]}\n    ],\n    \"SubagentStop\": [\n      {\"hooks\": [{\"type\": \"command\", \"command\": \"\\\"@TMP@/proj/.claude/hooks/bin/awf\\\" hook envelope\"}]}\n    ],\n    \"TaskCompleted\": [\n      {\"hooks\": [{\"type\": \"command\", \"command\": \"\\\"@TMP@/proj/.claude/hooks/bin/awf\\\" hook envelope\"}]}\n    ]\n  }\n}\n"
       ],
-      "proj/.claude/teams/README.md": "-:22ba33a9f7b5deb8",
+      "proj/.claude/teams/README.md": "-:556b049057022086",
       "proj/.claude/teams/crlf.md": [
        "-:eae63718586ac4fb",
        "第一行 示範客戶 ACME\n第二行\n只有 CR\n"
@@ -5908,7 +5908,7 @@
        "-:1e8f61a4c05f9e1b",
        "RUNS_DIR=_acme/agent-runs\nPROJECT_NAME=keep-me\n"
       ],
-      "proj/.claude/teams/README.md": "-:0bf904bcb3b02bce",
+      "proj/.claude/teams/README.md": "-:8cc862771d917efd",
       "proj/.claude/teams/guard.config.json": "-:6af9c685ba6ba5c5",
       "proj/.claude/teams/rules.md": "-:51d6bdbabb4d414f",
       "proj/.claude/teams/workflow.config": [
@@ -6022,7 +6022,7 @@
        "-:d5f7aa623bfc0d80",
        "PROJECT_NAME=changed\nRUNS_DIR=_new/runs\n"
       ],
-      "proj/.claude/teams/README.md": "-:3bd2a34e4f163bbe",
+      "proj/.claude/teams/README.md": "-:5a3e8607d3d36b4b",
       "proj/.claude/teams/rules.md": "-:5beb4e38f5514889",
       "proj/.claude/teams/workflow.config": [
        "-:700b94755412335e",
