@@ -1,0 +1,1137 @@
+{
+ "_說明": "check-tokens.py／verify-tokens.py（0.6 的設計系統 skill 腳本）的行為基準。每個案例：ref＝references/ 的檔、proj＝cwd 底下的檔、binary＝位元組內容（相對案例目錄）、symlinks＝符號連結。crash＝Python 版以 Traceback 結束（exit 1），stderr 只留例外那一行當參考；Rust 版只比 exit code 與 stdout。",
+ "cases": [
+  {
+   "name": "check：沒有參數",
+   "tool": "check",
+   "argv": [],
+   "ref": {},
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 2,
+   "stdout": "",
+   "stderr": "用法：check-tokens.py [--all] <檔案或目錄>...\n",
+   "crash": false
+  },
+  {
+   "name": "check：只有 --all",
+   "tool": "check",
+   "argv": [
+    "--all"
+   ],
+   "ref": {},
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 2,
+   "stdout": "",
+   "stderr": "用法：check-tokens.py [--all] <檔案或目錄>...\n",
+   "crash": false
+  },
+  {
+   "name": "check：骨架（白名單空）＋違規",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {},
+   "proj": {
+    "a.css": "a { color: #123456; }\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "a.css:1: #123456\n白名單 0 個色值；掃描 1 個檔；違規 1 處（1 種色值）\n",
+   "stderr": "警告：白名單是空的（tokens.css 還是骨架？），所有色碼都會列為違規\n",
+   "crash": false
+  },
+  {
+   "name": "check：骨架＋var() 放行",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {},
+   "proj": {
+    "a.css": "a { color: var(--fg); }\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "白名單 0 個色值；掃描 1 個檔；違規 0 處（0 種色值）\n",
+   "stderr": "警告：白名單是空的（tokens.css 還是骨架？），所有色碼都會列為違規\n",
+   "crash": false
+  },
+  {
+   "name": "check：找不到",
+   "tool": "check",
+   "argv": [
+    "nope.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 2,
+   "stdout": "",
+   "stderr": "找不到：nope.css\n",
+   "crash": false
+  },
+  {
+   "name": "check：第二個找不到（前一個已掃）",
+   "tool": "check",
+   "argv": [
+    "a.css",
+    "nope"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "a.css": "a{color:#000}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 2,
+   "stdout": "",
+   "stderr": "找不到：nope\n",
+   "crash": false
+  },
+  {
+   "name": "check：白名單內全過",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "a.css": "a { color: #0a5fff; b: #112233; c: rgb(0 0 0 / 50%); c2: rgba(0,0,0,0.5); d: HSL(120, 50%, 40%); e: oklch(62.5% .2 250 / .8) }\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "a.css:1: rgb(0 0 0 / 50%)  (= rgba(0,0,0,50%))\n白名單 5 個色值；掃描 1 個檔；違規 1 處（1 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：各種寫法",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "a.css": "a { color: #FFF; }\nb { color: #ffff; }\nc { color: #12345678 }\nd { color: #1234567 }\ne { color: #12345 }\nf{background:url(\"data:image/svg+xml,%3Csvg fill='%23F00'/%3E\")}\ng { color: rgb(255, 0, 0) }\nh { color: rgba(255 0 0 / 1) }\ni { color: rgb(100% 0% 0%) }\nj { color: hsla(10deg 1% 2%) }\nk { color: rgb(var(--x) 0 0) }\nl { color: rgb(calc(1+2), 0, 0) }\nm { color: lab(50% 40 59.5) lch(52.2% 72.2 50) oklab(59% 0.1 0.1) hwb(194 0% 0%) }\nn { color: color-mix(in srgb, #abc 50%, rgb(1,2,3)) }\no { color: rgb(1e2 1_0 0.000001) rgb(1234567 0.1234567 100000) rgb(inf nan -0) }\np { x: &#123; a#abc x-#abc #abc-d #abcx #abc_ #abcg }\nq { href: \"#fff\"; id=#fade; #beef #BEEF; }\nr { color: RGB(0,0,0); Rgba( 1 , 2 , 3 , 0.50 ) }\ns { color: xrgb(1,2,3) rgb() rgb(,) rgb(a b c) rgb(1 2) rgb(1 2 3 4 5) }\nt { c: rgb(50% 5.0% .5e1%) rgb(+1 -2 3.) }\nu{c:#aabbccdd;d:#AbC;e:%23abc}\nv { 中文#fff 字#abc }\nw { c: rgb(1,2,3)rgb(4,5,6) hsl(0 0% 0%/0.25) }\nx { c: rgb(1 2 3 / 1e-7) rgb(123456.7 1e16 1e-5) rgb(0.0001 100000.5 999999.5) }\ny { c: rgb(1__0 2 3) rgb(_1 2 3) rgb(1_ 2 3) rgb(1_.5 2 3) rgb(1e1_0 2 3) rgb(Infinity -inf NaN) rgb(1e999 -1e999 2.5e-320) rgb(0.5 1.5 2.5) rgb(1e 2 3) rgb(. 2 3) rgb(% 2 3) rgb(-0.0 0.00001234565 123456.5) }\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "a.css:1: #FFF  (= #ffffff)\na.css:2: #ffff  (= #ffffffff)\na.css:3: #12345678\na.css:6: %23F00  (= #ff0000)\na.css:7: rgb(255, 0, 0)  (= rgba(255,0,0,1))\na.css:8: rgba(255 0 0 / 1)  (= rgba(255,0,0,1))\na.css:9: rgb(100% 0% 0%)  (= rgba(100%,0%,0%,1))\na.css:13: lab(50% 40 59.5)  (= lab(50%,40,59.5))\na.css:13: lch(52.2% 72.2 50)  (= lch(52.2%,72.2,50))\na.css:13: oklab(59% 0.1 0.1)  (= oklab(59%,0.1,0.1))\na.css:13: hwb(194 0% 0%)  (= hwb(194,0%,0%))\na.css:14: #abc  (= #aabbcc)\na.css:14: rgb(1,2,3)  (= rgba(1,2,3,1))\na.css:15: rgb(1e2 1_0 0.000001)  (= rgba(100,10,1e-06,1))\na.css:15: rgb(1234567 0.1234567 100000)  (= rgba(1.23457e+06,0.123457,100000,1))\na.css:15: rgb(inf nan -0)  (= rgba(inf,nan,-0,1))\na.css:16: #abc  (= #aabbcc)\na.css:17: #fff  (= #ffffff)\na.css:17: #fade  (= #ffaaddee)\na.css:17: #beef  (= #bbeeeeff)\na.css:17: #BEEF  (= #bbeeeeff)\na.css:18: RGB(0,0,0)  (= rgba(0,0,0,1))\na.css:18: Rgba( 1 , 2 , 3 , 0.50 )  (= rgba(1,2,3,0.5))\na.css:19: rgb()  (= rgba())\na.css:19: rgb(,)  (= rgba())\na.css:19: rgb(1 2)  (= rgba(1,2))\na.css:19: rgb(1 2 3 4 5)  (= rgba(1,2,3,4,5))\na.css:20: rgb(50% 5.0% .5e1%)  (= rgba(50%,5%,5%,1))\na.css:20: rgb(+1 -2 3.)  (= rgba(1,-2,3,1))\na.css:21: #aabbccdd\na.css:21: #AbC  (= #aabbcc)\na.css:21: %23abc  (= #aabbcc)\na.css:23: rgb(1,2,3)  (= rgba(1,2,3,1))\na.css:23: rgb(4,5,6)  (= rgba(4,5,6,1))\na.css:23: hsl(0 0% 0%/0.25)  (= hsl(0,0%,0%,0.25))\na.css:24: rgb(1 2 3 / 1e-7)  (= rgba(1,2,3,1e-07))\na.css:24: rgb(123456.7 1e16 1e-5)  (= rgba(123457,1e+16,1e-05,1))\na.css:24: rgb(0.0001 100000.5 999999.5)  (= rgba(0.0001,100000,1e+06,1))\na.css:25: rgb(1e1_0 2 3)  (= rgba(1e+10,2,3,1))\na.css:25: rgb(Infinity -inf NaN)  (= rgba(inf,-inf,nan,1))\na.css:25: rgb(1e999 -1e999 2.5e-320)  (= rgba(inf,-inf,2.49997e-320,1))\na.css:25: rgb(0.5 1.5 2.5)  (= rgba(0.5,1.5,2.5,1))\na.css:25: rgb(-0.0 0.00001234565 123456.5)  (= rgba(-0,1.23456e-05,123456,1))\n白名單 5 個色值；掃描 1 個檔；違規 43 處（35 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：allowlist",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "allowlist.txt": "# 註解\n#FF8800   標誌 # 行尾註解\n\nrgb(9, 9, 9)\n   #0f0\n#abc#def\nxyz\n #  只有註解\nrgba(1,2,3,.5) 說明\n"
+   },
+   "proj": {
+    "a.css": "a{c:#ff8800;d:rgb(9 9 9);e:#00ff00;f:#abc;g:#def;h:rgba(1,2,3,0.5);i:rgb(9,;j:#999}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "a.css:1: #def  (= #ddeeff)\na.css:1: #999  (= #999999)\na.css:1: rgb(9 9 9)  (= rgba(9,9,9,1))\n白名單 9 個色值；掃描 1 個檔；違規 3 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：目錄遞迴、略過目錄與測試檔、副檔名",
+   "tool": "check",
+   "argv": [
+    "src"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "src/b.css": "b{c:#111111}\n",
+    "src/a.tsx": "const c = '#222222';\n",
+    "src/a.test.tsx": "'#333333'\n",
+    "src/x.spec.js": "'#333333'\n",
+    "src/readme.md": "#444444\n",
+    "src/A.CSS": "#454545\n",
+    "src/node_modules/m/i.js": "'#555555'\n",
+    "src/__tests__/t.js": "'#666666'\n",
+    "src/z/deep/c.vue": "<style>a{c:#777777}</style>\n",
+    "src/dist/o.css": "a{c:#888888}\n",
+    "src/m/i.svg": "<path fill=\"#999999\"/>\n",
+    "src/m/a.html": "<b style='color:#aaaaaa'>\n",
+    "src/.next/x.js": "'#bbbbbb'\n",
+    "src/Z/c.mjs": "'#cccccc'\n",
+    "src/m/x.test.css.bak.css": "a{c:#dddddd}\n",
+    "src/.css": "a{c:#eeeeee}\n",
+    "src/m/k.scss": "$c: #0A5FFF; $d: #0a5ffe;\n",
+    "src/build/q.js": "'#121212'\n",
+    "src/out/q.js": "'#121212'\n",
+    "src/coverage/q.js": "'#121212'\n",
+    "src/.turbo/q.js": "'#121212'\n",
+    "src/m/v.svelte": "<i style='c:#131313'>\n",
+    "src/m/c.cjs": "'#141414'\n",
+    "src/m/h.htm": "#151515\n",
+    "src/m/j.jsx": "'#161616' '#161616' '#0a5fff'\n",
+    "src/m/t.ts": "// rgb(1, 2, 3)\n",
+    "src/m/x.test.TS": "'#171717'\n",
+    "src/m/y.spec.t1.css": "a{c:#181818}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "src/a.tsx:1: #222222\nsrc/b.css:1: #111111\nsrc/m/a.html:1: #aaaaaa\nsrc/m/c.cjs:1: #141414\nsrc/m/h.htm:1: #151515\nsrc/m/i.svg:1: #999999\nsrc/m/j.jsx:1: #161616\nsrc/m/j.jsx:1: #161616\nsrc/m/k.scss:1: #0a5ffe\nsrc/m/t.ts:1: rgb(1, 2, 3)  (= rgba(1,2,3,1))\nsrc/m/v.svelte:1: #131313\nsrc/m/x.test.css.bak.css:1: #dddddd\nsrc/m/y.spec.t1.css:1: #181818\nsrc/z/c.mjs:1: #cccccc\nsrc/z/deep/c.vue:1: #777777\n白名單 5 個色值；掃描 14 個檔；違規 15 處（14 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：檔案直接指定（不看副檔名、測試檔也掃）",
+   "tool": "check",
+   "argv": [
+    "src/a.test.tsx",
+    "notes.md",
+    "./src//b.css",
+    "src/"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "src/a.test.tsx": "'#333333'\n",
+    "notes.md": "#444444 rgb(1,2,3)\n",
+    "src/b.css": "b{c:#111111}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "src/a.test.tsx:1: #333333\nnotes.md:1: #444444\nnotes.md:1: rgb(1,2,3)  (= rgba(1,2,3,1))\nsrc/b.css:1: #111111\nsrc/b.css:1: #111111\n白名單 5 個色值；掃描 4 個檔；違規 5 處（4 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：目前目錄",
+   "tool": "check",
+   "argv": [
+    "."
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "a.css": "a{c:#111}\n",
+    "s/b.css": "a{c:#222}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "a.css:1: #111  (= #111111)\ns/b.css:1: #222  (= #222222)\n白名單 5 個色值；掃描 2 個檔；違規 2 處（2 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：./ 開頭的目錄與空字串",
+   "tool": "check",
+   "argv": [
+    "./s/",
+    ""
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "a.css": "a{c:#111}\n",
+    "s/b.css": "a{c:#222}\n",
+    "s/t/c.css": "a{c:#333}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "s/b.css:1: #222  (= #222222)\ns/t/c.css:1: #333  (= #333333)\na.css:1: #111  (= #111111)\ns/b.css:1: #222  (= #222222)\ns/t/c.css:1: #333  (= #333333)\n白名單 5 個色值；掃描 5 個檔；違規 5 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：絕對路徑",
+   "tool": "check",
+   "argv": [
+    "@TMP@/proj/a.css",
+    "@TMP@/proj"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "a.css": "a{c:#111}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "@TMP@/proj/a.css:1: #111  (= #111111)\n@TMP@/proj/a.css:1: #111  (= #111111)\n白名單 5 個色值；掃描 2 個檔；違規 2 處（1 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：非 UTF-8 檔略過、空檔、CRLF、BOM",
+   "tool": "check",
+   "argv": [
+    "src"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "src/crlf.css": "a{c:#111}\r\nb{c:#222}\rc{c:#333}\n",
+    "src/empty.css": "",
+    "src/bom.css": "﻿#444 a{c:#555}\n",
+    "src/ff.css": "a\fb{c:#666} c{c:#777}\n"
+   },
+   "binary": {
+    "proj/src/bin.css": [
+     97,
+     123,
+     99,
+     58,
+     35,
+     57,
+     57,
+     57,
+     57,
+     57,
+     57,
+     125,
+     255,
+     254,
+     10
+    ]
+   },
+   "symlinks": {},
+   "code": 1,
+   "stdout": "src/bom.css:1: #444  (= #444444)\nsrc/bom.css:1: #555  (= #555555)\nsrc/crlf.css:1: #111  (= #111111)\nsrc/crlf.css:2: #222  (= #222222)\nsrc/crlf.css:3: #333  (= #333333)\nsrc/ff.css:2: #666  (= #666666)\nsrc/ff.css:3: #777  (= #777777)\n白名單 5 個色值；掃描 4 個檔；違規 7 處（7 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：正本行段白名單",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "# 設定\nSOURCE = ds.html\nALLOW_RANGES = 3-7, 8\nTOKEN_RANGE=4-6\nbad line\n=x\n"
+   },
+   "proj": {
+    "a.css": "a{c:#ff8800;d:rgb(1,2,3);e:#bada55}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "a.css:1: #bada55\n白名單 7 個色值；掃描 1 個檔；違規 1 處（1 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：掃正本本身只掃 ALLOW_RANGES",
+   "tool": "check",
+   "argv": [
+    "ds.html",
+    "sub"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=3-7\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "sub/copy.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "sub/other.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "[正本] ds.html：只掃 ALLOW_RANGES；--all 掃整份\n[正本] sub/copy.html：只掃 ALLOW_RANGES；--all 掃整份\nsub/other.html:8: #FF8800\nsub/other.html:8: rgb(1 2 3)  (= rgba(1,2,3,1))\nsub/other.html:10: #bada55\n白名單 5 個色值；掃描 3 個檔；違規 3 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：--all 掃整份正本",
+   "tool": "check",
+   "argv": [
+    "--all",
+    "ds.html"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=3-7\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "ds.html:8: #FF8800\nds.html:8: rgb(1 2 3)  (= rgba(1,2,3,1))\nds.html:10: #bada55\n白名單 5 個色值；掃描 1 個檔；違規 3 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：--all 放後面",
+   "tool": "check",
+   "argv": [
+    "ds.html",
+    "--all"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=3-7\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "ds.html:8: #FF8800\nds.html:8: rgb(1 2 3)  (= rgba(1,2,3,1))\nds.html:10: #bada55\n白名單 5 個色值；掃描 1 個檔；違規 3 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：ALLOW_RANGES 超出行數與空段",
+   "tool": "check",
+   "argv": [
+    "ds.html"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=8-99,,10\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "[正本] ds.html：只掃 ALLOW_RANGES；--all 掃整份\n白名單 8 個色值；掃描 1 個檔；違規 0 處（0 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：ALLOW_RANGES 空（正本整份掃）",
+   "tool": "check",
+   "argv": [
+    "ds.html"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "ds.html:8: #FF8800\nds.html:8: rgb(1 2 3)  (= rgba(1,2,3,1))\nds.html:10: #bada55\n白名單 5 個色值；掃描 1 個檔；違規 3 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：ALLOW_RANGES 0（負索引）",
+   "tool": "check",
+   "argv": [
+    "ds.html"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n<i c=#010203>",
+    "SHA256SUMS": "71336768eb8cb11aa6b3e3f0f442724cccd9084bd2550102089c711b48850169  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=0,9-8\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n<i c=#010203>"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "[正本] ds.html：只掃 ALLOW_RANGES；--all 掃整份\n白名單 6 個色值；掃描 1 個檔；違規 0 處（0 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：沒有 SHA256SUMS",
+   "tool": "check",
+   "argv": [
+    "ds.html"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=3-7\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "ds.html:8: #FF8800\nds.html:8: rgb(1 2 3)  (= rgba(1,2,3,1))\nds.html:10: #bada55\n白名單 5 個色值；掃描 1 個檔；違規 3 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：SHA 不符就整份掃",
+   "tool": "check",
+   "argv": [
+    "ds.html"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "0000000000000000000000000000000000000000000000000000000000000000  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=3-7\n"
+   },
+   "proj": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "ds.html:8: #FF8800\nds.html:8: rgb(1 2 3)  (= rgba(1,2,3,1))\nds.html:10: #bada55\n白名單 5 個色值；掃描 1 個檔；違規 3 處（3 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：ALLOW_RANGES 壞（當掉）",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=a-b\n"
+   },
+   "proj": {
+    "a.css": "a{}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "ValueError: invalid literal for int() with base 10: 'a'\n",
+   "crash": true
+  },
+  {
+   "name": "check：ALLOW_RANGES 開頭是負號（當掉）",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nALLOW_RANGES=-5\n"
+   },
+   "proj": {
+    "a.css": "a{}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "ValueError: invalid literal for int() with base 10: ''\n",
+   "crash": true
+  },
+  {
+   "name": "check：SOURCE 檔不存在（當掉）",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "source.conf": "SOURCE=nope.html\n"
+   },
+   "proj": {
+    "a.css": "a{}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "FileNotFoundError: [Errno 2] No such file or directory: '@TMP@/skill/references/nope.html'\n",
+   "crash": true
+  },
+  {
+   "name": "check：SHA256SUMS 空（當掉）",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": " \n",
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {
+    "a.css": "a{}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "IndexError: list index out of range\n",
+   "crash": true
+  },
+  {
+   "name": "check：tokens.css 不是 UTF-8（當掉）",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {},
+   "proj": {
+    "a.css": "a{}\n"
+   },
+   "binary": {
+    "skill/references/tokens.css": [
+     255,
+     254
+    ]
+   },
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\n",
+   "crash": true
+  },
+  {
+   "name": "check：tokens.css 多行註解",
+   "tool": "check",
+   "argv": [
+    "a.css"
+   ],
+   "ref": {
+    "tokens.css": ":root{/* #111111\n #222222 */--a:#333333;/* x */--b:#444444}\n/* 沒關的 #555555\n"
+   },
+   "proj": {
+    "a.css": "a{c:#111111;d:#222222;e:#333333;f:#444444;g:#555555}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "a.css:1: #111111\na.css:1: #222222\n白名單 3 個色值；掃描 1 個檔；違規 2 處（2 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "check：壞掉的符號連結檔（當掉）",
+   "tool": "check",
+   "argv": [
+    "src"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "src/a.css": "a{c:#111}\n"
+   },
+   "binary": {},
+   "symlinks": {
+    "proj/src/z.css": "nowhere.css"
+   },
+   "code": 1,
+   "stdout": "",
+   "stderr": "FileNotFoundError: [Errno 2] No such file or directory: 'src/z.css'\n",
+   "crash": true
+  },
+  {
+   "name": "check：符號連結目錄不往下走",
+   "tool": "check",
+   "argv": [
+    "src"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {
+    "src/a.css": "a{c:#111}\n",
+    "real/b.css": "a{c:#222}\n"
+   },
+   "binary": {},
+   "symlinks": {
+    "proj/src/link": "../real",
+    "proj/src/l.css": "../real/b.css"
+   },
+   "code": 1,
+   "stdout": "src/a.css:1: #111  (= #111111)\nsrc/l.css:1: #222  (= #222222)\n白名單 5 個色值；掃描 2 個檔；違規 2 處（2 種色值）\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：骨架（沒有宣告）",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* --a: #fff; */\n:root {\n}\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "tokens.css 還沒有任何宣告（仍是骨架）：先照 SKILL.md 從正本擷取\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：沒有 tokens.css（當掉）",
+   "tool": "verify",
+   "argv": [],
+   "ref": {},
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "FileNotFoundError: [Errno 2] No such file or directory: '@TMP@/skill/references/tokens.css'\n",
+   "crash": true
+  },
+  {
+   "name": "verify：指定的 tokens 檔不存在（當掉）",
+   "tool": "verify",
+   "argv": [
+    "nope.css"
+   ],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "FileNotFoundError: [Errno 2] No such file or directory: 'nope.css'\n",
+   "crash": true
+  },
+  {
+   "name": "verify：沒有設定正本",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": ":root {\n  /* 範例 #abcdef 不算 */\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n  --c-ok: hsl(120 50% 40%);\n  --c-x: oklch(62.5% 0.2 250 / 0.8);\n}\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "沒有設定正本（source.conf 的 SOURCE 是空的）：宣告 5 個；同名重複 0 個 []\n請人工對照設計正本；能取得 HTML／CSS 正本時，填 source.conf 再跑一次\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：沒有設定正本＋同名重複",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": ":root{--b: 1;--a: 2;--b: 3;--a:4;--c:5}\n/* 第 2 部分 */\n:root{--a: 9; --z : 1 ;}\n",
+    "source.conf": "SOURCE=\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "沒有設定正本（source.conf 的 SOURCE 是空的）：宣告 6 個；同名重複 2 個 ['--a', '--b']\n請人工對照設計正本；能取得 HTML／CSS 正本時，填 source.conf 再跑一次\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：全部找得到（含 TOKEN_RANGE）",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=4-6\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:4-6 整段比對：相同\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：第 2 部分別名",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n/* 第 2 部分 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 5；找得到 5；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：2 個：--c-primary, --c-ink\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：找不到＋SHA 不符＋整段不同",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #124;\n  --c-new: 1px;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "abc  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=4-6\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 4；找得到 2；找不到 2\n第 1 部分：4 個宣告＝4 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:4-6 整段比對：不同\n正本 SHA-256 不符：SHA256SUMS=abc，實際=a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n正本找不到：--c-ink: #124\n正本找不到：--c-new: 1px\ntokens.css 第 1 部分與正本 DS:4-6 不是整段相同\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：SHA256SUMS 空",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "",
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\n正本 SHA-256 不符：SHA256SUMS=(空)，實際=a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：沒有 SHA256SUMS（當掉）",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "FileNotFoundError: [Errno 2] No such file or directory: '@TMP@/skill/references/SHA256SUMS'\n",
+   "crash": true
+  },
+  {
+   "name": "verify：正本不存在（當掉）",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "SHA256SUMS": "x\n",
+    "source.conf": "SOURCE=nope.html\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "FileNotFoundError: [Errno 2] No such file or directory: '@TMP@/skill/references/nope.html'\n",
+   "crash": true
+  },
+  {
+   "name": "verify：TOKEN_RANGE 壞（當掉）",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=x\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "",
+   "stderr": "ValueError: invalid literal for int() with base 10: 'x'\n",
+   "crash": true
+  },
+  {
+   "name": "verify：TOKEN_RANGE 單行",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=5\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:5 整段比對：相同\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：TOKEN_RANGE 0",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=0\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:0 整段比對：相同\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：TOKEN_RANGE 超出",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=10-99\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:10-99 整段比對：不同\ntokens.css 第 1 部分與正本 DS:10-99 不是整段相同\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：TOKEN_RANGE 負數結尾",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=4--5\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:4--5 整段比對：相同\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：TOKEN_RANGE 整段不同",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=3-8\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:3-8 整段比對：不同\ntokens.css 第 1 部分與正本 DS:3-8 不是整段相同\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：兩個位置參數（相對 cwd 的 tokens、相對 references 的正本）",
+   "tool": "verify",
+   "argv": [
+    "my.css",
+    "alt.html"
+   ],
+   "ref": {
+    "tokens.css": "x",
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "alt.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\nTOKEN_RANGE=4-6\n"
+   },
+   "proj": {
+    "my.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：alt.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:4-6 整段比對：相同\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：正本給絕對路徑",
+   "tool": "verify",
+   "argv": [
+    "@TMP@/proj/my.css",
+    "@TMP@/proj/d/alt.html"
+   ],
+   "ref": {
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n"
+   },
+   "proj": {
+    "my.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n",
+    "d/alt.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：alt.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：第二個參數是空字串",
+   "tool": "verify",
+   "argv": [
+    "my.css",
+    ""
+   ],
+   "ref": {
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {
+    "my.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "沒有設定正本（source.conf 的 SOURCE 是空的）：宣告 3 個；同名重複 0 個 []\n請人工對照設計正本；能取得 HTML／CSS 正本時，填 source.conf 再跑一次\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：只給 tokens 檔",
+   "tool": "verify",
+   "argv": [
+    "my.css"
+   ],
+   "ref": {
+    "ds.html": "<html>\n<style>\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n.logo { fill: #FF8800; stroke: rgb(1 2 3); }\n</style>\n<p style=\"color:#bada55\">x</p>\n</html>\n",
+    "SHA256SUMS": "a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519  ds.html\n",
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {
+    "my.css": "/* 來源 */\n:root {\n  --c-primary: #0A5FFF;\n  --c-ink: #123;\n  --c-shadow: rgba(0, 0, 0, .5);\n}\n"
+   },
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 a22aaaf1b771f1074300bfeb8450dbc341c2689c263a29c85d469097c15b3519\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：3 個宣告＝3 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：宣告的形狀",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": ":root{--a:1;--b : 2 ;--c:\n  3\n;--d:4}\n--e: 5;\n.x{color:red;--f:{};--g:url(a;b);--h: x}\n--i: last",
+    "ds.html": "--a:1 --b : 2  --e: 5 --g:url(a",
+    "SHA256SUMS": "d1b9a3a885c26bf50046b9d7d3ce9fceeabecfdaded22da35d433821bc680ecc  ds.html\n",
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 1,
+   "stdout": "正本：ds.html  SHA-256 d1b9a3a885c26bf50046b9d7d3ce9fceeabecfdaded22da35d433821bc680ecc\n宣告總數 5；找得到 4；找不到 1\n第 1 部分：9 個宣告＝9 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\n正本找不到：--c:\n  3\n\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：CRLF 的 tokens 與正本",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": ":root {\r\n  --a: 1;\r\n  --b: 2;\r\n}\r\n",
+    "ds.html": "x\r\n:root {\r\n  --a: 1;\r\n  --b: 2;\r\n}\r\n",
+    "SHA256SUMS": "efa5cdd5baed7da4b666bde26b3971b292232816e642ef0cf404ee27c1b3780e  ds.html\n",
+    "source.conf": "SOURCE=ds.html\r\nTOKEN_RANGE=3-4\r\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 efa5cdd5baed7da4b666bde26b3971b292232816e642ef0cf404ee27c1b3780e\n宣告總數 2；找得到 2；找不到 0\n第 1 部分：2 個宣告＝2 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：0 個\nDS:3-4 整段比對：相同\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  },
+  {
+   "name": "verify：註解含中文（位置以字元計）、註解裡的「第 2 部分」",
+   "tool": "verify",
+   "argv": [],
+   "ref": {
+    "tokens.css": "/* 中文註解 --x: 1; */:root{--a: 1;}\n/* 這裡是 第 2 部分 的分界 */\n:root{--b: 2;--a: 1;}\n",
+    "ds.html": "--a: 1 --b: 2",
+    "SHA256SUMS": "4863cba030f9958272ef6a3db3b59e50848dd40c71c851935e15e9dec9086d0d  ds.html\n",
+    "source.conf": "SOURCE=ds.html\n"
+   },
+   "proj": {},
+   "binary": {},
+   "symlinks": {},
+   "code": 0,
+   "stdout": "正本：ds.html  SHA-256 4863cba030f9958272ef6a3db3b59e50848dd40c71c851935e15e9dec9086d0d\n宣告總數 3；找得到 3；找不到 0\n第 1 部分：1 個宣告＝1 個變數＋同名覆寫 0 個\n第 2 部分（別名，正本 :root 外）：2 個：--b, --a\n結果：全部找得到\n",
+   "stderr": "",
+   "crash": false
+  }
+ ]
+}

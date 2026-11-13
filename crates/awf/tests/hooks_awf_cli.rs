@@ -198,6 +198,13 @@ const RULES: &[Case] = &[
     ("awf spec ids", DEV, ALLOW, Sh::Both),
     ("awf spec ids --root openspec --json", DEV, ALLOW, Sh::Both),
     ("awf doctor", DEV, ALLOW, Sh::Both),
+    // golden、tokens：只讀的檢查，team agent 可以跑
+    ("awf golden", DEV, ALLOW, Sh::Both),
+    ("awf golden --dir .claude/teams/golden-set --verbose", REV, ALLOW, Sh::Both),
+    ("awf tokens check src", DEV, ALLOW, Sh::Both),
+    ("awf tokens check --all --ref .claude/skills/acme-ds/references src", REV, ALLOW, Sh::Both),
+    ("awf tokens verify", DEV, ALLOW, Sh::Both),
+    ("awf tokens --selftest", DEV, ALLOW, Sh::Both),
     ("awf watch --once", DEV, ALLOW, Sh::Both),
     ("awf watch _tpm/runs/r --once", DEV, ALLOW, Sh::Both),
     ("awf statusline", DEV, ALLOW, Sh::Both),

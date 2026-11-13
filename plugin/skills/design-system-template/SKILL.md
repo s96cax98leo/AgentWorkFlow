@@ -25,7 +25,7 @@ description: 設計系統 skill 的骨架（範本，不是成品）。要把一
 | 版面、斷點、無障礙、個資遮罩 | `references/rwd-a11y.md` |
 | 品牌標誌、favicon、登入頁 | `references/brand-mark.md` |
 | 字體檔、授權 | `references/fonts.md` |
-| 交件前自查、design review | `scripts/checklist.md`（逐條打勾）、`scripts/check-tokens.py` |
+| 交件前自查、design review | `scripts/checklist.md`（逐條打勾）、`awf tokens check` |
 
 ## 設計原則（DS:【填空：行號】，用自己的話）
 寫 3–5 條，每條一句原則＋一句「所以不做什麼」。範例格式：
@@ -50,7 +50,7 @@ description: 設計系統 skill 的骨架（範本，不是成品）。要把一
 ### 研究時另外定下的事
 - **token 來源**：`tokens.css` 以 DS:【起–迄】逐字為準；正本 `:root` 以外的別名另列一段並註明。
 - **撞名的 token**：產品既有變數與 DS 同名但值不同時，列出兩邊的值與以誰為準。
-- **`check-tokens.py` 白名單**＝`tokens.css` 的所有色值＋`references/allowlist.txt`（例如品牌標誌專用色）＋`source.conf` 指定的正本行段。
+- **`awf tokens check` 的白名單**＝`tokens.css` 的所有色值＋`references/allowlist.txt`（例如品牌標誌專用色）＋`source.conf` 指定的正本行段。
 
 ### 正本自己沒做到的地方（照抄前要知道）
 用 `scripts/checklist.md` 檢查正本本身，結果寫在 checklist 的 D 段「已知例外」。照抄到產品時**不要把例外一起抄過去**。常見的：文字對比未達 WCAG AA 4.5:1、窄螢幕元素消失、圖示連結沒有可讀名稱、觸控目標只寫在文字規則沒有 CSS。
@@ -94,8 +94,9 @@ description: 設計系統 skill 的骨架（範本，不是成品）。要把一
 照 `references/brand-mark.md`。所有出口（側欄、登入頁、favicon、錯誤頁、信件）用同一組圖形與色值。
 
 ### 6. 驗證
-- `python3 scripts/check-tokens.py <前端 src 目錄>`：列出寫死的色碼；**本次變更不得新增違規**。
-- `python3 scripts/verify-tokens.py`：tokens.css 與正本一字不差（改 tokens.css 後必跑）。
+- `awf tokens check <前端 src 目錄>`：列出寫死的色碼；**本次變更不得新增違規**。
+- `awf tokens verify`：tokens.css 與正本一字不差（改 tokens.css 後必跑）。
+- 這兩個指令內建在 `awf` 裡（skill 不帶腳本），在專案根目錄跑。專案只有這一個設計系統 skill 時會自動找到它的 `references/`；有多個時加 `--ref .claude/skills/<skill 名>/references`。
 - `scripts/checklist.md`：交件前逐條打勾，design-reviewer 以它為審查標準。
 
 ## DO／DON'T（DS:【行】，規則條文逐條）
