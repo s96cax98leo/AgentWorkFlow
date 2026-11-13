@@ -4,7 +4,7 @@
 use super::py::{self, pj, pname, pparent, truthy};
 use super::*;
 use crate::{pack, recipe, schema};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 const FULL_INTENT: &str = "# intent\n## 目標\n匯出 CSV\n## 範圍\n報表頁\n## 不做的事\nExcel\n## 驗收條件\n- AC-1 下載 CSV\n";
 const DIAG: &str = "## 現象\n匯出空白\n## 重現步驟\n1. 點匯出\n## 預期行為\n有資料\n";
@@ -1070,7 +1070,3 @@ pub fn selftest(ctx: &Ctx, out: &mut String) -> i32 {
     out.push_str(&format!("save_run selftest：{}\n", if ok_all { "全部通過" } else { "有失敗" }));
     i32::from(!ok_all)
 }
-
-/// 讓 `Map` 的匯入在沒有其他用途時不算多餘（`with` 的中間值）。
-#[allow(dead_code)]
-fn _unused(_: Map<String, Value>) {}

@@ -70,13 +70,13 @@ pub fn missing_agents(node: &Value) -> Vec<String> {
 
 // ------------------------------------------------------------------ 執行紀錄（trace）
 /// `_md_cell(v)`
-pub(crate) fn md_cell(v: &Value) -> String {
+pub fn md_cell(v: &Value) -> String {
     let empty = v.is_null() || v.as_str() == Some("");
     let t = if empty { "—".to_string() } else { s(v) };
     t.replace('|', "\\|").replace('\n', " ")
 }
 
-pub(crate) fn md_cell_str(t: &str) -> String {
+pub fn md_cell_str(t: &str) -> String {
     md_cell(&Value::String(t.to_string()))
 }
 
@@ -278,7 +278,7 @@ pub fn model_errors(stage: &str, result: &Value, profile: &Value, modifiers: &Va
         let resolved = recipe::resolve_model(profile, &Value::String(role.clone()), &Value::String(stage.to_string()), &py::NULL, modifiers).map_err(py::from_recipe)?;
         let floor = py::idx(&resolved, "floor")?;
         if truthy(floor) {
-            let fi = tier_index(floor).ok_or_else(|| PyErr_value(floor))?;
+            let fi = tier_index(floor).ok_or_else(|| value_err(floor))?;
             if ti < fi {
                 errs.push(format!("{label}（{role}）用了 {}，低於下限 {}", s(tier), s(floor)));
             }
@@ -293,8 +293,7 @@ pub fn model_errors(stage: &str, result: &Value, profile: &Value, modifiers: &Va
     Ok(errs)
 }
 
-#[allow(non_snake_case)]
-fn PyErr_value(v: &Value) -> crate::kb::PyErr {
+fn value_err(v: &Value) -> crate::kb::PyErr {
     crate::kb::PyErr::other("ValueError", format!("{} is not in list", pyfmt::repr(v)))
 }
 

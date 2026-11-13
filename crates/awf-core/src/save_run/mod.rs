@@ -30,8 +30,8 @@ mod selftest;
 mod trace;
 
 pub use crate::kb::PyErr;
-pub use archive::{archive_text, next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
-pub use checks::{constraint_file, constraint_issues, constraint_rows, intent_errors, plan_check_for, plan_check_issues, result_subtasks, CONSTRAINT_CHECK_TIMEOUT, CONSTRAINT_VERDICTS};
+pub use archive::{archive_text, clip, next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
+pub use checks::{ac_ids, constraint_file, constraint_issues, constraint_rows, intent_errors, plan_check_for, plan_check_issues, result_subtasks, CONSTRAINT_CHECK_TIMEOUT, CONSTRAINT_VERDICTS};
 pub use cli::{approve, run, stage, USAGE};
 pub use decisions::{decision_errors, record_decisions, split_answer};
 pub use policy::{
@@ -39,7 +39,7 @@ pub use policy::{
     required_roles_missing, REVIEW_ROLES,
 };
 pub use selftest::selftest;
-pub use trace::{envelope_of, envelopes, ghostwrite, is_envelope, missing_agents, model_errors, process_trace, record_candidates, retried_ok, Row};
+pub use trace::{envelope_of, envelopes, ghostwrite, is_envelope, md_cell, md_cell_str, missing_agents, model_errors, process_trace, record_candidates, retried_ok, Row};
 
 use crate::kb::pyish;
 use py::R;
@@ -180,6 +180,18 @@ impl Ctx {
 }
 
 /// `opt(argv, name, default)`：第一個 `name` 後面那個參數。
+/// `pack.run_epic(run)`：run.json 讀得進來、不是空值也不是物件時，Python 版在 `.get` 丟 AttributeError
+/// （`pack::run_epic` 這時回空字串）。這裡先擋下來，不讓讀不懂的 run.json 被當成「沒有 epic」繼續做。
+pub(crate) fn run_epic(ctx: &Ctx, run: &str) -> py::R<String> {
+    let dir = ctx.abs(run);
+    if let Some(v) = crate::pack::load_json(&py::pj(&dir, "run.json")) {
+        if py::truthy(&v) && !v.is_object() {
+            return Err(py::attr_err(&v, "get"));
+        }
+    }
+    Ok(crate::pack::run_epic(&dir, None))
+}
+
 pub fn opt<'a>(argv: &'a [String], name: &str, default: &'a str) -> &'a str {
     argv.iter().position(|a| a == name).and_then(|i| argv.get(i + 1)).map_or(default, String::as_str)
 }

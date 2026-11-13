@@ -83,7 +83,7 @@ pub fn next_stage(data: &Value) -> R<Option<String>> {
 }
 
 /// `_clip(s, n)`：空白壓成一個、超過 n 個字截短加「…」。
-fn clip(v: &Value, n: usize) -> String {
+pub fn clip(v: &Value, n: usize) -> String {
     let t = py::squash(&s_or(v, ""));
     if t.chars().count() <= n { t } else { format!("{}…", py::take(&t, n.saturating_sub(1))) }
 }

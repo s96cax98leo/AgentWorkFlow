@@ -37,7 +37,7 @@ pub fn record_decisions(ctx: &Ctx, run: &str, items: &[(String, String)], by: &s
     let resolved = ctx.resolve(run)?;
     let runs = pparent(&resolved);
     let run_name = pname(&resolved);
-    let epic = pack::run_epic(&ctx.abs(run), None);
+    let epic = super::run_epic(ctx, run)?;
     let file = pj(&runs, pack::DECISIONS);
     let mut f = std::fs::OpenOptions::new().append(true).create(true).open(&file).map_err(|e| PyErr::os(&e, &file))?;
     for (q, a) in items {

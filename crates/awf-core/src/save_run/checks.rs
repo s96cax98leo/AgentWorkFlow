@@ -69,7 +69,7 @@ static AC_BODY: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"AC[-_][A
 static WORD: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^[\p{L}\p{N}_-]$").ok());
 
 /// `AC_ID.findall(text)`：`(?<![\w-])AC[-_][A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*`。
-pub(crate) fn ac_ids(text: &str) -> Vec<String> {
+pub fn ac_ids(text: &str) -> Vec<String> {
     let (Some(body), Some(word)) = (AC_BODY.as_ref(), WORD.as_ref()) else { return Vec::new() };
     let mut out = Vec::new();
     let mut pos = 0;
@@ -216,7 +216,7 @@ pub fn plan_check_for(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &
     }
     let target = get(data, "target_repo")?;
     let repo = if truthy(target) { Some(ctx.abs(&py::pp(&s(target)))) } else { None };
-    let mut epic = pack::run_epic(&ctx.abs(run), None);
+    let mut epic = super::run_epic(ctx, run)?;
     if epic.is_empty() {
         let args = get(data, "args")?;
         epic = if truthy(args) { s_or(get(args, "epic")?, "") } else { String::new() };
