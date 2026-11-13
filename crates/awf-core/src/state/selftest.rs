@@ -454,7 +454,8 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
         let cands = plugin_candidates(&w.env, Some(&home)).unwrap_or_default();
         t.check("找 plugin：installed_plugins.json 的 agent-workflow 安裝都列出來，別的專案的標出來", cands.len() == 3 && cands.iter().filter(|c| c.other_project).count() == 1, format!("{}", cands.len()));
     } else {
-        let (got, gn) = find_plugin(&w.env, "").unwrap_or_default();
+        // 執行檔本身在模版 repo 底下時（開發中）會先找到 repo 的 plugin：這一項要驗的是登記檔那條路，把模版拿掉
+        let (got, gn) = find_plugin(&Env { template: None, ..w.env.clone() }, "").unwrap_or_default();
         t.check(
             "找 plugin：從 installed_plugins.json 找，版本和專案相同的優先，別的專案的安裝不算，多個來源會提醒",
             got.as_deref() == Some(plugin.as_str()) && gn.iter().any(|x| x.contains("不只一個來源")),
