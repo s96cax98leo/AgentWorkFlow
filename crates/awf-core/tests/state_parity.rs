@@ -16,14 +16,14 @@ use std::path::{Path, PathBuf};
 
 /// 這裡比 Python 嚴的步驟：標籤、原因。只要求這裡 exit 1（不產生腳本、不存檔）。
 const STRICTER: [(&str, &str); 4] = [
-    ("set-huge-int", "--set 給超出 64 位元的整數：Python 照整數放進 args；這裡的 JSON 放不下，拒絕"),
+    ("set-huge-int", "--set 給超出 64 位元的整數：Python 照整數放進 args；這裡放不下，當成寫錯的 --set 拒絕"),
     ("set-nan", "--set-json 給 NaN：Python 讀得進來（之後在摘要那一步才丟 TypeError）；這裡當成寫錯的 --set-json，一開始就拒絕"),
     ("output-nan", "done --output 的檔有 NaN：Python 讀得進來、照存；這裡整份當成讀不懂，拒絕存檔"),
-    ("runjson-nan", "run.json 有 NaN：Python 讀得進來、照常往下；這裡整份當成讀不懂，每個指令都拒絕"),
+    ("runjson-nan", "run.json 有 NaN：Python 讀得進來、照常往下；這裡整份不接受（ValueError），next、done、handoff、approve 都拒絕"),
 ];
 
 /// 兩邊都拒絕、只是文字不同的步驟：標籤、原因。只比 exit code。
-const KNOWN: [(&str, &str); 1] = [("set-deep", "--set-json 巢狀太深：Python 是沒接住的 RecursionError；這裡當成寫錯的 --set-json（一樣 exit 1、不寫檔）")];
+const KNOWN: [(&str, &str); 1] = [("set-deep", "--set-json 巢狀 3000 層：兩邊都是 RecursionError、exit 1（這裡超過 200 層就拒絕，Python 的上限大約 1000 層）；訊息文字不同，只比 exit code")];
 
 fn repo_root() -> PathBuf {
     std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("模版 repo")
@@ -141,8 +141,8 @@ impl Stage {
         files
     }
 
-    /// 這一步改了哪些檔（刪掉的記 null）。
-    fn changed(&self, before: &Map<String, Value>) -> Value {
+    /// 這一步改了哪些檔（刪掉的記 null）；做完之後的快照留在 `keep`，下一步接著用（中間沒有檔案操作時不用重掃）。
+    fn changed(&self, before: &Map<String, Value>, keep: &mut Option<Map<String, Value>>) -> Value {
         let after = self.snapshot();
         let keys: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
         let mut out = Map::new();
@@ -151,6 +151,7 @@ impl Stage {
                 out.insert(k.clone(), after.get(k).cloned().unwrap_or(Value::Null));
             }
         }
+        *keep = Some(after);
         Value::Object(out)
     }
 
@@ -261,8 +262,13 @@ struct Tally {
 fn run_steps(exp: &Value, st: &Stage) -> Tally {
     let mut t = Tally { runs: 0, calls: 0, same: 0, stricter: 0, known: 0, bad: Vec::new() };
     let steps = exp["steps"].as_array().expect("steps");
+    // 上一步做完之後的快照；檔案操作會讓它失效
+    let mut kept: Option<Map<String, Value>> = None;
     for (i, step) in steps.iter().enumerate() {
         let path = s(&step["path"]);
+        if !matches!(s(&step["op"]), "run" | "call") {
+            kept = None;
+        }
         let label = step.get("label").and_then(Value::as_str);
         let stricter = label.is_some_and(|l| STRICTER.iter().any(|(k, _)| *k == l));
         let known = label.is_some_and(|l| KNOWN.iter().any(|(k, _)| *k == l));
@@ -298,7 +304,7 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
                 t.runs += 1;
                 let shown = strings(&step["argv"]);
                 let argv: Vec<String> = shown.iter().map(|a| st.abs(a)).collect();
-                let before = st.snapshot();
+                let before = kept.take().unwrap_or_else(|| st.snapshot());
                 let (code, out, err) = state::run_captured(&argv, &st.env(step));
                 let (out, err) = (st.norm(&out), st.norm(&err));
                 let is = |k: &str| step.get(k).is_some();
@@ -308,7 +314,7 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
                     if code != 1 {
                         diff.push(format!("要拒絕（exit 1），得 {code}"));
                     }
-                    if let Some(d) = files_diff(&json!({}), &st.changed(&before)) {
+                    if let Some(d) = files_diff(&json!({}), &st.changed(&before, &mut kept)) {
                         diff.push(format!("拒絕時不該改到檔案\n    {d}"));
                     }
                 } else {
@@ -333,7 +339,7 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
                                 }
                             }
                         }
-                        if let Some(d) = files_diff(&step["files"], &st.changed(&before)) {
+                        if let Some(d) = files_diff(&step["files"], &st.changed(&before, &mut kept)) {
                             diff.push(format!("改到的檔\n    {d}"));
                         }
                     }
@@ -350,14 +356,14 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
             }
             "call" => {
                 t.calls += 1;
-                let before = st.snapshot();
+                let before = kept.take().unwrap_or_else(|| st.snapshot());
                 let name = s(&step["fn"]);
                 let got = st.norm_json(&call(&st.env(step), name, &st.abs_json(&step["args"])));
                 let mut diff = Vec::new();
                 if !same(&step["result"], &got) {
                     diff.push(format!("回傳\n    要：{}\n    得：{got}", step["result"]));
                 }
-                if let Some(d) = files_diff(&step["files"], &st.changed(&before)) {
+                if let Some(d) = files_diff(&step["files"], &st.changed(&before, &mut kept)) {
                     diff.push(format!("改到的檔\n    {d}"));
                 }
                 if diff.is_empty() {
