@@ -139,7 +139,7 @@ jobs:
             os: ubuntu-22.04
           # arm64 用 GitHub 的 arm runner 原生建置，不用交叉編譯工具鏈。
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-22.04-arm
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
