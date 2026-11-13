@@ -32,23 +32,53 @@ pub struct Paths {
     pub teams_dir: PathBuf,
     /// 共用片段的目錄（`<teams>/tools/snippets`）。
     pub snippet_dir: PathBuf,
+    /// `snippet_dir` 裡沒有某個片段時，再到這裡找（專案模式：模版／plugin 的片段目錄）。
+    pub snippet_fallback: Option<PathBuf>,
+}
+
+/// 模版的片段目錄在哪。`template_root` 是含 `scaffold/` 與 `plugin/` 的模版根目錄。
+/// 片段之後會搬進 `plugin/`；搬的時候只改這裡。
+pub fn template_snippet_dir(template_root: &Path) -> PathBuf {
+    template_root.join("scaffold").join(".claude").join("teams").join("tools").join("snippets")
 }
 
 impl Paths {
     /// 模版 repo：處理 `plugin/workflow-templates/`，schema 與片段用 `scaffold/.claude/teams/` 的。
     pub fn template_repo(root: &Path) -> Self {
         let teams = root.join("scaffold").join(".claude").join("teams");
-        Self { wf_dir: root.join("plugin").join("workflow-templates"), snippet_dir: teams.join("tools").join("snippets"), teams_dir: teams }
+        Self { wf_dir: root.join("plugin").join("workflow-templates"), snippet_dir: template_snippet_dir(root), teams_dir: teams, snippet_fallback: None }
     }
 
     /// 已 init 的專案：處理 `.claude/workflows/`（使用者留在專案的覆寫檔，沒有就什麼都不做）。
+    /// 片段只找專案自己的 `.claude/teams/tools/snippets/`（0.x 的專案才有）。
     pub fn project(root: &Path) -> Self {
+        Self::project_with(root, None)
+    }
+
+    /// 已 init 的專案，片段依序找：專案自己的 `.claude/teams/tools/snippets/`（舊專案還有時）→ `template_snippets`（模版／plugin 的）。
+    /// 1.0 的 init 不再把片段複製進專案，所以覆寫檔的片段通常來自後者。
+    pub fn project_with(root: &Path, template_snippets: Option<PathBuf>) -> Self {
         let teams = root.join(".claude").join("teams");
-        Self { wf_dir: root.join(".claude").join("workflows"), snippet_dir: teams.join("tools").join("snippets"), teams_dir: teams }
+        Self { wf_dir: root.join(".claude").join("workflows"), snippet_dir: teams.join("tools").join("snippets"), teams_dir: teams, snippet_fallback: template_snippets }
+    }
+
+    /// 片段要找的目錄，依先後。
+    pub fn snippet_dirs(&self) -> Vec<&Path> {
+        std::iter::once(self.snippet_dir.as_path()).chain(self.snippet_fallback.as_deref()).collect()
     }
 
     /// 從 `start` 判斷：`start` 自己是已 init 的專案（有 `.claude/teams/`、而且不是模版 repo）就當專案；
     /// 否則 `start` 或它上層有 `plugin/workflow-templates/` 與 `scaffold/.claude/teams/` 時當模版 repo；都不是就當專案。
+    /// 當專案時，片段找不到會再找 `template_snippets`。
+    pub fn detect_with(start: &Path, template_snippets: Option<PathBuf>) -> Self {
+        let mut paths = Self::detect(start);
+        if paths.snippet_fallback.is_none() && paths.wf_dir.ends_with(Path::new(".claude").join("workflows")) {
+            paths.snippet_fallback = template_snippets;
+        }
+        paths
+    }
+
+    /// 同 [`Paths::detect_with`]，不給模版的片段目錄（專案模式只找專案自己的）。
     pub fn detect(start: &Path) -> Self {
         let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
         let is_template = |d: &Path| d.join("plugin").join("workflow-templates").is_dir() && d.join("scaffold").join(".claude").join("teams").is_dir();
@@ -164,13 +194,19 @@ fn dump(v: &Value, out: &mut String) {
 
 /// 讀 `<snippet_dir>/<name>.js`；不存在或內容不合規則就回 [`BuildError::Snippet`]。
 pub fn load_snippet(name: &str, snippet_dir: &Path, cache: &mut SnippetCache) -> Result<String, BuildError> {
+    load_snippet_from(name, &[snippet_dir], cache)
+}
+
+/// 同 [`load_snippet`]，依序在 `dirs` 找（第一個有這個片段的目錄為準）；都沒有時訊息列第一個目錄的路徑。
+pub fn load_snippet_from(name: &str, dirs: &[&Path], cache: &mut SnippetCache) -> Result<String, BuildError> {
     if let Some(t) = cache.get(name) {
         return Ok(t.clone());
     }
-    let p = snippet_dir.join(format!("{name}.js"));
-    if !p.is_file() {
-        return Err(BuildError::Snippet(format!("片段檔不存在：{}", p.display())));
-    }
+    let file = format!("{name}.js");
+    let first = dirs.first().map(|d| d.join(&file)).unwrap_or_else(|| PathBuf::from(&file));
+    let Some(p) = dirs.iter().map(|d| d.join(&file)).find(|p| p.is_file()) else {
+        return Err(BuildError::Snippet(format!("片段檔不存在：{}", first.display())));
+    };
     let raw = read_text(&p).map_err(BuildError::Other)?;
     let text = raw.replace("\r\n", "\n");
     let text = text.trim_matches('\n');
@@ -261,9 +297,14 @@ pub fn unregistered_extensions(methodology: Option<&Value>, teams_dir: &Path) ->
 
 /// 只做片段內嵌：檢查 `@requires`，再把每個片段標記之間換成片段內容。
 pub fn render_snippets(text: &str, snippet_dir: &Path, cache: &mut SnippetCache) -> Result<String, BuildError> {
+    render_snippets_from(text, &[snippet_dir], cache)
+}
+
+/// 同 [`render_snippets`]，片段依序在 `dirs` 找。
+pub fn render_snippets_from(text: &str, dirs: &[&Path], cache: &mut SnippetCache) -> Result<String, BuildError> {
     let used: Vec<&str> = snip_mark().captures_iter(text).filter_map(|c| c.get(1)).map(|m| m.as_str()).collect();
     for name in &used {
-        for req in snippet_requires(&load_snippet(name, snippet_dir, cache)?) {
+        for req in snippet_requires(&load_snippet_from(name, dirs, cache)?) {
             if !used.iter().any(|u| *u == req) {
                 return Err(BuildError::Snippet(format!("片段 {name} 需要片段 {req}，workflow 沒有引用 /*@snippet:{req}*/")));
             }
@@ -274,7 +315,7 @@ pub fn render_snippets(text: &str, snippet_dir: &Path, cache: &mut SnippetCache)
     for c in snip_mark().captures_iter(text) {
         let (Some(all), Some(name)) = (c.get(0), c.get(1)) else { continue };
         out.push_str(text.get(last..all.start()).unwrap_or_default());
-        let body = load_snippet(name.as_str(), snippet_dir, cache)?;
+        let body = load_snippet_from(name.as_str(), dirs, cache)?;
         out.push_str(&format!("/*@snippet:{}*/\n{body}\n/*@end*/", name.as_str()));
         last = all.end();
     }
@@ -309,7 +350,12 @@ pub fn embed_methodology(text: &str, methodology: Option<&Value>) -> String {
 
 /// 完整內嵌：片段 → schema → methodology。
 pub fn render(text: &str, methodology: Option<&Value>, teams_dir: &Path, snippet_dir: &Path, cache: &mut SnippetCache) -> Result<String, BuildError> {
-    let text = render_snippets(text, snippet_dir, cache)?;
+    render_from(text, methodology, teams_dir, &[snippet_dir], cache)
+}
+
+/// 同 [`render`]，片段依序在 `snippet_dirs` 找。
+pub fn render_from(text: &str, methodology: Option<&Value>, teams_dir: &Path, snippet_dirs: &[&Path], cache: &mut SnippetCache) -> Result<String, BuildError> {
+    let text = render_snippets_from(text, snippet_dirs, cache)?;
     let text = embed_schemas(&text, teams_dir)?;
     Ok(embed_methodology(&text, methodology))
 }
@@ -352,7 +398,7 @@ pub fn run_captured(args: &[String], paths: &Paths) -> (i32, String, String) {
             Ok(t) => t,
             Err(msg) => return fail(out, msg),
         };
-        let new = match render(&old, methodology.as_ref(), &paths.teams_dir, &paths.snippet_dir, &mut cache) {
+        let new = match render_from(&old, methodology.as_ref(), &paths.teams_dir, &paths.snippet_dirs(), &mut cache) {
             Ok(t) => t,
             Err(BuildError::Snippet(e)) => {
                 out.push_str(&format!("{name}：{e}\n"));
@@ -390,7 +436,9 @@ pub fn run_captured(args: &[String], paths: &Paths) -> (i32, String, String) {
 pub fn main(args: &[String]) -> i32 {
     let start = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|s| !s.is_empty()).map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."));
-    let (code, out, err) = run_captured(args, &Paths::detect(&start));
+    // 專案模式：片段先找專案自己的，再找模版／plugin 的（1.0 的專案沒有自己的片段）
+    let template_snippets = crate::init::find_template_root().map(|r| template_snippet_dir(&r));
+    let (code, out, err) = run_captured(args, &Paths::detect_with(&start, template_snippets));
     print!("{out}");
     eprint!("{err}");
     code

@@ -44,20 +44,32 @@ pub fn merge_settings(user: &Map<String, Value>, tmpl: &Map<String, Value>) -> R
     Ok(out)
 }
 
-fn awf_mode_rx() -> &'static Regex {
+/// 0.x 的註冊：`… awf_hook.py <種類>`（Python 腳本）。
+fn old_hook_rx() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(&format!(r"awf_hook\.py\W*[{WS_CLASS}]+(guard-shell|guard-paths|envelope)\b")).expect("固定的正規式"))
 }
 
-/// 這個 hook 是 awf_hook.py 的哪個模式；不是就回 None。
-/// hook 的註冊方式改了（例如改成執行檔）時，要一起改這裡認舊註冊的規則。
-pub fn awf_mode(h: &Map<String, Value>) -> Option<String> {
-    let cmd = h.get("command").map(pyfmt::str_of).unwrap_or_default();
-    awf_mode_rx().captures(&cmd).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+/// 1.0 的註冊：`<路徑>/awf hook <種類>`（執行檔；路徑可以加引號，Windows 是 `awf.exe`）。
+/// `awf` 前面要是開頭、空白、路徑分隔或引號，才不會把使用者自己叫 `my-awf` 之類的指令認成我們的。
+fn new_hook_rx() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(&format!(r#"(?:^|[{WS_CLASS}/\\"'&])awf(?:\.exe)?["']?[{WS_CLASS}]+hook[{WS_CLASS}]+(guard-shell|guard-paths|envelope)\b"#)).expect("固定的正規式"))
 }
 
-/// awf_hook.py 的每個模式在每個事件只留一份：舊的不論掛在哪個 matcher 都先拿掉，再放上模版這版的；
-/// 使用者自己的 hooks 原樣保留。
+/// 這段文字（一個指令，或整份 hooks 的 JSON）裡有沒有（0.x 的註冊, 1.0 的註冊）。
+pub fn hook_forms(text: &str) -> (bool, bool) {
+    (old_hook_rx().is_match(text) || text.contains("awf_hook.py"), new_hook_rx().is_match(&text.replace("\\\"", "\"")))
+}
+
+/// 這個 hook 是我們的哪個種類（0.x 的 `awf_hook.py <種類>` 與 1.0 的 `awf hook <種類>` 都認）；不是就回 None。
+pub fn awf_mode(h: &Map<String, Value>) -> Option<String> {
+    let cmd = h.get("command").map(pyfmt::str_of).unwrap_or_default();
+    old_hook_rx().captures(&cmd).or_else(|| new_hook_rx().captures(&cmd)).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+}
+
+/// 我們的 hook 每個種類在每個事件只留一份：舊的（含 0.x 的 `awf_hook.py`）不論掛在哪個 matcher 都先拿掉，
+/// 再放上模版這版的；使用者自己的 hooks 原樣保留。
 pub fn merge_hooks(user: &Map<String, Value>, tmpl: &Map<String, Value>) -> R<Map<String, Value>> {
     let mut out = user.clone();
     for (event, entries) in tmpl {
@@ -102,6 +114,42 @@ pub fn merge_hooks(user: &Map<String, Value>, tmpl: &Map<String, Value>) -> R<Ma
         out.insert(event.clone(), Value::Array(keep));
     }
     Ok(out)
+}
+
+/// 0.x 的 settings 範本放的權限 → 1.0 的寫法（None＝1.0 沒有對應的東西，拿掉）。
+/// 只列已發佈各版範本裡真的出現過的項目；使用者自己加的（例如別的工具的 `python3 …`）不在這裡，不會被動到。
+pub const OLD_ALLOW: &[(&str, Option<&str>)] = &[
+    ("Bash(python3 .claude/teams/tools/build.py:*)", Some("Bash(awf build:*)")),
+    ("Bash(python3 .claude/teams/tools/check_envelope.py:*)", Some("Bash(awf check-envelope:*)")),
+    ("Bash(python3 .claude/teams/tools/check_rules.py:*)", Some("Bash(awf check-rules:*)")),
+    ("Bash(python3 .claude/teams/tools/check_agents.py:*)", Some("Bash(awf check-agents:*)")),
+    ("Bash(python3 .claude/teams/tools/save_run.py:*)", Some("Bash(awf save-run:*)")),
+    ("Bash(node .claude/teams/tools/check_workflows.mjs:*)", None),
+];
+
+/// 把 `permissions.allow` 裡 0.x 範本放的項目換成 1.0 的寫法（就地換，順序不變；新的已經有了就只拿掉舊的）。
+/// `keep` 回 true 的舊項目不動（例如它指的檔還在專案裡）。回傳（舊的, 換成什麼）。
+pub fn migrate_allow(doc: &mut Map<String, Value>, keep: &dyn Fn(&str) -> bool) -> Vec<(String, Option<String>)> {
+    let mut changed = Vec::new();
+    let Some(allow) = doc.get_mut("permissions").and_then(Value::as_object_mut).and_then(|p| p.get_mut("allow")).and_then(Value::as_array_mut) else { return changed };
+    let mut out: Vec<Value> = Vec::with_capacity(allow.len());
+    let have = |list: &[Value], s: &str| list.iter().any(|v| v.as_str() == Some(s));
+    for v in allow.iter() {
+        let hit = v.as_str().and_then(|s| OLD_ALLOW.iter().find(|(old, _)| *old == s)).filter(|(old, _)| !keep(old));
+        match hit {
+            None => out.push(v.clone()),
+            Some((old, new)) => {
+                if let Some(n) = new.filter(|n| !have(&out, n) && !have(allow, n)) {
+                    out.push(Value::String(n.to_string()));
+                }
+                changed.push((old.to_string(), new.map(str::to_string)));
+            }
+        }
+    }
+    if !changed.is_empty() {
+        *allow = out;
+    }
+    changed
 }
 
 /// base 有、have 沒有的欄位路徑（a.b.c）與 base 的值；兩邊都是物件時往下比，清單與純量不比內容。
@@ -200,6 +248,74 @@ mod tests {
             {"matcher": "Mine", "hooks": [{"command": "echo hi"}]},
             {"matcher": "Bash", "hooks": [{"command": "\"py\" \"x/awf_hook.py\" guard-shell"}]}
         ], "Stop": [1]}));
+    }
+
+    #[test]
+    fn old_and_new_registrations_are_both_ours() {
+        let mode = |cmd: &str| awf_mode(&m(json!({"command": cmd})));
+        // 0.x
+        assert_eq!(mode("\"/usr/bin/python3\" \"${CLAUDE_PROJECT_DIR}/.claude/hooks/awf_hook.py\" guard-shell").as_deref(), Some("guard-shell"));
+        assert_eq!(mode("& \"C:\\Py\\python.exe\" \"${CLAUDE_PROJECT_DIR}/.claude/hooks/awf_hook.py\" envelope").as_deref(), Some("envelope"));
+        // 1.0
+        assert_eq!(mode("\"/p/.claude/hooks/bin/awf\" hook guard-paths").as_deref(), Some("guard-paths"));
+        assert_eq!(mode("& \"C:\\p\\.claude\\hooks\\bin\\awf.exe\" hook guard-shell").as_deref(), Some("guard-shell"));
+        assert_eq!(mode("awf hook envelope").as_deref(), Some("envelope"));
+        // 使用者自己的
+        for cmd in ["echo hi", "my-awf hook envelope", "awfx hook envelope", "awf hooks envelope", "awf hook session-start", "awf kb query hook guard-shell", "python3 my_hook.py guard-shell"] {
+            assert_eq!(mode(cmd), None, "{cmd}");
+        }
+        assert_eq!(hook_forms("{\"command\":\"\\\"/p/.claude/hooks/bin/awf\\\" hook guard-shell\"}"), (false, true));
+        assert_eq!(hook_forms("{\"command\":\"py x/awf_hook.py guard-shell\"}"), (true, false));
+        assert_eq!(hook_forms("{\"command\":\"echo hi\"}"), (false, false));
+    }
+
+    #[test]
+    fn upgrade_replaces_old_registration_only() {
+        let tmpl = m(json!({"PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [{"command": "\"/p/.claude/hooks/bin/awf\" hook guard-shell"}]}],
+            "SubagentStop": [{"hooks": [{"command": "\"/p/.claude/hooks/bin/awf\" hook envelope"}]}]}));
+        let user = m(json!({"PreToolUse": [
+            {"matcher": "Bash|PowerShell", "hooks": [{"command": "\"py\" \"x/.claude/hooks/awf_hook.py\" guard-shell", "timeout": 10}]},
+            {"matcher": "Bash", "hooks": [{"command": "echo mine"}, {"command": "\"/old/.claude/hooks/bin/awf\" hook guard-shell"}]}
+        ], "SubagentStop": [{"hooks": [{"command": "py awf_hook.py envelope"}, {"command": "my-awf hook envelope"}]}], "Stop": [{"hooks": [{"command": "echo done"}]}]}));
+        let got = merge_hooks(&user, &tmpl).ok().unwrap_or_default();
+        assert_eq!(Value::Object(got.clone()), json!({"PreToolUse": [
+            {"matcher": "Bash", "hooks": [{"command": "echo mine"}]},
+            {"matcher": "Bash|PowerShell", "hooks": [{"command": "\"/p/.claude/hooks/bin/awf\" hook guard-shell"}]}
+        ], "SubagentStop": [{"hooks": [{"command": "my-awf hook envelope"}]}, {"hooks": [{"command": "\"/p/.claude/hooks/bin/awf\" hook envelope"}]}],
+            "Stop": [{"hooks": [{"command": "echo done"}]}]}));
+        // 再跑一次不變
+        assert_eq!(merge_hooks(&got, &tmpl).ok(), Some(got));
+    }
+
+    #[test]
+    fn allow_migration_touches_only_our_entries() {
+        let mut doc = m(json!({"permissions": {"allow": [
+            "Bash(npm test)",
+            "Bash(python3 .claude/teams/tools/build.py:*)",
+            "Bash(python3 .claude/teams/tools/kb.py:*)",
+            "Bash(python3 .claude/teams/tools/save_run.py:*)",
+            "Bash(awf save-run:*)",
+            "Bash(node .claude/teams/tools/check_workflows.mjs:*)",
+            "Bash(python3 .claude/teams/tools/check_rules.py --git:*)",
+            "Bash(git status:*)"
+        ], "deny": ["Bash(python3 .claude/teams/tools/build.py:*)"]}}));
+        let changed = migrate_allow(&mut doc, &|_| false);
+        assert_eq!(changed.len(), 3);
+        assert_eq!(Value::Object(doc.clone()), json!({"permissions": {"allow": [
+            "Bash(npm test)",
+            "Bash(awf build:*)",
+            "Bash(python3 .claude/teams/tools/kb.py:*)",
+            "Bash(awf save-run:*)",
+            "Bash(python3 .claude/teams/tools/check_rules.py --git:*)",
+            "Bash(git status:*)"
+        ], "deny": ["Bash(python3 .claude/teams/tools/build.py:*)"]}}));
+        assert!(migrate_allow(&mut doc, &|_| false).is_empty());
+        // 指的檔還在：不動
+        let mut kept = m(json!({"permissions": {"allow": ["Bash(node .claude/teams/tools/check_workflows.mjs:*)"]}}));
+        assert!(migrate_allow(&mut kept, &|old| old.contains("check_workflows")).is_empty());
+        // 形狀不對：不動、不當掉
+        let mut odd = m(json!({"permissions": {"allow": "all"}}));
+        assert!(migrate_allow(&mut odd, &|_| false).is_empty());
     }
 
     #[test]

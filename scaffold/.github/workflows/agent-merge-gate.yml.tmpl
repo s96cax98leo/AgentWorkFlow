@@ -1,10 +1,15 @@
-# agent-merge-gate：把確定性 merge gate（.claude/teams/tools/merge_gate.py）當成 PR 的 required check。
-# init.py 由 AgentWorkFlow 的 scaffold/.github/workflows/agent-merge-gate.yml.tmpl 產生。完整說明見 AgentWorkFlow 的 docs/自動合併信任模型.md。
+# agent-merge-gate：把確定性 merge gate（awf merge-gate）當成 PR 的 required check。
+# awf init --with-merge-gate 由 AgentWorkFlow 的 scaffold/.github/workflows/agent-merge-gate.yml.tmpl 產生。完整說明見 AgentWorkFlow 的 docs/自動合併信任模型.md。
 #
 # 為什麼這樣寫：
 # - 信任邊界在 GitHub 伺服器端，不在本機 hook。這支 CI 的結果才是能不能合併的依據。
-# - gate 與設定一律從「受保護的 base 分支」checkout 後執行，不執行 PR 自帶的 merge_gate.py、guard.config.json 或任何 PR 程式碼。
+# - gate 與設定一律從「受保護的 base 分支」checkout 後執行，不執行 PR 自帶的執行檔、guard.config.json 或任何 PR 程式碼。
 #   PR 只被當成資料（git diff）。所以用 pull_request_target（在 base 的脈絡執行），並且絕對不要 checkout PR head 後執行它的程式。
+# - gate 是一支執行檔（1.0 起取代 0.x 的 merge_gate.py，runner 不需要裝任何東西）：awf init --with-merge-gate 把 linux-x64 的
+#   執行檔與記它 sha256 的 checksums.json 放進 .claude/teams/bin/，兩個檔和這支 workflow 一起進受保護的 base 分支。
+#   CI 從 base 的 checkout 取出它們，先用 sha256sum 核對執行檔和 checksums.json 記的一致（抓檔案損壞、換行或 LFS 轉換弄壞的情況），
+#   再執行。信任來自「base 受保護、.claude/teams/bin/ 由 CODEOWNERS 指定只能由人核准」，不是來自這個雜湊（兩個檔同一個來源）。
+#   plugin 更新後要換執行檔：awf init --upgrade（專案已經有這支 CI 時會一起更新這三個檔），經 PR 由人核准後進 base。
 # - 結果用「gate App」的身分寫成 check run（名稱 agent-merge-gate/decision），ruleset 的 required check 綁定這個 App 當來源，
 #   任何其他身分（包括有 write 權限的人或 agent）設的同名 status 都不算數。
 #
@@ -18,7 +23,7 @@
 #   4. Require a pull request before merging：
 #      - 自動合併通道（fork 的最低風險等級）required approvals 設 0，由本 check 把關；
 #      - Dismiss stale approvals、Require approval of the most recent push 照開；
-#      - Require review from Code Owners：CODEOWNERS 指定 .claude/teams/guard.config.json、.claude/teams/tools/、.github/ 只能由人核准。
+#      - Require review from Code Owners：CODEOWNERS 指定 .claude/teams/guard.config.json、.claude/teams/bin/、.github/ 只能由人核准。
 #   5. Actions 設定維持「不允許 GitHub Actions 建立或核准 PR」。
 #
 # 需要的設定（Settings → Secrets and variables → Actions）：
@@ -51,7 +56,7 @@
 #     內含 <!-- agent-merge-gate-inputs --> 標記與一個 ```json 區塊：
 #       {"decision": {...merge-decision 信封...}, "evidence": [...], "tests_before": N, "tests_after": N, "findings": [...]}
 #     不是 vars.AGENT_MERGER_BOT 貼的留言一律忽略；沒有留言時 gate 判 hold（fail-closed）。
-#   團隊的驗證方式不同時，改這一步的資料來源即可；判定邏輯都在 merge_gate.py，不要搬進 YAML。
+#   團隊的驗證方式不同時，改這一步的資料來源即可；判定邏輯都在 awf merge-gate，不要搬進 YAML。
 
 name: agent-merge-gate
 
@@ -133,7 +138,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gate"
           git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
           test "$(git rev-parse refs/remotes/pr/head)" = "$HEAD_SHA"
-          # 明寫 a/、b/ 前綴：merge_gate 的 diff 解析認不得標頭時一律 hold
+          # 明寫 a/、b/ 前綴：gate 的 diff 解析認不得標頭時一律 hold
           git diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "origin/$BASE_REF...$HEAD_SHA" > "$RUNNER_TEMP/gate/diff.txt"
 
       - name: 收集 required checks 與 merger App 貼的 gate 輸入
@@ -196,7 +201,23 @@ jobs:
           echo "今天（${TODAY}）merger App 已合併：${N}"
           echo "merged_today=$N" >> "$GITHUB_OUTPUT"
 
-      - name: 跑 merge_gate.py check（base 分支上的版本）
+      - name: 核對 gate 執行檔的 sha256（base 分支上的 .claude/teams/bin/）
+        run: |
+          set -euo pipefail
+          # 這時工作區是受保護的 base 分支的 checkout（上面那一步），PR 的內容沒有進來
+          BIN=".claude/teams/bin/awf-linux-x64"
+          SUMS=".claude/teams/bin/checksums.json"
+          test -f "$BIN"    # 沒有執行檔就失敗（fail-closed）：用 awf init --with-merge-gate 放，並進 base 分支
+          test -f "$SUMS"
+          WANT="$(jq -er '.files["awf-linux-x64"]' "$SUMS")"
+          printf '%s' "$WANT" | grep -Eq '^[0-9a-f]{64}$'
+          printf '%s  %s\n' "$WANT" "$BIN" | sha256sum -c -
+          # 複製到工作區外面再執行：後面的步驟不會動到它，也不靠 git 保留的執行權限
+          mkdir -p "$RUNNER_TEMP/gate/bin"
+          install -m 0755 "$BIN" "$RUNNER_TEMP/gate/bin/awf"
+          printf '%s  %s\n' "$WANT" "$RUNNER_TEMP/gate/bin/awf" | sha256sum -c -
+
+      - name: 跑 awf merge-gate check（base 分支上的執行檔）
         id: gate
         env:
           REPO: ${{ github.repository }}
@@ -225,7 +246,7 @@ jobs:
           [ -f "$OUT/findings.json" ] && ARGS+=(--findings "$OUT/findings.json")
           [ -f "$OUT/tests_before" ] && ARGS+=(--tests-before "$(cat "$OUT/tests_before")")
           [ -f "$OUT/tests_after" ] && ARGS+=(--tests-after "$(cat "$OUT/tests_after")")
-          python3 .claude/teams/tools/merge_gate.py "${ARGS[@]}" > "$OUT/result.json"
+          "$OUT/bin/awf" merge-gate "${ARGS[@]}" > "$OUT/result.json"
           code=$?
           cat "$OUT/result.json"
           echo "exit=$code" >> "$GITHUB_OUTPUT"

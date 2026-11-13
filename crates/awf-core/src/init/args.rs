@@ -21,9 +21,14 @@ pub struct Args {
     pub with_workflows: bool,
     pub with_merge_gate: bool,
     pub defaults: bool,
+    /// 0.x 的選項（`--hooks project` 用的 Python）。1.0 不再需要：收下、提示一行、忽略，舊的腳本才不會壞。
     pub python: Option<String>,
     /// 模版根目錄（Rust 版新增；Python 版用 init.py 自己的位置）。
     pub source: Option<String>,
+    /// `--with-merge-gate` 要放進專案的 linux-x64 執行檔（沒給用模版的 `plugin/bin/awf-linux-x64`）。
+    pub merge_gate_bin: Option<String>,
+    /// 搭配 `--merge-gate-bin`：記這個執行檔 sha256 的 `checksums.json`（沒給就依執行檔產生一份）。
+    pub merge_gate_checksums: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -50,10 +55,12 @@ const OPTS: &[(&str, bool)] = &[
     ("--defaults", false),
     ("--python", true),
     ("--source", true),
+    ("--merge-gate-bin", true),
+    ("--merge-gate-checksums", true),
 ];
 
-pub const USAGE: &str = "usage: init.py [-h] [--target TARGET] [--config CONFIG] [--answers ANSWERS] [--upgrade] [--adopt-new-fields] [--force] \
-[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--python PYTHON] [--source SOURCE] [positional]";
+pub const USAGE: &str = "usage: awf init [-h] [--target TARGET] [--config CONFIG] [--answers ANSWERS] [--upgrade] [--adopt-new-fields] [--force] \
+[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--source SOURCE] [--merge-gate-bin MERGE_GATE_BIN] [--merge-gate-checksums MERGE_GATE_CHECKSUMS] [positional]";
 
 enum Seen {
     Plain,
@@ -200,6 +207,8 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgStop> {
             "--hooks" => a.hooks = value,
             "--python" => a.python = Some(value),
             "--source" => a.source = Some(value),
+            "--merge-gate-bin" => a.merge_gate_bin = Some(value),
+            "--merge-gate-checksums" => a.merge_gate_checksums = Some(value),
             _ => {}
         }
     }
@@ -232,6 +241,7 @@ mod tests {
         assert_eq!(msg(&["--with-m"]), "ambiguous option: --with-m could match --with-mcp, --with-merge-gate");
         assert_eq!(msg(&["--h"]), "ambiguous option: --h could match --help, --hooks");
         assert_eq!(msg(&["--force=1"]), "argument --force: ignored explicit argument '1'");
+        assert_eq!(msg(&["--merge-gate"]), "ambiguous option: --merge-gate could match --merge-gate-bin, --merge-gate-checksums");
         assert_eq!(run(&["x", "-h"]).err(), Some(ArgStop::Help));
     }
 
@@ -244,5 +254,7 @@ mod tests {
         let b = run(&["--force", "dir", "--defaults"]).ok().unwrap_or_default();
         assert_eq!(b.positional.as_deref(), Some("dir"));
         assert!(b.force && b.defaults);
+        let c = run(&["--python", "/x/py", "--merge-gate-b", "awf", "--merge-gate-checksums=c.json"]).ok().unwrap_or_default();
+        assert_eq!((c.python.as_deref(), c.merge_gate_bin.as_deref(), c.merge_gate_checksums.as_deref()), (Some("/x/py"), Some("awf"), Some("c.json")));
     }
 }

@@ -608,7 +608,7 @@ pub fn profile_upgrade(con: &mut Console, site: &Site, meth: &Path, adopt: bool)
     }
     let errs = check_methodology(site, proj)?;
     if !errs.is_empty() {
-        con.say(&format!("警告：你的 methodology.json 不符合這版 schema（build.py 會失敗）：{}", first5(&errs)));
+        con.say(&format!("警告：你的 methodology.json 不符合這版 schema（awf build 會失敗）：{}", first5(&errs)));
         return Ok(1);
     }
     Ok(0)
