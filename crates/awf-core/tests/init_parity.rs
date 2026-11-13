@@ -1,16 +1,23 @@
-//! init 的對跑：照 Python 版錄下來的劇本（tests/parity/init.expected.json）做一遍，逐字比對。
+//! init 的回歸基準：照劇本（tests/parity/init.expected.json）做一遍，逐字比對。
+//!
+//! 劇本原本是 Python 版 `init.py` 錄的；1.0 起 init 的行為不同了（工具不複製進專案、hook 改成執行檔、升級會整理舊工具、
+//! merge gate 帶執行檔），基準改由這個實作重錄，當成回歸基準：行為或訊息一改，這裡就會指出是哪個案例的哪一步。
 //!
 //! 劇本的每個案例有自己的暫存目錄（`@TMP@`）；`steps` 是檔案操作與指令（run）。每個 run 比 exit code、stdout、stderr
 //! 與「這一步改了哪些檔」（簽章＝有沒有執行權限＋內容雜湊；和 `base` 相同的只比數量與路徑清單的雜湊）。
-//! 模版來源是把 repo 的 `template` 清單複製到暫存目錄（`@SRC@`），plugin.json 的版本固定。細節見 tests/parity/record_init.py 開頭。
+//! 模版來源是把 repo 的 `template` 清單複製到暫存目錄（`@SRC@`），plugin.json 的版本固定，另外放一個假的
+//! `plugin/bin/awf-linux-x64`（只有 ELF 檔頭）與對得上的 `checksums.json`；`--hooks project` 複製的執行檔也是假的。
+//! run 可以帶 `awf_bin`（空字串＝找不到執行檔，其他＝改用這個路徑）。
 //!
-//! 重錄（Python 版移除之後，或模版內容改了）：`AWF_INIT_BLESS=1 cargo test -p awf-core --test init_parity`，
-//! 會用這個實作的結果改寫基準檔裡每個 run 的結果與 `base`（`cmp` 標成不比的欄位不動）。重錄前後的差異要逐項看過。
+//! 重錄：`AWF_RECORD=1 cargo test -p awf-core --test init_parity`（舊名 `AWF_INIT_BLESS=1` 也認），
+//! 會用這個實作的結果改寫基準檔裡每個 run 的結果、`base` 與 `counts`（`cmp` 標成不比的欄位不動）。
+//! 重錄前後的差異要逐項看過：說不出理由的差異就是 bug。新增或改寫案例：直接改劇本的 `steps`（run 的結果欄位留空），再重錄。
 #![cfg(unix)]
 
 use awf_core::init;
 use serde_json::{json, Map, Value};
 use sha1::{Digest, Sha1};
+use sha2::Sha256;
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -68,6 +75,31 @@ fn copy_template(exp: &Value, dst: &Path) {
     }
     let pj = dst.join("plugin/.claude-plugin/plugin.json");
     std::fs::write(&pj, format!("{{\"name\": \"agent-workflow\", \"version\": \"{}\"}}\n", s(&exp["version"]))).expect("寫 plugin.json");
+    // 發佈版才有的 linux-x64 執行檔：放一個只有 ELF 檔頭的假檔與對得上的 checksums.json
+    let bin = dst.join("plugin/bin");
+    std::fs::create_dir_all(&bin).expect("建目錄");
+    let elf = fake_elf();
+    std::fs::write(bin.join("awf-linux-x64"), &elf).expect("寫假執行檔");
+    let sum: String = Sha256::digest(&elf).iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::write(bin.join("checksums.json"), format!("{{\n  \"files\": {{\n    \"awf-linux-x64\": \"{sum}\"\n  }},\n  \"source\": \"test\"\n}}\n")).expect("寫 checksums.json");
+}
+
+/// 假的 linux x86-64 執行檔：ELF 檔頭（64 位元、little-endian、機器類型 62）加一行字。
+fn fake_elf() -> Vec<u8> {
+    let mut v = vec![0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0];
+    v.extend_from_slice("\nfake awf linux-x64\n".as_bytes());
+    v
+}
+
+/// `--hooks project` 要複製的執行檔（假的）。
+fn fake_awf(root: &Path) -> PathBuf {
+    let p = root.join("fake-bin").join("awf");
+    if !p.is_file() {
+        std::fs::create_dir_all(p.parent().expect("上層目錄")).expect("建目錄");
+        std::fs::write(&p, "#!/bin/sh\n# 假的 awf 執行檔（init 對跑用）\n").expect("寫假執行檔");
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("改權限");
+    }
+    p
 }
 
 struct Stage<'a> {
@@ -178,7 +210,7 @@ fn last_line(t: &str) -> &str {
 }
 
 /// 跑一個案例。回（每個 run 實際的結果——重錄用, 不合的地方, run 的數量）。
-fn run_case(exp: &Value, case: &Value, root: &Path, index: usize, shared_src: &Path) -> (Vec<Value>, Vec<String>, usize) {
+fn run_case(exp: &Value, case: &Value, root: &Path, index: usize, shared_src: &Path, awf: &Path) -> (Vec<Value>, Vec<String>, usize) {
     let dir = root.join(format!("c{index:03}"));
     std::fs::create_dir_all(dir.join("cwd")).expect("建目錄");
     std::fs::create_dir_all(dir.join("h")).expect("建目錄");
@@ -233,7 +265,12 @@ fn run_case(exp: &Value, case: &Value, root: &Path, index: usize, shared_src: &P
                 runs += 1;
                 let argv: Vec<String> = step["argv"].as_array().expect("argv").iter().map(|a| st.abs(s(a))).collect();
                 let cwd = st.p(s(&step["cwd"])).canonicalize().expect("cwd");
-                let env = init::Env { source: Some(PathBuf::from(&st.src)), cwd, home: Some(text_of(&st.p("h"))), python: Some("@PY@".to_string()) };
+                let awf_bin = match step.get("awf_bin").map(s) {
+                    None => Some(awf.to_path_buf()),
+                    Some("") => None,
+                    Some(other) => Some(PathBuf::from(st.abs(other))),
+                };
+                let env = init::Env { source: Some(PathBuf::from(&st.src)), cwd, home: Some(text_of(&st.p("h"))), awf_bin };
                 let tty = step.get("tty").is_some();
                 let fed = if tty { s(&step["tty"]) } else { step.get("stdin").map(s).unwrap_or_default() };
                 let mut input = std::io::Cursor::new(fed.as_bytes().to_vec());
@@ -274,7 +311,7 @@ fn run_case(exp: &Value, case: &Value, root: &Path, index: usize, shared_src: &P
                     if cmp("stdout") == "exact" {
                         o.insert("stdout".into(), json!(out));
                     }
-                    if cmp("stderr") == "exact" {
+                    if cmp("stderr") != "skip" {
                         o.insert("stderr".into(), json!(err));
                     }
                     o.insert("files".into(), files);
@@ -299,18 +336,20 @@ fn run_case(exp: &Value, case: &Value, root: &Path, index: usize, shared_src: &P
 }
 
 #[test]
-fn steps_match_python() {
+fn steps_match_baseline() {
     let mut exp = expected();
-    let bless = std::env::var("AWF_INIT_BLESS").is_ok_and(|v| v == "1");
+    let bless = ["AWF_RECORD", "AWF_INIT_BLESS"].iter().any(|k| std::env::var(k).is_ok_and(|v| v == "1"));
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
     let root = std::env::temp_dir().join(format!("init-parity-{}-{nanos}", std::process::id()));
     let shared = root.join("src");
     copy_template(&exp, &shared);
+    let awf = fake_awf(&root);
+    let awf = awf.as_path();
     let cases: Vec<Value> = exp["cases"].as_array().expect("cases").clone();
 
     // 重錄時先跑第一個案例訂出 base，其餘案例才有東西可比
     if bless {
-        let (mut first, _, _) = run_case(&exp, &cases[0], &root, 0, &shared);
+        let (mut first, _, _) = run_case(&exp, &cases[0], &root, 0, &shared, awf);
         exp["base"] = first.pop().expect("base");
         std::fs::remove_dir_all(root.join("c000")).expect("清掉 c000");
     }
@@ -324,7 +363,7 @@ fn steps_match_python() {
                 scope.spawn(move || {
                     cases.iter().enumerate().filter(|(i, _)| i % workers == w)
                         .map(|(i, c)| {
-                            let (actual, bad, runs) = run_case(exp_ref, c, root, i, shared);
+                            let (actual, bad, runs) = run_case(exp_ref, c, root, i, shared, awf);
                             (i, actual, bad, runs)
                         })
                         .collect::<Vec<_>>()
@@ -345,6 +384,8 @@ fn steps_match_python() {
             }
             exp["cases"][*i]["steps"] = Value::Array(std::mem::take(actual));
         }
+        exp["counts"] = json!({"cases": cases.len(), "runs": runs});
+        exp["_說明"] = json!("init 的回歸基準（劇本）。案例的 steps 可以手改（run 的結果欄位留空），結果一律用 AWF_RECORD=1 cargo test -p awf-core --test init_parity 重錄，不要手改。");
         std::fs::write(expected_path(), format!("{}\n", awf_core::recipe::dumps(&exp, Some(1)))).expect("寫基準檔");
         eprintln!("init 對跑：已重錄 {} 個案例、{runs} 次執行（重錄前有 {} 處不同）", cases.len(), bad.len());
         return;
@@ -352,10 +393,10 @@ fn steps_match_python() {
     assert_eq!(exp["counts"]["cases"].as_u64(), Some(cases.len() as u64), "案例數和基準檔的 counts 不符");
     assert_eq!(exp["counts"]["runs"].as_u64(), Some(runs as u64), "執行次數和基準檔的 counts 不符");
     eprintln!("init 對跑：{} 個案例、{runs} 次執行，不同 {} 處", cases.len(), bad.len());
-    assert!(bad.is_empty(), "和 Python 版不同（{} 處），前幾處：\n{}", bad.len(), bad.iter().take(6).map(|x| x.as_str()).collect::<Vec<_>>().join("\n\n"));
+    assert!(bad.is_empty(), "和基準不同（{} 處），前幾處：\n{}", bad.len(), bad.iter().take(6).map(|x| x.as_str()).collect::<Vec<_>>().join("\n\n"));
 }
 
-/// Rust 版新增的 `--source` 與找不到模版時的訊息（Python 版沒有，不在劇本裡）。
+/// `--source` 與找不到模版時的訊息（劇本的模版來源固定由環境給，測不到這兩件事）。
 #[test]
 fn source_option_and_missing_template() {
     let exp = expected();
@@ -366,7 +407,7 @@ fn source_option_and_missing_template() {
     std::fs::create_dir_all(root.join("cwd")).expect("建目錄");
     let cwd = root.join("cwd").canonicalize().expect("cwd");
     let run = |args: &[&str], source: Option<PathBuf>| {
-        let env = init::Env { source, cwd: cwd.clone(), home: None, python: Some("@PY@".to_string()) };
+        let env = init::Env { source, cwd: cwd.clone(), home: None, awf_bin: None };
         let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         let (mut out, mut err, mut input) = (Vec::new(), Vec::new(), std::io::Cursor::new(Vec::new()));
         let code = init::run(&argv, &env, &mut out, &mut err, &mut input, false);
@@ -375,7 +416,7 @@ fn source_option_and_missing_template() {
     // 沒有模版來源
     let (code, out, err) = run(&["--target", "p0", "--defaults"], None);
     assert_eq!((code, out.as_str()), (1, ""));
-    assert!(err.starts_with("init.py：找不到模版"), "{err}");
+    assert!(err.starts_with("awf init：找不到模版"), "{err}");
     assert!(!root.join("cwd/p0").exists(), "找不到模版時不應該建立目標目錄");
     // --source（相對路徑）蓋過環境給的來源
     let (code, out, err) = run(&["--target", "p1", "--defaults", "--source", "../tpl"], Some(root.join("nope")));
@@ -385,6 +426,6 @@ fn source_option_and_missing_template() {
     // 環境給的來源不存在
     let (code, _, err) = run(&["--target", "p2", "--defaults"], Some(root.join("nope")));
     assert_eq!(code, 1);
-    assert!(err.starts_with("init.py：找不到 ") && err.trim_end().ends_with("nope/scaffold"), "{err}");
+    assert!(err.starts_with("awf init：找不到 ") && err.trim_end().ends_with("nope/scaffold"), "{err}");
     let _ = std::fs::remove_dir_all(&root);
 }
