@@ -2,6 +2,7 @@
 //!
 //! 樣式字串照 Python 版逐字搬過來（差異由 `re.rs` 對齊）；判斷順序、訊息文字都不變。
 
+use super::awf_cli::{self, Deny};
 use super::guard::{cmd_name, err, fold, is_secret_path, norm, run_git, splitlines, str_or_empty, tool_input, Guard, Stop, AUDIT_FILES, GIT_GLOBAL_OPTS, R, SLUG};
 use super::path;
 use super::ps::{self, ps_segments, segments, PS_NESTED_SHELLS};
@@ -771,7 +772,7 @@ impl Guard {
         }
         let sha12 = py::head(&sha, 12);
         let Some(rec) = self.last_audit(repo, pr, &sha)? else {
-            return Ok(Some(format!("merge-audit.jsonl 沒有 {repo}#{pr} @ {sha12} 的 gate 紀錄（先跑 merge_gate.py check）")));
+            return Ok(Some(format!("merge-audit.jsonl 沒有 {repo}#{pr} @ {sha12} 的 gate 紀錄（先跑 awf merge-gate check）")));
         };
         if rec.get("decision").and_then(Value::as_str) != Some("merge") {
             return Ok(Some(format!("{repo}#{pr} @ {sha12} 最後一次 gate 判定是 {}，不是 merge", pyfmt::str_opt(rec.get("decision")))));
@@ -849,7 +850,7 @@ impl Guard {
         }
         let runs = &self.runs;
         if runs.is_empty() {
-            return Ok(Some("沒有 runs_dir，不能用 run_brief.py 寫 log".into()));
+            return Ok(Some("沒有 runs_dir，不能用 awf run-brief 寫 log".into()));
         }
         if flag_dup(toks, &["--log"]) {
             return Ok(Some("--log 只能寫一次".into()));
@@ -895,13 +896,26 @@ impl Guard {
             if rb == 0 || INTERP.is_match(&toks[..rb].join(" ")) {
                 let rest = &toks[rb + 1..];
                 if let Some(bad) = self.run_brief_problem(rest, base)? {
-                    return Ok(Some(format!("run_brief.py {bad}")));
+                    return Ok(Some(format!("awf run-brief {bad}")));
                 }
                 if let Some(d) = rest.iter().position(|t| t == "--") {
                     return self.record_shell_write(&ps::join(&rest[d + 1..]), base, depth + 1);
                 }
                 return Ok(None);
             }
+        }
+        // awf run-brief：同一套（--log 的位置、「--」後面的內層指令）；不是直接執行就看不清楚參數，擋
+        if let Some(c) = awf_cli::calls_here(seg).into_iter().find(|c| c.sub == "run-brief") {
+            if !c.direct {
+                return Ok(Some("awf run-brief 要直接執行（不能經轉呼叫或變數）".into()));
+            }
+            if let Some(bad) = self.run_brief_problem(&c.args, base)? {
+                return Ok(Some(format!("awf run-brief {bad}")));
+            }
+            if let Some(d) = c.args.iter().position(|t| t == "--") {
+                return self.record_shell_write(&ps::join(&c.args[d + 1..]), base, depth + 1);
+            }
+            return Ok(None);
         }
         if has(SHELL_NAMES, &name) {
             for (k, t) in args.iter().enumerate() {
@@ -1090,55 +1104,80 @@ impl Guard {
             if team && (GH_BYPASS.is_match(seg) || GH_ACCOUNT_WRITE.is_match(seg)) {
                 return Err(self.block(&format!("{agent} 不能改 GitHub 帳號層級的設定（alias、extension、ssh／gpg 金鑰、gist、登入）")));
             }
-            if team && MERGE_GATE_PY.is_match(seg) && CHECK_WORD.is_match(seg) && !self.is_steward(data)? {
-                return Err(self.block(&format!("{agent} 不能跑 merge_gate.py check；只有 {merger_label}（完整 agent_type）能跑")));
+            let awf = awf_cli::calls(seg);
+            let steward = if team && !awf.is_empty() { self.is_steward(data)? } else { false };
+            let awf_deny: Vec<Deny> = if team { awf.iter().filter_map(|c| c.team_deny(steward)).collect() } else { Vec::new() };
+            if team && ((MERGE_GATE_PY.is_match(seg) && CHECK_WORD.is_match(seg) && !self.is_steward(data)?) || awf_deny.contains(&Deny::MergeGate)) {
+                return Err(self.block(&format!("{agent} 不能跑 awf merge-gate check；只有 {merger_label}（完整 agent_type）能跑")));
             }
             if team {
-                if save_run_write(seg, "pack", &["--selftest"], 0).is_some() {
-                    return Err(self.block(&format!("{agent} 不能跑 pack.py（資料包與調研重用的紀錄只由主 session 產生，agent 只讀 pack.md）")));
+                if save_run_write(seg, "pack", &["--selftest"], 0).is_some() || awf_deny.contains(&Deny::Pack) {
+                    return Err(self.block(&format!("{agent} 不能跑 awf pack（資料包與調研重用的紀錄只由主 session 產生，agent 只讀 pack.md）")));
                 }
-                if save_run_write(seg, "deliverables", &["status", "check", "affected", "--selftest", "-h", "--help"], 0).is_some() {
-                    return Err(self.block(&format!("{agent} 只能跑 deliverables.py status／check／affected（交付設定、來源紀錄、追溯矩陣與開發紀錄只由主 session 寫；\
+                if save_run_write(seg, "deliverables", &["status", "check", "affected", "--selftest", "-h", "--help"], 0).is_some() || awf_deny.contains(&Deny::Deliverables) {
+                    return Err(self.block(&format!("{agent} 只能跑 awf deliverables status／check／affected（交付設定、來源紀錄、追溯矩陣與開發紀錄只由主 session 寫；\
 agent 只改派工單指定的文件小節）")));
                 }
-                if save_run_write(seg, "kb", &["query", "lint", "--selftest", "-h", "--help"], 0).is_some() {
-                    return Err(self.block(&format!("{agent} 只能跑 kb.py query／lint（build 會改寫共用的索引與卡片，只由主 session 或 pack.py 執行）")));
+                if save_run_write(seg, "kb", &["query", "lint", "--selftest", "-h", "--help"], 0).is_some() || awf_deny.contains(&Deny::Kb) {
+                    return Err(self.block(&format!("{agent} 只能跑 awf kb query／lint（build 會改寫共用的索引與卡片，只由主 session 或 awf pack 執行）")));
                 }
-                if let Some(sr) = save_run_write(seg, "save_run", &["status", "--selftest"], 0) {
-                    return Err(self.block(&format!("{agent} 不能跑 save_run.py {sr}（team agent 只能跑唯讀的 status 與 --selftest）；\
+                let sr = save_run_write(seg, "save_run", &["status", "--selftest"], 0)
+                    .or_else(|| awf_deny.iter().find_map(|d| if let Deny::SaveRun(x) = d { Some(x.clone()) } else { None }));
+                if let Some(sr) = sr {
+                    return Err(self.block(&format!("{agent} 不能跑 awf save-run {sr}（team agent 只能跑唯讀的 status 與 --selftest）；\
 run 狀態、核准、放棄、升級、後續、結案一律由主 session（或人）執行")));
                 }
-                if let Some(aw) = save_run_write(seg, "awf", &["--selftest"], 0) {
-                    return Err(self.block(&format!("{agent} 不能跑 awf.py {aw}（狀態機會存段結果、核准、產生下一段的腳本，只由主 session 執行；team agent 只能跑 --selftest）")));
+                let aw = save_run_write(seg, "awf", &["--selftest"], 0)
+                    .or_else(|| awf_deny.iter().find_map(|d| if let Deny::State(x) = d { Some(x.clone()) } else { None }));
+                if let Some(aw) = aw {
+                    return Err(self.block(&format!("{agent} 不能跑 awf {aw}（狀態機會存段結果、核准、產生下一段的腳本，只由主 session 執行；team agent 只能跑 awf state --selftest）")));
+                }
+                // 1.0 才有的子指令：會改共用狀態或設定的只由主 session 跑；看不出子指令的一律不允許
+                for d in &awf_deny {
+                    let why = match d {
+                        Deny::Init => "不能跑 awf init（套用與升級會改寫 .claude/ 底下的設定與工具，只由人或主 session 執行）".to_string(),
+                        Deny::Build => "不能跑 awf build（會改寫 workflow 腳本的內嵌內容，只由人或主 session 執行）".to_string(),
+                        Deny::Spec(x) => format!("不能跑 awf spec {x}（規格與編號登記只由主 session 改；team agent 只能跑 awf spec status／validate／show，以及不帶 --write／--adopt／--retire 的 ids）"),
+                        Deny::Watch => "只能跑 awf watch --once（持續監看會一直寫進度事件，由主 session 或人執行）".to_string(),
+                        Deny::Unknown(x) => format!("不能跑 awf {x}（看不出是哪個子指令，無法確認是否允許；請直接寫 awf <子指令> <參數>）"),
+                        Deny::Opaque(x) => format!("不能這樣呼叫 awf{x}；請直接寫 awf <子指令> <參數>"),
+                        _ => continue,
+                    };
+                    return Err(self.block(&format!("{agent} {why}")));
                 }
             }
             if record_only {
                 if let Some(why) = self.record_shell_write(seg, d, 0)? {
                     return Err(self.block(&format!("{agent} 是唯讀角色（只有 Write 能寫 {runs_label}<run>/<段>/<label>.md 的執行紀錄），不能用 shell 寫檔\
-（{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 run_brief.py --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
+（{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 awf run-brief --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
                 }
             }
             if team && self.agent_writes_state(seg, d)? {
-                return Err(self.block(&format!("{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 save_run.py 在主 session 寫")));
+                return Err(self.block(&format!("{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 awf save-run 在主 session 寫")));
             }
             if team && self.shell_writes_team_config(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json\
 （守門設定、profile 與 workflow 腳本只由人或主 session 改）")));
             }
-            for (tool_name, tool_re) in [("publish.py", &PUBLISH_PY), ("merge_gate.py", &MERGE_GATE_PY)] {
-                if tool_re.is_match(seg) {
-                    let targs = shlex_tokens(seg);
+            for (tool_name, sub, tool_re) in [("awf publish", "publish", &PUBLISH_PY), ("awf merge-gate", "merge-gate", &MERGE_GATE_PY)] {
+                let via_awf: Vec<&awf_cli::Call> = awf.iter().filter(|c| c.sub == sub).collect();
+                if tool_re.is_match(seg) || !via_awf.is_empty() {
+                    let mut targs = shlex_tokens(seg);
+                    for c in &via_awf {
+                        targs.push(String::new()); // 隔開，避免前一組最後的旗標吃到下一組的第一個參數
+                        targs.extend(c.args.iter().cloned());
+                    }
                     // 每個出現的值都要檢查（argparse 取最後一個）
                     for pd in flag_values(&targs, &["--project-dir"]) {
                         if self.resolve_arg(d, &pd)? != self.ws_real()? {
                             return Err(self.block(&format!("{tool_name} 的 --project-dir 只能是本專案（{}），不能指到 {pd}", path::display(&self.ws))));
                         }
                     }
-                    if tool_name == "merge_gate.py" {
+                    if sub == "merge-gate" {
                         for rd in flag_values(&targs, &["--runs-dir"]) {
                             let runs = if cfg.runs_dir.is_empty() { "_tpm/runs" } else { &cfg.runs_dir };
                             if self.resolve_arg(&self.ws, &rd)? != path::resolve(&path::join(&self.ws, runs))? {
-                                return Err(self.block(&format!("merge_gate.py 的 --runs-dir 只能是 guard.config.json 的 runs_dir（{}）", cfg.runs_dir)));
+                                return Err(self.block(&format!("awf merge-gate 的 --runs-dir 只能是 guard.config.json 的 runs_dir（{}）", cfg.runs_dir)));
                             }
                         }
                     }
@@ -1172,11 +1211,11 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                     return Err(self.block(&format!("主 session 不解凍自動合併（刪除凍結檔或寫 frozen=false）；解凍由人自己做（在提示列用 ! 執行，或手動編輯 {prot}）")));
                 }
                 if AUDIT_FILES.contains(&prot.as_str()) || (prot == "guard.config.json" && am.enabled) {
-                    return Err(self.block(&format!("主 session 不直接改 {prot}（稽核紀錄只由 merge_gate.py、publish.py 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")));
+                    return Err(self.block(&format!("主 session 不直接改 {prot}（稽核紀錄只由 awf merge-gate、awf publish 寫；auto_merge 啟用時 guard.config.json 改走 PR＋CODEOWNERS）")));
                 }
             }
-            if team && PUBLISH_PY.is_match(seg) {
-                return Err(self.block(&format!("{agent} 不能執行 publish.py；推送與開 PR 由主 session 執行")));
+            if team && (PUBLISH_PY.is_match(seg) || awf_deny.contains(&Deny::Publish)) {
+                return Err(self.block(&format!("{agent} 不能執行 awf publish；推送與開 PR 由主 session 執行")));
             }
             if ok {
                 continue; // steward 允許的寫入已檢查過 repo 白名單與上游授權

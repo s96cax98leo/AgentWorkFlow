@@ -61,11 +61,11 @@ pub fn version_hint(project: &str, plugin_root: &str) -> Option<String> {
         return None;
     }
     let fix = if b < a {
-        "已套用的專案不會自動更新，請跑模版 repo 的 init.py --target <這個專案> --upgrade"
+        "已套用的專案不會自動更新，請跑 awf init --target <這個專案> --upgrade"
     } else {
         "請更新 plugin：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins"
     };
-    Some(format!("agent-workflow：plugin 是 {pv}，這個專案的工具是 {tv}。{fix}（檢查細節：python3 .claude/teams/tools/awf.py doctor）"))
+    Some(format!("agent-workflow：plugin 是 {pv}，這個專案的工具是 {tv}。{fix}（檢查細節：awf doctor）"))
 }
 
 fn env_dir(k: &str) -> Option<String> {
