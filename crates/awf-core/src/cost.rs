@@ -67,8 +67,8 @@ impl std::fmt::Display for Crash {
 /// 一個 `datetime`：`naive` 是「牆上時間」從 0001-01-01 起算的微秒，`offset` 是時區位移（微秒；None＝naive）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ts {
-    naive: i64,
-    offset: Option<i64>,
+    pub naive: i64,
+    pub offset: Option<i64>,
 }
 
 const DAY_US: i64 = 86_400_000_000;
@@ -84,7 +84,7 @@ impl Ts {
     }
 
     /// `(self - other)` 的微秒數。
-    fn micros_since(&self, other: &Ts) -> Result<i64, Crash> {
+    pub fn micros_since(&self, other: &Ts) -> Result<i64, Crash> {
         match (self.offset, other.offset) {
             (None, None) => Ok(self.naive - other.naive),
             (Some(a), Some(b)) => Ok((self.naive - a) - (other.naive - b)),
