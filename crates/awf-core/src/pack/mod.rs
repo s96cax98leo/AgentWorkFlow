@@ -19,7 +19,8 @@
 //! - `verify_reuse`／`sources_changed` 在 Python 會丟例外的畸形紀錄（目錄清單的 path 不是字串之類），這裡一律算「讀不到」（判不符）。
 //! - 信封比對（`py_eq`）對超過 2^53 的整數照整數比，不經過浮點數（只會更嚴）。
 //! - reuse.json、run.json 裡有 NaN／Infinity 時整份當成讀不懂（Python 讀得進來）；對 `verify_reuse` 來說是「沒有紀錄」，判不符。
-//! - 目錄清單裡有不是 UTF-8 的檔名時算讀不到（Python 會在算雜湊時丟例外）。
+//! - 目錄清單裡有不是 utf-8 的檔名時算讀不到（Python 會在算雜湊時丟例外）。
+//! - reuse.json 的原文有落單的代理字元跳脫時整份當成讀不懂；信封裡大到超出 64 位元整數範圍的數字一律當成不相等。
 
 mod selftest;
 
@@ -120,6 +121,11 @@ pub fn py_eq(a: &Value, b: &Value) -> bool {
             _ => None,
         }
     }
+    // 超過 64 位元的整數在解析時已經變成浮點數，分不出原本是不是同一個數：這麼大的浮點數一律當成不相等（只會更嚴）
+    let huge = |v: &Value| float(v).is_some_and(|f| !f.is_finite() || f.abs() >= 9.2e18);
+    if huge(a) || huge(b) {
+        return false;
+    }
     match (a, b) {
         (Value::Null, Value::Null) => true,
         (Value::String(x), Value::String(y)) => x == y,
@@ -173,7 +179,8 @@ fn py_in(needle: &str, v: Option<&Value>) -> PyResult<bool> {
 /// `sep.join(v or [])`：元素要全是字串。
 fn py_join(sep: &str, v: Option<&Value>) -> PyResult<String> {
     let mut parts: Vec<String> = Vec::new();
-    for (i, x) in py_iter(v)?.iter().enumerate() {
+    let items = py_iter(v).map_err(|_| type_err("can only join an iterable".to_string()))?;
+    for (i, x) in items.iter().enumerate() {
         match x {
             Value::String(s) => parts.push(s.clone()),
             other => return Err(type_err(format!("sequence item {i}: expected str instance, {} found", py_type(other)))),
@@ -368,7 +375,7 @@ pub fn flat(v: Option<&Value>, limit: usize) -> String {
     }
 }
 
-/// 讀 JSON 檔；讀不到、不是 UTF-8、不是 JSON 回 None。
+/// 讀 JSON 檔；讀不到、不是 utf-8、不是 JSON 回 None。
 pub fn load_json(p: &str) -> Option<Value> {
     let raw = std::fs::read(p).ok()?;
     let text = String::from_utf8(raw).ok()?;
@@ -376,9 +383,44 @@ pub fn load_json(p: &str) -> Option<Value> {
 }
 
 // ------------------------------------------------------------------ 調研重用
+/// JSON 原文裡有沒有落單的代理字元跳脫（高位那一半後面沒接低位那一半之類）。解析器會把它們都換成 U+FFFD，
+/// 兩個不同的字串可能因此變成相同；Python 版寫不出這種檔（寫檔時編碼會失敗），所以有就當成讀不懂。
+fn lone_surrogate_escape(text: &str) -> bool {
+    let b = text.as_bytes();
+    let unit = |i: usize| -> Option<u32> {
+        if b.get(i) != Some(&b'\\') || b.get(i + 1) != Some(&b'u') {
+            return None;
+        }
+        u32::from_str_radix(text.get(i + 2..i + 6)?, 16).ok()
+    };
+    let mut i = 0;
+    while i < b.len() {
+        if b.get(i) != Some(&b'\\') {
+            i += 1;
+            continue;
+        }
+        match unit(i) {
+            Some(hi) if (0xd800..0xdc00).contains(&hi) => {
+                if !unit(i + 6).is_some_and(|lo| (0xdc00..0xe000).contains(&lo)) {
+                    return true;
+                }
+                i += 12;
+            }
+            Some(lo) if (0xdc00..0xe000).contains(&lo) => return true,
+            Some(_) => i += 6,
+            None => i += 2,
+        }
+    }
+    false
+}
+
 /// `<run>/plan/reuse.json` 的 angles；讀不懂當成沒有。
 pub fn load_store(run: &str) -> Map<String, Value> {
-    match load_json(&join(run, &format!("plan/{STORE}"))) {
+    let file = join(run, &format!("plan/{STORE}"));
+    if std::fs::read(&file).is_ok_and(|raw| lone_surrogate_escape(&String::from_utf8_lossy(&raw))) {
+        return Map::new();
+    }
+    match load_json(&file) {
         Some(Value::Object(d)) => match d.get("angles") {
             Some(Value::Object(a)) => a.clone(),
             _ => Map::new(),
@@ -995,7 +1037,8 @@ pub fn md_headings(path: &str) -> Vec<Heading> {
     heads
 }
 
-fn norm_title(t: &str) -> String {
+/// 標題的比對鍵：去掉開頭的 #、多餘空白，不分大小寫。
+pub fn norm_title(t: &str) -> String {
     pyish::casefold(&pyish::collapse_ws(pyish::strip(pyish::strip(t).trim_start_matches('#'))))
 }
 
