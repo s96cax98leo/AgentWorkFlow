@@ -52,7 +52,7 @@
       "items": {
         "type": "string"
       },
-      "description": "查過的關鍵詞或指令（kb.py query、Grep、Glob）"
+      "description": "查過的關鍵詞或指令（awf kb query、Grep、Glob）"
     },
     "gaps": {
       "type": "array",

@@ -14,7 +14,7 @@ argument-hint: <要決定的問題與候選方案>
 - 沒有開：跳到第 3 節。
 
 ## 1. 建隊（Agent Teams）
-1. 建 run 目錄：`python3 .claude/teams/tools/save_run.py init {{RUNS_DIR}}/<YYYYMMDD>-debate-<短名> --event debate`。
+1. 建 run 目錄：`awf save-run init {{RUNS_DIR}}/<YYYYMMDD>-debate-<短名> --event debate`。
 2. 每個方案建一個任務，任務描述**一定要有**這兩行，`TaskCompleted` hook 會照這個檢查：
    ```
    {{RUNS_DIR}}/<run>/
@@ -38,10 +38,10 @@ argument-hint: <要決定的問題與候選方案>
 2. 每個方案再由一個 `tpm-skeptic` 反駁，schema 用 `verdicts`。
 3. 最後由 `tpm-writer` 寫比較表。
 
-腳本照 plugin 的 `workflow-templates/event-pr-review.js` 的 pipeline 寫法（放在專案的 `.claude/workflows/`），schema 用 `/*@schema:…*/ null /*@end*/` 標記，再跑 `python3 .claude/teams/tools/build.py` 把 schema 填進去。反駁與判定可以直接沿用共用片段：`/*@snippet:challenge*/ /*@end*/`（把 skeptic 的 verdicts 對回方案、缺件時組 halted 回傳）與 `/*@snippet:review-skeptic*/ /*@end*/`（審查交件後派 skeptic 逐則反駁；它依賴 challenge，兩個都要引用），`build.py` 會一併內嵌。
+腳本照 plugin 的 `workflow-templates/event-pr-review.js` 的 pipeline 寫法（放在專案的 `.claude/workflows/`），schema 用 `/*@schema:…*/ null /*@end*/` 標記，再跑 `awf build` 把 schema 填進去。反駁與判定可以直接沿用共用片段：`/*@snippet:challenge*/ /*@end*/`（把 skeptic 的 verdicts 對回方案、缺件時組 halted 回傳）與 `/*@snippet:review-skeptic*/ /*@end*/`（審查交件後派 skeptic 逐則反駁；它依賴 challenge，兩個都要引用），`awf build` 會一併內嵌。
 
 ## 4. 彙整
-`tpm-writer` 寫 `{{RUNS_DIR}}/<run>/comparison.md`，給決策者的版本另寫到 `docs/`（或 guard.config.json 的 `writer_dirs` 內其他目錄），並跑 `check_rules.py --audience owner`：
+`tpm-writer` 寫 `{{RUNS_DIR}}/<run>/comparison.md`，給決策者的版本另寫到 `docs/`（或 guard.config.json 的 `writer_dirs` 內其他目錄），並跑 `awf check-rules --audience owner`：
 - 表格：方案、做法、代價、前提、需要決策者配合、什麼情況下才對。
 - 被成功挑戰的論點，列在「存疑」。
 - 決策者拍板後，走決策落地事件（`event` 的 decision 類型）落地（見 `tpm-team` skill）。

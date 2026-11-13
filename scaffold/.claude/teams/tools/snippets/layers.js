@@ -1,5 +1,5 @@
 // ── 片段 layers（.claude/teams/tools/snippets/layers.js）：依 depends_on 把子任務拓撲分層 ──
-// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 碰到循環或指向不存在的子任務就停下：回傳的 cycle／unknown 不是空的，呼叫端要停（throw 或回 halted:true）。
 // 這裡不派 agent，所以沒有 agent 缺件（missing）的問題；缺的是相依目標時列在 unknown。
 

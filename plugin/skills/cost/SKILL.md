@@ -11,7 +11,7 @@ argument-hint: <run 目錄（可省略＝最近動過的 run）>
 使用者指定的 run：$ARGUMENTS（沒給就用最近動過的那個）。
 
 ```bash
-python3 .claude/teams/tools/awf_cost.py --project . --run-dir <run_dir>
+awf cost --project . --run-dir <run_dir>
 ```
 
 回報時：

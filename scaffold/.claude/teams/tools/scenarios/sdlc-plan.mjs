@@ -44,7 +44,7 @@ const ext = extScenario('ext:db')
 // ── 0.4：模型分級、兩段式調研、角度數、重用、派工上限 ──
 const MODELS = { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'opus' }, defaults: { '*': 'standard' }, floors: {} }
 const MP = { ...RP, models: MODELS }
-const LOC = (k, locs) => ENV({ angle: k, locations: locs, queries: ['kb.py query x'], gaps: [] })
+const LOC = (k, locs) => ENV({ angle: k, locations: locs, queries: ['awf kb query x'], gaps: [] })
 const ONE_LOC = [{ path: 'services/a.py', start: 10, end: 40, why: '匯出欄位順序' }]
 const tr = (r) => (r.out && r.out.trace) || []
 const byLabel = (r, l) => tr(r).filter((t) => t.label === l)

@@ -33,7 +33,7 @@ skills: []
 
 ## 交件格式
 - **Workflow 裡**：用 StructuredOutput 交，schema 會強制格式。
-- **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `hooks/awf_hook.py envelope`（SubagentStop hook）會驗證，不合格就交不出去。
+- **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `awf hook envelope`（SubagentStop hook）會驗證，不合格就交不出去。
 - **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：`findings`（`.claude/teams/schemas/payloads/findings.schema.json`），lens=`post-merge`。每則發現：severity 用 blocker（main 紅且歸因到合併 commit）、important（歸因不確定）、info（正常）；location 寫合併 commit SHA 與 CI run URL；recommendation 寫 `git revert <sha>` 的範圍說明與是否凍結。
 - 有 blocker 時 `status` 用 `needs_decision`，open_questions 附選項與代價（例如：由人合併 revert PR、先凍結再調查、判定 flaky 解除）。
 - **輸出語言**：信封一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。

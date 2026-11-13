@@ -23,7 +23,7 @@ export default [
       ...(/--audience owner/.test(r.prompts.write || '') && /intent-draft-/.test(r.prompts.write || '') ? [] : ['writer 派工單缺 --audience owner 或 intent-draft']),
     ],
   },
-  { name: 'writer 回報 check_rules 沒過：halted', fakes: { write: OWNER_DOCS('fail：R3 內部編號') }, expect: halted('check_rules') },
+  { name: 'writer 回報 check_rules 沒過：halted', fakes: { write: OWNER_DOCS('fail：R3 內部編號') }, expect: halted('check-rules') },
   {
     // B-3：預設模式（kept 是被採信的結論）同一事項判了多次，只要有一則 refuted 就列存疑。
     // i1 判 [沒推翻, 推翻]、i2 判 [推翻, 沒推翻]：「以最後一則為準」的實作會把 i2 採信，這個情境就會失敗

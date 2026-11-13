@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "progress-event.schema.json",
-  "title": "awf.py watch 寫進 <run_dir>/progress.jsonl 的事件（一行一個）",
+  "title": "awf watch 寫進 <run_dir>/progress.jsonl 的事件（一行一個）",
   "description": "給外部程式讀的進度事件。只整理 run.json、執行紀錄檔與 workflow transcript，不參與任何閘門判定；格式有變會遞增 v。",
   "type": "object",
   "required": ["v", "seq", "at", "type", "run"],

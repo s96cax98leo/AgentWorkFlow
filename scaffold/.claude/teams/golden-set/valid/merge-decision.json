@@ -4,7 +4,7 @@
   "status": "done",
   "summary": "示範客戶 ACME：PR 3 的需求對照全部一致",
   "artifacts": ["_tpm/runs/x/merge-decision.md"],
-  "evidence": [{"claim": "gate 判 merge", "source": "python3 .claude/teams/tools/merge_gate.py check --decision d.json ...", "result": "merge"}],
+  "evidence": [{"claim": "gate 判 merge", "source": "awf merge-gate check --decision d.json ...", "result": "merge"}],
   "confidence": 0.9,
   "open_questions": [],
   "derived_work": [],

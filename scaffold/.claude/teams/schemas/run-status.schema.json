@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "run-status.schema.json",
-  "title": "save_run.py status --json 的輸出",
+  "title": "awf save-run status --json 的輸出",
   "description": "給外部程式讀的 run 狀態快照。只是把 run.json 與各段結果整理成穩定格式，不參與任何閘門判定。",
   "type": "object",
   "required": ["v", "run", "event", "state", "recipe", "stages", "next", "waiting_gate"],

@@ -9,7 +9,7 @@
   "evidence": [
    {
     "claim": "gate 判 merge",
-    "source": "python3 .claude/teams/tools/merge_gate.py check --decision d.json ...",
+    "source": "awf merge-gate check --decision d.json ...",
     "result": "merge"
    }
   ],

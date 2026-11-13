@@ -1,6 +1,6 @@
 // ── 片段 patterns（.claude/teams/tools/snippets/patterns.js）：六個動態工作流程 pattern ──
 // @requires: challenge, recipe, kernel
-// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
+// awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
 // 出處：Claude Code workflows 文件與〈A harness for every task〉列的六個 pattern。這裡的版本有三條共同規則：
 //   1. 派工一律走執行核心的 awfAgent（模型分級、失敗升級、派工數上限、trace）。
 //   2. 每個 pattern 都要給上限（max，正整數）；沒給就 throw。要做的事超過上限時不派任何 agent、回 halted（I8：不靜默截斷）。

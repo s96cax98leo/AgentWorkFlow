@@ -29,7 +29,7 @@
     }
    ],
    "queries": [
-    "kb.py query 匯出 CSV 日期",
+    "awf kb query 匯出 CSV 日期",
     "Grep write_row"
    ],
    "gaps": []

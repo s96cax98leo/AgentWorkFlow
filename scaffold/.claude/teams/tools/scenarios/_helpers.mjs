@@ -32,7 +32,7 @@ export const SYNC_APPLY = (sync, conflicts = []) => ENV({ task_id: 'sync', branc
 export const TRANSIT = { strategy: 'transit', behind: 3, published: true, conflicts: ['src/a.ts'], transit_branch: 'merge/demo-into-main-20261012' }
 // 派工單去掉 challenge 片段加的共同前綴（## 共同規則…）與最後一行「執行紀錄檔：…」，只留 workflow 自己寫的本文
 export const taskBody = (p) => String(p || '').replace(/^## 共同規則[\s\S]*?\n\n/, '').replace(/\n*執行紀錄檔：[^\n]*\s*$/, '')
-// 內建 recipe 的段（和 tools/recipe.py 的 BUILTIN_RECIPES 一致）：各 sdlc-<段>.mjs 用 recipeScenarios 對包含該段的 recipe 各產生一個「recipe:<名>」情境
+// 內建 recipe 的段（和 awf recipe 的 BUILTIN_RECIPES 一致）：各 sdlc-<段>.mjs 用 recipeScenarios 對包含該段的 recipe 各產生一個「recipe:<名>」情境
 export const RECIPE_STAGES = {
   feature: ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge'],
   bugfix: ['plan', 'build', 'sync', 'test', 'deliver', 'merge'],

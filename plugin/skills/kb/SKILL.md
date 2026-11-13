@@ -9,9 +9,9 @@ argument-hint: <要查的問題；或 build、lint>
 使用者要查的：$ARGUMENTS
 
 ```bash
-python3 .claude/teams/tools/kb.py query "<問題>" --top 8     # 查：回傳 路徑:起行-訖行、標題鏈與節錄
-python3 .claude/teams/tools/kb.py build                      # 建立或增量更新索引（文件改過之後）
-python3 .claude/teams/tools/kb.py lint                       # 壞連結與孤兒頁
+awf kb query "<問題>" --top 8     # 查：回傳 路徑:起行-訖行、標題鏈與節錄
+awf kb build                      # 建立或增量更新索引（文件改過之後）
+awf kb lint                       # 壞連結與孤兒頁
 ```
 
 1. 參數是 `build` 或 `lint` 就跑對應的指令；其他都當成問題去查。

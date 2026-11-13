@@ -18,7 +18,7 @@ export default [
     {
       name: '有衝突：transit',
       fakes: { plan: SYNC_PLAN(TRANSIT), 'apply:transit': SYNC_APPLY({ ...TRANSIT, head_branch: TRANSIT.transit_branch, head_sha: 'b'.repeat(40) }, [{ file: 'src/a.ts', kind: 'seam', resolution: 'x' }]) },
-      expect: (r) => (r.out && !r.out.halted && r.out.head_branch === TRANSIT.transit_branch && /publish\.py/.test(r.out.next || '') && /--supersedes 1/.test(r.out.next || '') ? [] : [`transit 要換 head_branch 並提示開新 PR：${JSON.stringify(r.out && { halted: r.out.halted, head_branch: r.out.head_branch, next: r.out.next, why: r.out.halt_reason })}`]),
+      expect: (r) => (r.out && !r.out.halted && r.out.head_branch === TRANSIT.transit_branch && /awf publish/.test(r.out.next || '') && /--supersedes 1/.test(r.out.next || '') ? [] : [`transit 要換 head_branch 並提示開新 PR：${JSON.stringify(r.out && { halted: r.out.halted, head_branch: r.out.head_branch, next: r.out.next, why: r.out.halt_reason })}`]),
     },
     {
       name: '中轉分支多解了沒預測的檔',
@@ -64,6 +64,6 @@ export default [
     // recipe：每個包含 sync 的內建 recipe 一個情境（merge 策略），next 指向 recipe 的下一段
     ...recipeScenarios('sync', () => ({
       fakes: { plan: SYNC_PLAN({ strategy: 'merge', behind: 2, published: true, conflicts: [] }), 'apply:merge': ON_BRANCH({ strategy: 'merge', conflicts: [], head_sha: 'a'.repeat(40) }) },
-      expect: (r) => (/run_brief\.py/.test(r.prompts['apply:merge'] || '') ? [] : ['apply 派工單要求 verify 用 run_brief.py']),
+      expect: (r) => (/awf run-brief/.test(r.prompts['apply:merge'] || '') ? [] : ['apply 派工單要求 verify 用 awf run-brief']),
     })),
 ]

@@ -16,7 +16,7 @@ pstack 是給 Cursor 用的 agent 工作流程 plugin。核心是一組 prose pl
 | 面向 | pstack | AgentWorkFlow |
 |---|---|---|
 | 流程結構 | 沒有分段管線，playbook 之間由 agent 自行串接 | plan → design → build → sync → test → deliver → merge，每段一支 workflow |
-| 強制方式 | 靠 prose playbook，沒有 hook、schema、確定性 gate | hook 守門、JSON 信封 schema、`merge_gate.py`、`publish.py` 等確定性工具 |
+| 強制方式 | 靠 prose playbook，沒有 hook、schema、確定性 gate | hook 守門、JSON 信封 schema、`awf merge-gate`、`awf publish` 等確定性工具 |
 | 人的角色 | never-block-on-the-human：盡量不停下等人 | 段與段之間人工核准（plan 一律由人；其他段在政策允許時可政策核准），不確定就 hold 交人 |
 | 平台 | 強綁 Cursor | Claude Code（plugin＋scaffold） |
 
@@ -26,7 +26,7 @@ pstack 是給 Cursor 用的 agent 工作流程 plugin。核心是一組 prose pl
 
 以下做法參考 pstack 的想法，改寫成我們的確定性工具或流程：
 
-1. **偵測放寬閘門**：`merge_gate.py` 檢查 PR 是否改了測試、lint、型別、覆蓋率的設定，或新增壓制註解（例如 `eslint-disable`、`# noqa`、`@ts-ignore`），有就 escalate 交人會簽。新增 skip／only 原本就判 hold。
+1. **偵測放寬閘門**：`awf merge-gate` 檢查 PR 是否改了測試、lint、型別、覆蓋率的設定，或新增壓制註解（例如 `eslint-disable`、`# noqa`、`@ts-ignore`），有就 escalate 交人會簽。新增 skip／only 原本就判 hold。
 2. **rebase 後沿用判定**：rebase 前後的 patch-id 相同時才沿用先前的 verdict，不重跑整段審查。預設關閉，要在 `auto_merge.carry_verdict_on_rebase` 明確開啟（opt-in）。
 3. **合併後讀回狀態**：合併指令執行後再讀回 PR 的實際狀態，記為 `merge_state`，不以指令的 exit code 當成已合併。
 4. **CI flake 判準**：明確定義什麼情況算 flake、什麼情況算真的失敗，避免把真失敗當 flake 重跑過關。
@@ -38,7 +38,7 @@ pstack 是給 Cursor 用的 agent 工作流程 plugin。核心是一組 prose pl
 | pstack 的做法 | 沒引進的原因 |
 |---|---|
 | 固定格式的 markdown 計畫加上 lint | 我們的交件已用 JSON 信封與 payload schema（`schemas/`）驗證，再加一套 markdown 格式會重複，也比 schema 弱 |
-| orchestrate 狀態檔 | 我們用 workflow 腳本＋`save_run.py` 的 `run.json` 記錄進度與核准，不需要另一份狀態檔 |
+| orchestrate 狀態檔 | 我們用 workflow 腳本＋`awf save-run` 的 `run.json` 記錄進度與核准，不需要另一份狀態檔 |
 | 多模型 arena（多個模型各做一份再比較） | 依賴非 Claude 模型，不符合模版的執行環境 |
 | never-block-on-the-human 的自主權 | 和我們的信任模型相反：不可逆節點要人當下同意，合併通道不確定就 hold（見 `docs/自動合併信任模型.md`） |
 

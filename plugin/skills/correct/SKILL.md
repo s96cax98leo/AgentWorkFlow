@@ -42,8 +42,8 @@ argument-hint: <錯誤描述、踩坑手冊條目、followup 路徑或 commit／
 
 | 層級 | 目標專案 | AgentWorkFlow 模版 repo 自己 |
 |---|---|---|
-| **1. 架構或確定性工具**：讓錯誤寫不出來或流程走不下去 | 專案自己的型別、模組邊界、建置步驟 | `merge_gate.py` 的判定、`schemalib.py` 的語意規則、workflow 裡的確定性核對（回傳 `halted: true`） |
-| **2. schema／hook／lint**：錯誤寫得出來但會被立刻擋 | 專案既有 lint 的規則、pre-commit | 信封與 payload schema（`schemas/`）、`guard.py` 的 guard 規則、`check_rules.py` |
+| **1. 架構或確定性工具**：讓錯誤寫不出來或流程走不下去 | 專案自己的型別、模組邊界、建置步驟 | `awf merge-gate` 的判定、驗證器（`crates/awf-core/src/schema.rs`）的語意規則、workflow 裡的確定性核對（回傳 `halted: true`） |
+| **2. schema／hook／lint**：錯誤寫得出來但會被立刻擋 | 專案既有 lint 的規則、pre-commit | 信封與 payload schema（`schemas/`）、守門規則（`crates/awf-core/src/hooks/guard.rs`）、`awf check-rules` |
 | **3. 測試**：錯誤會在跑測試時被抓 | 專案既有的測試 | `golden-set/valid|invalid/`（含 `semantic` 反例）、`check_workflows.mjs` 的 `SCENARIOS`、`plugin/hooks/tests/run.py` |
 | **4. 文件**：只能靠人或 agent 讀到 | rules.md〈專案規則〉、agent 提示、專案 CLAUDE.md | `rules.md` 通用規則、agent 提示、`docs/踩坑手冊.md` |
 
@@ -51,8 +51,8 @@ argument-hint: <錯誤描述、踩坑手冊條目、followup 路徑或 commit／
 - 判斷題（需要讀懂語意才能決定的）通常停在第 4 層，或交給審查 agent 的 lens；這時標「僅文件」，不要硬寫一個會誤擋的規則。
 
 **在模版 repo 自己身上用時的對應**（照 `CLAUDE.md`〈改動時的檢查清單〉）：
-- 語意規則：寫在 `schemalib.py`，在 `golden-set/invalid/` 補 `semantic` 反例、`valid/` 補正例；改了 schema 重跑 `build.py`。
-- guard 規則：寫在 `plugin/hooks/` 的 guard，在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的案例，Bash 與 PowerShell 各一。
+- 語意規則：寫在 `crates/awf-core/src/schema.rs`，在 `golden-set/invalid/` 補 `semantic` 反例、`valid/` 補正例；改了 schema 重跑 `awf build`。
+- guard 規則：寫在 `crates/awf-core/src/hooks/guard.rs`，在 `plugin/hooks/tests/run.py` 補一個該擋、一個該放的案例，Bash 與 PowerShell 各一。
 - workflow 核對：寫在 `plugin/workflow-templates/*.js`，乾跑走不到的分支在 `tools/scenarios/<workflow>.mjs` 補情境。
 
 ## 3. 列計畫，等使用者同意
@@ -70,7 +70,7 @@ argument-hint: <錯誤描述、踩坑手冊條目、followup 路徑或 commit／
 
 ## 4. 實作並證明
 
-- 照計畫改檔。改到 `.claude/teams/` 的 schema 或 methodology profile 時，重跑 `python3 .claude/teams/tools/build.py`。
+- 照計畫改檔。改到 `.claude/teams/` 的 schema 或 methodology profile 時，重跑 `awf build`。
 - 重現舊錯誤的方法，依序選：
   1. 直接用舊 commit 的檔案（`git show <sha>:<路徑>` 存到暫存目錄）。
   2. 用舊錯誤的實際內容做成反例檔（golden-set 反例、hook 測試案例、`SCENARIOS` 假回傳）。

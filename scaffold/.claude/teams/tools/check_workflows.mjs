@@ -14,10 +14,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const claude = join(here, '..', '..')
 const argAt = process.argv.indexOf('--agents-dir')
-// workflow 腳本的位置：--wf-dir（例如 awf.py render --all 產生的目錄），沒給就是專案的 .claude/workflows（範本帶佔位符，不能直接乾跑）
+// workflow 腳本的位置：--wf-dir（例如 awf render --all 產生的目錄），沒給就是專案的 .claude/workflows（範本帶佔位符，不能直接乾跑）
 const wfAt = process.argv.indexOf('--wf-dir')
 const wfDir = wfAt > 0 ? process.argv[wfAt + 1] : join(claude, 'workflows')
-if (!existsSync(wfDir)) { console.log(`找不到 workflow 目錄 ${wfDir}：先跑 python3 .claude/teams/tools/awf.py render --all --out <目錄>，再加 --wf-dir <目錄>`); process.exit(1) }
+if (!existsSync(wfDir)) { console.log(`找不到 workflow 目錄 ${wfDir}：先跑 awf render --all --out <目錄>，再加 --wf-dir <目錄>`); process.exit(1) }
 const pluginDir = process.env.AWF_PLUGIN_DIR || process.env.CLAUDE_PLUGIN_ROOT
 const agentsDir = argAt > 0 ? process.argv[argAt + 1] : (pluginDir && existsSync(join(pluginDir, 'agents')) ? join(pluginDir, 'agents') : join(claude, 'agents'))
 const role = (t) => String(t || '').split(':').pop()
@@ -158,8 +158,8 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
     if (meta && (!meta.name || !meta.description)) errs.push('meta 缺 name 或 description')
     if (meta && meta.name !== f.replace(/\.js$/, '')) errs.push(`meta.name「${meta.name}」與檔名不同`)
   }
-  if (/@schema:[a-z-]+\*\/\s*null/.test(src)) errs.push('schema 尚未內嵌（請跑 build.py）')
-  if (/@snippet:[a-z0-9-]+\*\/\s*\/\*@end\*\//.test(src)) errs.push('片段尚未內嵌（請跑 build.py）')
+  if (/@schema:[a-z-]+\*\/\s*null/.test(src)) errs.push('schema 尚未內嵌（請跑 awf build）')
+  if (/@snippet:[a-z0-9-]+\*\/\s*\/\*@end\*\//.test(src)) errs.push('片段尚未內嵌（請跑 awf build）')
   if (/Date\.now\(\)|Math\.random\(\)|new Date\(\)/.test(src)) errs.push('不能用 Date.now()／Math.random()／new Date()')
   const titles = new Set((meta && meta.phases || []).map((p) => p.title))
   let agents = 0

@@ -1,6 +1,6 @@
 // ── 片段 recipe（.claude/teams/tools/snippets/recipe.js）：依需求類型解析這次 SDLC 要走的段與要派的角色 ──
-// build.py 內嵌；不要在 workflow 裡手改，改片段後重跑 build.py。只定義函式，需要的值都用參數傳入。
-// 規則和 tools/recipe.py 完全一致（golden-set/recipes/*.json 兩邊都跑，結果要相同）：
+// awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
+// 規則和 awf recipe 完全一致（golden-set/recipes/*.json 兩邊都跑，結果要相同）：
 //   profile 沒有 recipes（舊版）或指定的 recipe 不存在 → 當成 feature 完整流程（只會更嚴）；
 //   每個 recipe 都有 plan 段（intent 不能省）；size=small 套 recipe 的 small 覆寫；modifiers 只會加嚴；
 //   不認得的 modifier 記在 errors（呼叫端要停下交人）。
@@ -106,7 +106,7 @@ function recipeSummary(r) {
   return `recipe ${r.name}${r.modifiers.length ? `＋${r.modifiers.join('、')}` : ''}${r.size ? `（size=${r.size}）` : ''}：${r.stages.join(' → ')}；plan_mode=${r.plan_mode}`
 }
 
-// ── 模型分級（I7：AI 建議，工具守下限，只會往上）。和 tools/recipe.py 的 resolve_model 完全一致（golden 的 model_cases 兩邊對跑）──
+// ── 模型分級（I7：AI 建議，工具守下限，只會往上）。和 awf recipe 的 resolve_model 完全一致（golden 的 model_cases 兩邊對跑）──
 function modelTiers() { return ['light', 'standard', 'strong'] }
 // strong 預設 inherit：沿用使用者主對話選的模型
 function modelBuiltinTiers() { return { light: 'haiku', standard: 'sonnet', strong: 'inherit' } }

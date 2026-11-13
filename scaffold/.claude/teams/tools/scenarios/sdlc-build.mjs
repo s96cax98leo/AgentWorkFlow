@@ -102,7 +102,7 @@ export default [
     },
   },
   {
-    // 子任務資料包（pack.py build）：派工單引用自己那一份；路徑不對的不採用
+    // 子任務資料包（awf pack build）：派工單引用自己那一份；路徑不對的不採用
     name: '子任務資料包：派工單引用自己的資料包，路徑不對的不採用',
     args: { task_packs: { t1: '_runs/demo/build/t1/pack.md', t2: '_runs/demo/build/../../secrets/pack.md', t3: '_runs/demo/build/t1/pack.md' } },
     expect: (r) => {

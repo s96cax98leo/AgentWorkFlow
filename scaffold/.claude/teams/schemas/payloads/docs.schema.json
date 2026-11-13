@@ -18,6 +18,6 @@
         }
       }
     },
-    "rule_check": {"type": "string", "description": "check_rules.py 的結果摘要"}
+    "rule_check": {"type": "string", "description": "awf check-rules 的結果摘要"}
   }
 }
