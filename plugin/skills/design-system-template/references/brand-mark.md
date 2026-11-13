@@ -18,5 +18,5 @@
 | 錯誤頁（403／404） | 【填空】 | |
 | 信件 | 【填空】 | |
 
-## 4. check-tokens.py
+## 4. awf tokens check
 標誌色值不在 tokens.css 時，加進 `allowlist.txt`，否則會被列為違規。

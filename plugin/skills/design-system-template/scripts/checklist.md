@@ -10,7 +10,7 @@
 ### 外觀
 | # | 條文 | 怎麼驗 |
 |---|---|---|
-| A1 | 只用本文件的 token，沒有自創色票或灰色（預設） | `python3 scripts/check-tokens.py <src>`：本次變更不得新增違規（與 base 比）；新程式 0 違規 |
+| A1 | 只用本文件的 token，沒有自創色票或灰色（預設） | `awf tokens check <src>`：本次變更不得新增違規（與 base 比）；新程式 0 違規 |
 | A2 | 卡片樣式【填空：底色＋邊界做法＋圓角】 | getComputedStyle 量 `border-radius`、`box-shadow`、`border` |
 | A3 | 按鈕／徽章形狀與按壓回饋【填空】 | 量 `border-radius`；`:active` 時的 transform |
 | A4 | 圖示全部來自【圖示集】，筆畫【填空】 | `svg` 的 `stroke-width`；只有 adapter 直接 import 圖示庫 |

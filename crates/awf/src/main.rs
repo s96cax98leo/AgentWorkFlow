@@ -45,6 +45,8 @@ fn usage() -> &'static str {
   check-agents     檢查 agent 檔的格式與角色名單
   check-envelope   驗一份交件信封（schema 與交接的語意規則）
   check-rules      掃描產出有沒有違反 rules.md 的硬規則（只做機械判定）
+  golden           跑專案的 golden-set：交件信封與各種 payload 的正例、反例、語意反例
+  tokens           設計系統的 token 檢查：掃寫死的色碼（check）、tokens.css 與正本一字不差（verify）
 
 安裝：
   init             把模版套用到專案，或升級已套用的專案
@@ -89,6 +91,8 @@ fn main() -> ExitCode {
         Some("run-brief") => ExitCode::from(awf_core::run_brief::main(&args[1..]).clamp(0, 255) as u8),
         Some("check-envelope") => ExitCode::from(awf_core::check_envelope::main(&args[1..]).clamp(0, 255) as u8),
         Some("check-rules") => ExitCode::from(awf_core::check_rules::main(&args[1..]).clamp(0, 255) as u8),
+        Some("golden") => ExitCode::from(awf_core::golden::main(&args[1..]).clamp(0, 255) as u8),
+        Some("tokens") => ExitCode::from(awf_core::tokens::main(&args[1..]).clamp(0, 255) as u8),
         Some("hook") => ExitCode::from(awf_core::hooks::main(&args[1..]).clamp(0, 255) as u8),
         Some(other) => {
             eprintln!("awf：不認得的子指令「{other}」\n\n{}", usage());

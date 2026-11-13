@@ -28,6 +28,7 @@ pub const SUBCOMMANDS: &[&str] = &[
     "checklist", "kb", "recipe", "merge-gate", "sync-branch", "publish", "save-run", "deliverables", "locate", "pack", "cost", "script",
     "build", "start", "next", "done", "approve", "render", "handoff", "state", "watch", "statusline", "doctor", "spec", "init",
     "check-agents", "run-brief", "check-envelope", "check-rules", "hook",
+    "golden", "tokens",
 ];
 const STATE_VERBS: &[&str] = &["start", "next", "done", "approve", "render", "handoff"];
 const HELP: &[&str] = &["-h", "--help"];
@@ -399,6 +400,8 @@ impl Call {
             }
             "statusline" | "doctor" | "hook" | "checklist" | "recipe" | "sync-branch" | "locate" | "cost" | "script" | "check-agents"
             | "run-brief" | "check-envelope" | "check-rules" => None,
+            // 兩支都只讀檔（golden：跑 golden-set；tokens：check／verify 掃色碼與比對正本），沒有會寫檔的子指令或選項
+            "golden" | "tokens" => None,
             other => Some(Deny::Unknown(other.to_string())),
         }
     }
@@ -446,6 +449,7 @@ mod tests {
             "cargo build -p awf", "cargo test -p awf --test hooks_entry", "go build -o awf ./cmd", "$AWF_BIN kb query x", "awf doctor", "awf watch --once", "awf statusline",
             "awf hook guard-shell", "awf spec status", "awf spec ids --json", "awf state --selftest", "awf merge-gate --selftest",
             "which awf", "command -v awf", "AWF_BIN=target/debug/awf awf kb query x", "make awf build", "awf run-brief --log x.log -- npm test",
+            "awf golden", "awf golden --dir .claude/teams/golden-set --verbose", "awf tokens check src", "awf tokens verify", "awf tokens --selftest",
         ] {
             assert!(!denied(c), "應該放：{c}（{:?}）", calls(c));
         }
