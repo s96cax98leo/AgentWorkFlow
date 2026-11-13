@@ -21,7 +21,7 @@
 //! 第 4 條對應 `run.py`「官方 jsonschema 應該擋但通過」那一項。範例檔讀不懂、缺 `data`、既沒有 `payload` 也沒有 `schema`：
 //! `run.py` 當掉，這裡算那一例失敗。
 //!
-//! 判定邏輯和 `cargo xtask golden`（模版 repo 自己用的那一支）相同，之後整併成一份。
+//! `cargo xtask golden`（模版 repo 自己用的那一支）呼叫這裡的 [`run_all`]，判定只有這一份；兩支只差在目錄怎麼決定與總結那一行的寫法。
 
 use crate::pyfmt::{repr_str, truthy};
 use crate::schema::{self, Schemas};

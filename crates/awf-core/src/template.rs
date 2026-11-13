@@ -72,6 +72,21 @@ pub fn find() -> Option<PathBuf> {
     find_with(&var, exe.as_deref())
 }
 
+/// 同 [`find_installed`]，環境變數與執行檔位置由呼叫端給（測試用）。
+pub fn find_installed_with(var: &dyn Fn(&str) -> Option<String>, exe: Option<&Path>) -> Option<PathBuf> {
+    let from_exe = exe.and_then(Path::parent).and_then(Path::parent).map(Path::to_path_buf);
+    ENV_PLUGIN.iter().filter_map(|k| var(k)).map(PathBuf::from).chain(from_exe).find(|d| plugin_json(d).is_file())
+}
+
+/// 「裝好的 plugin」在哪（SessionStart 的版本提示用）：只認有版本檔（`.claude-plugin/plugin.json`）的目錄，
+/// 依序看 [`ENV_PLUGIN`] 的環境變數、執行檔所在目錄的上一層（`<plugin>/bin/awf`）。
+/// 比 [`find`] 窄：不看 `AWF_TEMPLATE_DIR`、不從執行檔一路往上找，所以開發時的 `target/debug/awf` 不會被當成裝好的 plugin
+/// （提示會進使用者的對話，寧可不提示）。
+pub fn find_installed() -> Option<PathBuf> {
+    let var = |k: &str| std::env::var_os(k).map(|v| v.to_string_lossy().into_owned()).filter(|s| !s.is_empty());
+    find_installed_with(&var, std::env::current_exe().ok().as_deref())
+}
+
 /// [`find`] 的文字版（路徑分隔一律 `/`），給用字串路徑的模組。
 pub fn find_str() -> Option<String> {
     find().and_then(|p| p.to_str().map(|s| s.replace('\\', "/")))
@@ -210,6 +225,39 @@ mod tests {
         assert_eq!(find_with(&tpl(repo.clone()), None), Some(repo.join("plugin")));
         assert_eq!(find_with(&tpl(installed.clone()), None), Some(installed.clone()));
         assert_eq!(find_with(&tpl(t.join("nope")), None), Some(t.join("nope")));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn installed_needs_manifest() {
+        let t = tmp("inst");
+        let (a, b, bare) = (t.join("a"), t.join("b"), t.join("bare"));
+        for d in [&a, &b] {
+            std::fs::create_dir_all(d.join(".claude-plugin")).expect("mkdir");
+            std::fs::write(plugin_json(d), "{}").expect("write");
+        }
+        std::fs::create_dir_all(&bare).expect("mkdir");
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let none = |_: &str| None;
+        // 執行檔在 <plugin>/bin/ 底下；再往上的不算（開發時的 target/debug/awf 不是裝好的 plugin）
+        assert_eq!(find_installed_with(&none, Some(&a.join("bin/awf"))), Some(a.clone()));
+        assert_eq!(find_installed_with(&none, Some(&a.join("target/debug/awf"))), None);
+        assert_eq!(find_installed_with(&none, None), None);
+        // 環境變數先於執行檔位置，AWF_PLUGIN_DIR 先；沒有版本檔的略過
+        let both = |k: &str| match k {
+            "AWF_PLUGIN_DIR" => Some(s(&b)),
+            "CLAUDE_PLUGIN_ROOT" => Some(s(&a)),
+            _ => None,
+        };
+        assert_eq!(find_installed_with(&both, Some(&a.join("bin/awf"))), Some(b.clone()));
+        let bad_first = |k: &str| match k {
+            "AWF_PLUGIN_DIR" => Some(s(&bare)),
+            "CLAUDE_PLUGIN_ROOT" => Some(s(&a)),
+            _ => None,
+        };
+        assert_eq!(find_installed_with(&bad_first, None), Some(a.clone()));
+        let only_bare = |k: &str| (k == "CLAUDE_PLUGIN_ROOT").then(|| s(&bare));
+        assert_eq!(find_installed_with(&only_bare, None), None);
         let _ = std::fs::remove_dir_all(&t);
     }
 
