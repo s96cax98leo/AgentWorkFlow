@@ -466,7 +466,10 @@ print(json.dumps(out))
     };
     for (key, cap) in [("None", None), ("2", Some(2))] {
         let mine = check_patterns::sample_script(&r, cap).expect("組得起來");
+        // 腳本裡接上那一段的標題列，Rust 版寫的是 awf（沒有 awf.py 這個檔了）；只換這一句，其餘仍要逐字相同
         let theirs = py[key].as_str().expect("文字");
+        assert!(theirs.matches("// ── 以下由 awf.py 接上（").count() == 1, "Python 版的標題列應該剛好一處");
+        let theirs = theirs.replacen("// ── 以下由 awf.py 接上（", "// ── 以下由 awf 接上（", 1);
         assert!(mine.len() > 20_000, "腳本太短：{}", mine.len());
         assert!(mine == theirs, "上限 {key}：組裝結果和 Python 版不同（長度 {} 對 {}）", mine.len(), theirs.len());
     }

@@ -2594,11 +2594,11 @@
       ],
       [
        "awfInit",
-       "不要自己呼叫 awfInit：awf.py 已經接好了"
+       "不要自己呼叫 awfInit：awf 已經接好了"
       ],
       [
        "awfKernelInit",
-       "不要自己呼叫 awfKernelInit：awf.py 已經接好了（上限與角色白名單由它帶）"
+       "不要自己呼叫 awfKernelInit：awf 已經接好了（上限與角色白名單由它帶）"
       ],
       [
        "awfSetModifiers",
@@ -2788,7 +2788,7 @@
     "text": "export const meta = { name: 'my-waves', description: '分兩波打地基：agent() 這個字寫在字串裡沒關係' }\nconst SUBTASKS = /*@schema:subtasks*/ null /*@end*/\nconst waves = [['t1'], ['t2', 't3']]\nconst done = []\nfunction awfAgent() { return {} }\nfor (const [i, wave] of waves.entries()) {\n  const r = await awfFanOut(wave.map((id) => ({ prompt: `做 ${id}（不要 while 迴圈）`, label: `Implement:${id}`, agentType: NS + 'dev-implementer', schema: SUBTASKS })), { max: 4 })\n  if (r.halted) return { stage: 'build', halted: true, halt_reason: r.reason, missing: r.missing, recipe: RECIPE, trace: awfTrace() }\n  done.push(...r.results)\n}\nfor (let i = 0; i < 2; i++) { done.push(i) }\nconst pick = (xs) => { return xs[0] }\nconst ext = await awfAgent('看一下', { label: 'ext', agentType: 'acme:a11y', schema: SUBTASKS })\nreturn {\n  stage: 'build', halted: false, results: done, first: pick(done), ext,\n  recipe: RECIPE,\n  trace: awfTrace(),\n}\n",
     "note": "重新定義 awfAgent",
     "want": [
-     "第 5 行：不能重新定義 awfAgent（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 5 行：不能重新定義 awfAgent（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -2804,7 +2804,7 @@
     "text": "export const meta = { name: 'my-waves', description: '分兩波打地基：agent() 這個字寫在字串裡沒關係' }\nconst SUBTASKS = /*@schema:subtasks*/ null /*@end*/\nconst waves = [['t1'], ['t2', 't3']]\nconst done = []\nconst RECIPE = {}\nfor (const [i, wave] of waves.entries()) {\n  const r = await awfFanOut(wave.map((id) => ({ prompt: `做 ${id}（不要 while 迴圈）`, label: `Implement:${id}`, agentType: NS + 'dev-implementer', schema: SUBTASKS })), { max: 4 })\n  if (r.halted) return { stage: 'build', halted: true, halt_reason: r.reason, missing: r.missing, recipe: RECIPE, trace: awfTrace() }\n  done.push(...r.results)\n}\nfor (let i = 0; i < 2; i++) { done.push(i) }\nconst pick = (xs) => { return xs[0] }\nconst ext = await awfAgent('看一下', { label: 'ext', agentType: 'acme:a11y', schema: SUBTASKS })\nreturn {\n  stage: 'build', halted: false, results: done, first: pick(done), ext,\n  recipe: RECIPE,\n  trace: awfTrace(),\n}\n",
     "note": "重新宣告 RECIPE",
     "want": [
-     "第 5 行：不能重新定義 RECIPE（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 5 行：不能重新定義 RECIPE（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -2820,7 +2820,7 @@
     "text": "export const meta = { name: 'my-waves', description: '分兩波打地基：agent() 這個字寫在字串裡沒關係' }\nconst SUBTASKS = /*@schema:subtasks*/ null /*@end*/\nconst waves = [['t1'], ['t2', 't3']]\nconst done = []\nawfKernelInit({ max_agents: 0 })\nfor (const [i, wave] of waves.entries()) {\n  const r = await awfFanOut(wave.map((id) => ({ prompt: `做 ${id}（不要 while 迴圈）`, label: `Implement:${id}`, agentType: NS + 'dev-implementer', schema: SUBTASKS })), { max: 4 })\n  if (r.halted) return { stage: 'build', halted: true, halt_reason: r.reason, missing: r.missing, recipe: RECIPE, trace: awfTrace() }\n  done.push(...r.results)\n}\nfor (let i = 0; i < 2; i++) { done.push(i) }\nconst pick = (xs) => { return xs[0] }\nconst ext = await awfAgent('看一下', { label: 'ext', agentType: 'acme:a11y', schema: SUBTASKS })\nreturn {\n  stage: 'build', halted: false, results: done, first: pick(done), ext,\n  recipe: RECIPE,\n  trace: awfTrace(),\n}\n",
     "note": "自己呼叫 awfKernelInit",
     "want": [
-     "第 5 行：不要自己呼叫 awfKernelInit：awf.py 已經接好了（上限與角色白名單由它帶）"
+     "第 5 行：不要自己呼叫 awfKernelInit：awf 已經接好了（上限與角色白名單由它帶）"
     ]
    },
    {
@@ -2884,7 +2884,7 @@
     "text": "export const meta = { name: 'my-waves', description: '分兩波打地基：agent() 這個字寫在字串裡沒關係' }\nconst SUBTASKS = /*@schema:subtasks*/ null /*@end*/\nconst waves = [['t1'], ['t2', 't3']]\nconst done = []\nconst ki = 1 ? awfKernelInit : 0\nfor (const [i, wave] of waves.entries()) {\n  const r = await awfFanOut(wave.map((id) => ({ prompt: `做 ${id}（不要 while 迴圈）`, label: `Implement:${id}`, agentType: NS + 'dev-implementer', schema: SUBTASKS })), { max: 4 })\n  if (r.halted) return { stage: 'build', halted: true, halt_reason: r.reason, missing: r.missing, recipe: RECIPE, trace: awfTrace() }\n  done.push(...r.results)\n}\nfor (let i = 0; i < 2; i++) { done.push(i) }\nconst pick = (xs) => { return xs[0] }\nconst ext = await awfAgent('看一下', { label: 'ext', agentType: 'acme:a11y', schema: SUBTASKS })\nreturn {\n  stage: 'build', halted: false, results: done, first: pick(done), ext,\n  recipe: RECIPE,\n  trace: awfTrace(),\n}\n",
     "note": "三元運算式取出 awfKernelInit",
     "want": [
-     "第 5 行：不要自己呼叫 awfKernelInit：awf.py 已經接好了（上限與角色白名單由它帶）"
+     "第 5 行：不要自己呼叫 awfKernelInit：awf 已經接好了（上限與角色白名單由它帶）"
     ]
    },
    {
@@ -2914,7 +2914,7 @@
     "text": "export const meta = { name: 'my-waves', description: '分兩波打地基：agent() 這個字寫在字串裡沒關係' }\nconst SUBTASKS = /*@schema:subtasks*/ null /*@end*/\nconst waves = [['t1'], ['t2', 't3']]\n/*@snippet:kernel*/ null /*@end*/\nconst done = []\nfor (const [i, wave] of waves.entries()) {\n  const r = await awfFanOut(wave.map((id) => ({ prompt: `做 ${id}（不要 while 迴圈）`, label: `Implement:${id}`, agentType: NS + 'dev-implementer', schema: SUBTASKS })), { max: 4 })\n  if (r.halted) return { stage: 'build', halted: true, halt_reason: r.reason, missing: r.missing, recipe: RECIPE, trace: awfTrace() }\n  done.push(...r.results)\n}\nfor (let i = 0; i < 2; i++) { done.push(i) }\nconst pick = (xs) => { return xs[0] }\nconst ext = await awfAgent('看一下', { label: 'ext', agentType: 'acme:a11y', schema: SUBTASKS })\nreturn {\n  stage: 'build', halted: false, results: done, first: pick(done), ext,\n  recipe: RECIPE,\n  trace: awfTrace(),\n}\n",
     "note": "片段標記",
     "want": [
-     "腳本不能自己放片段或 profile 的標記（awf.py 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用"
+     "腳本不能自己放片段或 profile 的標記（awf 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用"
     ]
    },
    {
@@ -2938,7 +2938,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\n/*@methodology*/ null /*@end*/\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "profile 標記",
     "want": [
-     "腳本不能自己放片段或 profile 的標記（awf.py 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用"
+     "腳本不能自己放片段或 profile 的標記（awf 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用"
     ]
    },
    {
@@ -2946,7 +2946,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst s = '/*@snippet 寫在字串裡也擋'\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "標記在字串裡",
     "want": [
-     "腳本不能自己放片段或 profile 的標記（awf.py 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用"
+     "腳本不能自己放片段或 profile 的標記（awf 會接上）；只有 /*@schema:<名>*/ null /*@end*/ 可以用"
     ]
    },
    {
@@ -3137,7 +3137,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst v = [awfInit]\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "禁用：awfInit",
     "want": [
-     "第 3 行：不要自己呼叫 awfInit：awf.py 已經接好了"
+     "第 3 行：不要自己呼叫 awfInit：awf 已經接好了"
     ]
    },
    {
@@ -3151,7 +3151,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst v = [awfKernelInit]\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "禁用：awfKernelInit",
     "want": [
-     "第 3 行：不要自己呼叫 awfKernelInit：awf.py 已經接好了（上限與角色白名單由它帶）"
+     "第 3 行：不要自己呼叫 awfKernelInit：awf 已經接好了（上限與角色白名單由它帶）"
     ]
    },
    {
@@ -3805,7 +3805,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nfunction awfX() {}\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "function awf*",
     "want": [
-     "第 3 行：不能重新定義 awfX（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 awfX（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3813,7 +3813,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nfunction* awfGen() {}\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "generator",
     "want": [
-     "第 3 行：不能重新定義 awfGen（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 awfGen（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3821,7 +3821,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nfunction *MP() {}\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "function *",
     "want": [
-     "第 3 行：不能重新定義 MP（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 MP（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3829,7 +3829,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nlet A\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "let A",
     "want": [
-     "第 3 行：不能重新定義 A（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 A（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3837,7 +3837,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nvar NS = 1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "var NS",
     "want": [
-     "第 3 行：不能重新定義 NS（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 NS（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3845,7 +3845,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst awfy = 1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "const awf*",
     "want": [
-     "第 3 行：不能重新定義 awfy（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 awfy（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3859,7 +3859,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nasync function layersOf() {}\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "reserved 裡的名字",
     "want": [
-     "第 3 行：不能重新定義 layersOf（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 layersOf（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3881,7 +3881,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst\n  METHODOLOGY = 1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "const 跨行",
     "want": [
-     "第 3 行：不能重新定義 METHODOLOGY（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 METHODOLOGY（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3889,7 +3889,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst　RECIPE = 1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "全形空白",
     "want": [
-     "第 3 行：不能重新定義 RECIPE（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 RECIPE（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3897,7 +3897,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nfunction\nresolveRecipe() {}\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "function 跨行",
     "want": [
-     "第 3 行：不能重新定義 resolveRecipe（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 resolveRecipe（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3906,7 +3906,7 @@
     "note": "具名函式運算式",
     "want": [
      "第 3 行：不能直接用 tryAgent()：派工一律走 awfAgent 或 pattern（才有模型分級與派工數上限）",
-     "第 3 行：不能重新定義 tryAgent（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 tryAgent（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -3994,7 +3994,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst /*中文註解*/ awfX = 1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "const 和名字中間有註解：兩條都擋",
     "want": [
-     "第 3 行：不能重新定義 awfX（awf.py 接上的名字；awf 開頭的名字保留給執行核心）",
+     "第 3 行：不能重新定義 awfX（awf 接上的名字；awf 開頭的名字保留給執行核心）",
      "第 3 行：不能改寫 awfX"
     ]
    },
@@ -4003,7 +4003,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nlet  \n A = 1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "let 換行",
     "want": [
-     "第 3 行：不能重新定義 A（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 A（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -4090,7 +4090,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nconst awf = 1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "const awf",
     "want": [
-     "第 3 行：不能重新定義 awf（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 awf（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -4118,7 +4118,7 @@
     "text": "export const meta = { name: 'x', description: 'y' }\nconst r0 = await awfAgent('p', { label: 'a', agentType: NS + 'tpm-writer', schema: null })\nvar   A   =   1\nreturn { stage: 'build', recipe: RECIPE, trace: awfTrace() }\n",
     "note": "var 後面多個空白",
     "want": [
-     "第 3 行：不能重新定義 A（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 A（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -4147,7 +4147,7 @@
      "mine"
     ],
     "want": [
-     "第 3 行：不能重新定義 mine（awf.py 接上的名字；awf 開頭的名字保留給執行核心）"
+     "第 3 行：不能重新定義 mine（awf 接上的名字；awf 開頭的名字保留給執行核心）"
     ]
    },
    {
@@ -4159,7 +4159,7 @@
      "$x"
     ],
     "want": [
-     "第 3 行：不能重新定義 mine（awf.py 接上的名字；awf 開頭的名字保留給執行核心）",
+     "第 3 行：不能重新定義 mine（awf 接上的名字；awf 開頭的名字保留給執行核心）",
      "第 4 行：不能改寫 mine"
     ]
    },
