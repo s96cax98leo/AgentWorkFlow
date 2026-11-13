@@ -1,0 +1,7 @@
+plugin/bin/awf text eol=lf
+plugin/bin/awf.cmd text eol=crlf
+plugin/bin/awf-darwin-arm64 binary
+plugin/bin/awf-darwin-x64 binary
+plugin/bin/awf-linux-x64 binary
+plugin/bin/awf-linux-arm64 binary
+plugin/bin/awf-windows-x64.exe binary

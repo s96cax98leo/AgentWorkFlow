@@ -1,0 +1,38 @@
+#!/bin/sh
+# awf 啟動器：只挑這個平台的執行檔，不放任何邏輯（repo「不新增 shell 腳本」原則的唯一例外）。
+# 自己建置的人設 AWF_BIN=<執行檔路徑> 就直接用它。
+# 限制：musl 的 Linux（例如 Alpine）照用 glibc 版，跑不起來請自己建置並設 AWF_BIN；
+#       arm64 的 Windows 用 x64 版。說明在 docs/建置與發佈.md。
+if [ -n "${AWF_BIN:-}" ]; then
+  [ -x "$AWF_BIN" ] || { echo "awf：AWF_BIN 指的執行檔不存在或不能執行：${AWF_BIN}" >&2; exit 127; }
+  exec "$AWF_BIN" "$@"
+fi
+# 經符號連結被呼叫時，一層一層解析到自己真正的位置（不假設有 readlink -f）。
+self=$0
+while [ -L "$self" ]; do
+  dir=$(cd -P -- "$(dirname -- "$self")" && pwd) || exit 127
+  link=$(readlink -- "$self") || exit 127
+  case $link in
+    /*) self=$link ;;
+    *) self=$dir/$link ;;
+  esac
+done
+dir=$(cd -P -- "$(dirname -- "$self")" && pwd) || exit 127
+case $(uname -s) in
+  Darwin) os=darwin ;;
+  Linux) os=linux ;;
+  MINGW*|MSYS*|CYGWIN*) os=windows ;;
+  *) os=unknown ;;
+esac
+case $(uname -m) in
+  x86_64|amd64) arch=x64 ;;
+  arm64|aarch64) arch=arm64 ;;
+  *) arch=unknown ;;
+esac
+case $os-$arch in
+  darwin-arm64|darwin-x64|linux-x64|linux-arm64) bin=$dir/awf-$os-$arch ;;
+  windows-x64|windows-arm64) bin=$dir/awf-windows-x64.exe ;;
+  *) echo "awf：不支援這個平台（$(uname -s) $(uname -m)）；請自己建置並把 AWF_BIN 設成執行檔路徑" >&2; exit 127 ;;
+esac
+[ -x "$bin" ] || { echo "awf：找不到執行檔 ${bin}；請更新 plugin，或自己建置並把 AWF_BIN 設成執行檔路徑" >&2; exit 127; }
+exec "$bin" "$@"

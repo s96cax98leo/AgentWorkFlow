@@ -10,4 +10,5 @@ publish = false
 awf-core = { path = "../awf-core" }
 serde_json.workspace = true
 regex.workspace = true
+sha2.workspace = true
 fancy-regex.workspace = true

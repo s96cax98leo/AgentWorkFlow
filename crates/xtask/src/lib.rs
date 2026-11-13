@@ -6,9 +6,13 @@ pub mod check_kernel;
 pub mod check_patterns;
 pub mod check_recipes;
 pub mod check_supply;
+pub mod checksums;
+pub mod dist;
+pub mod launchers;
 pub mod pyimports;
 pub mod pyre;
 pub mod scrub;
+pub mod source_hash;
 pub mod util;
 
 use std::path::PathBuf;

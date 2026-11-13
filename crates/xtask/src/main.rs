@@ -13,6 +13,11 @@ const USAGE: &str = "用法：cargo xtask <指令>
   check-budget [--update] [--budget <檔>]
                   派工數與派工單字數對 golden-set/token-budget.json（超過 10% 失敗；--update 寫回基準）
   check-supply    供應鏈：只用標準庫、plugin 不連網、action 釘 SHA、版控沒有快取與私鑰
+  check-launchers 啟動器（plugin/bin/awf、awf.cmd）：用假的執行檔核對挑檔、參數、exit code、錯誤訊息
+  dist [--target <triple>] [--out <目錄>]
+                  建置發佈用的執行檔並複製成 plugin/bin 用的檔名（預設本機平台、輸出到 target/dist）
+  checksums [--dir <目錄>] [--write|--check] [--require-all]
+                  執行檔的 sha256 與原始碼雜湊（checksums.json；預設目錄 plugin/bin）
 
 check-recipes 以下這五個指令可以加 --root <目錄> 指定 repo 根目錄（預設是這個 repo；測試用）。
 其他指令在移植中，完成的會列在這裡。";
@@ -33,6 +38,11 @@ fn main() -> ExitCode {
         }
         Some("scrub") => finish(xtask::scrub::run_captured(&xtask::repo_root(), rest)),
         Some("check-docs") => finish(xtask::check_docs::run_captured(&xtask::repo_root())),
+        Some("check-launchers") => finish(xtask::launchers::run_captured(&xtask::repo_root())),
+        Some("dist") => finish(xtask::dist::run_captured(&xtask::repo_root(), rest)),
+        Some("checksums") => finish(xtask::checksums::run_captured(&xtask::repo_root(), rest)),
+        // 隱藏指令：check-launchers 在 Windows 上拿 xtask 自己當假的執行檔。
+        Some(xtask::launchers::ECHO_COMMAND) => ExitCode::from(xtask::launchers::echo_main(rest).clamp(0, 255) as u8),
         Some(name @ ("check-recipes" | "check-kernel" | "check-patterns" | "check-budget" | "check-supply")) => {
             let (root, rest) = match xtask::util::take_opt(rest, "--root") {
                 Ok((root, rest)) => (root.map(std::path::PathBuf::from).unwrap_or_else(xtask::repo_root), rest),
