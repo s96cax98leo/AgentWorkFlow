@@ -280,7 +280,25 @@ pub fn main(args: &[String]) -> i32 {
         say(&format!("用法：awf hook <{}> < hook-input.json", MODES.join("|")));
         return 1;
     }
+    start_deadline(mode);
     dispatch(mode)
+}
+
+/// 守門類 hook 的內部期限（毫秒）。plugin 的 hooks.json 給 10 秒、逾時算「跑不起來」而放行；
+/// 一條切得出上千段的長指令可以把檢查拖過 10 秒，所以在那之前自己擋下。Python 版沒有這一層（只會更嚴）。
+const GUARD_DEADLINE_MS: u64 = 8000;
+
+/// 交件類（envelope）與提示類不設期限：它們出問題時本來就放行。
+fn start_deadline(mode: &str) {
+    if !matches!(mode, "guard-shell" | "guard-paths") {
+        return;
+    }
+    let ms = std::env::var("AWF_HOOK_DEADLINE_MS").ok().and_then(|v| v.parse::<u64>().ok()).filter(|n| *n > 0).unwrap_or(GUARD_DEADLINE_MS);
+    let _ = std::thread::Builder::new().name("awf-hook-deadline".into()).spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        eprintln!("AWF 守門：這次檢查超過 {} 秒還沒做完，為了安全先擋下。請把指令拆短（一次少做幾件事）再執行。", ms.div_ceil(1000));
+        std::process::exit(2);
+    });
 }
 
 #[cfg(test)]

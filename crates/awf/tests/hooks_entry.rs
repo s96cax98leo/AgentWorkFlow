@@ -230,6 +230,24 @@ fn guard_shell_latency() {
 
 // ───────── 3. 沒 init 的專案 ─────────
 
+/// 檢查拖太久時守門類要自己擋下，不能等外層 timeout 放行。
+#[test]
+fn slow_check_blocks_before_the_outer_timeout() {
+    let tmp = Tmp::new("deadline");
+    let (ws, _) = init_ws(tmp.path(), default_config());
+    let long = format!("echo {}", "git status 之後 && ls -la 目錄 | grep 檔案 ; ".repeat(2500));
+    let mut c = base_cmd(&["guard-shell"], &ws);
+    c.env("AWF_HOOK_DEADLINE_MS", "300");
+    let t = Instant::now();
+    let r = run(c, sh(&ws, &long, AGENT).to_string().as_bytes());
+    expect("上千段的長指令：到期限就擋", &r, 2);
+    assert!(err_of(&r).contains("為了安全先擋下"), "{}", err_of(&r));
+    assert!(t.elapsed().as_secs() < 5, "期限沒有生效：{:?}", t.elapsed());
+    let mut c = base_cmd(&["guard-shell"], &ws);
+    c.env("AWF_HOOK_DEADLINE_MS", "300");
+    expect("一般指令不受期限影響", &run(c, sh(&ws, "ls -la", AGENT).to_string().as_bytes()), 0);
+}
+
 #[test]
 fn project_without_init() {
     let tmp = Tmp::new("noinit");
