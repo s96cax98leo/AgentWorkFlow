@@ -303,8 +303,11 @@ pub(crate) fn write(path: &str, text: &str) -> py::R<()> {
     std::fs::write(path, text.as_bytes()).map_err(|e| PyErr::os(&e, path))
 }
 
-/// `d.setdefault(k, {})`，回傳可以改的物件；原本的值不是物件時照 Python 對它做 `x[k] = v` 會丟的例外。
+/// `d.setdefault(k, {})`，回傳可以改的物件；`d` 不是物件是 AttributeError，原本的值不是物件時照 Python 對它做 `x[k] = v` 會丟的例外。
 pub(crate) fn setdefault_obj<'a>(d: &'a mut Value, k: &str) -> py::R<&'a mut Map<String, Value>> {
+    if !d.is_object() {
+        return Err(py::attr_err(d, "setdefault"));
+    }
     let m = py::obj_mut(d)?;
     py::obj_mut(m.entry(k.to_string()).or_insert_with(|| json!({})))
 }

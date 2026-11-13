@@ -1,6 +1,6 @@
 //! `--set`、每一段 workflow 的 args、資料包、交付文件同步、找 workflow 的回傳。
 
-use super::{awf_err, event_required, has, is_dir, load_json, read_config, required_of, s_or, setdefault_obj, write, Env, A};
+use super::{awf_err, event_required, is_dir, load_json, read_config, required_of, s_or, write, Env, A};
 use crate::kb::pyish;
 use crate::kb::PyErr;
 use crate::save_run::{self as sr, py::{self, pj, R}};
@@ -36,6 +36,9 @@ fn coerce(v: &str) -> Option<Value> {
 
 /// `--set k=v`、`--set-json k=<JSON>` 記進 run.json 的 args（之後每一段都帶）。回傳錯誤。
 pub fn apply_sets(data: &mut Value, argv: &[String]) -> R<Vec<String>> {
+    if !data.is_object() {
+        return Err(py::attr_err(data, "setdefault"));
+    }
     let d = py::obj_mut(data)?;
     let store = d.entry("args".to_string()).or_insert_with(|| json!({}));
     let mut errs = Vec::new();
@@ -301,7 +304,7 @@ pub fn deliverables_sync(env: &Env, run: &str, data: &Value, updated: Option<&Va
         let (code, notes) = deliverables::sync(&env.project, run, repo.as_deref(), &[], only.as_ref());
         let head = if code == 0 { "交付文件已同步" } else { "交付文件沒有同步（要人處理）" };
         let mut lines: Vec<String> = vec![format!("{head}：")];
-        lines.extend(notes.iter().take(19).map(|n| format!("  {n}")));
+        lines.extend(notes.iter().take(20).map(|n| format!("  {n}")));
         let (errs, _) = deliverables::check_all(&env.project, repo.as_deref());
         if let Some(errs) = errs.filter(|e| !e.is_empty()) {
             lines.push(format!("交付文件檢查有 {} 個問題（結案或交付前要處理）：", errs.len()));
@@ -372,7 +375,7 @@ pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, Str
     }
     hits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     if since != 0.0 && hits.len() > 1 {
-        let stems: Vec<String> = hits.iter().skip(hits.len().saturating_sub(4)).map(|h| py::pname(&h.2).trim_end_matches(".json").to_string()).collect();
+        let stems: Vec<String> = hits.iter().skip(hits.len().saturating_sub(4)).map(|h| { let n = py::pname(&h.2); n.strip_suffix(".json").unwrap_or(&n).to_string() }).collect();
         return awf_err(format!(
             "這次 next 之後，用同一支腳本跑的 workflow 紀錄有 {} 筆（{}），分不出哪一筆才是這一段的結果。確認之後把正確的回傳存成 JSON 檔，用 --output <檔> 指定（這樣存的段不能政策核准，要由人核准）",
             hits.len(),
@@ -388,16 +391,11 @@ pub fn current_session(env: &Env) -> R<String> {
     let mut best: Option<(f64, String)> = None;
     for name in names_in(&root).into_iter().filter(|n| n.ends_with(".jsonl") && n != ".jsonl" || n == ".jsonl") {
         let Some(mt) = mtime(std::path::Path::new(&pj(&root, &name))) else { return Ok(String::new()) };
-        let stem = if name == ".jsonl" { name.clone() } else { name.trim_end_matches(".jsonl").to_string() };
+        let stem = if name == ".jsonl" { name.clone() } else { name.strip_suffix(".jsonl").unwrap_or(&name).to_string() };
         let cand = (mt, stem);
         if best.as_ref().is_none_or(|b| (cand.0, &cand.1) > (b.0, &b.1)) {
             best = Some(cand);
         }
     }
     Ok(best.map(|b| b.1).unwrap_or_default())
-}
-
-#[allow(dead_code)]
-fn _unused(argv: &[String]) -> bool {
-    has(argv, "") && setdefault_obj(&mut json!({}), "").is_ok()
 }
