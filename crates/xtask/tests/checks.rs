@@ -2,8 +2,9 @@
 //!
 //! 每支檢查兩種：對這個 repo 實跑要通過；在暫存副本裡弄壞一個輸入（golden 的預期、片段裡的上限檢查、基準數字、
 //! 版控裡的檔案）要報失敗、exit 非零，而且訊息指得出是哪裡。
-//! 另有兩個和 Python 版直接對照的測試（import 清單、自訂腳本的組裝結果）：Python 版還在的期間才跑，
-//! 找不到 python3 或對應的 Python 檔就略過。
+//! 自訂腳本的組裝結果和固定的預期檔比（`tests/fixtures/custom-script-frame.*.js`）。
+//! 另有一個和 Python 版直接對照的測試（供應鏈檢查的 import 清單）：Python 檔還在的期間才跑，
+//! 找不到 python3 或對應的 Python 檔就略過；Python 移除後這個測試與它掃的東西一起沒有了。
 #![cfg(unix)]
 
 use serde_json::{json, Value};
@@ -295,7 +296,23 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(st.status.success(), "git {args:?}：{}", String::from_utf8_lossy(&st.stderr));
 }
 
-const PASSING: &str = "[通過] 只用標準庫\n[通過] plugin 不連網\n[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n\n供應鏈檢查通過\n";
+/// Python 檔不在時沒有前兩條（`RUST_PASSING` 是其餘的）。
+const PASSING: &str = "[通過] 只用標準庫\n[通過] plugin 不連網\n[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n[通過] Cargo.lock 在版控裡\n\
+[通過] Rust 相依都來自 crates.io\n[通過] Rust 相依和允許清單一致\n[通過] Node 腳本只用內建模組\n\n供應鏈檢查通過\n";
+const RUST_PASSING: &str = "[通過] action 釘 SHA\n[通過] 版控沒有快取、.env、私鑰\n[通過] Cargo.lock 在版控裡\n\
+[通過] Rust 相依都來自 crates.io\n[通過] Rust 相依和允許清單一致\n[通過] Node 腳本只用內建模組\n\n供應鏈檢查通過\n";
+const CRATES_IO: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+/// 迷你 workspace：一個成員 demo、一個來自 crates.io 的相依 serde，允許清單只有 serde。
+fn write_cargo(d: &Path) {
+    write(d, "Cargo.toml", "[workspace]\nresolver = \"2\"\nmembers = [\"crates/demo\"]\n");
+    write(d, "crates/demo/Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n");
+    write(d, "Cargo.lock", &format!("version = 4\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\n \"serde\",\n]\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"{CRATES_IO}\"\nchecksum = \"00\"\n"));
+    write(d, "crates/xtask/allowed-crates.txt", "# 說明\n\nserde\n");
+    write(d, "scaffold/.claude/teams/tools/check_workflows.mjs", "import { readFileSync } from 'node:fs'\nimport {\n  join,\n} from 'path'\nconst s = await import(somewhere)\n// 字串裡的 from 'left-pad' 不算\n");
+    write(d, "scaffold/.claude/teams/tools/scenarios/a.mjs", "import { X } from './_helpers.mjs'\nexport default []\n");
+    write(d, "crates/xtask/src/js/t.cjs", "const fs = require('fs')\n");
+}
 
 #[test]
 fn supply_passes_on_repo() {
@@ -317,6 +334,7 @@ fn supply_catches_each_kind() {
     write(d, "scaffold/.github/workflows/gate.yml.tmpl", &format!("steps:\n  - name: x\n    uses: \"actions/setup-node@{sha}\"\n"));
     write(d, ".env.example", "A=1\n");
     write(d, "README.md", "乾淨\n");
+    write_cargo(d);
     git(d, &["init", "-q"]);
     git(d, &["add", "-A"]);
     let (rc, out, err) = check_supply::run_captured(d);
@@ -339,6 +357,16 @@ fn supply_catches_each_kind() {
     // 私鑰標頭在執行時組出來，不以完整形狀寫在檔案裡
     let dashes = "-".repeat(5);
     write(d, "notes.txt", &format!("前面\n{dashes}{} RSA {} {}{dashes}\n後面\n", "BEGIN", "PRIVATE", "KEY"));
+    // Rust 相依：git 來源、workspace 以外的 path 相依、清單沒有的 crate、清單多出來的名字
+    let lock = std::fs::read_to_string(d.join("Cargo.lock")).expect("Cargo.lock");
+    write(d, "Cargo.lock", &format!(
+        "{lock}\n[[package]]\nname = \"evil\"\nversion = \"0.1.0\"\nsource = \"git+https://example.com/evil#abc\"\n\n[[package]]\nname = \"local-dep\"\nversion = \"0.1.0\"\n\n\
+         [[package]]\nname = \"extra\"\nversion = \"2.0.0\"\nsource = \"{CRATES_IO}\"\n"
+    ));
+    write(d, "crates/xtask/allowed-crates.txt", "serde\ngone\n");
+    // Node：外部套件、網路模組
+    write(d, "scaffold/.claude/teams/tools/scenarios/a.mjs", "import axios from 'axios'\nexport { y } from \"../up.mjs\"\n");
+    write(d, "crates/xtask/src/js/t.cjs", "const fs = require('fs')\nconst h = require('node:https')\n");
     git(d, &["add", "-A", "-f"]);
     let (rc, out, err) = check_supply::run_captured(d);
     assert_eq!(rc, 1, "{out}{err}");
@@ -363,12 +391,56 @@ fn supply_catches_each_kind() {
         "  - pkg/__pycache__/a.txt：版控裡不該有 Python 快取檔\n",
         "  - pkg/b.pyc：版控裡不該有 Python 快取檔\n",
         "  - notes.txt：內容含私鑰\n",
+        "[通過] Cargo.lock 在版控裡\n",
+        "[失敗] Rust 相依都來自 crates.io\n",
+        "  - evil：來源不是 crates.io（git+https://example.com/evil#abc）\n",
+        "  - local-dep：沒有來源（workspace 以外的 path 相依）\n",
+        "[失敗] Rust 相依和允許清單一致\n",
+        "  - evil：Cargo.lock 有、允許清單沒有（確認要用它之後加進 crates/xtask/allowed-crates.txt）\n",
+        "  - extra：Cargo.lock 有、允許清單沒有（確認要用它之後加進 crates/xtask/allowed-crates.txt）\n",
+        "  - gone：允許清單有、Cargo.lock 沒有（已經不用就從 crates/xtask/allowed-crates.txt 拿掉）\n",
+        "[失敗] Node 腳本只用內建模組\n",
+        "  - scaffold/.claude/teams/tools/scenarios/a.mjs:1：只能 import 內建模組（不含網路）或相對路徑（axios）\n",
+        "  - crates/xtask/src/js/t.cjs:2：只能 import 內建模組（不含網路）或相對路徑（node:https）\n",
     ] {
         assert!(out.contains(want), "少了「{want}」：\n{out}");
     }
-    assert_eq!(out.matches("  - ").count(), 16, "{out}");
-    assert!(out.ends_with("\n供應鏈檢查失敗：16 條\n"), "{out}");
+    assert_eq!(out.matches("  - ").count(), 23, "{out}");
+    assert!(out.ends_with("\n供應鏈檢查失敗：23 條\n"), "{out}");
     assert!(!out.contains(".env.example") && !out.contains("docker://") && !out.contains("helper"), "{out}");
+}
+
+/// Python 檔都不在時：沒有 Python 那兩條，其餘照常；Cargo.lock 沒進版控、不存在、workspace 成員沒跟上都要失敗。
+#[test]
+fn supply_without_python_checks_rust_side() {
+    let tmp = TempDir::new("awf-xtask-supply-rs-").expect("暫存目錄");
+    let d = tmp.path();
+    write_cargo(d);
+    write(d, "README.md", "乾淨\n");
+    git(d, &["init", "-q"]);
+    git(d, &["add", "-A"]);
+    let (rc, out, err) = check_supply::run_captured(d);
+    assert_eq!((rc, out.as_str()), (0, RUST_PASSING), "{err}");
+
+    git(d, &["rm", "-q", "--cached", "Cargo.lock"]);
+    let (rc, out, _) = check_supply::run_captured(d);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("[失敗] Cargo.lock 在版控裡\n  - Cargo.lock 不在版控裡（git ls-files 沒有它）\n"), "{out}");
+    assert!(out.ends_with("\n供應鏈檢查失敗：1 條\n"), "{out}");
+
+    git(d, &["add", "Cargo.lock"]);
+    write(d, "Cargo.toml", "[workspace]\nmembers = [\n  \"crates/demo\",\n  \"crates/other\",\n]\n");
+    write(d, "crates/other/Cargo.toml", "[package]\nname = \"other\"\n");
+    let (rc, out, _) = check_supply::run_captured(d);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("  - other：workspace 成員不在 Cargo.lock 裡（Cargo.lock 沒有跟上）\n"), "{out}");
+
+    std::fs::remove_file(d.join("Cargo.lock")).expect("rm");
+    let (rc, out, _) = check_supply::run_captured(d);
+    assert_eq!(rc, 1, "{out}");
+    for want in ["  - Cargo.lock 不存在\n", "[失敗] Rust 相依都來自 crates.io\n  - 讀不到 Cargo.lock\n", "[失敗] Rust 相依和允許清單一致\n  - 讀不到 Cargo.lock\n"] {
+        assert!(out.contains(want), "少了「{want}」：\n{out}");
+    }
 }
 
 #[test]
@@ -427,50 +499,72 @@ fn supply_imports_match_python_ast() {
     assert!(total > 300, "import 太少，可能沒掃到：{total}");
 }
 
-/// 自訂腳本的組裝結果和 `awf.py` 的 `render_custom` 逐字相同（check-patterns 自己接 preamble 的那一段沒有走樣）。
+/// 自訂腳本的組裝結果沒有走樣：骨架（狀態機接上去的那一段與外層包裝；片段、profile、schema 的內文換成記號，
+/// 見 `check_patterns::script_frame`）和固定的預期檔逐字相同。
+///
+/// 預期檔的來歷：Python 版還在的時候，這個測試直接拿 `awf.py` 的 `render_custom` 對照，全文逐字相同（只差標題列的
+/// 「awf.py」改成「awf」）；預期檔就是那一次的結果取骨架存下來的。之後行為確實該變時用
+/// `AWF_UPDATE_EXPECTED=1 cargo test -p xtask --test checks custom_script` 重寫，並在 commit 說明哪裡變了、為什麼。
 #[test]
-fn custom_script_assembly_matches_python() {
+fn custom_script_assembly_matches_recorded_frame() {
     let r = root();
-    let tools = util::teams_dir(&r).join("tools");
-    if !tools.join("awf.py").is_file() || !tools.join("awf_script.py").is_file() {
-        eprintln!("略過：Python 版已經不在");
-        return;
-    }
-    let code = r#"
-import sys, json, tempfile
-from pathlib import Path
-tools = Path(sys.argv[1])
-sys.path.insert(0, str(tools))
-import awf, awf_script
-default = json.loads((tools.parent / "methodologies" / "default.json").read_text(encoding="utf-8"))
-out = {}
-for cap in (None, 2):
-    with tempfile.TemporaryDirectory(prefix="awf-cs.") as tmp:
-        proj = Path(tmp)
-        teams = proj / ".claude" / "teams"
-        teams.mkdir(parents=True)
-        (teams / "workflow.config").write_text('AGENT_NS=agent-workflow:\nOUTPUT_LANGUAGE="繁體中文"\n', encoding="utf-8")
-        prof = dict(default)
-        if cap:
-            prof["limits"] = {**(prof.get("limits") or {}), "max_agents": cap}
-        (teams / "methodology.json").write_text(json.dumps(prof, ensure_ascii=False), encoding="utf-8")
-        src = proj / "waves.js"
-        src.write_text(awf_script.GOOD.replace("'acme:a11y'", "NS + 'tpm-reviewer'"), encoding="utf-8")
-        text, _ = awf.render_custom(src, "build", proj, {"run_dir": "_runs/r1", "epic": "demo", "recipe": "feature", "modifiers": []})
-        out[str(cap)] = text
-print(json.dumps(out))
-"#;
-    let Some(py) = python_json(code, &[&tools]) else {
-        eprintln!("略過：找不到 python3");
-        return;
-    };
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures");
+    let update = std::env::var_os("AWF_UPDATE_EXPECTED").is_some_and(|v| !v.is_empty());
     for (key, cap) in [("None", None), ("2", Some(2))] {
-        let mine = check_patterns::sample_script(&r, cap).expect("組得起來");
-        // 腳本裡接上那一段的標題列，Rust 版寫的是 awf（沒有 awf.py 這個檔了）；只換這一句，其餘仍要逐字相同
-        let theirs = py[key].as_str().expect("文字");
-        assert!(theirs.matches("// ── 以下由 awf.py 接上（").count() == 1, "Python 版的標題列應該剛好一處");
-        let theirs = theirs.replacen("// ── 以下由 awf.py 接上（", "// ── 以下由 awf 接上（", 1);
-        assert!(mine.len() > 20_000, "腳本太短：{}", mine.len());
-        assert!(mine == theirs, "上限 {key}：組裝結果和 Python 版不同（長度 {} 對 {}）", mine.len(), theirs.len());
+        let full = check_patterns::sample_script(&r, cap).expect("組得起來");
+        assert!(full.len() > 20_000, "腳本太短：{}", full.len());
+        let mine = check_patterns::script_frame(&r, cap).expect("取得到骨架");
+        assert!(mine.matches("// ── 以下由 awf 接上（").count() == 1, "標題列應該剛好一處");
+        let file = dir.join(format!("custom-script-frame.{key}.js"));
+        if update {
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(&file, &mine).expect("寫預期檔");
+            continue;
+        }
+        let want = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("讀不到預期檔 {}：{e}", file.display()));
+        assert!(mine == want, "上限 {key}：組裝結果的骨架和預期檔 {} 不同\n--- 現在 ---\n{mine}\n--- 預期 ---\n{want}", file.display());
     }
+}
+
+// ------------------------------------------------------------------ golden
+
+#[test]
+fn golden_passes_on_repo() {
+    let (code, out, _) = xtask::golden::run_captured(&root(), &[]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("失敗 0"), "{out}");
+}
+
+#[test]
+fn golden_fails_when_an_invalid_case_is_filed_as_valid() {
+    let tmp = teams_copy("golden-swap");
+    let set = util::teams_dir(tmp.path()).join("golden-set");
+    let bad = std::fs::read_dir(set.join("invalid")).expect("invalid").flatten().map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .expect("至少一個反例");
+    std::fs::rename(&bad, set.join("valid").join("zz-moved.json")).expect("搬檔");
+    let (code, out, _) = xtask::golden::run_captured(tmp.path(), &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("FAIL valid/zz-moved.json"), "{out}");
+}
+
+#[test]
+fn golden_fails_when_a_semantic_case_loses_its_mark() {
+    let tmp = teams_copy("golden-semantic");
+    let dir = util::teams_dir(tmp.path()).join("golden-set").join("invalid");
+    let mark = "\"semantic\": true";
+    let file = std::fs::read_dir(&dir).expect("invalid").flatten().map(|e| e.path())
+        .find(|p| std::fs::read_to_string(p).is_ok_and(|t| t.contains(mark)))
+        .expect("至少一個語意反例");
+    edit(&file, mark, "\"semantic\": false");
+    let (code, out, _) = xtask::golden::run_captured(tmp.path(), &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("schema 應該擋但通過"), "{out}");
+}
+
+#[test]
+fn golden_fails_on_empty_set() {
+    let tmp = TempDir::new("awf-xtask-golden-empty-").expect("暫存目錄");
+    let (code, out, _) = xtask::golden::run_captured(tmp.path(), &[]);
+    assert_eq!(code, 1, "{out}");
 }

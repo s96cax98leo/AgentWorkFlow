@@ -15,7 +15,8 @@
 //! 和 Python 版不同的地方（只會更嚴）：報告或基準的格式不對（缺欄位、不是數字），Python 版直接當掉，這裡印一行說明、
 //! exit 1；報告裡有不成對的代理字元（serde_json 不收）同樣判失敗。
 
-use crate::util::{self, Captured, TempDir};
+use crate::tempproj;
+use crate::util::{self, Captured};
 use awf_core::merge_gate::pyutil;
 use awf_core::{pyfmt, recipe};
 use serde_json::{json, Map, Value};
@@ -25,49 +26,17 @@ use std::process::Command;
 const TOLERANCE: f64 = 0.10;
 const STAGES: [&str; 5] = ["plan", "design", "build", "test", "deliver"];
 
-fn python() -> PathBuf {
-    if let Some(p) = std::env::var_os("AWF_PYTHON").filter(|p| !p.is_empty()) {
-        return PathBuf::from(p);
-    }
-    util::which("python3").or_else(|| util::which("python")).unwrap_or_else(|| PathBuf::from("python3"))
-}
-
-/// 乾跑全部 workflow，回 check_workflows.mjs 的情境報告。
-///
-/// TODO(v1.0 第 7 批)：init 與狀態機的 `render` 還沒有 Rust 版，這裡照舊呼叫 Python 的 `init.py` 與專案裡的
-/// `awf.py render`；移植後改成直接呼叫 awf-core。仍然呼叫 Python 的地方集中在這個函式。
+/// 乾跑全部 workflow，回 check_workflows.mjs 的情境報告。init 與產生腳本在行程內呼叫 awf-core（見 [`crate::tempproj`]）。
 fn scenario_report(root: &Path) -> Result<Value, String> {
-    let tmp = TempDir::new("awf-budget.")?;
-    let proj = tmp.path().join("proj");
-    std::fs::create_dir_all(&proj).map_err(|e| format!("建不了暫存專案：{e}"))?;
-    let _ = util::run(Command::new("git").args(["init", "-q"]).current_dir(&proj), None);
-    let py = python();
-    let both = |r: &util::Ran| format!("{}{}", r.stdout, r.stderr);
+    let r = tempproj::rendered(root, "awf-budget.")?;
+    let rep = r.tmp.path().join("report.json");
     let p = util::run(
-        Command::new(&py).arg(root.join("init.py")).arg("--target").arg(&proj).arg("--defaults").current_dir(tmp.path()).env("PYTHONUTF8", "1"),
-        None,
-    )?;
-    if p.code != 0 {
-        return Err(format!("init.py 失敗：{}", pyutil::tail(&both(&p), 1500)));
-    }
-    let rep = tmp.path().join("report.json");
-    let wfd = tmp.path().join("wf");
-    let tools = proj.join(".claude").join("teams").join("tools");
-    let p = util::run(
-        Command::new(&py).arg(tools.join("awf.py")).args(["render", "--all", "--out"]).arg(&wfd).arg("--plugin-dir").arg(root.join("plugin"))
-            .current_dir(&proj).env("PYTHONUTF8", "1"),
-        None,
-    )?;
-    if p.code != 0 {
-        return Err(format!("awf.py render 失敗：{}", pyutil::tail(&both(&p), 1500)));
-    }
-    let p = util::run(
-        Command::new("node").arg(tools.join("check_workflows.mjs")).arg("--agents-dir").arg(root.join("plugin").join("agents")).arg("--wf-dir").arg(&wfd)
-            .current_dir(&proj).env("PYTHONUTF8", "1").env("AWF_SCENARIO_REPORT", &rep),
+        Command::new("node").arg(tempproj::check_workflows(root, &r.proj)).arg("--agents-dir").arg(root.join("plugin").join("agents")).arg("--wf-dir").arg(&r.wf_dir)
+            .current_dir(&r.proj).env("AWF_SCENARIO_REPORT", &rep),
         None,
     )?;
     if !rep.is_file() {
-        return Err(format!("check_workflows 沒有產出報告：{}", pyutil::tail(&both(&p), 1500)));
+        return Err(format!("check_workflows 沒有產出報告：{}", pyutil::tail(&format!("{}{}", p.stdout, p.stderr), 1500)));
     }
     util::read_json(&rep)
 }

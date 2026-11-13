@@ -4,14 +4,15 @@
 //!
 //! 找 agents 目錄的順序：`--agents-dir <dir>` → `--plugin-dir <dir>/agents` → 環境變數 AWF_PLUGIN_DIR、CLAUDE_PLUGIN_ROOT 的 agents/
 //! → 專案 `.claude/agents`。skill 會在這些地方找：plugin 的 skills/、agents 目錄旁的 skills/、專案 `.claude/skills`、`~/.claude/skills`、內建。
-//! 檢查 plugin 的 agents 時做雙向比對（少了或多出沒登記的 tpm-*／dev-* 都算錯），並唯讀解析 hooks 的 `awf_config.py`，
-//! 確認 CORE 與 ALIASES 都在 RESERVED_ROLES 裡、RECORD_ONLY_ROLES 和這裡的 RECORD_ONLY 一致。
+//! 檢查 plugin 的 agents 時做雙向比對（少了或多出沒登記的 tpm-*／dev-* 都算錯），並核對守門那一邊的常數
+//! （[`crate::config::RESERVED_ROLES`]、[`crate::config::RECORD_ONLY_ROLES`]）：CORE 與 ALIASES 都要在 RESERVED_ROLES 裡、
+//! RECORD_ONLY_ROLES 要和這裡的 RECORD_ONLY 一致。
 //!
 //! 和 Python 版的已知差異：
-//! - Python 版用 `ast` 解析 `awf_config.py`；這裡只認「寫在行首的 `名字 = {…}`、`名字 = [...]` 或外面包一層呼叫
-//!   （`frozenset({…})`）、元素是沒有跳脫的單行字串」這種寫法，其他寫法（tuple、字串相接、巢狀在 if 裡、連續指定）一律當成讀不到
-//!   （報錯，比 Python 嚴）。反過來，檔案別處有語法錯誤時 Python 版讀不到、這裡照樣讀得到（比 Python 鬆；這支只是格式檢查，不是閘門）。
+//! - Python 版用 `ast` 解析 plugin 目錄裡的 `hooks/awf_config.py`；守門規則移植後常數在 `config.rs`，這裡直接比 Rust 的常數，
+//!   不再讀那支檔（它不存在、是空的、寫法不同都不影響結果）。對跑基準裡只測「讀那支檔」的案例在重放時排除，見測試。
 //! - Python 版在 `--plugin-dir` 後面沒接值、agent 檔不是 UTF-8 時直接當掉（traceback、exit 1）；這裡印一行說明後 exit 1。
+//! - `dev-merge-steward` 的執行紀錄小節要寫明由誰代寫：`save_run`（舊寫法）與 `save-run`（`awf save-run`）都認。
 
 use crate::kb::pyish::{self, is_space, ppath};
 use crate::merge_gate::pyutil::universal_newlines;
@@ -54,10 +55,6 @@ fn parent(p: &str) -> String {
 
 fn is_dir(p: &str) -> bool {
     std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
-}
-
-fn is_file(p: &str) -> bool {
-    std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
 }
 
 fn exists(p: &str) -> bool {
@@ -192,179 +189,6 @@ fn section<'a>(text: &'a str, head: &str) -> &'a str {
     block(text, &format!("## {head}"), stop_h2).unwrap_or("")
 }
 
-// ------------------------------------------------------------------ 唯讀解析 awf_config.py 的集合常數
-
-fn skip_py_string(s: &[char], i: usize) -> Option<usize> {
-    let q = *s.get(i)?;
-    if s.get(i + 1) == Some(&q) && s.get(i + 2) == Some(&q) {
-        let mut j = i + 3;
-        while j < s.len() {
-            match s.get(j) {
-                Some('\\') => j += 2,
-                Some(c) if *c == q && s.get(j + 1) == Some(&q) && s.get(j + 2) == Some(&q) => return Some(j + 3),
-                _ => j += 1,
-            }
-        }
-        return None;
-    }
-    let mut j = i + 1;
-    while j < s.len() {
-        match s.get(j) {
-            Some('\\') => j += 2,
-            Some('\n') => return None,
-            Some(c) if *c == q => return Some(j + 1),
-            _ => j += 1,
-        }
-    }
-    None
-}
-
-/// 空白、換行與註解。
-fn skip_blank(s: &[char], mut i: usize) -> usize {
-    loop {
-        match s.get(i) {
-            Some(' ' | '\t' | '\n' | '\r' | '\x0c') => i += 1,
-            Some('#') => {
-                while s.get(i).is_some_and(|c| *c != '\n') {
-                    i += 1;
-                }
-            }
-            _ => return i,
-        }
-    }
-}
-
-fn py_ident(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// `名字 = ` 之後的值：`{…}`、`[...]` 或外面包一層呼叫；元素只收沒有跳脫的單行字串。
-fn parse_py_set(s: &[char], mut i: usize) -> Option<BTreeSet<String>> {
-    while matches!(s.get(i), Some(' ' | '\t')) {
-        i += 1;
-    }
-    let mut call = false;
-    if s.get(i).is_some_and(|c| c.is_ascii_alphabetic() || *c == '_') {
-        while s.get(i).is_some_and(|c| py_ident(*c) || *c == '.') {
-            i += 1;
-        }
-        while matches!(s.get(i), Some(' ' | '\t')) {
-            i += 1;
-        }
-        if s.get(i) != Some(&'(') {
-            return None;
-        }
-        call = true;
-        i = skip_blank(s, i + 1);
-    }
-    let close = match s.get(i) {
-        Some('{') => '}',
-        Some('[') => ']',
-        _ => return None,
-    };
-    i += 1;
-    let mut out = BTreeSet::new();
-    loop {
-        i = skip_blank(s, i);
-        let c = *s.get(i)?;
-        if c == close {
-            i += 1;
-            break;
-        }
-        if c != '\'' && c != '"' {
-            return None;
-        }
-        let mut j = i + 1;
-        let mut item = String::new();
-        loop {
-            match s.get(j) {
-                Some(x) if *x == c => break,
-                Some('\\' | '\n') | None => return None,
-                Some(x) => item.push(*x),
-            }
-            j += 1;
-        }
-        if item.is_empty() && s.get(j + 1) == Some(&c) {
-            return None; // 三引號
-        }
-        out.insert(item);
-        i = skip_blank(s, j + 1);
-        match s.get(i) {
-            Some(',') => i += 1,
-            Some(x) if *x == close => {
-                i += 1;
-                break;
-            }
-            _ => return None,
-        }
-    }
-    if call {
-        i = skip_blank(s, i);
-        if s.get(i) == Some(&',') {
-            i = skip_blank(s, i + 1);
-        }
-        if s.get(i) != Some(&')') {
-            return None;
-        }
-        i += 1;
-    }
-    while matches!(s.get(i), Some(' ' | '\t' | '\r')) {
-        i += 1;
-    }
-    match s.get(i) {
-        None | Some('\n' | '#') => Some(out),
-        _ => None,
-    }
-}
-
-/// 唯讀解析 Python 原始碼裡模組層級的集合常數（不執行）。找不到或解析不了回 None。
-pub fn py_const_set(src: &str, name: &str) -> Option<BTreeSet<String>> {
-    let s: Vec<char> = src.chars().collect();
-    let target: Vec<char> = name.chars().collect();
-    let (mut i, mut depth, mut line_start) = (0usize, 0i64, true);
-    while i < s.len() {
-        if line_start && depth == 0 && s.get(i..i + target.len()).is_some_and(|x| x == target.as_slice()) {
-            let mut j = i + target.len();
-            if !s.get(j).is_some_and(|c| py_ident(*c)) {
-                while matches!(s.get(j), Some(' ' | '\t')) {
-                    j += 1;
-                }
-                if s.get(j) == Some(&'=') && s.get(j + 1) != Some(&'=') {
-                    return parse_py_set(&s, j + 1);
-                }
-            }
-        }
-        line_start = false;
-        match s.get(i) {
-            Some('#') => {
-                while s.get(i).is_some_and(|c| *c != '\n') {
-                    i += 1;
-                }
-                continue;
-            }
-            Some('\'' | '"') => {
-                i = skip_py_string(&s, i)?;
-                continue;
-            }
-            Some('(' | '[' | '{') => depth += 1,
-            Some(')' | ']' | '}') => depth -= 1,
-            Some('\\') if s.get(i + 1) == Some(&'\n') => {
-                i += 2;
-                continue;
-            }
-            Some('\n') => line_start = true,
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
-fn reserved_roles(path: &str, name: &str) -> Option<BTreeSet<String>> {
-    let text = String::from_utf8(std::fs::read(path).ok()?).ok()?;
-    py_const_set(&universal_newlines(&text), name)
-}
-
 // ------------------------------------------------------------------ 主流程
 
 fn opt<'a>(argv: &'a [String], name: &str) -> Result<Option<&'a str>, String> {
@@ -485,7 +309,7 @@ fn check(argv: &[String], claude: &str, env_plugin: Option<&str>, home: &str) ->
                     if tools.contains("Write") || tools.contains("Edit") {
                         errs.push(format!("{name}: {NO_WRITE_ROLE} 不能有 Write／Edit（執行紀錄由 save_run 代寫）"));
                     }
-                    if !rec.contains("save_run") {
+                    if !rec.contains("save_run") && !rec.contains("save-run") {
                         errs.push(format!("{name}: {RECORD_HEAD}小節要寫明「沒有 Write：內容放信封，由 save_run 代寫」"));
                     }
                 }
@@ -515,7 +339,7 @@ fn check(argv: &[String], claude: &str, env_plugin: Option<&str>, home: &str) ->
         errs.push(format!("{agents_dir} 裡沒有 tpm-*／dev-* agent"));
     }
 
-    if let Some(plugin) = plugin.as_deref().filter(|p| join(p, "agents") == agents_dir) {
+    if plugin.as_deref().is_some_and(|p| join(p, "agents") == agents_dir) {
         let have: BTreeSet<String> = names.iter().filter(|n| team_stem(n)).map(|n| stem(n).to_string()).collect();
         let known: BTreeSet<String> = CORE.iter().chain(ALIASES.iter().map(|(old, _)| old)).map(|s| s.to_string()).collect();
         let sep = |xs: Vec<&String>| xs.into_iter().map(String::as_str).collect::<Vec<_>>().join("、");
@@ -527,23 +351,17 @@ fn check(argv: &[String], claude: &str, env_plugin: Option<&str>, home: &str) ->
         if !extra.is_empty() {
             errs.push(format!("plugin 多了沒登記在 CORE 的角色：{}（新增角色要改 check_agents.py 的 CORE 與 awf_config.py 的 RESERVED_ROLES）", sep(extra)));
         }
-        let cfg_py = join(plugin, "hooks/awf_config.py");
-        let readable = is_file(&cfg_py);
-        match if readable { reserved_roles(&cfg_py, "RESERVED_ROLES") } else { None } {
-            None => errs.push(format!("讀不到 {cfg_py} 的 RESERVED_ROLES，無法核對 CORE ⊆ RESERVED_ROLES")),
-            Some(reserved) => {
-                let lacking: Vec<&String> = known.difference(&reserved).collect();
-                if !lacking.is_empty() {
-                    errs.push(format!("awf_config.py 的 RESERVED_ROLES 少了：{}（守門不會把它們當模版角色）", sep(lacking)));
-                }
-            }
+        let reserved: BTreeSet<String> = crate::config::RESERVED_ROLES.iter().map(|s| s.to_string()).collect();
+        let lacking: Vec<&String> = known.difference(&reserved).collect();
+        if !lacking.is_empty() {
+            errs.push(format!("awf_config.py 的 RESERVED_ROLES 少了：{}（守門不會把它們當模版角色）", sep(lacking)));
         }
-        let rec_only = if readable { reserved_roles(&cfg_py, "RECORD_ONLY_ROLES") } else { None };
+        let rec_only: BTreeSet<String> = crate::config::RECORD_ONLY_ROLES.iter().map(|s| s.to_string()).collect();
         let ours: BTreeSet<String> = RECORD_ONLY.iter().map(|s| s.to_string()).collect();
-        if rec_only.as_ref() != Some(&ours) {
+        if rec_only != ours {
             errs.push(format!(
                 "awf_config.py 的 RECORD_ONLY_ROLES（{}）和 check_agents.py 的 RECORD_ONLY（{}）不一致：hook 限制與 agent 的 Write 要一起改",
-                rec_only.as_ref().map(list_repr).unwrap_or_else(|| "讀不到".into()),
+                list_repr(&rec_only),
                 list_repr(&ours)
             ));
         }
@@ -604,17 +422,15 @@ mod tests {
         assert!(has_skill_word("Read, Skill") && !has_skill_word("Skills") && !has_skill_word("MySkill"));
     }
 
+    /// 守門那一邊的常數和這裡一致（執行時也會核對；這裡讓不一致在 `cargo test` 就失敗）。
     #[test]
-    fn py_constants() {
-        let set = |xs: &[&str]| Some(xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>());
-        let src = "\"\"\"說明\nX = {'no'}\n\"\"\"\n# X = {'no'}\nY = (\nX, 1)\nX = frozenset({\n    \"a\", 'b',  # 註解\n    \"c\",\n})\nX = {'later'}\n";
-        assert_eq!(py_const_set(src, "X"), set(&["a", "b", "c"]));
-        assert_eq!(py_const_set("X = ['a', 'a']", "X"), set(&["a"]));
-        assert_eq!(py_const_set("X = {}", "X"), set(&[]));
-        // 比 Python 嚴：這些寫法一律當成讀不到
-        for bad in ["X = ('a', 'b')", "X = {'a'} | {'b'}", "X: set = {'a'}", "X == {'a'}", "if True:\n    X = {'a'}", "X = {'a' 'b'}", "X = {'a\\n'}", "X = OTHER", "X = {1}", "XY = {'a'}"] {
-            assert_eq!(py_const_set(bad, "X"), None, "{bad}");
+    fn guard_constants_agree() {
+        let reserved: BTreeSet<&str> = crate::config::RESERVED_ROLES.iter().copied().collect();
+        for r in CORE.iter().chain(ALIASES.iter().map(|(old, _)| old)) {
+            assert!(reserved.contains(r), "RESERVED_ROLES 少了 {r}");
         }
+        assert_eq!(crate::config::RECORD_ONLY_ROLES.iter().copied().collect::<BTreeSet<_>>(), RECORD_ONLY.iter().copied().collect::<BTreeSet<_>>());
+        assert_eq!(crate::config::ROLE_ALIASES, ALIASES.as_slice());
     }
 
     fn s(v: &Value) -> &str {
@@ -638,6 +454,16 @@ mod tests {
         let steps = doc["agents"]["steps"].as_array().expect("steps");
         let mut bad: Vec<String> = Vec::new();
         let mut runs = 0;
+        // Python 版讀 plugin 目錄裡的 hooks/awf_config.py；這裡比的是 config.rs 的常數，所以「那支檔不存在、是空的、
+        // 少了角色、寫法讀不懂」這三種訊息不會再出現。預期輸出裡這三種行先拿掉再比：
+        //   - 整個輸出只有這幾行的步驟（案例就是在測那支檔）→ 排除，記在 skipped
+        //   - 還有別的錯誤行的步驟 → 其餘各行照比，記在 trimmed
+        let py_only = |l: &str| {
+            (l.starts_with("讀不到 ") && l.ends_with(" 的 RESERVED_ROLES，無法核對 CORE ⊆ RESERVED_ROLES"))
+                || l.starts_with("awf_config.py 的 RESERVED_ROLES 少了：")
+                || l.starts_with("awf_config.py 的 RECORD_ONLY_ROLES（")
+        };
+        let (mut skipped, mut trimmed): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
         for (i, st) in steps.iter().enumerate() {
             match s(&st["op"]) {
                 "write" => {
@@ -661,6 +487,17 @@ mod tests {
                 }
                 "mkdir" => std::fs::create_dir_all(real(s(&st["path"]))).expect("mkdir"),
                 "agents" => {
+                    let want_out = s(&st["out"]);
+                    let kept: Vec<&str> = want_out.lines().filter(|l| !py_only(l)).collect();
+                    let want_out = if kept.len() == want_out.lines().count() {
+                        want_out.to_string()
+                    } else if kept.is_empty() {
+                        skipped.push(i);
+                        continue;
+                    } else {
+                        trimmed.push(i);
+                        format!("{}\n", kept.join("\n"))
+                    };
                     runs += 1;
                     let argv: Vec<String> = st["argv"].as_array().map(|a| a.iter().map(|x| real(s(x))).collect()).unwrap_or_default();
                     let env_plugin = st["env_plugin"].as_str().map(&real);
@@ -669,8 +506,8 @@ mod tests {
                     if st["rc"].as_i64() != Some(i64::from(rc)) {
                         bad.push(format!("{label} rc\n  預期：{}\n  實際：{rc}", st["rc"]));
                     }
-                    if s(&st["out"]) != norm(&out) {
-                        bad.push(format!("{label} stdout\n  預期：{:?}\n  實際：{:?}", s(&st["out"]), norm(&out)));
+                    if want_out != norm(&out) {
+                        bad.push(format!("{label} stdout\n  預期：{:?}\n  實際：{:?}", want_out, norm(&out)));
                     }
                     if st.get("err_any").is_none() {
                         if s(&st["err"]) != norm(&err) {
@@ -684,7 +521,11 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&base);
-        assert!(runs > 0, "基準裡沒有 agents 的案例");
+        assert!(runs > 100, "重放的案例太少：{runs}");
+        // 排除的 14 步：沒有 awf_config.py、空的、不是 UTF-8、RESERVED_ROLES／RECORD_ONLY_ROLES 少了或多了、各種讀不懂的寫法
+        assert_eq!(skipped, vec![286, 289, 292, 295, 298, 301, 319, 322, 325, 328, 331, 334, 337, 343], "排除的步驟變了");
+        // 346（plugin 的 agents 是空的）：另外兩行錯誤照比
+        assert_eq!(trimmed, vec![346], "只比其餘各行的步驟變了");
         assert!(bad.is_empty(), "{} 處不同（共 {runs} 次執行）：\n{}", bad.len(), bad.join("\n"));
     }
 }

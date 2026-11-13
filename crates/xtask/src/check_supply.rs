@@ -1,12 +1,20 @@
-//! 供應鏈檢查。由 `tests/check_supply.py` 移植。
+//! 供應鏈檢查。由 `tests/check_supply.py` 移植，再加上 Rust 與 Node 那兩半。
 //!
-//! plugin 會在使用者的所有專案執行，init.py 與 scaffold 工具會被複製進使用者的專案，所以這幾類檔案要守住下面幾條：
-//!   1. 只 import 標準庫或 repo 內模組：plugin/hooks/*.py、scaffold/.claude/teams/tools/*.py、init.py。
-//!   2. plugin/ 下的 .py 沒有網路呼叫：不 import urllib、http.client、socket、requests 等。
-//!   3. action 都釘 40 字元 commit SHA：.github/workflows/*.yml 與 scaffold/.github/workflows/*.tmpl。
-//!   4. 版控（git ls-files）裡沒有 __pycache__、.env、私鑰形狀的檔案或內容。
+//! plugin 會在使用者的所有專案執行，所以要守住下面幾條：
+//!   1. action 都釘 40 字元 commit SHA：.github/workflows/*.yml 與 scaffold/.github/workflows/*.tmpl。
+//!   2. 版控（git ls-files）裡沒有 __pycache__、.env、私鑰形狀的檔案或內容。
+//!   3. `Cargo.lock` 存在而且在版控裡（建置出來的執行檔用哪些版本是固定的）。
+//!   4. Rust 相依都來自 crates.io：`Cargo.lock` 裡沒有 git 來源，也沒有 workspace 以外的 path 相依。
+//!   5. Rust 相依的名單和允許清單（`crates/xtask/allowed-crates.txt`，一行一個 crate 名）一致：多了、少了都算失敗，
+//!      所以新增（或間接帶進）一個 crate 一定要有人明確把它加進清單。
+//!   6. Node 腳本（乾跑用的 `check_workflows.mjs`、`scenarios/*.mjs`，xtask 的 `js/*.cjs`）只 import 內建模組或相對路徑，
+//!      而且不用網路模組。
 //!
-//! 失敗時逐條列出，exit 1。和 Python 版不同的地方（都只會更嚴，不會更鬆）：
+//! Python 檔還在的期間另外兩條照舊（有 `.py` 才掃、才列出；Python 移除那天不用改這支）：
+//!   - 只 import 標準庫或 repo 內模組：plugin/hooks/*.py、scaffold/.claude/teams/tools/*.py、init.py。
+//!   - plugin/ 下的 .py 沒有網路呼叫：不 import urllib、http.client、socket、requests 等。
+//!
+//! 失敗時逐條列出，exit 1。Python 那兩條和 Python 版不同的地方（都只會更嚴，不會更鬆）：
 //!   - import 用 [`crate::pyimports`] 找，不是 `ast`：差異見那個模組的說明（同一個檔有多條時順序可能不同）。
 //!   - 標準庫清單固定用 Python 版的後備清單（3.9 的頂層模組）再扣掉之後版本移除的模組；Python 版在 3.10 以上用
 //!     執行當下那一版的 `sys.stdlib_module_names`，所以結果會跟著 Python 版本變，這裡取各版都算標準庫的那些。
@@ -254,6 +262,208 @@ fn check_tracked_files(root: &Path, pats: &Patterns, errors: &mut Vec<String>) {
     }
 }
 
+// ------------------------------------------------------------------ Rust 相依
+/// crates.io 的來源字串（`Cargo.lock` 的 `source`）。
+const CRATES_IO: &str = "registry+https://github.com/rust-lang/crates.io-index";
+/// 允許清單的位置（相對 repo 根目錄）。
+pub const ALLOWED_CRATES: &str = "crates/xtask/allowed-crates.txt";
+
+/// `Cargo.lock` 的一個 `[[package]]`。
+struct LockPkg {
+    name: String,
+    source: Option<String>,
+}
+
+/// `key = "value"` 這種行的值（Cargo.lock 與 Cargo.toml 裡用得到的寫法）。
+fn toml_str(line: &str, key: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix(key)?.trim_start().strip_prefix('=')?.trim();
+    let rest = rest.strip_prefix('"')?;
+    rest.find('"').map(|end| rest.get(..end).unwrap_or_default().to_string())
+}
+
+fn lock_packages(text: &str) -> Result<Vec<LockPkg>, String> {
+    let mut out: Vec<LockPkg> = Vec::new();
+    let mut in_pkg = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_pkg = t == "[[package]]";
+            if in_pkg {
+                out.push(LockPkg { name: String::new(), source: None });
+            }
+            continue;
+        }
+        let Some(cur) = out.last_mut().filter(|_| in_pkg) else { continue };
+        if let Some(v) = toml_str(line, "name") {
+            cur.name = v;
+        } else if let Some(v) = toml_str(line, "source") {
+            cur.source = Some(v);
+        }
+    }
+    if out.is_empty() || out.iter().any(|p| p.name.is_empty()) {
+        return Err("Cargo.lock 讀不懂（沒有 [[package]]，或有 package 沒有 name）".into());
+    }
+    Ok(out)
+}
+
+/// workspace 成員的 crate 名（根 `Cargo.toml` 的 `members`，各成員 `Cargo.toml` 的 `[package]` `name`）。
+fn workspace_members(root: &Path) -> Result<BTreeSet<String>, String> {
+    let text = util::read_text(&root.join("Cargo.toml")).map_err(|_| "讀不到 Cargo.toml".to_string())?;
+    let re = regex::Regex::new(r"(?s)\bmembers\s*=\s*\[(.*?)\]").map_err(|e| e.to_string())?;
+    let list = re.captures(&text).and_then(|c| c.get(1)).map(|m| m.as_str()).ok_or("Cargo.toml 沒有 workspace 的 members")?;
+    let mut out = BTreeSet::new();
+    for dir in list.split(',').map(|x| x.trim().trim_matches('"')).filter(|x| !x.is_empty()) {
+        if dir.contains('*') {
+            return Err(format!("workspace 的 members 用了萬用字元（{dir}），無法核對成員名單"));
+        }
+        let manifest = util::read_text(&full(root, dir).join("Cargo.toml")).map_err(|_| format!("讀不到 {dir}/Cargo.toml"))?;
+        let mut in_package = false;
+        let mut name = None;
+        for line in manifest.lines() {
+            let t = line.trim();
+            if t.starts_with('[') {
+                in_package = t == "[package]";
+            } else if in_package && name.is_none() {
+                name = toml_str(line, "name");
+            }
+        }
+        out.insert(name.ok_or_else(|| format!("{dir}/Cargo.toml 沒有 [package] 的 name"))?);
+    }
+    Ok(out)
+}
+
+fn check_lock_tracked(root: &Path, errors: &mut Vec<String>) {
+    if !root.join("Cargo.lock").is_file() {
+        errors.push("Cargo.lock 不存在".into());
+        return;
+    }
+    match util::run(Command::new("git").args(["ls-files", "--error-unmatch", "Cargo.lock"]).current_dir(root), None) {
+        Ok(r) if r.code == 0 => {}
+        Ok(_) => errors.push("Cargo.lock 不在版控裡（git ls-files 沒有它）".into()),
+        Err(e) => errors.push(format!("git ls-files 失敗：{e}")),
+    }
+}
+
+/// 讀 `Cargo.lock`；讀不到或讀不懂記一條錯誤、回 None（後面兩條都靠它，各自報一次）。
+fn read_lock(root: &Path) -> Result<Vec<LockPkg>, String> {
+    lock_packages(&util::read_text(&root.join("Cargo.lock")).map_err(|_| "讀不到 Cargo.lock".to_string())?)
+}
+
+fn check_registry_only(root: &Path, errors: &mut Vec<String>) {
+    let (pkgs, members) = match (read_lock(root), workspace_members(root)) {
+        (Ok(p), Ok(m)) => (p, m),
+        (p, m) => {
+            errors.extend(p.err());
+            errors.extend(m.err());
+            return;
+        }
+    };
+    for p in &pkgs {
+        match &p.source {
+            None if members.contains(&p.name) => {}
+            None => errors.push(format!("{}：沒有來源（workspace 以外的 path 相依）", p.name)),
+            Some(src) if src == CRATES_IO => {}
+            Some(src) => errors.push(format!("{}：來源不是 crates.io（{src}）", p.name)),
+        }
+    }
+    for m in &members {
+        if !pkgs.iter().any(|p| p.source.is_none() && p.name == *m) {
+            errors.push(format!("{m}：workspace 成員不在 Cargo.lock 裡（Cargo.lock 沒有跟上）"));
+        }
+    }
+}
+
+fn check_allowed_crates(root: &Path, errors: &mut Vec<String>) {
+    let pkgs = match read_lock(root) {
+        Ok(p) => p,
+        Err(e) => {
+            errors.push(e);
+            return;
+        }
+    };
+    let text = match util::read_text(&full(root, ALLOWED_CRATES)) {
+        Ok(t) => t,
+        Err(_) => {
+            errors.push(format!("讀不到允許清單 {ALLOWED_CRATES}"));
+            return;
+        }
+    };
+    let allowed: BTreeSet<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+    let have: BTreeSet<&str> = pkgs.iter().filter(|p| p.source.is_some()).map(|p| p.name.as_str()).collect();
+    for name in have.difference(&allowed) {
+        errors.push(format!("{name}：Cargo.lock 有、允許清單沒有（確認要用它之後加進 {ALLOWED_CRATES}）"));
+    }
+    for name in allowed.difference(&have) {
+        errors.push(format!("{name}：允許清單有、Cargo.lock 沒有（已經不用就從 {ALLOWED_CRATES} 拿掉）"));
+    }
+}
+
+// ------------------------------------------------------------------ Node 腳本
+/// 可以用的內建模組（不含 `node:` 前綴）。網路相關的（http、https、net、tls、dgram、dns、http2）刻意不列。
+const NODE_BUILTINS: &[&str] = &["assert", "child_process", "crypto", "events", "fs", "module", "os", "path", "process", "url", "util", "vm"];
+
+/// repo 裡自己的 Node 腳本（相對路徑）：乾跑工具與情境、xtask 的測試本體。
+fn node_files(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for (dir, exts) in [
+        ("scaffold/.claude/teams/tools", &[".mjs", ".cjs"][..]),
+        ("scaffold/.claude/teams/tools/scenarios", &[".mjs", ".cjs"][..]),
+        ("crates/xtask/src/js", &[".mjs", ".cjs", ".js"][..]),
+    ] {
+        for ext in exts {
+            files.extend(files_in(root, dir, ext));
+        }
+    }
+    files
+}
+
+fn check_node_builtin_only(root: &Path, errors: &mut Vec<String>) {
+    let pats = [
+        r#"(?m)^[ \t]*(?:import|export)\b[^\n'"]*?\bfrom[ \t]*['"]([^'"\n]+)['"]"#,
+        r#"(?m)^[ \t]*\}[ \t]*from[ \t]*['"]([^'"\n]+)['"]"#,
+        r#"(?m)^[ \t]*import[ \t]*['"]([^'"\n]+)['"]"#,
+        r#"\b(?:require|import)[ \t]*\([ \t]*['"]([^'"\n]+)['"]"#,
+    ];
+    let mut res = Vec::new();
+    for p in pats {
+        match regex::Regex::new(p) {
+            Ok(r) => res.push(r),
+            Err(e) => {
+                errors.push(format!("內建的樣式編不過（{e}）"));
+                return;
+            }
+        }
+    }
+    for rel in node_files(root) {
+        let text = match util::read_text(&full(root, &rel)) {
+            Ok(t) => t,
+            Err(_) => {
+                errors.push(format!("{rel}：讀不到或不是 UTF-8"));
+                continue;
+            }
+        };
+        let mut found: Vec<(usize, &str)> = Vec::new();
+        for re in &res {
+            for c in re.captures_iter(&text) {
+                if let Some(m) = c.get(1) {
+                    let line = text.get(..m.start()).unwrap_or_default().matches('\n').count() + 1;
+                    if !found.contains(&(line, m.as_str())) {
+                        found.push((line, m.as_str()));
+                    }
+                }
+            }
+        }
+        found.sort();
+        for (line, spec) in found {
+            let bare = spec.strip_prefix("node:").unwrap_or(spec);
+            let local = spec.starts_with("./") || spec.starts_with("../");
+            if !local && !NODE_BUILTINS.contains(&bare) {
+                errors.push(format!("{rel}:{line}：只能 import 內建模組（不含網路）或相對路徑（{spec}）"));
+            }
+        }
+    }
+}
+
 /// 指令本體：`root` 是 repo 根目錄。
 pub fn run_captured(root: &Path) -> Captured {
     let pats = match patterns() {
@@ -274,14 +484,27 @@ pub fn run_captured(root: &Path) -> Captured {
         }
     };
     let mut errors = Vec::new();
-    check_stdlib_only(root, &mut errors);
-    report("只用標準庫", std::mem::take(&mut errors));
-    check_no_network(root, &mut errors);
-    report("plugin 不連網", std::mem::take(&mut errors));
+    // Python 檔還在的期間照舊掃；沒有 .py 就沒有這兩條
+    if !stdlib_only_files(root).is_empty() {
+        check_stdlib_only(root, &mut errors);
+        report("只用標準庫", std::mem::take(&mut errors));
+    }
+    if !py_files_under(root, "plugin").is_empty() {
+        check_no_network(root, &mut errors);
+        report("plugin 不連網", std::mem::take(&mut errors));
+    }
     check_pinned_actions(root, &pats, &mut errors);
     report("action 釘 SHA", std::mem::take(&mut errors));
     check_tracked_files(root, &pats, &mut errors);
     report("版控沒有快取、.env、私鑰", std::mem::take(&mut errors));
+    check_lock_tracked(root, &mut errors);
+    report("Cargo.lock 在版控裡", std::mem::take(&mut errors));
+    check_registry_only(root, &mut errors);
+    report("Rust 相依都來自 crates.io", std::mem::take(&mut errors));
+    check_allowed_crates(root, &mut errors);
+    report("Rust 相依和允許清單一致", std::mem::take(&mut errors));
+    check_node_builtin_only(root, &mut errors);
+    report("Node 腳本只用內建模組", std::mem::take(&mut errors));
     if failed > 0 {
         out.push_str(&format!("\n供應鏈檢查失敗：{failed} 條\n"));
         return (1, out, String::new());

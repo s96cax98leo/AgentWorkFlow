@@ -3,10 +3,10 @@
 //!
 //! 檢查的文件：README.md、CLAUDE.md、scaffold/.claude/teams/README.md、.claude-plugin/marketplace.json 與
 //! plugin/.claude-plugin/plugin.json 的 description。實際狀態從檔案算：
-//!   - agent：plugin/agents/*.md；核心角色與舊名取自 scaffold/.claude/teams/tools/check_agents.py 的 CORE、ALIASES，
+//!   - agent：plugin/agents/*.md；核心角色與舊名取自 `awf_core::check_agents` 的 `CORE`、`ALIASES`，
 //!     其餘是網站分析 agent。
 //!   - command：plugin/commands/*.md；skill：plugin/skills/*/。
-//!   - workflow：plugin/workflow-templates/*.js；SDLC 段落順序取自 save_run.py 的 SDLC。
+//!   - workflow：plugin/workflow-templates/*.js；SDLC 段落順序取自 `awf_core::save_run::SDLC`。
 //!
 //! 規則：
 //!   1. 數量：文件寫的各種「N 個」「N 支」都要和實際一致。
@@ -30,155 +30,24 @@ const PLUGIN_NAME: &str = "agent-workflow";
 /// Claude Code 內建的斜線指令（文件裡會提到的）
 const BUILTIN_SLASH: &[&str] = &["plugin", "reload-plugins", "hooks", "agents", "help", "config", "skills"];
 
-// ------------------------------------------------------------------ Python 常值
-/// Python 檔頂層常值賦值的值（只認字串與容器；唯讀解析，不執行任何程式）。
-#[derive(Debug, Clone, PartialEq)]
-enum Lit {
-    Str(String),
-    Seq(Vec<Lit>),
-    Dict(Vec<(Lit, Lit)>),
+// ------------------------------------------------------------------ 程式裡的常數
+/// 文件要對上的常數：核心角色、舊名、SDLC 段落順序。
+#[derive(Debug, Clone)]
+pub struct Consts {
+    pub core: Vec<String>,
+    /// 舊名 → 併入的角色
+    pub aliases: Vec<(String, String)>,
+    pub sdlc: Vec<String>,
 }
 
-struct LitParser {
-    s: Vec<char>,
-    i: usize,
-}
-
-impl LitParser {
-    fn peek(&self) -> Option<char> {
-        self.s.get(self.i).copied()
-    }
-
-    /// 跳過空白、換行與註解（括號裡可以換行）。
-    fn skip(&mut self) {
-        while let Some(c) = self.peek() {
-            if c == '#' {
-                while self.peek().is_some_and(|c| c != '\n') {
-                    self.i += 1;
-                }
-            } else if c.is_whitespace() || c == '\\' && self.s.get(self.i + 1) == Some(&'\n') {
-                self.i += 1;
-            } else {
-                break;
-            }
+impl Consts {
+    /// 實際的值：直接取 awf-core 的常數（`check_agents::CORE`、`check_agents::ALIASES`、`save_run::SDLC`）。
+    pub fn builtin() -> Self {
+        Self {
+            core: awf_core::check_agents::CORE.iter().map(|s| s.to_string()).collect(),
+            aliases: awf_core::check_agents::ALIASES.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            sdlc: awf_core::save_run::SDLC.iter().map(|s| s.to_string()).collect(),
         }
-    }
-
-    fn string(&mut self) -> Option<String> {
-        let q = self.peek().filter(|c| *c == '"' || *c == '\'')?;
-        if self.s.get(self.i + 1) == Some(&q) && self.s.get(self.i + 2) == Some(&q) {
-            return None; // 三引號字串：用不到，不支援
-        }
-        self.i += 1;
-        let mut out = String::new();
-        loop {
-            let c = self.peek()?;
-            self.i += 1;
-            match c {
-                '\n' => return None,
-                '\\' => {
-                    let n = self.peek()?;
-                    self.i += 1;
-                    match n {
-                        '\\' | '\'' | '"' => out.push(n),
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        _ => return None,
-                    }
-                }
-                c if c == q => return Some(out),
-                c => out.push(c),
-            }
-        }
-    }
-
-    fn value(&mut self, depth: usize) -> Option<Lit> {
-        if depth > 50 {
-            return None;
-        }
-        self.skip();
-        match self.peek()? {
-            '"' | '\'' => {
-                let mut text = self.string()?;
-                loop {
-                    // 相鄰的字串常值會接起來（只看同一行，避免在頂層讀到下一個敘述）
-                    while self.peek().is_some_and(|c| c == ' ' || c == '\t') {
-                        self.i += 1;
-                    }
-                    if !matches!(self.peek(), Some('"' | '\'')) {
-                        break;
-                    }
-                    text.push_str(&self.string()?);
-                }
-                Some(Lit::Str(text))
-            }
-            open @ ('[' | '(' | '{') => {
-                let close = match open {
-                    '[' => ']',
-                    '(' => ')',
-                    _ => '}',
-                };
-                self.i += 1;
-                let mut items: Vec<Lit> = Vec::new();
-                let mut pairs: Vec<(Lit, Lit)> = Vec::new();
-                let mut is_dict = open == '{';
-                loop {
-                    self.skip();
-                    if self.peek()? == close {
-                        self.i += 1;
-                        break;
-                    }
-                    let item = self.value(depth + 1)?;
-                    self.skip();
-                    if open == '{' && self.peek() == Some(':') {
-                        if !items.is_empty() {
-                            return None;
-                        }
-                        self.i += 1;
-                        let v = self.value(depth + 1)?;
-                        pairs.push((item, v));
-                    } else {
-                        if !pairs.is_empty() {
-                            return None;
-                        }
-                        is_dict = false;
-                        items.push(item);
-                    }
-                    self.skip();
-                    match self.peek()? {
-                        ',' => self.i += 1,
-                        c if c == close => {}
-                        _ => return None,
-                    }
-                }
-                Some(if is_dict { Lit::Dict(pairs) } else { Lit::Seq(items) })
-            }
-            _ => None,
-        }
-    }
-}
-
-/// 讀 `rel` 這支 Python 檔頂層的 `name = <常值>`（第一個）。
-fn literal(root: &Path, rel: &str, name: &str) -> Result<Lit, String> {
-    let fail = || format!("讀不到 {rel} 的 {name}");
-    let text = read_text(root, rel)?;
-    let head = regex::Regex::new(&format!(r"(?m)^{}[ \t]*(?::[^=\n]*)?=[ \t]*", regex::escape(name))).map_err(|_| fail())?;
-    for m in head.find_iter(&text) {
-        let rest = text.get(m.end()..).unwrap_or_default();
-        if rest.starts_with('=') {
-            continue;
-        }
-        let mut p = LitParser { s: rest.chars().collect(), i: 0 };
-        return p.value(0).ok_or_else(fail);
-    }
-    Err(fail())
-}
-
-fn strings(lit: &Lit) -> Option<Vec<String>> {
-    match lit {
-        Lit::Seq(items) => items.iter().map(|x| if let Lit::Str(s) = x { Some(s.clone()) } else { None }).collect(),
-        Lit::Dict(pairs) if pairs.is_empty() => Some(Vec::new()),
-        _ => None,
     }
 }
 
@@ -215,20 +84,10 @@ fn stems(dir: &Path, ext: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn facts(root: &Path) -> Result<Facts, String> {
-    let check_agents = "scaffold/.claude/teams/tools/check_agents.py";
+fn facts(root: &Path, consts: &Consts) -> Result<Facts, String> {
     let agents = stems(&root.join("plugin").join("agents"), ".md");
-    let core: BTreeSet<String> = strings(&literal(root, check_agents, "CORE")?)
-        .ok_or_else(|| format!("讀不到 {check_agents} 的 CORE"))?.into_iter().collect();
-    let aliases: Vec<(String, String)> = match literal(root, check_agents, "ALIASES")? {
-        Lit::Dict(pairs) => pairs.into_iter().filter_map(|(k, v)| match (k, v) {
-            (Lit::Str(k), Lit::Str(v)) => Some((k, v)),
-            _ => None,
-        }).collect(),
-        _ => return Err(format!("讀不到 {check_agents} 的 ALIASES")),
-    };
-    let sdlc = strings(&literal(root, "scaffold/.claude/teams/tools/save_run.py", "SDLC")?)
-        .ok_or_else(|| "讀不到 scaffold/.claude/teams/tools/save_run.py 的 SDLC".to_string())?;
+    let core: BTreeSet<String> = consts.core.iter().cloned().collect();
+    let (aliases, sdlc) = (consts.aliases.clone(), consts.sdlc.clone());
     let site: BTreeSet<String> = agents.iter().filter(|a| !core.contains(*a) && !aliases.iter().any(|(k, _)| k == *a)).cloned().collect();
     let skills: BTreeSet<String> = std::fs::read_dir(root.join("plugin").join("skills")).into_iter().flatten().flatten()
         .filter(|e| e.path().join("SKILL.md").exists())
@@ -290,7 +149,8 @@ const COUNT_RULES: &[(&str, &str)] = &[
     (r"event-\*(?:\.js)?`?[^（(\n]{0,20}[（(](\d+)\s*支", "event workflow 數"),
     (r"(\d+)\s*支\s*workflow", "workflow 總數"),
     (r"(\d+)\s*支\s*(?:slash\s*)?command", "command 數"),
-    (r"check_agents\.py[^\n]*?[（(](\d+)\s*個", "check_agents 檢查的 agent 數"),
+    // 文件現在寫的是 `awf check-agents`；舊寫法 check_agents.py 照認
+    (r"check[_-]agents(?:\.py)?[^\n]*?[（(](\d+)\s*個", "check_agents 檢查的 agent 數"),
 ];
 
 fn rules() -> Result<Rules, String> {
@@ -403,8 +263,8 @@ fn check_sdlc(f: &Facts, r: &Rules, name: &str, text: &str, errs: &mut Vec<Strin
     Ok(())
 }
 
-fn check(root: &Path) -> Result<(Facts, Vec<String>), String> {
-    let f = facts(root)?;
+fn check(root: &Path, consts: &Consts) -> Result<(Facts, Vec<String>), String> {
+    let f = facts(root, consts)?;
     let d = docs(root)?;
     let r = rules()?;
     let mut errs: Vec<String> = Vec::new();
@@ -460,7 +320,12 @@ fn check(root: &Path) -> Result<(Facts, Vec<String>), String> {
 
 /// 指令本體：`root` 是 repo 根目錄。回（exit code、stdout、stderr）。
 pub fn run_captured(root: &Path) -> (i32, String, String) {
-    let (f, errs) = match check(root) {
+    run_with(root, &Consts::builtin())
+}
+
+/// 同 [`run_captured`]，常數由呼叫端給（對跑基準的迷你 repo 有自己的角色與段落）。
+pub fn run_with(root: &Path, consts: &Consts) -> (i32, String, String) {
+    let (f, errs) = match check(root, consts) {
         Ok(x) => x,
         Err(msg) => return (1, String::new(), format!("{msg}\n")),
     };

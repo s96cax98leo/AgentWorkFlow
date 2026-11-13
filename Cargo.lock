@@ -454,6 +454,7 @@ dependencies = [
  "fancy-regex",
  "regex",
  "serde_json",
+ "sha1",
  "sha2",
 ]
 

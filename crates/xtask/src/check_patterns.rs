@@ -5,17 +5,17 @@
 //! 裡也生效、角色白名單以外的 agent 會 throw。
 //!
 //! 自訂腳本端到端：組裝出來的腳本真的能跑（片段之間沒有撞名）、派工經過核心、上限在執行時生效，而且靜態檢查被繞過
-//! 之後包裝仍然擋得住。檢查與組裝用 [`awf_core::script`]（`check`、`assemble`）與 [`awf_core::build`]（片段、schema）。
+//! 之後包裝仍然擋得住。檢查與組裝直接呼叫狀態機的 [`awf_core::state::render_custom`]（和 `awf next --script` 同一支）。
 //!
 //! 沒有 node 時判失敗（不略過）。和 Python 版不同的地方（只會更嚴）：node 回的結果缺 `calls`／`out`、格式不對時，
 //! Python 版直接當掉，這裡列成一條失敗。
 
+use crate::tempproj;
 use crate::util::{self, Captured, TempDir};
-use awf_core::build::{self, dumps_compact};
+use awf_core::build;
 use awf_core::merge_gate::pyutil;
 use awf_core::{pyfmt, recipe, script};
 use serde_json::{json, Map, Value};
-use std::collections::BTreeSet;
 use std::path::Path;
 
 const JS: &str = include_str!("js/patterns.cjs");
@@ -24,59 +24,79 @@ const SNIPPETS: [&str; 4] = ["challenge", "recipe", "kernel", "patterns"];
 const NS: &str = "agent-workflow:";
 const LANG: &str = "繁體中文";
 
+fn copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("建不了 {}：{e}", dst.display()))?;
+    for e in std::fs::read_dir(src).map_err(|e| format!("讀不到 {}：{e}", src.display()))?.flatten() {
+        let (from, to) = (e.path(), dst.join(e.file_name()));
+        if from.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).map_err(|e| format!("複製不了 {}：{e}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// 檢查並組裝一支自訂腳本，回可以執行的腳本文字。
 ///
-/// TODO(v1.0 第 7 批)：這是 `awf.py` 的 `render_custom` 接 preamble 的那一段（狀態機還沒有 Rust 版）照抄過來的，
-/// 專案設定固定成測試用的值（AGENT_NS、輸出語言、沒有擴充 agent）。狀態機移植後改成直接呼叫 awf-core 的版本，
-/// 不要留兩份 preamble。
+/// 組裝用的是狀態機自己的 [`awf_core::state::render_custom`]（`awf next --script` 走的那一支），不另抄一份 preamble：
+/// 在暫存目錄擺一個最小的專案（測試用的 AGENT_NS、輸出語言、給定的 profile、沒有擴充 agent；schema 取自 `root`），
+/// 片段取自 `root` 的 scaffold。
 fn render_custom(root: &Path, text: &str, stage: &str, args: &Value, methodology: &Value) -> Result<String, String> {
-    let snippet_dir = util::snippet_dir(root);
-    let mut cache = build::SnippetCache::new();
-    let mut snippets: Vec<(&str, String)> = Vec::new();
-    for n in script::SNIPPETS {
-        let body = build::load_snippet(n, &snippet_dir, &mut cache).map_err(|e| format!("片段 {n} 載入失敗：{e:?}"))?;
-        snippets.push((n, body));
+    let tmp = TempDir::new("awf-cs-proj.")?;
+    let proj = tmp.path();
+    let teams = proj.join(".claude").join("teams");
+    copy_dir(&util::teams_dir(root).join("schemas"), &teams.join("schemas"))?;
+    let put = |p: &Path, t: &str| std::fs::write(p, t).map_err(|e| format!("寫不了 {}：{e}", p.display()));
+    put(&teams.join("workflow.config"), &format!("AGENT_NS={NS}\nOUTPUT_LANGUAGE=\"{LANG}\"\n"))?;
+    put(&teams.join("methodology.json"), &methodology.to_string())?;
+    let src = proj.join("waves.js");
+    put(&src, text)?;
+    let env = tempproj::state_env(root, proj);
+    match awf_core::state::render_custom(&env, &tempproj::posix(&src), stage, args) {
+        Ok((out, _)) => Ok(out),
+        Err(awf_core::state::Fail::Awf(m)) => Err(m),
+        Err(awf_core::state::Fail::Py(e)) => Err(format!("{}：{}", e.class, e.msg)),
     }
-    let roles: Vec<String> = script::ROLES.iter().map(|r| format!("{NS}{r}")).collect();
-    let allowed: BTreeSet<String> = roles.iter().cloned().collect();
-    let errs = script::check(text, &allowed, NS, &script::defined_names(snippets.iter().map(|(_, s)| s.as_str())));
-    if !errs.is_empty() {
-        let head: Vec<&str> = errs.iter().take(20).map(String::as_str).collect();
-        return Err(format!("自訂腳本沒通過檢查，不執行：\n  - {}", head.join("\n  - ")));
-    }
-    let cap = methodology.get("limits").and_then(|l| l.get("max_agents")).and_then(Value::as_i64).filter(|n| *n > 0).unwrap_or(40);
-    let js = |v: &Value| dumps_compact(v);
-    let s = js(&Value::String(stage.to_string()));
-    let mut pre: Vec<String> = vec![
-        format!("// ── 以下由 awf 接上（自訂腳本，{stage} 段）：執行核心、pattern 庫、這一段的參數。不要手改 ──"),
-        format!("const NS = {}", js(&Value::String(NS.to_string()))),
-        format!("const A = Object.assign({}, args || {{}})", js(args)),
-        format!("const METHODOLOGY = {}", js(methodology)),
-        "const MP = METHODOLOGY || {}".to_string(),
-    ];
-    pre.extend(snippets.iter().map(|(n, body)| format!("// ── 片段 {n} ──\n{body}")));
-    let roles_js = js(&Value::Array(roles.into_iter().map(Value::String).collect()));
-    pre.extend([
-        "const R = resolveRecipe(METHODOLOGY, A.recipe, [].concat(A.modifiers || []), A.size)".to_string(),
-        format!(
-            "if (R.errors.length) return {{ stage: {s}, halted: true, halt_reason: 'recipe 解析有錯：' + R.errors.join('；'), missing: [], \
-             recipe: {{ name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages }}, trace: [] }}"
-        ),
-        "const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages, summary: recipeSummary(R) }".to_string(),
-        format!(
-            "awfInit({{ run_dir: A.run_dir, stage: {s}, lang: {}, rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, {s}) }})",
-            js(&Value::String(LANG.to_string()))
-        ),
-        format!("awfKernelInit({{ profile: METHODOLOGY, stage: {s}, modifiers: [].concat(A.modifiers || []), max_agents: {cap}, roles: {roles_js} }})"),
-    ]);
-    let out = script::assemble(text, &pre.join("\n"), stage).map_err(|e| format!("組裝失敗：{}", e.0))?;
-    build::embed_schemas(&out, &util::teams_dir(root)).map_err(|e| format!("schema 內嵌失敗：{e:?}"))
 }
 
 /// 測試用的自訂腳本與組裝結果（給對照用）：上限 `cap`（None＝profile 原樣）。
 pub fn sample_script(root: &Path, cap: Option<i64>) -> Result<String, String> {
     let default = util::read_json(&util::teams_dir(root).join("methodologies").join("default.json"))?;
     render_custom(root, &good_source(), "build", &sample_args(), &with_cap(&default, cap))
+}
+
+/// 組裝結果的「骨架」：把會跟著別的檔案變的三種內容換成記號，剩下的就是狀態機接上去的那一段與外層包裝
+/// （`render_custom` 與 `script::assemble` 自己寫出來的字）。回歸基準 `tests/fixtures/custom-script-frame.*.js` 比的是它。
+///   - 四個片段的內文（`snippets/*.js`，另有 `awf build --check` 與 check-kernel／check-patterns 顧）→ `«片段 <名>»`
+///   - profile 的 JSON（`methodologies/default.json`）→ `«METHODOLOGY»`
+///   - 內嵌的 schema（`schemas/`，另有 golden 顧）→ `«schema»`
+///
+/// 任何一種沒換到（骨架就不可信）回 `Err`。
+pub fn script_frame(root: &Path, cap: Option<i64>) -> Result<String, String> {
+    let default = util::read_json(&util::teams_dir(root).join("methodologies").join("default.json"))?;
+    let prof = with_cap(&default, cap);
+    let mut text = render_custom(root, &good_source(), "build", &sample_args(), &prof)?;
+    let dir = util::snippet_dir(root);
+    let mut cache = build::SnippetCache::new();
+    for n in script::SNIPPETS {
+        let body = build::load_snippet(n, &dir, &mut cache).map_err(|e| format!("片段 {n} 載入失敗：{e:?}"))?;
+        let (from, to) = (format!("// ── 片段 {n} ──\n{body}"), format!("// ── 片段 {n} ──\n«片段 {n}»"));
+        if text.matches(&from).count() != 1 {
+            return Err(format!("組裝結果裡找不到片段 {n} 的內文（或不只一處）"));
+        }
+        text = text.replacen(&from, &to, 1);
+    }
+    let meth = format!("const METHODOLOGY = {}\n", build::dumps_compact(&prof));
+    if text.matches(&meth).count() != 1 {
+        return Err("組裝結果裡找不到 profile 的 JSON（或不只一處）".into());
+    }
+    text = text.replacen(&meth, "const METHODOLOGY = «METHODOLOGY»\n", 1);
+    let re = regex::Regex::new(r"(?s)(/\*@schema:[\w-]+\*/) .*? (/\*@end\*/)").map_err(|e| e.to_string())?;
+    if !re.is_match(&text) {
+        return Err("組裝結果裡沒有內嵌的 schema".into());
+    }
+    Ok(re.replace_all(&text, "$1 «schema» $2").into_owned())
 }
 
 fn good_source() -> String {

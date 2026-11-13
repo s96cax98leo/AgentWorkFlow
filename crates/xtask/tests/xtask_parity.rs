@@ -22,8 +22,22 @@ fn sorted_lines(x: &str) -> String {
     v.join("\n")
 }
 
-/// 跑一份劇本；回（執行次數、只比 exit code 與 stdout 的次數、排序後才比的次數）。
-fn play(section: &str, tag: &str) -> (usize, usize, usize) {
+/// 文件核對的常數現在取自 awf-core，不再讀 repo 裡的 Python 檔。劇本的迷你 repo 有自己的角色與段落（寫在它的
+/// `check_agents.py`、`save_run.py`），這裡照劇本寫進去的內容給對應的常數；「Python 檔裡讀不到常數」的三個案例
+/// 只對 Python 版有意義（回 None，由呼叫端列出並排除）。
+fn mini_consts(check_agents: &str, save_run: &str) -> Option<check_docs::Consts> {
+    let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    // 只對 Python 版有意義：沒有 CORE、沒有 ALIASES、沒有 SDLC
+    if check_agents == "ALIASES = {}\nCORES = {'dev-alpha'}\n" || check_agents == "CORE = {'dev-alpha', 'dev-beta-gamma', 'tpm-one'}\n" || save_run == "sdlc = []\n" {
+        return None;
+    }
+    let aliases = if check_agents.ends_with("\nALIASES = {}\n") { Vec::new() } else { vec![("dev-old".to_string(), "tpm-one".to_string())] };
+    let sdlc = if save_run.contains("'merge'") { v(&["plan", "design", "build", "sync", "test", "merge"]) } else { v(&["plan", "design", "build", "sync", "test"]) };
+    Some(check_docs::Consts { core: v(&["dev-alpha", "dev-beta-gamma", "tpm-one"]), aliases, sdlc })
+}
+
+/// 跑一份劇本；回（執行次數、只比 exit code 與 stdout 的次數、排序後才比的次數、排除的步驟）。
+fn play(section: &str, tag: &str) -> (usize, usize, usize, Vec<usize>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let text = std::fs::read_to_string(root.join("tests/parity/build.expected.json")).expect("讀不到基準");
     let doc: Value = serde_json::from_str(&text).expect("JSON");
@@ -36,6 +50,8 @@ fn play(section: &str, tag: &str) -> (usize, usize, usize) {
     let norm = |x: &str| x.replace(&tmp, "@TMP@");
     let mut bad: Vec<String> = Vec::new();
     let (mut runs, mut loose, mut unordered) = (0, 0, 0);
+    let mut skipped: Vec<usize> = Vec::new();
+    let (mut py_check_agents, mut py_save_run) = (String::new(), String::new());
     let steps = doc[section].as_array().expect("劇本");
     for (i, st) in steps.iter().enumerate() {
         let op = s(&st["op"]);
@@ -44,6 +60,11 @@ fn play(section: &str, tag: &str) -> (usize, usize, usize) {
                 let p = real(s(&st["path"]));
                 std::fs::create_dir_all(Path::new(&p).parent().expect("上層目錄")).expect("mkdir");
                 let data = if st.get("hex").is_some() { unhex(s(&st["hex"])) } else { s(&st["text"]).as_bytes().to_vec() };
+                if p.ends_with("/tools/check_agents.py") {
+                    py_check_agents = String::from_utf8_lossy(&data).into_owned();
+                } else if p.ends_with("/tools/save_run.py") {
+                    py_save_run = String::from_utf8_lossy(&data).into_owned();
+                }
                 std::fs::write(&p, data).expect("write");
                 continue;
             }
@@ -67,7 +88,14 @@ fn play(section: &str, tag: &str) -> (usize, usize, usize) {
                 let argv: Vec<String> = st["argv"].as_array().map(|a| a.iter().map(|x| real(s(x))).collect()).unwrap_or_default();
                 scrub::run_captured(Path::new(&real(s(&st["root"]))), &argv)
             }
-            "docs" => check_docs::run_captured(Path::new(&real(s(&st["root"])))),
+            "docs" => match mini_consts(&py_check_agents, &py_save_run) {
+                Some(consts) => check_docs::run_with(Path::new(&real(s(&st["root"]))), &consts),
+                None => {
+                    assert!(s(&st["err"]).starts_with("讀不到 scaffold/.claude/teams/tools/"), "步驟 {i}：排除的案例應該是「讀不到 Python 常數」");
+                    skipped.push(i);
+                    continue;
+                }
+            },
             "docs_real" => check_docs::run_captured(&xtask::repo_root()),
             other => panic!("不認得的步驟 {other}"),
         };
@@ -97,19 +125,22 @@ fn play(section: &str, tag: &str) -> (usize, usize, usize) {
     let _ = std::fs::remove_dir_all(&base);
     println!("{section}：{runs} 次執行，{} 次逐字相同，{loose} 次只比 exit code 與 stdout，{unordered} 次排序後才比", runs - loose - unordered);
     assert!(bad.is_empty(), "{} 處不同（共 {} 步）：\n{}", bad.len(), steps.len(), bad.join("\n"));
-    (runs, loose, unordered)
+    (runs, loose, unordered, skipped)
 }
 
 #[test]
 fn scrub_matches_python() {
-    let (runs, _, _) = play("scrub", "scrub");
+    let (runs, _, _, skipped) = play("scrub", "scrub");
     assert!(runs > 40, "劇本太短：{runs}");
+    assert!(skipped.is_empty());
 }
 
 #[test]
 fn check_docs_matches_python() {
-    let (runs, _, _) = play("docs", "docs");
+    let (runs, _, _, skipped) = play("docs", "docs");
     assert!(runs > 50, "劇本太短：{runs}");
+    // 排除的三步：check_agents.py 沒有 CORE、沒有 ALIASES，save_run.py 沒有 SDLC（常數改從 awf-core 取之後不會發生）
+    assert_eq!(skipped, vec![166, 169, 181], "排除的步驟變了");
 }
 
 /// 公開清單（tests/scrub_terms.txt）的每一條規則都編得過，而且抓得到對應形狀的字串。
