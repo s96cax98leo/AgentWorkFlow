@@ -1,5 +1,8 @@
 //! 交付文件：型錄、設定、逐節更新、盤點與檢查。由 `scaffold/.claude/teams/tools/deliverables.py` 移植。
 
+#[allow(dead_code)]
+mod html5;
+
 /// `awf deliverables …`
 pub fn main(args: &[String]) -> i32 {
     let _ = args;
