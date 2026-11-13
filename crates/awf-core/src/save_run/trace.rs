@@ -154,7 +154,7 @@ pub fn ghostwrite(ctx: &Ctx, path: &str, entry: &Value, env: &Value) -> R<()> {
     let mut lines: Vec<String> = vec![
         format!("# 執行紀錄：{}（{GHOSTWRITTEN}）", text_of(entry, "label")?),
         String::new(),
-        format!("> {} {why}，這份紀錄由 save_run.py 依它交回的信封代寫，內容只來自信封。", text_of(entry, "agent_type")?),
+        format!("> {} {why}，這份紀錄由 awf save-run 依它交回的信封代寫，內容只來自信封。", text_of(entry, "agent_type")?),
         String::new(),
         "## 任務摘要".to_string(),
         String::new(),
@@ -386,7 +386,7 @@ pub fn process_trace(ctx: &Ctx, run: &str, stage: &str, result: &Value, write: b
                     status = format!("完成（{GHOSTWRITTEN}紀錄：agent 沒寫紀錄檔）");
                 } else {
                     status = "缺紀錄檔".to_string();
-                    missing.push(format!("{label} 的紀錄檔 {record} 不存在{}", if env.is_none() { "" } else { "（還沒代寫：先跑 save_run.py stage）" }));
+                    missing.push(format!("{label} 的紀錄檔 {record} 不存在{}", if env.is_none() { "" } else { "（還沒代寫：先跑 awf save-run stage）" }));
                 }
             }
         } else if okv == &Value::Bool(false) && retried_ok(trace, i)? {
@@ -422,7 +422,7 @@ pub fn process_trace(ctx: &Ctx, run: &str, stage: &str, result: &Value, write: b
             format!("# 執行紀錄索引：{stage}"),
             String::new(),
             format!(
-                "由 save_run.py 依 workflow 回傳的 trace 產生，每列是一次派工（共 {} 次）。agent 有交件但沒寫紀錄檔時，由 save_run 依信封代寫（狀態欄會標明）；連信封都對不回才算缺件，不能政策核准。成果檔取自該 agent 信封的 artifacts。",
+                "由 awf save-run 依 workflow 回傳的 trace 產生，每列是一次派工（共 {} 次）。agent 有交件但沒寫紀錄檔時，由 save_run 依信封代寫（狀態欄會標明）；連信封都對不回才算缺件，不能政策核准。成果檔取自該 agent 信封的 artifacts。",
                 rows.len()
             ),
             String::new(),

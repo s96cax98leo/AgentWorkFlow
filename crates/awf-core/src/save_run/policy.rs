@@ -142,13 +142,13 @@ pub fn policy_violations(ctx: &Ctx, stage: &str, result: &Value, run: Option<&st
             errs.push(format!("回傳標了 halted：{}", s(why)));
         }
         if truthy(field("custom_script")) {
-            errs.push("這一段是用自訂腳本跑的（awf.py next --script）：流程沒有經過標準腳本的核對，要由人核准".to_string());
+            errs.push("這一段是用自訂腳本跑的（awf next --script）：流程沒有經過標準腳本的核對，要由人核准".to_string());
         }
         if truthy(field("override_script")) {
             errs.push("這一段用的是專案自己的 workflow 腳本（覆寫檔或舊副本），不是 plugin 的範本：要由人核准".to_string());
         }
         if truthy(field("manual_output")) {
-            errs.push("這一段的結果是用 awf.py done --output 手動給的（不是 awf 從 workflow 紀錄取得的）：要由人核准".to_string());
+            errs.push("這一段的結果是用 awf done --output 手動給的（不是 awf 從 workflow 紀錄取得的）：要由人核准".to_string());
         }
     }
     let envs = envelopes(result);

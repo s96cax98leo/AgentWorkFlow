@@ -55,7 +55,7 @@ pub fn run_captured(argv: &[String], teams: &Path, stdin: &mut dyn FnMut() -> St
         Err(e) => return (1, String::new(), format!("awf check-envelope：{e}\n")),
     };
     if !errs.is_empty() {
-        let mut err = String::from("交件信封不合格（.claude/teams/tools/check_envelope.py）：\n");
+        let mut err = String::from("交件信封不合格（awf check-envelope）：\n");
         for e in &errs {
             err.push_str(&format!("- {e}\n"));
         }

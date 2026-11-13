@@ -372,7 +372,7 @@ pub fn run_captured(args: &[String], paths: &Paths) -> (i32, String, String) {
     }
     if check && !stale.is_empty() {
         out.push_str(&format!(
-            "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：{}（請跑 build.py）\n",
+            "workflow 內嵌的 schema、開發規範 profile 或片段跟 schemas/、methodology.json、tools/snippets/ 不一致：{}（請跑 awf build）\n",
             stale.join("、")
         ));
         return (1, out, String::new());

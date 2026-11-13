@@ -57,9 +57,9 @@ recipe 定義在開發規範 profile（methodology.json）的 recipes／modifier
   - diff_shortfalls(resolved, paths)：實際的 diff 形狀需要的流程 recipe 沒有時，列出理由（publish 拒推、merge_gate hold）。
 
 用法：
-    python3 recipe.py resolve [--profile <methodology.json>] --recipe <名> [--modifiers a,b] [--size small]
-    python3 recipe.py check-diff --run <run_dir> [--base <ref>] [--repo <dir>]   # 依 run.json 的 recipe 檢查 diff 形狀
-    python3 recipe.py --selftest
+    awf recipe resolve [--profile <methodology.json>] --recipe <名> [--modifiers a,b] [--size small]
+    awf recipe check-diff --run <run_dir> [--base <ref>] [--repo <dir>]   # 依 run.json 的 recipe 檢查 diff 形狀
+    awf recipe --selftest
 只用標準庫。
 "#;
 
@@ -1057,7 +1057,7 @@ fn check_diff(argv: &[String], git: &dyn Fn(&[String]) -> Result<GitOut, String>
     }
     let found = diff_shortfalls(&recipe_of_run(&run)?, &Value::Array(paths))?;
     for e in &found {
-        errs.push_str(&format!("recipe 不足：{e}（要升級就用 save_run.py escalate）\n"));
+        errs.push_str(&format!("recipe 不足：{e}（要升級就用 awf save-run escalate）\n"));
     }
     out.push_str(&if found.is_empty() { "diff 形狀和 recipe 相符\n".to_string() } else { format!("共 {} 項不符\n", found.len()) });
     Ok(if found.is_empty() { 0 } else { 1 })

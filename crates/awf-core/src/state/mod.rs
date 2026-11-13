@@ -1,7 +1,7 @@
 //! 狀態機：主 session 每一段只做兩件事——`awf next`（照它說的做）與 `awf done`（把結果存起來）。
 //! 由 `scaffold/.claude/teams/tools/awf.py` 移植：動作的 JSON、訊息文字、exit code、寫出的檔
 //! （run.json、`<run>/.wf/<名>.js`、`接手摘要.md`、資料包）都和 Python 版逐字相同
-//! （對跑基準在 `tests/parity/state.expected.json`）。訊息裡提到的舊指令（`python3 .claude/teams/tools/awf.py …`）原樣保留。
+//! （對跑基準在 `tests/parity/state.expected.json`）。訊息與動作裡的指令已改成 `awf <子指令>`，基準檔的對應字串一起換過。
 //!
 //! 這支只排順序、組參數、取時間、產生腳本，**不放寬任何閘門**：存檔與驗證仍然是 [`crate::save_run::stage`]，
 //! 核准仍然是 [`crate::save_run::approve`]。分檔：
@@ -62,7 +62,7 @@ pub const HINTS: [(&str, &str); 15] = [
     ("repo", "目標 repo（我方的本機 clone）"),
     ("epic", "這個需求的短名（specs/<epic>/、分支名都用它）"),
     ("requirement", "需求原文或檔案路徑"),
-    ("pr", "PR 編號：先經使用者同意推 fork、開 PR（publish.py），再用 --set pr=<號> 補上"),
+    ("pr", "PR 編號：先經使用者同意推 fork、開 PR（awf publish），再用 --set pr=<號> 補上"),
     ("has_ui", "這次改動有沒有畫面（true／false；依 spec 判斷）"),
     ("has_security", "這次改動有沒有安全面（true／false；依 spec 判斷）"),
     ("decisions", "使用者對退回的 design 做的決定（--set-json decisions='[\"…\"]'）"),
@@ -75,7 +75,7 @@ pub const HINTS: [(&str, &str); 15] = [
     ("what", "上游發生了什麼（例如 PR 編號、main 前進、CI 失敗）"),
     ("change", "需求改了什麼"),
 ];
-pub const MERGED_HINT: &str = "0.5 起會議、決策落地、demo 前檢查、需求變動、上游變動共用 event.js（事件類型由 awf.py start --event <類型> 決定）。";
+pub const MERGED_HINT: &str = "0.5 起會議、決策落地、demo 前檢查、需求變動、上游變動共用 event.js（事件類型由 awf start --event <類型> 決定）。";
 pub const HANDOFF: &str = "接手摘要.md";
 
 pub const USAGE: &str = "狀態機：主 session 每一段只做兩件事——`awf next`（照它說的做）與 `awf done`（把結果存起來）。
@@ -397,7 +397,7 @@ fn emit(act: &Value, argv: &[String], out: &mut String) -> py::R<()> {
 fn load_run(env: &Env, run: &str) -> A<Value> {
     let file = py::pj(run, "run.json");
     if !is_file(&file) {
-        return awf_err(format!("找不到 {file}（先用 awf.py start 建立）"));
+        return awf_err(format!("找不到 {file}（先用 awf start 建立）"));
     }
     Ok(sr::load(&env.sr(), run)?)
 }
@@ -461,7 +461,7 @@ fn cmd_render(env: &Env, argv: &[String], plugin: Option<&str>, out: &mut String
     let out_dir = opt(argv, "--out");
     let names: Vec<String> = if has(argv, "--all") { workflow_names(env, plugin)? } else { argv.get(1).filter(|a| !a.starts_with('-')).cloned().into_iter().collect() };
     if names.is_empty() || out_dir.is_empty() {
-        return awf_err("用法：awf.py render <workflow>|--all --out <目錄>");
+        return awf_err("用法：awf render <workflow>|--all --out <目錄>");
     }
     for n in &names {
         let (text, notes) = render(env, n, plugin, None)?;
@@ -497,7 +497,7 @@ fn cmd_start(env: &Env, argv: &[String], run: &str, run_arg: &str, out: &mut Str
         return awf_err(errs.join("；"));
     }
     sr::dump(&ctx, run, &data)?;
-    out.push_str(&format!("已建立 {run_arg}/run.json。下一步：python3 .claude/teams/tools/awf.py next --run {run_arg}\n"));
+    out.push_str(&format!("已建立 {run_arg}/run.json。下一步：awf next --run {run_arg}\n"));
     Ok(0)
 }
 
@@ -544,7 +544,7 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     let pend = or_obj(py::get(&or_obj(py::get(&data, "awf")?), "pending")?);
     let stage_v = if opt(argv, "--stage").is_empty() { py::get(&pend, "stage")?.clone() } else { json!(opt(argv, "--stage")) };
     if !py::truthy(&stage_v) {
-        return awf_err("不知道要存哪一段：先跑 awf.py next，或用 --stage 指定");
+        return awf_err("不知道要存哪一段：先跑 awf next，或用 --stage 指定");
     }
     let stage = py::s(&stage_v);
     let src = opt(argv, "--output");
@@ -665,7 +665,7 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
                 let brief = if action == "run_workflow" {
                     // 還沒備好腳本：要跑 next 才會產生
                     let st = py::s(py::idx(&act, "stage")?);
-                    json!({"action": "next", "stage": st, "say": format!("下一段是 {st}：跑 python3 .claude/teams/tools/awf.py next --run {run_arg}")})
+                    json!({"action": "next", "stage": st, "say": format!("下一段是 {st}：跑 awf next --run {run_arg}")})
                 } else if action == "gate" || action == "halted" {
                     act
                 } else {
@@ -708,7 +708,7 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
         stage = s_or(py::get(&snap, "waiting_gate")?);
     }
     if stage.is_empty() {
-        return awf_err("現在沒有在等核准的段；要指定就寫 awf.py approve --run <run_dir> <段> --by <誰>");
+        return awf_err("現在沒有在等核准的段；要指定就寫 awf approve --run <run_dir> <段> --by <誰>");
     }
     if opt(argv, "--by").is_empty() {
         return awf_err("缺 --by <誰核准的>");
@@ -737,7 +737,7 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
     }
     let code = sr::approve(&ctx, &pass, out, err)?;
     if code == 0 {
-        out.push_str(&format!("下一步：python3 .claude/teams/tools/awf.py next --run {run_arg}\n"));
+        out.push_str(&format!("下一步：awf next --run {run_arg}\n"));
     }
     Ok(code)
 }
@@ -772,7 +772,7 @@ fn dispatch(env: &Env, argv: &[String], out: &mut String, err: &mut String) -> A
             }
             let file = py::pj(run, HANDOFF);
             crate::pack::write_lf(&file, &text).map_err(|e| PyErr::os(&e, &file))?;
-            out.push_str(&format!("已寫 {run_arg}/{HANDOFF}。新的 session 先讀它，再跑 python3 .claude/teams/tools/awf.py next --run {run_arg}\n"));
+            out.push_str(&format!("已寫 {run_arg}/{HANDOFF}。新的 session 先讀它，再跑 awf next --run {run_arg}\n"));
             Ok(0)
         }
         "approve" => cmd_approve(env, argv, run, run_arg, &data, out, err),

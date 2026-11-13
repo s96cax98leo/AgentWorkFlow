@@ -48,7 +48,7 @@ fn render_custom(root: &Path, text: &str, stage: &str, args: &Value, methodology
     let js = |v: &Value| dumps_compact(v);
     let s = js(&Value::String(stage.to_string()));
     let mut pre: Vec<String> = vec![
-        format!("// ── 以下由 awf.py 接上（自訂腳本，{stage} 段）：執行核心、pattern 庫、這一段的參數。不要手改 ──"),
+        format!("// ── 以下由 awf 接上（自訂腳本，{stage} 段）：執行核心、pattern 庫、這一段的參數。不要手改 ──"),
         format!("const NS = {}", js(&Value::String(NS.to_string()))),
         format!("const A = Object.assign({}, args || {{}})", js(args)),
         format!("const METHODOLOGY = {}", js(methodology)),

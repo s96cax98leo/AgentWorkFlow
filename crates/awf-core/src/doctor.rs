@@ -7,7 +7,7 @@
 //! - 沒有 `python` 這一項：執行檔不需要 Python。
 //! - 沒有 `hooks-compile` 這一項：那是「hook 的 .py 編譯得過」，hook 改註冊成執行檔之後換成執行檔的檢查。
 //!
-//! 訊息裡的舊指令（`init.py --upgrade`、`awf.py next`）先原樣保留，引用全部改寫時一起換。
+//! 訊息裡的指令已改成 `awf <子指令>`（`awf init --upgrade`、`awf next`），基準檔的對應字串一起換過。
 
 use crate::kb::pyish;
 use crate::save_run::py;
@@ -253,7 +253,7 @@ fn check_plugin(env: &Env, plugin: Option<&str>, notes: &[String]) -> Part {
         return Ok(vec![item(
             "plugin",
             ERR,
-            "找不到 agent-workflow plugin（awf.py next 沒辦法產生 workflow 腳本）",
+            "找不到 agent-workflow plugin（awf next 沒辦法產生 workflow 腳本）",
             "安裝 plugin（claude plugin install agent-workflow@agentworkflow），或用 --plugin-dir／環境變數 AWF_PLUGIN_DIR 指定 plugin 目錄",
         )]);
     };
@@ -269,9 +269,9 @@ fn check_plugin(env: &Env, plugin: Option<&str>, notes: &[String]) -> Part {
         String::new()
     };
     if tv.is_empty() {
-        out.push(item("version", WARN, "專案沒有 .claude/teams/VERSION（0.2.0 以前套用的，或檔案被刪了）", "跑模版 repo 的 init.py --target <這個專案> --upgrade"));
+        out.push(item("version", WARN, "專案沒有 .claude/teams/VERSION（0.2.0 以前套用的，或檔案被刪了）", "跑 awf init --target <這個專案> --upgrade"));
     } else if !pv.is_empty() && vtuple(&tv) < vtuple(&pv) {
-        out.push(item("version", WARN, format!("專案的工具是 {tv}，plugin 是 {pv}：新版 workflow 的回傳，舊的閘門工具可能不認得"), "跑模版 repo 的 init.py --target <這個專案> --upgrade（已套用的專案不會自動更新）"));
+        out.push(item("version", WARN, format!("專案的工具是 {tv}，plugin 是 {pv}：新版 workflow 的回傳，舊的閘門工具可能不認得"), "跑 awf init --target <這個專案> --upgrade（已套用的專案不會自動更新）"));
     } else if !pv.is_empty() && vtuple(&tv) > vtuple(&pv) {
         out.push(item("version", WARN, format!("專案的工具是 {tv}，plugin 還是 {pv}"), update_fix("agent-workflow@agentworkflow")));
     } else {
@@ -281,6 +281,12 @@ fn check_plugin(env: &Env, plugin: Option<&str>, notes: &[String]) -> Part {
 }
 
 // ------------------------------------------------------------------ hook
+/// 專案 settings 裡註冊的是不是這套 hook：舊的 `awf_hook.py`，或執行檔的 `awf hook <種類>`（路徑可以加引號）。
+fn project_hook_re() -> &'static regex::Regex {
+    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r#"awf_hook\.py|awf(?:\.exe)?[\\"']*\s+hook\s+(?:guard-shell|guard-paths|envelope|session-start)\b"#).expect("固定的正規式"))
+}
+
 fn check_hooks(env: &Env, plugin: Option<&str>, has_install: bool) -> Part {
     let mut out = Vec::new();
     let any_dir = plugin.is_some_and(|p| is_dir(&pyish::pjoin(p, "hooks"))) || is_dir(&pyish::pjoin(&env.project, ".claude/hooks"));
@@ -288,18 +294,18 @@ fn check_hooks(env: &Env, plugin: Option<&str>, has_install: bool) -> Part {
     for name in ["settings.json", "settings.local.json"] {
         let s = load_json(&pyish::pjoin(&env.project, &format!(".claude/{name}")));
         if let Some(h) = s.as_ref().and_then(Value::as_object).and_then(|o| o.get("hooks")).filter(|h| py::truthy(h)) {
-            registered = registered || serde_json::to_string(h).is_ok_and(|t| t.contains("awf_hook.py"));
+            registered = registered || serde_json::to_string(h).is_ok_and(|t| project_hook_re().is_match(&t));
         }
     }
     if registered && has_install {
         out.push(item(
             "hooks-double",
             WARN,
-            "hook 註冊了兩次：專案的 settings 有 awf_hook.py，plugin 也會註冊，每次工具呼叫會檢查兩遍",
-            "擇一：留專案的（較嚴，適合 Windows）就停用 plugin 的 hook；留 plugin 的就把專案 settings 裡 awf_hook.py 的 hooks 拿掉",
+            "hook 註冊了兩次：專案的 settings 有 awf hook，plugin 也會註冊，每次工具呼叫會檢查兩遍",
+            "擇一：留專案的（較嚴，適合 Windows）就停用 plugin 的 hook；留 plugin 的就把專案 settings 裡 awf hook 的 hooks 拿掉",
         ));
     } else if !registered && !has_install && !any_dir {
-        out.push(item("hooks", WARN, "找不到任何 hook 註冊：守門與交件檢查沒有在跑", "安裝 plugin，或跑 init.py --target <這個專案> --upgrade --hooks project"));
+        out.push(item("hooks", WARN, "找不到任何 hook 註冊：守門與交件檢查沒有在跑", "安裝 plugin，或跑 awf init --target <這個專案> --upgrade --hooks project"));
     }
     Ok(out)
 }
@@ -322,7 +328,7 @@ fn check_config(env: &Env) -> Part {
     let mf = pyish::pjoin(&teams, "methodology.json");
     let meth = load_json(&mf);
     if !is_file(&mf) {
-        out.push(item("methodology", ERR, "沒有 .claude/teams/methodology.json（開發規範 profile）", "跑 init.py --target <這個專案> --upgrade，或用 /agent-workflow:init-workflow 重新設定"));
+        out.push(item("methodology", ERR, "沒有 .claude/teams/methodology.json（開發規範 profile）", "跑 awf init --target <這個專案> --upgrade，或用 /agent-workflow:init-workflow 重新設定"));
     } else if !meth.as_ref().is_some_and(Value::is_object) {
         out.push(item("methodology", ERR, "methodology.json 不是合法的 JSON 物件", "修正 JSON 語法（常見：多了結尾逗號、少了引號）"));
     } else if let Some(m) = &meth {
@@ -331,7 +337,7 @@ fn check_config(env: &Env) -> Part {
             None => Err("找不到 schemas/methodology.schema.json".to_string()),
         };
         match checked {
-            Err(e) => out.push(item("methodology", WARN, format!("methodology.json 沒辦法驗證：驗證器跑不起來（{e}）"), "跑 init.py --target <這個專案> --upgrade 補齊工具與 schema")),
+            Err(e) => out.push(item("methodology", WARN, format!("methodology.json 沒辦法驗證：驗證器跑不起來（{e}）"), "跑 awf init --target <這個專案> --upgrade 補齊工具與 schema")),
             Ok(errs) if !errs.is_empty() => out.push(item(
                 "methodology",
                 ERR,
@@ -344,11 +350,11 @@ fn check_config(env: &Env) -> Part {
     let gf = pyish::pjoin(&teams, "guard.config.json");
     let guard = load_json(&gf);
     if !is_file(&gf) {
-        out.push(item("guard", WARN, "沒有 .claude/teams/guard.config.json：hook 只套用安全預設（只管 tpm-／dev- 角色，不擋主 session）", "跑 init.py --target <這個專案> --upgrade"));
+        out.push(item("guard", WARN, "沒有 .claude/teams/guard.config.json：hook 只套用安全預設（只管 tpm-／dev- 角色，不擋主 session）", "跑 awf init --target <這個專案> --upgrade"));
     } else if let Some(Value::Object(g)) = &guard {
         let text = String::from_utf8_lossy(&std::fs::read(&gf).map_err(|e| ("OSError".to_string(), e.to_string()))?).into_owned();
         if text.contains(&"{".repeat(2)) {
-            out.push(item("guard", ERR, "guard.config.json 還有沒換掉的佔位符（兩個左大括號開頭的那種）", "補上 workflow.config 的值後跑 init.py --target <這個專案> --upgrade"));
+            out.push(item("guard", ERR, "guard.config.json 還有沒換掉的佔位符（兩個左大括號開頭的那種）", "補上 workflow.config 的值後跑 awf init --target <這個專案> --upgrade"));
         } else {
             let am = g.get("auto_merge").and_then(Value::as_object).and_then(|a| a.get("enabled")).is_some_and(py::truthy);
             out.push(item("guard", OK, format!("guard.config.json 讀得懂{}", if am { "；auto_merge 已啟用" } else { "" }), ""));
@@ -357,7 +363,7 @@ fn check_config(env: &Env) -> Part {
         out.push(item("guard", ERR, "guard.config.json 不是合法的 JSON 物件：hook 讀不到設定", "修正 JSON 語法"));
     }
     if !is_file(&pyish::pjoin(&teams, "workflow.config")) {
-        out.push(item("config", WARN, "沒有 .claude/teams/workflow.config：workflow 範本的佔位符沒有值可以換，awf.py next 會拒絕", "跑 init.py --target <這個專案> --upgrade"));
+        out.push(item("config", WARN, "沒有 .claude/teams/workflow.config：workflow 範本的佔位符沒有值可以換，awf next 會拒絕", "跑 awf init --target <這個專案> --upgrade"));
     }
     if meth.as_ref().is_some_and(Value::is_object) {
         let miss = state::unregistered(env, meth.as_ref()).map_err(py_err)?;
@@ -408,7 +414,7 @@ fn check_overrides(env: &Env, plugin: Option<&str>) -> Part {
             "override-old",
             INFO,
             format!(".claude/workflows/ 有沒有標記的同名檔（舊版複製的副本，不會被採用）：{}{}", old.iter().take(8).cloned().collect::<Vec<_>>().join("、"), if old.len() > 8 { "…" } else { "" }),
-            "確認沒在用：跑 init.py --target <這個專案> --upgrade 會移除沒改過的、保留改過的並說明",
+            "確認沒在用：跑 awf init --target <這個專案> --upgrade 會移除沒改過的、保留改過的並說明",
         ));
     }
     Ok(out)
@@ -422,7 +428,7 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
             "project",
             ERR,
             "這個專案還沒套用 agent-workflow（沒有 .claude/teams/）",
-            "在 Claude Code 裡用 /agent-workflow:init-workflow（會先問開發習慣）；想先用預設值：python3 <模版 repo>/init.py --target . --defaults",
+            "在 Claude Code 裡用 /agent-workflow:init-workflow（會先問開發習慣）；想先用預設值：awf init --target . --defaults",
         ));
         out.extend(check_installs(env));
         return out;

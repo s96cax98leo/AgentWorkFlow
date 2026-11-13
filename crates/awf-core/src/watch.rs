@@ -23,13 +23,13 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::io::Write;
 
-pub const USAGE: &str = "watcher：把一個 run 的進度寫成外部程式看得懂的事件（awf.py watch 會轉到這裡）。
+pub const USAGE: &str = "watcher：把一個 run 的進度寫成外部程式看得懂的事件。
 
 用法（在已 init 的專案根目錄）：
-    python3 .claude/teams/tools/awf.py watch --run <run_dir> [--interval 5] [--stall-seconds 900]   # 長駐：每隔幾秒寫 <run_dir>/progress.jsonl
-    python3 .claude/teams/tools/awf.py watch --run <run_dir> --once [--json]                       # 只看一次：印快照，順便補寫事件
-    python3 .claude/teams/tools/awf.py statusline                                                  # 一行狀態（給 Claude Code 的 statusLine 用）
-    python3 .claude/teams/tools/awf_watch.py --selftest
+    awf watch --run <run_dir> [--interval 5] [--stall-seconds 900]   # 長駐：每隔幾秒寫 <run_dir>/progress.jsonl
+    awf watch --run <run_dir> --once [--json]                       # 只看一次：印快照，順便補寫事件
+    awf statusline                                                  # 一行狀態（給 Claude Code 的 statusLine 用）
+    awf watch --selftest
 
 三個來源，全部唯讀：
     1. run.json 與各段結果：段開始、存檔、等核准、核准、結束。
@@ -317,7 +317,7 @@ impl Transcripts {
         let mut hit = self.needles.iter().any(|n| !n.is_empty() && script.contains(n.as_str()));
         let files = agent_files(wf_dir);
         if !hit {
-            // 不是 awf.py 產生的腳本：看派工單有沒有提到這個 run 目錄（只看每個 agent 的開頭）
+            // 不是 awf 產生的腳本：看派工單有沒有提到這個 run 目錄（只看每個 agent 的開頭）
             for name in files.iter().take(6) {
                 let Some(head) = read_head(&pyish::pjoin(wf_dir, name)) else { continue };
                 if self.needles.iter().any(|n| head.contains(n.as_str()) || head.contains(escaped(n).as_str())) {

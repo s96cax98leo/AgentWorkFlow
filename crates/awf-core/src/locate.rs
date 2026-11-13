@@ -1,6 +1,6 @@
 //! 工具先定位：不派 agent，先用確定性的方式找出「哪個檔的哪幾行」值得讀。
 //! 由 `scaffold/.claude/teams/tools/locate.py` 移植，輸出、結束碼、訊息文字和 Python 版逐字相同
-//! （對跑基準在 `tests/parity/deliverables.expected.json` 的 locate 部分；說明文字裡的 `locate.py` 字樣照舊）。
+//! （對跑基準在 `tests/parity/deliverables.expected.json` 的 locate 部分；說明文字裡的指令已改成 `awf locate`）。
 //!
 //! 做法：把目標 repo 的文字檔切成固定行數的視窗，用需求文字當查詢做 BM25 排序（分詞和知識層相同），
 //! 取分數夠高的視窗、合併相鄰的，回報行段。這是輔助功能：任何錯誤都回空結果，由 workflow 改派定位 agent。
@@ -51,7 +51,7 @@ const DOC: &str = "工具先定位：不派 agent，先用確定性的方式找�
 為什麼要有：兩段式調研的定位 agent 實測佔 plan 段約六成 token（每個角度 9～11 輪查詢）。
 多數時候需求裡的詞（識別字、路徑、中文名詞）直接對得到程式與文件，這一步不需要模型。
 
-做法：把目標 repo 的文字檔切成固定行數的視窗，用需求文字當查詢做 BM25 排序（分詞和 kb.py 相同：英數字小寫單字、中日韓 bigram），
+做法：把目標 repo 的文字檔切成固定行數的視窗，用需求文字當查詢做 BM25 排序（分詞和 awf kb 相同：英數字小寫單字、中日韓 bigram），
 取分數夠高的視窗、合併相鄰的，回報行段。命中夠多、涵蓋夠多查詢詞才算「夠」（enough）；不夠時 workflow 仍會派定位 agent，並把這裡找到的當成起點。
 
 角度決定看哪些檔：
@@ -60,8 +60,8 @@ const DOC: &str = "工具先定位：不派 agent，先用確定性的方式找�
   requirement     需求檔本身（需求是專案內的檔案時）加上文件
 
 用法：
-    python3 locate.py --repo <目標 repo> --requirement \"<需求文字或專案內的檔案路徑>\" [--angle <角度>]… [--json]
-    python3 locate.py --selftest
+    awf locate --repo <目標 repo> --requirement \"<需求文字或專案內的檔案路徑>\" [--angle <角度>]… [--json]
+    awf locate --selftest
 只用標準庫。結果可重現：同樣的檔案內容與需求，輸出完全相同。這是輔助功能：任何錯誤都回空結果，由 workflow 改派定位 agent。
 ";
 

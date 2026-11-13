@@ -143,7 +143,7 @@ fn body(t: &mut Tally, td: &str) -> Result<(), PyErr> {
 
     // --- 索引不存在
     let (code, out) = cli(&["query", "退款", "--root", root.as_str()]);
-    t.check("索引不存在：query exit 0 並有說明", code == 0 && out.contains("索引不存在") && out.contains("kb.py build"), &out);
+    t.check("索引不存在：query exit 0 並有說明", code == 0 && out.contains("索引不存在") && out.contains("awf kb build"), &out);
     t.check("索引不存在：query() 回空清單", q("退款").is_empty(), "");
     let (code, out) = cli(&["lint", "--root", root.as_str()]);
     t.check("索引不存在：lint exit 0", code == 0 && out.contains("索引不存在"), &out);

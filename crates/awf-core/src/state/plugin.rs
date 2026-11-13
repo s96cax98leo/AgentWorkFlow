@@ -233,7 +233,7 @@ pub fn render(env: &Env, name: &str, plugin: Option<&str>, args: Option<&Value>)
     let left: BTreeSet<&str> = ph_re().captures_iter(&text).filter_map(|c| c.get(1).map(|g| g.as_str())).collect();
     if !left.is_empty() {
         return awf_err(format!(
-            "{name}.js 還有沒換掉的佔位符（.claude/teams/workflow.config 缺這些值；跑 init.py --upgrade 補上）：{}",
+            "{name}.js 還有沒換掉的佔位符（.claude/teams/workflow.config 缺這些值；跑 awf init --upgrade 補上）：{}",
             left.into_iter().collect::<Vec<_>>().join("、")
         ));
     }
@@ -257,7 +257,7 @@ pub fn render(env: &Env, name: &str, plugin: Option<&str>, args: Option<&Value>)
         Err(_) => String::new(),
     };
     if source == "plugin" && !pv.is_empty() && !tv.is_empty() && pv != tv {
-        notes.push(format!("plugin 是 {pv}，專案的工具是 {tv}：跑 init.py --upgrade 讓兩邊一致（不一致時閘門工具可能不認得新版 workflow 的回傳）"));
+        notes.push(format!("plugin 是 {pv}，專案的工具是 {tv}：跑 awf init --upgrade 讓兩邊一致（不一致時閘門工具可能不認得新版 workflow 的回傳）"));
     }
     Ok((text, notes))
 }
@@ -331,7 +331,7 @@ pub fn render_custom(env: &Env, src: &str, stage: &str, args: &Value) -> A<(Stri
     let s_js = js(&json!(stage));
     let meth_js = meth.as_ref().map(js).unwrap_or_else(|| "null".to_string());
     let mut pre: Vec<String> = vec![
-        format!("// ── 以下由 awf.py 接上（自訂腳本，{stage} 段）：執行核心、pattern 庫、這一段的參數。不要手改 ──"),
+        format!("// ── 以下由 awf 接上（自訂腳本，{stage} 段）：執行核心、pattern 庫、這一段的參數。不要手改 ──"),
         format!("const NS = {}", js(&json!(ns))),
         format!("const A = Object.assign({}, args || {{}})", js(args)),
         format!("const METHODOLOGY = {meth_js}"),

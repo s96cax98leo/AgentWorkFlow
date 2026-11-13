@@ -161,7 +161,7 @@ pub fn search(text_q: &str, o: &QueryOpts) -> Result<SearchInfo, PyErr> {
     if !Path::new(&db).is_file() {
         let within = pyish::is_under(&pyish::resolve(&db)?, root);
         let shown = if within { to_posix(&pyish::relpath(&db, root)) } else { DB_NAME.to_string() };
-        info.note = format!("索引不存在（{shown}），請主 session 先跑 `kb.py build`");
+        info.note = format!("索引不存在（{shown}），請主 session 先跑 `awf kb build`");
         return Ok(info);
     }
     let terms = query_terms(text_q);
@@ -176,7 +176,7 @@ pub fn search(text_q: &str, o: &QueryOpts) -> Result<SearchInfo, PyErr> {
         let m = meta(&con)?;
         let get = |k: &str| m.get(k).cloned().flatten();
         if get("schema").as_deref() != Some(SCHEMA_VERSION) {
-            info.note = "索引版本不同，請主 session 重跑 `kb.py build`".into();
+            info.note = "索引版本不同，請主 session 重跑 `awf kb build`".into();
             return Ok(info);
         }
         let has_fts = get("fts5").as_deref() == Some("1") && fts5_available();
@@ -314,7 +314,7 @@ pub fn lint(root: Option<&str>, kb_dir: Option<&str>, profile: Option<&str>) -> 
     let db = pyish::pjoin(&cfg.dir, DB_NAME);
     let mut res = LintResult::default();
     if !Path::new(&db).is_file() {
-        res.note = "索引不存在，請主 session 先跑 `kb.py build`".into();
+        res.note = "索引不存在，請主 session 先跑 `awf kb build`".into();
         return Ok(res);
     }
     let (paths, links): (Vec<String>, Vec<(String, i64, String, String)>) = {

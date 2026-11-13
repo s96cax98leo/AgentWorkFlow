@@ -314,7 +314,7 @@ pub fn deliverables_sync(env: &Env, run: &str, data: &Value, updated: Option<&Va
     };
     match inner() {
         Ok(t) => t,
-        Err(e) => format!("交付文件沒有同步（{}：{}）；可以之後手動跑 deliverables.py sync --run <run_dir>", e.class, e.msg),
+        Err(e) => format!("交付文件沒有同步（{}：{}）；可以之後手動跑 awf deliverables sync --run <run_dir>", e.class, e.msg),
     }
 }
 

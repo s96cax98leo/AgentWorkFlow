@@ -1,6 +1,6 @@
 //! 知識層：先查到「哪個檔的哪幾行」，再只讀那幾行（token 精簡的 Read less）。
 //! 由 `scaffold/.claude/teams/tools/kb.py` 移植，輸出、結束碼、訊息文字和 Python 版逐字相同
-//! （對跑基準在 `tests/parity/kb.expected.json`，訊息裡的 `kb.py` 字樣也照舊）。
+//! （對跑基準在 `tests/parity/kb.expected.json`；訊息裡的指令已改成 `awf kb`，基準檔的對應字串一起換過）。
 //!
 //! agent 找資料時整檔讀大檔，context 很快撐爆。這支工具把專案的文件切成段落建索引，查詢時回傳
 //! `路徑:起行-訖行`、標題鏈與節錄，agent 只讀列出的行段。不做向量或 embedding，不自動 commit。

@@ -429,13 +429,13 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
     let _ = std::fs::remove_file(&ov_file);
     put(&pj(&teams, "VERSION"), "0.4.1\n");
     let n5 = render(&w.env, "sdlc-plan", pl, None).unwrap_or_default().1;
-    t.check("版本：plugin 和專案的工具版本不同會提醒跑 init.py --upgrade", n5.iter().any(|x| x.contains("init.py --upgrade")), String::new());
+    t.check("版本：plugin 和專案的工具版本不同會提醒跑 awf init --upgrade", n5.iter().any(|x| x.contains("awf init --upgrade")), String::new());
     put(&pj(&teams, "VERSION"), "9.9.9\n");
     let mut with_ext = default_profile.clone();
     update(&mut with_ext, json!({"extensions": [{"name": "x", "agent": "my-agent", "stage": "test", "instructions": "i"}]}));
     put(&pj(&teams, "methodology.json"), &jd(&with_ext));
     let bad = fail_text(render(&w.env, "sdlc-test", pl, None));
-    t.check("產生：擴充 agent 沒登記守門角色就拒絕（和 build.py 一樣）", bad.contains("my-agent"), bad.clone());
+    t.check("產生：擴充 agent 沒登記守門角色就拒絕（和 awf build 一樣）", bad.contains("my-agent"), bad.clone());
     put(&pj(&teams, "methodology.json"), &profile_text);
 
     // ── 找 plugin
@@ -491,7 +491,7 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
     let t1 = read(&hf);
     t.check(
         "handoff：寫出接手摘要，有狀態、各段與核准、怎麼接手",
-        c == 0 && t1.contains("## 現在在哪裡") && t1.contains("| plan | done |") && t1.contains("recipe：bugfix") && t1.contains(&format!("awf.py next --run {d}")),
+        c == 0 && t1.contains("## 現在在哪裡") && t1.contains("| plan | done |") && t1.contains("recipe：bugfix") && t1.contains(&format!("awf next --run {d}")),
         format!("{out}{}", t1.chars().take(400).collect::<String>()),
     );
     let before = read(&pj(&w.run(d), "run.json"));
@@ -847,7 +847,7 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
         m.shift_remove("manual_output");
     }
     t.check(
-        "done：從 workflow 紀錄取得的結果和手動跑 save_run.py stage 的一樣；--output 給的結果多一個 manual_output 標記、其餘相同",
+        "done：從 workflow 紀錄取得的結果和手動跑 awf save-run stage 的一樣；--output 給的結果多一個 manual_output 標記、其餘相同",
         same_auto && (rc_out == 0 || rc_out == 1) && by_out["manual_output"] == true && serde_json::from_str::<Value>(&manual).is_ok_and(|m| m == rest),
         by_out.to_string(),
     );

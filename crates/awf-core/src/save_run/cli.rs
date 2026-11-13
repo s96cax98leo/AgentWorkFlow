@@ -280,7 +280,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
                 let old_key = json!([get(c, "name")?, py::sorted(iter_or(get(c, "modifiers")?)?)?, size]);
                 if !pyfmt::eq(&new_key, &old_key) {
                     let why = if truthy(get(c, "locked")?) { "plan 已核准過" } else { "escalate 過" };
-                    errs.push(format!("recipe 已鎖定（{why}）：不能從 {} 換成 {}，要改走 save_run.py escalate", s(get(c, "name")?), s(idx(&r, "name")?)));
+                    errs.push(format!("recipe 已鎖定（{why}）：不能從 {} 換成 {}，要改走 awf save-run escalate", s(get(c, "name")?), s(idx(&r, "name")?)));
                 }
             } else if cur.is_none() && {
                 let plan = or_empty_obj(get(stages, "plan")?);
@@ -330,7 +330,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         }
     } {
         // recipe 沒有的段：只存檔、判錯，run.json 仍標 skipped（不讓它看起來像該段存在）
-        line(err, format!("不能記錄：recipe {} 沒有 {stage} 段（要加段走 save_run.py escalate）；回傳只存成 {stage}.json", s(get(idx(&data, "recipe")?, "name")?)));
+        line(err, format!("不能記錄：recipe {} 沒有 {stage} 段（要加段走 awf save-run escalate）；回傳只存成 {stage}.json", s(get(idx(&data, "recipe")?, "name")?)));
         return Ok(1);
     }
     if in_sdlc && stage != "plan" && has_recipe(&data)? && result.is_object() {
@@ -592,7 +592,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
         }
     }
     if lock {
-        line(out, format!("recipe 已鎖定：{}；之後要改只能 save_run.py escalate（只能加嚴）", recipe_summary(idx(&data, "recipe")?)?));
+        line(out, format!("recipe 已鎖定：{}；之後要改只能 awf save-run escalate（只能加嚴）", recipe_summary(idx(&data, "recipe")?)?));
     }
     let st = get(idx(&data, "stages")?, stage)?;
     for (key, text) in [("missing_records", "有 {n} 個執行紀錄缺件"), ("constraint_issues", "有 {n} 項限制文件的問題")] {
@@ -711,7 +711,7 @@ fn followup_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mu
     }
     let fpath = py::pp(frun);
     if !ctx.is_file(&pj(&fpath, "run.json")) {
-        line(err, format!("不能記錄：後續 run {frun} 沒有 run.json（先 save_run.py init）"));
+        line(err, format!("不能記錄：後續 run {frun} 沒有 run.json（先 awf save-run init）"));
         return Ok(1);
     }
     let ferr = followup_run_errors(ctx, &fpath)?;
@@ -739,7 +739,7 @@ fn close_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mut S
     let needs_followup = truthy(get(&r, "followup")?);
     let fr = get(&data, "followup_run")?;
     if needs_followup && !truthy(fr) {
-        errs.push(format!("recipe {} 要求事後開後續 run 補完整流程，run.json 沒有 followup_run（先 save_run.py followup）", s(get(&r, "name")?)));
+        errs.push(format!("recipe {} 要求事後開後續 run 補完整流程，run.json 沒有 followup_run（先 awf save-run followup）", s(get(&r, "name")?)));
     } else if needs_followup {
         let ferr = followup_run_errors(ctx, &py::pp(&s_or(get(fr, "run")?, "")))?;
         if !ferr.is_empty() {
