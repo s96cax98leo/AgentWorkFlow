@@ -2,8 +2,9 @@
 //!
 //! 每支檢查兩種：對這個 repo 實跑要通過；在暫存副本裡弄壞一個輸入（golden 的預期、片段裡的上限檢查、基準數字、
 //! 版控裡的檔案）要報失敗、exit 非零，而且訊息指得出是哪裡。
-//! 另有兩個和 Python 版直接對照的測試（import 清單、自訂腳本的組裝結果）：Python 版還在的期間才跑，
-//! 找不到 python3 或對應的 Python 檔就略過。
+//! 自訂腳本的組裝結果和固定的預期檔比（`tests/fixtures/custom-script-frame.*.js`）。
+//! 另有一個和 Python 版直接對照的測試（供應鏈檢查的 import 清單）：Python 檔還在的期間才跑，
+//! 找不到 python3 或對應的 Python 檔就略過；Python 移除後這個測試與它掃的東西一起沒有了。
 #![cfg(unix)]
 
 use serde_json::{json, Value};
@@ -427,50 +428,29 @@ fn supply_imports_match_python_ast() {
     assert!(total > 300, "import 太少，可能沒掃到：{total}");
 }
 
-/// 自訂腳本的組裝結果和 `awf.py` 的 `render_custom` 逐字相同（check-patterns 自己接 preamble 的那一段沒有走樣）。
+/// 自訂腳本的組裝結果沒有走樣：骨架（狀態機接上去的那一段與外層包裝；片段、profile、schema 的內文換成記號，
+/// 見 `check_patterns::script_frame`）和固定的預期檔逐字相同。
+///
+/// 預期檔的來歷：Python 版還在的時候，這個測試直接拿 `awf.py` 的 `render_custom` 對照，全文逐字相同（只差標題列的
+/// 「awf.py」改成「awf」）；預期檔就是那一次的結果取骨架存下來的。之後行為確實該變時用
+/// `AWF_UPDATE_EXPECTED=1 cargo test -p xtask --test checks custom_script` 重寫，並在 commit 說明哪裡變了、為什麼。
 #[test]
-fn custom_script_assembly_matches_python() {
+fn custom_script_assembly_matches_recorded_frame() {
     let r = root();
-    let tools = util::teams_dir(&r).join("tools");
-    if !tools.join("awf.py").is_file() || !tools.join("awf_script.py").is_file() {
-        eprintln!("略過：Python 版已經不在");
-        return;
-    }
-    let code = r#"
-import sys, json, tempfile
-from pathlib import Path
-tools = Path(sys.argv[1])
-sys.path.insert(0, str(tools))
-import awf, awf_script
-default = json.loads((tools.parent / "methodologies" / "default.json").read_text(encoding="utf-8"))
-out = {}
-for cap in (None, 2):
-    with tempfile.TemporaryDirectory(prefix="awf-cs.") as tmp:
-        proj = Path(tmp)
-        teams = proj / ".claude" / "teams"
-        teams.mkdir(parents=True)
-        (teams / "workflow.config").write_text('AGENT_NS=agent-workflow:\nOUTPUT_LANGUAGE="繁體中文"\n', encoding="utf-8")
-        prof = dict(default)
-        if cap:
-            prof["limits"] = {**(prof.get("limits") or {}), "max_agents": cap}
-        (teams / "methodology.json").write_text(json.dumps(prof, ensure_ascii=False), encoding="utf-8")
-        src = proj / "waves.js"
-        src.write_text(awf_script.GOOD.replace("'acme:a11y'", "NS + 'tpm-reviewer'"), encoding="utf-8")
-        text, _ = awf.render_custom(src, "build", proj, {"run_dir": "_runs/r1", "epic": "demo", "recipe": "feature", "modifiers": []})
-        out[str(cap)] = text
-print(json.dumps(out))
-"#;
-    let Some(py) = python_json(code, &[&tools]) else {
-        eprintln!("略過：找不到 python3");
-        return;
-    };
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures");
+    let update = std::env::var_os("AWF_UPDATE_EXPECTED").is_some_and(|v| !v.is_empty());
     for (key, cap) in [("None", None), ("2", Some(2))] {
-        let mine = check_patterns::sample_script(&r, cap).expect("組得起來");
-        // 腳本裡接上那一段的標題列，Rust 版寫的是 awf（沒有 awf.py 這個檔了）；只換這一句，其餘仍要逐字相同
-        let theirs = py[key].as_str().expect("文字");
-        assert!(theirs.matches("// ── 以下由 awf.py 接上（").count() == 1, "Python 版的標題列應該剛好一處");
-        let theirs = theirs.replacen("// ── 以下由 awf.py 接上（", "// ── 以下由 awf 接上（", 1);
-        assert!(mine.len() > 20_000, "腳本太短：{}", mine.len());
-        assert!(mine == theirs, "上限 {key}：組裝結果和 Python 版不同（長度 {} 對 {}）", mine.len(), theirs.len());
+        let full = check_patterns::sample_script(&r, cap).expect("組得起來");
+        assert!(full.len() > 20_000, "腳本太短：{}", full.len());
+        let mine = check_patterns::script_frame(&r, cap).expect("取得到骨架");
+        assert!(mine.matches("// ── 以下由 awf 接上（").count() == 1, "標題列應該剛好一處");
+        let file = dir.join(format!("custom-script-frame.{key}.js"));
+        if update {
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(&file, &mine).expect("寫預期檔");
+            continue;
+        }
+        let want = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("讀不到預期檔 {}：{e}", file.display()));
+        assert!(mine == want, "上限 {key}：組裝結果的骨架和預期檔 {} 不同\n--- 現在 ---\n{mine}\n--- 預期 ---\n{want}", file.display());
     }
 }

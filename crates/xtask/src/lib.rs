@@ -13,6 +13,7 @@ pub mod pyimports;
 pub mod pyre;
 pub mod scrub;
 pub mod source_hash;
+pub mod tempproj;
 pub mod util;
 
 use std::path::PathBuf;
