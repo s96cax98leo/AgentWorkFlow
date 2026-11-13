@@ -1474,7 +1474,7 @@
    "stdin": null,
    "rc": 2,
    "out": "",
-   "err": "驗證一份交件信封：schema＋交接語意規則。\n\n用法：\n    python3 check_envelope.py <file.json> [--payload findings]\n    echo '<回報文字，最後一個 ```json 區塊是信封>' | python3 check_envelope.py - [--payload ...]\n不帶 --payload 時，若信封裡有 \"payload_type\" 以外的提示也不猜，只驗信封本體。\n通過 exit 0；不通過 exit 1，原因印到 stderr。\n\n"
+   "err_any": true
   },
   {
    "op": "envelope",

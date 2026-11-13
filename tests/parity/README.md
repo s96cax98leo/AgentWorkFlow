@@ -8,6 +8,7 @@
 | `schema.expected.json` | golden-set 每個範例與內建 profile 的完整錯誤清單，加探測案例 | `python3 tests/parity/record_schema.py > tests/parity/schema.expected.json` |
 | `recipe.expected.json` | recipe 與模型分級：golden 案例、探測案例、CLI、內建常數 | 見 `tests/parity/record_recipe.py` 開頭的用法 |
 | `kb.expected.json` | 知識層：固定文件集上的 412 步劇本（build、增量、query、lint，FTS5 與純 BM25 兩條路）與函式探測 | 見 `tests/parity/record_kb.py` 開頭的用法 |
+| `small.expected.json` | run_brief、check_envelope、check_rules：222 步劇本（偵測、摘要、信封的 golden 範例、規則掃描與 commit 檢查） | `python3 tests/parity/record_small.py > tests/parity/small.expected.json` |
 
 規則：
 

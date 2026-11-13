@@ -9,7 +9,7 @@
   - write／git：準備檔案與 git 歷史（author、committer、日期固定，SHA 可重現）。
   - envelope：check_envelope 的指令列（schema 用 scaffold 的）。
   - rules：check_rules 的指令列（專案在暫存目錄，各有自己的 guard.config.json）。
-err_any 是 true 的步驟只比 exit code 與 stdout：Python 版在那裡直接當掉（traceback），另一個實作印一行說明。
+err_any 是 true 的步驟只比 exit code 與 stdout：Python 版在那裡直接當掉（traceback）或印用法（指令名不同），另一個實作印自己的說明。
 暫存路徑換成 @TMP@。同一個實作連錄兩次要逐字相同。這支腳本在 Python 版移除時一起刪，基準檔留著。"""
 import json
 import os
@@ -158,7 +158,7 @@ envelope(["-"], "null")
 envelope(["-"], "[]")
 envelope(["-"], "3")
 envelope(["-"], "")
-envelope([])
+envelope([], err_any=True)  # 用法訊息：指令名改成 awf check-envelope
 envelope(["@TMP@/env/沒有這個檔.json"], err_any=True)
 envelope(["-", "--payload", "no-such-payload"], json.dumps(OK_ENV), err_any=True)
 envelope(["-", "--payload"], json.dumps(OK_ENV), err_any=True)
