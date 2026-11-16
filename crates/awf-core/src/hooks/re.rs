@@ -6,8 +6,10 @@
 //! - `\w`、`\b`：Python 的「字」是字母（L）、數字（N）與底線；Rust 另外把結合符號（M）、連接標點（Pc）等算進去，
 //!   又不含 No。比對前把「兩邊分類不同」的非 ASCII 字元換成同樣位元組長度、分類和 Python 一致的替身字元
 //!   （[`prep`]），其餘字元原樣，位移不變。
-//! - `re.I`：Python 的 i 也配 U+0130、U+0131（Rust 不配）；比對前把這兩個字元換成 i。換了以後不帶 `re.I` 的樣式
-//!   也會把它們當成 i，只會多擋。ſ（U+017F）、K（U+212A）兩邊都配，不用處理。
+//! - `re.I`：Python 的 i 也配 U+0130、U+0131（Rust 不配）；樣式帶 `re.I` 時，比對前把這兩個字元換成 i。
+//!   不帶 `re.I` 的樣式不換（白名單樣式換了會多放：`verıfier.md` 不是 `verifier.md`）。
+//!   ſ（U+017F）、K（U+212A）兩邊都配，不用處理。
+//! - `\Z`：Python 是「字串結尾」，換成 Rust 的 `\z`。
 //! - lookahead／lookbehind：Rust `regex` 沒有，含這些的樣式用 `fancy_regex`（回溯上限調到最大，和 Python 一樣不設限）。
 //!
 //! 樣式編譯失敗或執行失敗時記在 [`fault`]，由最外層當成意外錯誤處理（守門類擋下），不會默默放行。
@@ -60,6 +62,7 @@ fn translate(src: &str, flags: &str) -> Option<(String, bool)> {
                 ('s', true) => out.push_str(r"\s\x1c-\x1f"),
                 ('S', false) => out.push_str(r"[^\s\x1c-\x1f]"),
                 ('S', true) => return None,
+                ('Z', false) => out.push_str(r"\z"),
                 _ => {
                     out.push('\\');
                     out.push(n);
@@ -94,6 +97,16 @@ fn translate(src: &str, flags: &str) -> Option<(String, bool)> {
     Some((out, fancy))
 }
 
+/// 使用者寫的樣式的回溯上限：內建樣式不設限（和 Python 一樣），使用者的樣式不能拖垮工具；超過時這次比對算失敗並記 [`fault`]。
+const USER_BACKTRACK_LIMIT: usize = 1_000_000;
+
+/// 樣式開頭的行內旗標有沒有 i（`(?i)`、`(?is)`、`(?i:`）。
+fn inline_ci(src: &str) -> bool {
+    let Some(rest) = src.strip_prefix("(?") else { return false };
+    let flags: String = rest.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    flags.contains('i') && matches!(rest[flags.len()..].chars().next(), Some(')') | Some(':'))
+}
+
 /// 一段區間（原字串的位元組位移）。
 pub type Span = (usize, usize);
 
@@ -104,6 +117,34 @@ impl Re {
 
     pub fn dynamic(src: String, flags: &'static str) -> Self {
         Re { src: Cow::Owned(src), flags, cell: OnceLock::new() }
+    }
+
+    /// 使用者寫的 Python 風格樣式（設定檔、profile 裡的正規式，例如 `task_id_regex`）：照 Python `re` 的語意編譯，
+    /// `\w`、`\b`、`\s`、`$`、`\Z` 的對齊和內建樣式同一套（見檔頭）。`flags` 是 `""`、`"i"`、`"s"` 或 `"is"`。
+    /// 編不過（Rust 不支援的寫法，例如類別裡的 `\S`、條件群組）回 `Err(說明)`，**不**記 [`fault`]：
+    /// 呼叫端自己決定要擋還是交人。回傳的 [`Re`] 用 `is_match`／`find`／`captures`（都是 `re.search` 的語意；
+    /// 要 `re.match` 就把樣式包成 `\A(?:…)`，要 `re.fullmatch` 包成 `\A(?:…)\z`）。
+    pub fn python(src: &str, flags: &'static str) -> Result<Re, String> {
+        let Some((pat, fancy)) = translate(src, flags) else {
+            return Err(format!("樣式用了不支援的寫法：{src}"));
+        };
+        let plain = if fancy { None } else { regex::Regex::new(&pat).ok().map(Eng::Plain) };
+        let eng = match plain {
+            Some(e) => e,
+            // 反向參照、lookaround 這些 regex 不收的寫法交給 fancy_regex
+            None => match fancy_regex::RegexBuilder::new(&pat).backtrack_limit(USER_BACKTRACK_LIMIT).build() {
+                Ok(r) => Eng::Fancy(r),
+                Err(e) => return Err(format!("樣式編不過：{e}")),
+            },
+        };
+        let cell = OnceLock::new();
+        let _ = cell.set(Some(eng));
+        Ok(Re { src: Cow::Owned(src.to_string()), flags, cell })
+    }
+
+    /// 樣式有沒有忽略大小寫（旗標或開頭的 `(?i)`）。
+    fn ci(&self) -> bool {
+        self.flags.contains('i') || inline_ci(&self.src)
     }
 
     pub fn source(&self) -> &str {
@@ -175,19 +216,19 @@ impl Re {
 
     /// `re.search`：第一個符合的區間。
     pub fn find(&self, h: &str) -> Option<Span> {
-        let p = prep(h);
+        let p = prep(h, self.ci());
         self.raw_find(&p.text, 0).map(|s| p.span(s))
     }
 
     /// `re.search`：各群組的區間（0 是整個符合）。
     pub fn captures(&self, h: &str) -> Option<Vec<Option<Span>>> {
-        let p = prep(h);
+        let p = prep(h, self.ci());
         self.raw_caps(&p.text, 0).map(|v| v.into_iter().map(|s| s.map(|s| p.span(s))).collect())
     }
 
     /// 所有不重疊的符合區間。
     pub fn find_all(&self, h: &str) -> Vec<Span> {
-        let p = prep(h);
+        let p = prep(h, self.ci());
         let mut out = Vec::new();
         let mut pos = 0;
         while pos <= p.text.len() {
@@ -274,8 +315,8 @@ fn class_res() -> Option<&'static (regex::Regex, regex::Regex)> {
 }
 
 /// 比對前的字串：非 ASCII 字元裡，Python 與 Rust 對「是不是字」看法不同的換成替身（同位元組長度），
-/// U+0130／U+0131 換成 i。純 ASCII 直接原樣。
-fn prep(h: &str) -> Prepared<'_> {
+/// 樣式忽略大小寫（`ci`）時 U+0130／U+0131 換成 i。純 ASCII 直接原樣。
+fn prep(h: &str, ci: bool) -> Prepared<'_> {
     if h.is_ascii() {
         return Prepared { text: Cow::Borrowed(h), map: None };
     }
@@ -290,7 +331,7 @@ fn prep(h: &str) -> Prepared<'_> {
     for (i, c) in h.char_indices() {
         let rep = if c.is_ascii() {
             c
-        } else if c == '\u{130}' || c == '\u{131}' {
+        } else if ci && (c == '\u{130}' || c == '\u{131}') {
             changed_len = true;
             'i'
         } else {
@@ -331,6 +372,40 @@ fn prep(h: &str) -> Prepared<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dotless_i_only_with_ignore_case() {
+        assert!(!Re::new(r"^verifier\.md\z", "").is_match("ver\u{131}fier.md"));
+        assert!(!Re::new(r"^verifier\.md\z", "").is_match("ver\u{130}fier.md"));
+        assert!(Re::new(r"^verifier\.md\z", "i").is_match("ver\u{131}fier.md"));
+        assert!(Re::new(r"^verifier\.md\z", "i").is_match("VER\u{130}FIER.md"));
+        assert!(Re::dynamic(r"(?i)^verifier\.md\z".to_string(), "").is_match("ver\u{131}fier.md"));
+        // 兩個字元本身還是「字」
+        assert!(Re::new(r"^\w+\z", "").is_match("ver\u{131}f\u{130}er"));
+        // 位移對得回原字串
+        assert_eq!(Re::new(r"fier", "i").find("ver\u{131}fier"), Some((5, 9)));
+    }
+
+    #[test]
+    fn user_written_python_patterns() {
+        let r = Re::python(r"^[A-Z]+-\d+$", "").unwrap();
+        assert!(r.is_match("TASK-12") && r.is_match("TASK-12\n") && !r.is_match("task-12"));
+        // \w 照 Python：結合符號（Rust 算字）不算，No 類（Rust 不算）算
+        let w = Re::python(r"^\w+\Z", "").unwrap();
+        assert!(w.is_match("a\u{b2}") && !w.is_match("a\u{301}") && !w.is_match("ab\n"));
+        // \s 多 \x1c–\x1f
+        assert!(Re::python(r"a\sb", "").unwrap().is_match("a\x1cb"));
+        // 具名群組、反向參照、lookahead
+        let g = Re::python(r"(?P<k>[a-z]+)-(?P=k)", "").unwrap();
+        assert!(g.is_match("ab-ab") && !g.is_match("ab-cd"));
+        assert!(Re::python(r"REQ-(?!0)\d+", "").unwrap().is_match("REQ-12"));
+        assert!(Re::python(r"req-\d+", "i").unwrap().is_match("REQ-1"));
+        // 編不過回 Err，而且不記 fault
+        let before = fault();
+        assert!(Re::python(r"(unclosed", "").is_err());
+        assert!(Re::python(r"[\S]", "").is_err());
+        assert_eq!(fault(), before);
+    }
 
     #[test]
     fn dollar_and_space() {
