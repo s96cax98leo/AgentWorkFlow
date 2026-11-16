@@ -314,7 +314,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - `plugin/skills/tpm-team/SKILL.md` 只寫 `awf next` → 照做 → `done` 的迴圈（不超過 60 行、描述不超過 200 字，`VP B1.5` 檢查）；事件對照表、recipe、閘門規則與手動執行在同目錄的 `reference/*.md`。
 - plugin 有 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`，都是薄殼。
 - 其他入口是 skill，用 `/agent-workflow:<skill>` 叫用（沒有同名指令時可省略前綴）。不要再新增和 skill 同名的 command。
-  - `/agent-workflow:init-workflow`：先跑 `awf init --detect`，逐主題在對話中確認使用者的做法，再跑 `awf init --answers` 並唸出對照表（訪談在 `crates/awf-core/src/init/detect.rs`、`interview.rs`；答案存 `.claude/teams/init-answers.json`，`--reconfigure` 只改有變的設定）。
+  - `/agent-workflow:init-workflow`：先跑 `awf init --detect`，逐主題在對話中確認使用者的做法，再跑 `awf init --answers` 並唸出對照表（訪談在 `crates/awf-core/src/init/detect.rs`、`interview.rs`；答案存 `.claude/teams/init-answers.json`，`--reconfigure` 只改有變的設定；`--reconfigure <主題>` 只重問一個主題，可以單獨問的主題是 `interview::single_topics()`）。
   - `/agent-workflow:add-agent`：把使用者自己的 agent 加進 SDLC。
   - `/agent-workflow:correct`：把一則教訓變成最高可行層級的強制機制，並在 rules.md〈專案規則〉維護「規則 ↔ 強制方式」對照表。
   - `/agent-workflow:deliverables`：薄殼，在對話中走交付設定（提案 → 人確認 → `--write`）與盤點（`status`、`check`）。

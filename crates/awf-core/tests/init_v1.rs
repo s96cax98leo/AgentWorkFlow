@@ -918,3 +918,128 @@ fn d_merge_gate_places_binary_checksums_and_ci() {
     assert_eq!(json_of(&p.join(".claude/teams/bin/checksums.json"))["files"]["awf-linux-x64"], sha256(&newer), "執行檔與 checksums 一起換");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ------------------------------------------------------------------ 訪談補題與 --reconfigure <主題>
+
+/// 互動模式（tty）跑 init，`fed` 是使用者打的字。
+fn run_tty(cwd: &Path, args: &[&str], fed: &str) -> Out {
+    let env = init::Env { source: Some(template().to_path_buf()), cwd: cwd.to_path_buf(), home: None, awf_bin: None };
+    let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let (mut out, mut err, mut input) = (Vec::new(), Vec::new(), std::io::Cursor::new(fed.as_bytes().to_vec()));
+    let code = init::run(&argv, &env, &mut out, &mut err, &mut input, true);
+    Out { code, out: String::from_utf8_lossy(&out).into_owned(), err: String::from_utf8_lossy(&err).into_owned() }
+}
+
+#[test]
+fn e_reconfigure_one_topic_only_asks_and_changes_that_topic() {
+    let d = tmp("topic");
+    let p = d.join("proj");
+    std::fs::create_dir_all(d.join("acme-specs/.git")).expect("旁邊的 repo");
+    let ps = p.to_string_lossy().into_owned();
+    let r = run(&d, None, &["--target", &ps, "--defaults"]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    let (meth, guard) = (p.join(".claude/teams/methodology.json"), p.join(".claude/teams/guard.config.json"));
+    let before = json_of(&meth);
+    let guard_before = json_of(&guard);
+
+    // 1. 全部 Enter：什麼都不改
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "knowledge"], "");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    assert!(r.out.contains("沒有要改的"), "{}", r.out);
+    assert!(r.out.contains("候選") && r.out.contains("../acme-specs"), "旁邊的 repo 列成候選：{}", r.out);
+    assert!(!r.out.contains("模型分級") || !r.out.contains("models.mode（"), "只問這個主題：{}", r.out);
+    assert!(!r.out.contains("要不要啟用自動合併"), "別的主題不問：{}", r.out);
+    assert_eq!(json_of(&meth), before);
+
+    // 2. 知識圖：建圖、提問帶位置、收旁邊的 repo
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "knowledge"], "y\ny\n../acme-specs\ndocs/**/*.md, specs/**/*.md\ny\n");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    let now = json_of(&meth);
+    assert_eq!(now["knowledge"]["auto"]["update"], true);
+    assert_eq!(now["knowledge"]["auto"]["prompt"], true);
+    assert_eq!(now["knowledge"]["repos"], serde_json::json!([{"id": "acme-specs", "path": "../acme-specs", "sources": ["docs/**/*.md", "specs/**/*.md"]}]));
+    let strip = |v: &Value| {
+        let mut o = v.as_object().cloned().unwrap_or_default();
+        o.remove("knowledge");
+        o
+    };
+    assert_eq!(strip(&now), strip(&before), "其他鍵不動");
+    assert_eq!(json_of(&guard), guard_before);
+    // 再問一次全部 Enter：預設值是上次的答案，不會改回去
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure=knowledge"], "");
+    assert!(r.code == 0 && r.out.contains("沒有要改的"), "{}{}", r.out, r.err);
+    assert_eq!(json_of(&meth), now);
+
+    // 3. 平行與拆分：只改回答和預設不同的那一題
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "parallelism"], "6\n\ny\n");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    let par = json_of(&meth);
+    assert_eq!(par["parallelism"]["split_threshold"], 6);
+    assert_eq!(par["parallelism"]["max_sub_plans"], before["parallelism"]["max_sub_plans"]);
+    let bad = run_tty(&d, &["--target", &ps, "--reconfigure", "parallelism"], "1\n");
+    assert_ne!(bad.code, 0, "小於 2 要拒絕");
+    assert_eq!(json_of(&meth), par);
+
+    // 4. 守門設定：受保護分支多一個；不能清空
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "main, master, release\n\ny\n");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    let g = json_of(&guard);
+    assert_eq!(g["protected_branches"], serde_json::json!(["main", "master", "release"]));
+    assert_eq!(g["acceptance_test_dirs"], guard_before["acceptance_test_dirs"]);
+    assert_eq!(json_of(&meth), par, "守門主題不動 methodology.json");
+    let bad = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "-\n");
+    assert_ne!(bad.code, 0, "受保護分支不能清空");
+    assert_eq!(json_of(&guard), g);
+
+    // 5. 交付文件：內建 profile 有文件清單、預設不啟用 → 回答 y 才啟用
+    assert_ne!(before["deliverables"]["enabled"], true);
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "deliverables"], "y\ny\n");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    assert_eq!(json_of(&meth)["deliverables"]["enabled"], true);
+
+    // 6. 不能單獨問的主題、不認得的主題、答案檔帶了別的主題的鍵：都拒絕、不寫
+    let snap = snapshot(&p);
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "conventions"], "");
+    assert!(r.code != 0 && r.err.contains("不能單獨重問"), "{}{}", r.out, r.err);
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure=nope"], "");
+    assert!(r.code != 0 && r.err.contains("沒有 'nope' 這個主題"), "{}{}", r.out, r.err);
+    let af = d.join("a.json");
+    write(&af, r#"{"knowledge": {"auto": {"prompt": false}}, "auto_merge": true}"#);
+    let afs = af.to_string_lossy().into_owned();
+    let r = run(&d, None, &["--target", &ps, "--reconfigure", "knowledge", "--answers", &afs]);
+    assert!(r.code != 0 && r.err.contains("auto_merge"), "{}{}", r.out, r.err);
+    assert_eq!(snapshot(&p), snap, "被拒絕時什麼都沒寫");
+    // 只有那個主題的鍵：照做
+    write(&af, r#"{"knowledge": {"auto": {"update": true, "prompt": false}, "repos": []}}"#);
+    let r = run(&d, None, &["--target", &ps, "--reconfigure", "knowledge", "--answers", &afs]);
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    let last = json_of(&meth);
+    assert_eq!(last["knowledge"]["auto"]["prompt"], false);
+    assert_eq!(last["knowledge"]["repos"], serde_json::json!([]));
+    assert_eq!(json_of(&guard), g);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn e_interactive_init_asks_the_new_topics_last() {
+    let d = tmp("ask");
+    let p = d.join("proj");
+    let ps = p.to_string_lossy().into_owned();
+    // 全部 Enter：新的題目有問到，而且什麼都沒有多寫
+    let r = run_tty(&d, &["--target", &ps], "");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    for q in ["要不要建知識圖", "提問時要不要帶位置", "有沒有別的 repo 要收進知識圖", "要不要產交付文件", "預估子任務超過幾個就拆成子計劃", "受保護分支", "驗收測試目錄"] {
+        assert!(r.out.contains(q), "沒有問「{q}」：{}", r.out);
+    }
+    let hooks_at = r.out.find("hook 註冊方式（plugin＝").expect("既有的最後一題");
+    assert!(r.out.find("要不要建知識圖").is_some_and(|i| i > hooks_at), "新的題目接在既有題目後面");
+    let d2 = tmp("ask-defaults");
+    let p2 = d2.join("proj");
+    let r2 = run(&d2, None, &["--target", &p2.to_string_lossy(), "--defaults"]);
+    assert_eq!(r2.code, 0, "{}", r2.err);
+    for f in [".claude/teams/methodology.json", ".claude/teams/guard.config.json"] {
+        assert_eq!(json_of(&p.join(f)), json_of(&p2.join(f)), "全部 Enter 和 --defaults 的 {f} 一樣");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&d2);
+}

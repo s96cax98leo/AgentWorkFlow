@@ -732,7 +732,7 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         }
         let base = profile::load_profile(&site, &name)?;
         let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
-        interview::ask_more(con, &mut ans, base, &topics, a.hooks_given)?;
+        interview::ask_more(con, &mut ans, base, &topics, a.hooks_given, None)?;
     }
     let hooks = match interview::hooks_answer(&ans)? {
         Some(h) if !a.hooks_given => h,
@@ -1077,6 +1077,21 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
     };
     let vals = if record_path.is_file() { read_kv(&record_path, RECORD_FILE)? } else { Kv::default() };
     let topics = detect::detect(target, cfg!(windows));
+    // `--reconfigure <主題>`：只重問一個主題
+    let only = a.reconfigure_topic.as_deref();
+    let only_topic = match only {
+        None => None,
+        Some(id) => {
+            let singles = interview::single_topics();
+            let Some(t) = topics.iter().find(|t| t.id == id) else {
+                return die(format!("沒有 {} 這個主題。可以單獨重問的主題：{}（全部主題見 awf init --detect）", pyfmt::repr_str(id), singles.join("、")));
+            };
+            if !singles.contains(&id) {
+                return die(format!("主題 {id}（{}）的題目互相有關，不能單獨重問：不帶主題跑 awf init --reconfigure 問一整輪，或用 --answers 只寫要改的鍵。可以單獨重問的主題：{}", t.title, singles.join("、")));
+            }
+            Some(t)
+        }
+    };
 
     let mut new_ans = saved.clone();
     let asked = a.answers.as_deref().filter(|s| !s.is_empty()).is_none() && !a.defaults && con.tty;
@@ -1086,12 +1101,34 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
             return die(format!("找不到答案檔 {file}"));
         }
         // 答案檔只要寫要改的鍵；值寫 null＝拿掉那個答案（回到 profile 的預設）
-        for (k, v) in load_object(&p.real, "答案檔")? {
+        let given = load_object(&p.real, "答案檔")?;
+        if let Some(t) = only_topic {
+            let other: Vec<&str> = given.keys().map(String::as_str).filter(|k| !t.answer_keys.contains(k)).collect();
+            if !other.is_empty() {
+                return die(format!("--reconfigure {} 只改這個主題（答案檔的鍵：{}），答案檔卻還有：{}。拿掉它們，或不帶主題重跑", t.id, t.answer_keys.join("、"), other.join("、")));
+            }
+        }
+        for (k, v) in given {
             if v.is_null() {
                 new_ans.shift_remove(&k);
             } else {
                 new_ans.insert(k, v);
             }
+        }
+    } else if let (true, Some(t)) = (asked, only_topic) {
+        con.say(&format!("重新設定「{}」（{}）：其他主題不問、不動。每題的預設值是上次的答案（沒有的用偵測到的現況或 profile），Enter＝不改。", t.title, t.id));
+        if t.id == "main_session" {
+            let was = saved.get("main_session_push_merge").is_some_and(interview::yes);
+            let m = con.ask("你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR（y／n）", if was { "y" } else { "n" });
+            let free = pyutil::strip(&m).to_lowercase().starts_with('y') || pyutil::strip(&m) == "會";
+            if free || saved.contains_key("main_session_push_merge") {
+                new_ans.insert("main_session_push_merge".to_string(), Value::Bool(free));
+            }
+        } else {
+            let name = saved.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
+            let base = profile::load_profile(site, &name)?;
+            let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
+            interview::ask_more(con, &mut new_ans, base, &topics, false, Some(t.id))?;
         }
     } else if asked {
         con.say("重新設定：每題的預設值是上次的答案（沒有的用偵測到的現況），Enter＝不改。");
@@ -1115,7 +1152,7 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
         }
         let base = profile::load_profile(site, &name)?;
         let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
-        interview::ask_more(con, &mut new_ans, base, &topics, false)?;
+        interview::ask_more(con, &mut new_ans, base, &topics, false, None)?;
     }
 
     let name_of = |ans: &Map<String, Value>| ans.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
