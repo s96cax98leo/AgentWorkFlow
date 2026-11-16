@@ -13,8 +13,13 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 pub const CONSTRAINT_VERDICTS: [&str; 3] = ["符合", "偏離", "不適用"];
-/// 檢查指令的逾時（秒）。
+/// 檢查指令的逾時（秒）：限制沒寫 `timeout` 時的預設。
 pub const CONSTRAINT_CHECK_TIMEOUT: u64 = 300;
+
+/// 一項限制的檢查指令逾時秒數：`constraints[].timeout`（1–3600 的整數）；沒寫或不合法用預設。逾時仍然算沒過。
+pub fn constraint_timeout(c: &Value) -> u64 {
+    c.get("timeout").and_then(Value::as_u64).filter(|n| (1..=3600).contains(n)).unwrap_or(CONSTRAINT_CHECK_TIMEOUT)
+}
 
 /// 限制文件的實際位置：先找專案根目錄，再找目標 repo；都沒有回 None。
 pub fn constraint_file(ctx: &Ctx, c: &Value, repo: Option<&str>) -> R<Option<String>> {
@@ -292,12 +297,14 @@ pub fn constraint_issues(ctx: &Ctx, run: &str, stage: &str, profile: &Value, rep
         };
         let mut command = shell(cmd);
         command.current_dir(ctx.abs(&cwd));
-        let (code, tail) = match pyutil::run(&mut command, None, Some(Duration::from_secs(CONSTRAINT_CHECK_TIMEOUT))) {
+        // 逾時秒數：constraints[].timeout（1–3600；沒寫或不合法用預設）。逾時仍然算沒過
+        let secs = constraint_timeout(c);
+        let (code, tail) = match pyutil::run(&mut command, None, Some(Duration::from_secs(secs))) {
             Ok(o) => {
                 let text = format!("{}{}", pyutil::text(&o.stdout), pyutil::text(&o.stderr));
                 (i64::from(o.code), pyutil::tail(py::strip(&text), 300).to_string())
             }
-            Err(pyutil::RunErr::Timeout) => (-1, format!("逾時（{CONSTRAINT_CHECK_TIMEOUT} 秒）")),
+            Err(pyutil::RunErr::Timeout) => (-1, format!("逾時（{secs} 秒）")),
             Err(pyutil::RunErr::Os(e)) => (-1, format!("跑不起來：{}", crate::kb::PyErr::os(&e, &cwd).msg)),
         };
         checks.push(json!({"id": cid, "command": cmd, "exit": code, "output": tail}));
@@ -371,4 +378,20 @@ pub fn intent_file_errors(ctx: &Ctx, result: &Value, paths: &[String], profile: 
         }
     }
     Ok(errs)
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+
+    #[test]
+    fn constraint_timeout_defaults_and_bounds() {
+        assert_eq!(constraint_timeout(&json!({"id": "a"})), CONSTRAINT_CHECK_TIMEOUT);
+        assert_eq!(constraint_timeout(&json!({"timeout": 30})), 30);
+        assert_eq!(constraint_timeout(&json!({"timeout": 3600})), 3600);
+        // 不合法的值一律退回預設，不會變成不逾時
+        for bad in [json!(0), json!(3601), json!(-5), json!(1.5), json!("60"), json!(null)] {
+            assert_eq!(constraint_timeout(&json!({"timeout": bad})), CONSTRAINT_CHECK_TIMEOUT);
+        }
+    }
 }

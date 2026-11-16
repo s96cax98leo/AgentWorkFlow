@@ -133,4 +133,13 @@ export default [
       return e
     },
   })),
+  {
+    // 審查信心門檻（profile 的 review.min_confidence，只能調低）
+    name: '可設定：review.min_confidence=0.5 → 審查派工單的門檻跟著變',
+    profile: { review: { min_confidence: 0.5 } },
+    expect: (r) => {
+      const hit = Object.entries(r.prompts).filter(([k]) => k.startsWith('review:'))
+      return hit.length && hit.every(([, v]) => /只列 ≥0\.5 的/.test(v || '')) ? [] : [`審查派工單的門檻沒有跟著設定：${hit.map(([k]) => k).join('、')}`]
+    },
+  },
 ]

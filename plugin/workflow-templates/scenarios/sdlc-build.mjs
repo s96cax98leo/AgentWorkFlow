@@ -295,4 +295,16 @@ export default [
     args: { recipe: 'bugfix', modifiers: ['nope'] },
     expect: (r) => (r.out && r.out.halted && /nope/.test(r.out.halt_reason || '') && !r.labels.length ? [] : [`不認得的 modifier 要 halted：${JSON.stringify(r.out && r.out.halt_reason)}`]),
   },
+  {
+    // 輪數（profile 的 limits.rounds.build_retry）：預設 2（最多派 3 次）；設 0 就不重做
+    name: '可設定：limits.rounds.build_retry=0 → 子任務 blocked 不重做；預設重做到第 3 次',
+    profile: (p) => ({ limits: { ...(p.limits || {}), rounds: { build_retry: 0 } } }),
+    fakes: { 'Implement:t1': { status: 'blocked', summary: '卡住' } },
+    expect: (r) => (r.labels.includes('Implement:t1') && !r.labels.includes('Implement:t1#2') ? [] : [`build_retry=0 不該重派：${r.labels.join(' → ')}`]),
+  },
+  {
+    name: '可設定：沒設 limits.rounds 時 blocked 的子任務最多派 3 次（預設 2 次重做）',
+    fakes: { 'Implement:t1': { status: 'blocked', summary: '卡住' }, 'Implement:t1#2': { status: 'blocked', summary: '卡住' }, 'Implement:t1#3': { status: 'blocked', summary: '卡住' } },
+    expect: (r) => (r.labels.includes('Implement:t1#3') && !r.labels.includes('Implement:t1#4') ? [] : [`預設要派到第 3 次為止：${r.labels.join(' → ')}`]),
+  },
 ]

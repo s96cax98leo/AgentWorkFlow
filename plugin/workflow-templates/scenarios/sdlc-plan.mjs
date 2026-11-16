@@ -453,4 +453,21 @@ export default [
     ],
   })),
   ...V04,
+  {
+    // triage 信心門檻（profile 的 triage.min_confidence）：調高後，0.9 以下的建議不採用、改走 feature
+    name: '可設定：triage.min_confidence 調到 0.95 → 信心 0.9 的 bugfix 建議不採用，改走 feature；派工單寫的門檻跟著變',
+    profile: { ...RP, triage: { min_confidence: 0.95 } }, fakes: { triage: TRIAGE('bugfix', 0.9) },
+    expect: (r) => [
+      ...(recipeOf(r) === 'feature' ? [] : [`recipe 應為 feature，實際 ${recipeOf(r)}`]),
+      ...(/低於 0\.95 時 workflow 會改用 feature 完整流程/.test(r.prompts.triage || '') ? [] : ['triage 派工單的門檻沒有跟著設定']),
+    ],
+  },
+  {
+    name: '可設定：triage.min_confidence 不合法（超出 0–1）時照預設 0.7',
+    profile: { ...RP, triage: { min_confidence: 7 } }, fakes: { triage: TRIAGE('bugfix', 0.9), tasks: TASKS('bugfix') },
+    expect: (r) => [
+      ...(recipeOf(r) === 'bugfix' ? [] : [`recipe 應為 bugfix，實際 ${recipeOf(r)}`]),
+      ...(/低於 0\.7 時/.test(r.prompts.triage || '') ? [] : ['不合法的值要退回 0.7']),
+    ],
+  },
 ]
