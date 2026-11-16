@@ -214,6 +214,18 @@ pub fn scan(cfg: &Config, max_bytes: u64) -> Result<(BTreeMap<String, String>, V
             skipped.push((rel, "機敏檔".into()));
             return;
         }
+        // 連結解開後落在別的位置：用實際的路徑再過一次機敏目錄與排除規則（docs/prod.md -> ../secrets/prod.env）
+        let real_rel = to_posix(&pyish::relpath(&real, root));
+        if real_rel != rel {
+            if real_rel.split('/').any(|seg| is_sensitive(seg) || matches!(seg.to_lowercase().as_str(), "secrets" | "secret" | ".ssh" | ".aws" | ".gnupg")) {
+                skipped.push((rel, "機敏檔".into()));
+                return;
+            }
+            if excludes.iter().flatten().any(|rx| rx.is_match(&real_rel)) {
+                skipped.push((rel, "連到被排除的位置".into()));
+                return;
+            }
+        }
         if real == kb_abs || real.strip_prefix(kb_abs.as_str()).is_some_and(|r| r.starts_with('/')) {
             return;
         }

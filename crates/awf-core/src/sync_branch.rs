@@ -567,10 +567,16 @@ pub fn execute(ctx: &Ctx, argv: &[String]) -> Option<(i32, Value)> {
         Err(e) => Err(Halt(format!("參數錯誤：{}", e.message()))),
         Ok((cmd, a)) => {
             rec.insert("command".into(), json!(cmd));
+            // 這些值會直接交給 git：- 開頭的會被當成 git 的選項（例如 --upload-pack=<指令>）
+            let dashed = ["--repo", "--branch", "--base", "--remote", "--transit-branch"].iter().find(|k| a.get(k).is_some_and(|v| v.starts_with('-')));
+            if let Some(k) = dashed {
+                Err(Halt(format!("參數錯誤：{k} 的值不能以 - 開頭")))
+            } else {
             match cmd {
                 "plan" => cmd_plan(ctx, &a, &mut rec),
                 "apply" => cmd_apply(ctx, &a, &mut rec),
                 _ => cmd_check_transit(ctx, &a, &mut rec),
+            }
             }
         }
     };

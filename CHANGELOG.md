@@ -36,7 +36,9 @@
   - 交件或合併決定的文字有兩個 JSON 區塊時只看最後一個，讀不懂就當沒有。
   - 子任務的 `owns`、`depends_on` 這類欄位型別不對是錯誤，不再當成空的。
   - 重存一段時回傳讀不懂，該段標成 invalid 並清掉核准。
-  - run.json 已有 recipe 而專案沒有 `methodology.json` 時，核准、推送、merge gate 都拒絕。
+  - run.json 已有 recipe 而專案沒有 `methodology.json` 時，非 plan 段的存檔、核准、推送、merge gate 都拒絕。
+  - 需求來源是 `openspec` 時，design 核准後規格的條目變少或差異檔被改，算問題（要改規格就重跑 design 段）。
+  - `awf check-rules --git`、`awf recipe check-diff`、`awf sync-branch` 交給 git 的值不能以 `-` 開頭。
   - `guard.config.json` 讀不懂時，team agent 的寫入全擋。
   - `awf run-brief --log` 只能寫 run 目錄底下的紀錄檔。
   - 守門多擋：指令替換（`X=$(awf save-run approve …)`）、`sudo -u`／`find -exec`／`xargs -I{}` 後面的 `bash -c`、`git bisect run`、`trap`、ANSI-C 引號與大括號展開改寫的子指令。

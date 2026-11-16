@@ -32,6 +32,7 @@ struct Ctx {
     methodology: PathBuf,
     estimate: Regex,
     tnum: Option<crate::hooks::re::Re>,
+    sch: Schemas,
     internal: Vec<FRegex>,
     judge: Regex,
 }
@@ -79,12 +80,14 @@ impl Ctx {
             tnum: sch.task_id_regex(),
             internal,
             judge: Regex::new("能力不足|不專業|偷懶|很差勁|太弱|不夠聰明|擺爛|不負責任").expect("固定的正規式"),
+            sch,
         })
     }
 
     fn tnum_all(&self, text: &str) -> Vec<String> {
         match &self.tnum {
-            Some(re) => re.find_all(text).into_iter().map(|(a, b)| text[a..b].to_string()).collect(),
+            // 前綴帶非 ASCII 字元時樣式對不上，和閘門用同一個找法
+            Some(_) => self.sch.task_id_spans(text).into_iter().map(|(a, b)| text[a..b].to_string()).collect(),
             None => Vec::new(),
         }
     }
@@ -216,6 +219,10 @@ pub fn run_captured(argv: &[String], project: &Path) -> (i32, String, String) {
         let (Some(repo), Some(rng)) = (argv.get(1), argv.get(2)) else {
             return (1, String::new(), format!("awf check-rules：--git 要給 <repo> 與 <range>\n\n{USAGE}"));
         };
+        // 值會直接交給 git：- 開頭的會被當成 git 的選項（例如 --output=<檔>）
+        if repo.starts_with('-') || rng.starts_with('-') {
+            return (1, String::new(), "awf check-rules：--git 的 <repo> 與 <range> 不能以 - 開頭\n".to_string());
+        }
         ctx.scan_git(repo, rng, &mut out)
     } else {
         let mut files: Vec<String> = argv.to_vec();

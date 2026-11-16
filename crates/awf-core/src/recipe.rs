@@ -1043,6 +1043,11 @@ fn check_diff(argv: &[String], git: &dyn Fn(&[String]) -> Result<GitOut, String>
         v => v.to_string(),
     };
     let base = opt(argv, "--base", "origin/main");
+    // 值會直接交給 git：- 開頭的會被當成 git 的選項
+    if base.starts_with('-') || repo.starts_with('-') {
+        errs.push_str("--base 與 --repo 不能以 - 開頭（fail-closed）\n");
+        return Ok(1);
+    }
     // --name-status：改名與刪除的舊路徑也算進來（X3 M2：src/app.py 搬到 docs/app.py 不能被當成只改文件）
     let args: Vec<String> = ["-C", &repo, "diff", "--name-status", "-M", &format!("{base}...HEAD")].iter().map(|x| x.to_string()).collect();
     let p = git(&args).map_err(|e| perr("OSError", e))?;
