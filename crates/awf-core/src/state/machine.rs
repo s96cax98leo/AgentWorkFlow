@@ -2,7 +2,7 @@
 
 use super::args::stage_result;
 use super::{
-    awf_err, current_session, event_route, find_template, has, hint, is_file, load_json_or, opt, or_obj, read_config, render, render_custom, run_pack, s_or, setdefault_obj, stage_args,
+    auto, awf_err, current_session, event_route, find_template, has, hint, is_file, load_json_or, opt, or_obj, read_config, render, render_custom, run_pack, s_or, setdefault_obj, stage_args,
     stage_workflow, write, Env, Fail, A,
 };
 use crate::kb::pyish;
@@ -146,6 +146,11 @@ pub fn highlights(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str
     if is_file(&pj(&pj(run, stage), sr::INDEX_NAME)) {
         h.insert("records_index".into(), json!(format!("{run_arg}/{stage}/{}", sr::INDEX_NAME)));
     }
+    let recovered = auto::recovered_used(data, stage, &res);
+    if !recovered.is_empty() {
+        // 中斷回收：上次被中斷時留下、這次沿用的調研（存檔時 verify_reuse 已經重新核對過來源）
+        h.insert("recovered".into(), Value::Array(recovered));
+    }
     Ok(Value::Object(h))
 }
 
@@ -267,6 +272,10 @@ pub fn workflow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage:
     let (mut a, need, mut notes) = stage_args(env, run, data, stage, workflow)?;
     if !need.is_empty() {
         return Ok(need_input(stage, workflow, &need, &format!("{NEXT_CMD} next --run {run_arg}")));
+    }
+    if prepare {
+        // 每段開跑前先讓知識圖跟上（有圖、或 knowledge.auto.update 開啟時才做；失敗只多一行警告）
+        notes.extend(auto::kg_before_stage(env));
     }
     if prepare && workflow.starts_with("sdlc-") && sr::SDLC.contains(&stage) {
         let (extra, pnotes) = run_pack(env, stage, run_arg, &a, run)?;
@@ -410,8 +419,15 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
     }
     let stage = if opt(argv, "--stage").is_empty() { sr::next_stage(data)? } else { Some(opt(argv, "--stage").to_string()) };
     let Some(stage) = stage.filter(|s| !s.is_empty()) else {
+        // merge 之後：需求來源是 openspec 時，先把規格差異併回現行規格（要人確認；做過或略過就不再提）
+        let spec_tip = match auto::spec_apply(env, run, run_arg, data)? {
+            auto::SpecApply::Action(act) => return Ok(act),
+            auto::SpecApply::Tip(t) => Some(t),
+            auto::SpecApply::Nothing => None,
+        };
         let rec = recipe::recipe_of_run(data)?;
         let mut tips = vec!["這個 run 的每一段都完成了。".to_string()];
+        tips.extend(spec_tip);
         let stages = py::get(&rec, "stages")?;
         if py::truthy(stages) && py::contains(stages, "merge")? && stage_result(env, run, "merge")?.get("merged").is_some_and(py::truthy) {
             tips.push("已合併：跑 event-post-merge 監看。".to_string());
@@ -515,6 +531,7 @@ pub fn custom_action(env: &Env, run: &str, run_arg: &str, data: &mut Value, argv
     if !need.is_empty() {
         return Ok(need_input(stage, &name, &need, &format!("{NEXT_CMD} next --run {run_arg} --script {script_arg}")));
     }
+    let knotes = auto::kg_before_stage(env);
     let (extra, pnotes) = run_pack(env, stage, run_arg, &a, run)?;
     for (k, v) in extra {
         a.insert(k, v);
@@ -524,6 +541,7 @@ pub fn custom_action(env: &Env, run: &str, run_arg: &str, data: &mut Value, argv
     write(&pj(run, &format!(".wf/{name}.js")), &text)?;
     write(&pj(run, &format!(".wf/{name}.args.json")), &format!("{}\n", py::dumps(&a_val, Some(1))))?;
     let mut all: Vec<String> = notes;
+    all.extend(knotes);
     all.extend(pnotes);
     all.push(format!(
         "這一段用自訂腳本 {} 跑：存檔時的檢查和標準腳本一樣（必要的角色、紀錄、模型下限、recipe），而且不能政策核准，一律由人核准",
@@ -696,7 +714,7 @@ pub fn handoff_text(env: &Env, run: &str, run_arg: &str, data: &Value) -> R<Stri
 pub fn text_of(act: &Value) -> R<String> {
     let stage = py::get(act, "stage")?;
     let mut lines = vec![format!("動作：{}{}", py::s(py::get(act, "action")?), if py::truthy(stage) { format!("（{} 段）", py::s(stage)) } else { String::new() })];
-    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("say", "說明"), ("approve", "核准"), ("publish", "推送")] {
+    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("say", "說明"), ("approve", "核准"), ("publish", "推送"), ("preview", "試跑"), ("apply", "執行"), ("skip", "略過")] {
         let v = py::get(act, k)?;
         if py::truthy(v) {
             lines.push(format!("{label}：{}", py::s(v)));

@@ -805,6 +805,15 @@ fn followup_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mu
     Ok(0)
 }
 
+/// 結案或取消之後重寫知識圖的 vault（自動接點；沒有圖時什麼都不做、什麼都不印；失敗只警告）。
+fn vault_after(ctx: &Ctx, out: &mut String, err: &mut String) {
+    match crate::state::auto::refresh_vault(&ctx.abs(&ctx.project_root())) {
+        Some((true, msg)) => line(out, msg),
+        Some((false, msg)) => line(err, format!("注意：{msg}")),
+        None => {}
+    }
+}
+
 fn close_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mut String, err: &mut String) -> R<i32> {
     let (by, at) = (opt(argv, "--by", ""), opt(argv, "--at", ""));
     let mut errs: Vec<String> = Vec::new();
@@ -851,6 +860,7 @@ fn close_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mut S
     } else {
         line(err, format!("注意：{warn}"));
     }
+    vault_after(ctx, out, err);
     Ok(0)
 }
 
@@ -873,6 +883,7 @@ fn abandon_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mut
     } else {
         line(err, format!("注意：{warn}"));
     }
+    vault_after(ctx, out, err);
     Ok(0)
 }
 

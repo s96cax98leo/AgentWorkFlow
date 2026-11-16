@@ -8,6 +8,7 @@
 //! - `plugin`：找 plugin、讀 workflow.config、找範本、產生腳本（含自訂腳本的組裝）。
 //! - `args`：`--set`、每一段的 args、資料包、交付文件同步、找 workflow 的回傳。
 //! - `machine`：下一個動作（decide）、閘門重點、政策核准、自訂腳本、接手摘要。
+//! - `auto`：自動接點（每段開跑前更新知識圖、merge 之後併回規格、結案後重寫 vault、中斷回收）；全部是輔助，失敗只警告。
 //! - `selftest`：`awf state --selftest`。
 //!
 //! 和 0.x 的 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
@@ -19,6 +20,7 @@
 //! - 用法訊息的指令名是 `awf`。
 
 mod args;
+pub mod auto;
 mod machine;
 mod plugin;
 mod selftest;
@@ -85,6 +87,7 @@ pub const USAGE: &str = "狀態機：主 session 每一段只做兩件事——`
         [--requirement <需求原文或路徑>] [--base <base>] [--recipe <名>] [--modifiers a,b] [--size s] [--set k=v]… [--set-json k=<JSON>]…
     awf next --run <run_dir> [--set k=v]… [--set-json k=<JSON>]… [--stage <段>] [--workflow <名>] [--text]
     awf next --run <run_dir> --script <自己寫的腳本.js> [--stage <段> --retry]   # design、build、deliver 段改用自訂腳本（先檢查再接上執行核心）
+    awf next --run <run_dir> --skip spec-apply   # merge 之後「把規格差異併回現行規格」這一步先不做，之後不再提
     awf done --run <run_dir> [--output <workflow 回傳的 JSON 檔>] [--stage <段>]
     awf approve --run <run_dir> [<段>] --by <誰> [--note <備註>] [--answer \"<問題>=<答覆>\"]… [--accept-defaults]
     awf handoff --run <run_dir> [--print]      # 寫 <run_dir>/接手摘要.md：換 session 或換人接手時看
@@ -493,11 +496,20 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if !errs.is_empty() {
         return awf_err(errs.join("；"));
     }
+    if !opt(argv, "--skip").is_empty() {
+        auto::skip(env, &mut data, opt(argv, "--skip"))?;
+    }
+    // 中斷回收（輔助）：上一次交出去的 plan 段沒有結果時，把已經做完的調研記進 reuse.json；任何失敗都當成沒有可回收的
+    let recovered = auto::recover_interrupted(env, run, &mut data).unwrap_or_default();
     let act = if opt(argv, "--script").is_empty() { decide(env, run, run_arg, &mut data, plugin, argv)? } else { custom_action(env, run, run_arg, &mut data, argv)? };
     let mut act = carry(act, &data)?;
     if py::get(&act, "action")?.as_str() == Some("run_workflow") {
         let mut notes: Vec<Value> = pnotes.iter().map(|n| json!(n)).collect();
         notes.extend(py::iter(act.get("notes").unwrap_or(&json!([])))?);
+        if !recovered.is_empty() {
+            notes.push(json!(format!("中斷回收：上次這一段沒跑完，已經做完而且來源沒變的調研會沿用（{}）", recovered.join("、"))));
+            py::obj_mut(&mut act)?.insert("highlights".into(), json!({"recovered": recovered}));
+        }
         py::obj_mut(&mut act)?.insert("notes".into(), Value::Array(notes));
         let mut pending = Map::new();
         for k in ["stage", "workflow", "script"] {
