@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "program.schema.json",
   "title": "多需求排程 <runs_dir>/program.json",
-  "description": "一批 epic、彼此的相依、各自對應的 run 或變更。由人維護；awf program status／next 只讀它與各 run 的 run.json，排順序、給提示，不派工、不碰閘門、不寫任何檔。schema 表達不了的規則（id 不重複、兩個 epic 不能指到同一個 run、相依要指到存在的 epic、不能依賴自己、不能有循環）由 awf program 與 golden 的語意檢查擋。",
+  "description": "一批 epic、彼此的相依、各自對應的 run 或變更。由人維護；awf program status／next 只讀它與各 run 的 run.json，排順序、給提示，不派工、不碰閘門、不寫任何檔。schema 表達不了的規則（id 不重複、兩個 epic 不能指到同一個 run、相依要指到存在的 epic、不能依賴自己、不能有循環、run 與 change 的字元白名單）由 awf program 與 golden 的語意檢查擋。",
   "type": "object",
   "required": [
     "epics"
@@ -37,17 +37,17 @@
           "title": {
             "type": "string",
             "pattern": "\\S",
-            "description": "一句話的需求；還沒開工時會放進建議的 awf start 指令"
+            "description": "一句話的需求（只給人看）：列在狀態與開工建議旁邊當資料，不會變成指令的參數"
           },
           "run": {
             "type": "string",
             "pattern": "^[^/\\\\\\s.][^/\\\\\\s]{0,119}$",
-            "description": "對應的 run 目錄名（在 runs_dir 底下，不帶路徑、不以點開頭）。沒寫或目錄還不存在＝還沒開始"
+            "description": "對應的 run 目錄名（在 runs_dir 底下，不帶路徑、不以點開頭）。沒寫或目錄還不存在＝還沒開始。會出現在建議的指令裡：只能用英數字、-、_、.與中日韓文字（語意規則擋，其他符號一律報錯）"
           },
           "change": {
             "type": "string",
             "pattern": "\\S",
-            "description": "對應的變更名稱（需求來源是 openspec 時）；只用在建議的指令裡"
+            "description": "對應的變更名稱（需求來源是 openspec 時）；只用在建議的指令裡，字元限制同 run（語意規則擋）"
           },
           "depends_on": {
             "type": "array",

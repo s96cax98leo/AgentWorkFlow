@@ -1,0 +1,13 @@
+{
+  "schema": "program",
+  "description": "run 是指令替換",
+  "semantic": true,
+  "data": {
+    "epics": [
+      {
+        "id": "b",
+        "run": "$(id>pwned)"
+      }
+    ]
+  }
+}

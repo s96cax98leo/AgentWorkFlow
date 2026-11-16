@@ -1,0 +1,22 @@
+{
+  "schema": "program",
+  "description": "run 與 change 可以用中日韓文字、英數字、-、_、.",
+  "data": {
+    "schema_version": 1,
+    "epics": [
+      {
+        "id": "sso",
+        "title": "單一登入",
+        "run": "2026-11-01-單一登入_v1.2",
+        "change": "add-sso.v2"
+      },
+      {
+        "id": "export",
+        "run": "匯出帳單",
+        "depends_on": [
+          "sso"
+        ]
+      }
+    ]
+  }
+}
