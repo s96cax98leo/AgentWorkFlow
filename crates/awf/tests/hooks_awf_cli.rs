@@ -136,6 +136,32 @@ const RULES: &[Case] = &[
     ("awf kb query \"匯出 日期\"", DEV, ALLOW, Sh::Both),
     ("awf kb lint", DEV, ALLOW, Sh::Both),
     ("awf kb build", MAIN, ALLOW, Sh::Both),
+    // kg：只能跑五個查詢，而且不能帶寫入的選項；圖與 vault 寫不到
+    ("awf kg build", DEV, BLOCK, Sh::Both),
+    ("awf kg build --full --timeout 5", DEV, BLOCK, Sh::Both),
+    ("awf kg export", DEV, BLOCK, Sh::Both),
+    ("awf kg export --out docs/vault", REV, BLOCK, Sh::Both),
+    ("awf kg locate x --out docs/a.md", DEV, BLOCK, Sh::Both),
+    ("awf kg check --full", DEV, BLOCK, Sh::Both),
+    ("awf kg relink --write", DEV, BLOCK, Sh::Both),
+    ("awf kg locate \"匯出 發票\"", DEV, ALLOW, Sh::Both),
+    ("awf kg trace billing/export-invoice --json", DEV, ALLOW, Sh::Both),
+    ("awf kg impact src/a.ts", DEV, ALLOW, Sh::Both),
+    ("awf kg impact --diff main", REV, ALLOW, Sh::Both),
+    ("awf kg check --run _tpm/runs/r", DEV, ALLOW, Sh::Both),
+    ("awf kg neighbors src/a.ts#main --depth 3", DEV, ALLOW, Sh::Both),
+    ("awf kg --selftest", DEV, ALLOW, Sh::Both),
+    ("awf kg build", MAIN, ALLOW, Sh::Both),
+    ("awf kg export", MAIN, ALLOW, Sh::Both),
+    ("rm _tpm/kb/graph.db", DEV, BLOCK, Sh::Bash),
+    ("Remove-Item _tpm/kb/graph.db", DEV, BLOCK, Sh::Ps),
+    ("echo x > _tpm/kb/vault/notes/idea.md", DEV, BLOCK, Sh::Bash),
+    ("Set-Content _tpm\\kb\\vault\\notes\\idea.md x", DEV, BLOCK, Sh::Ps),
+    ("cp a.md _tpm/kb/vault/需求/a.md", DEV, BLOCK, Sh::Bash),
+    ("cat _tpm/kb/vault/hot.md", DEV, ALLOW, Sh::Bash),
+    ("Get-Content _tpm/kb/vault/hot.md", DEV, ALLOW, Sh::Ps),
+    ("ls -l _tpm/kb/graph.db", DEV, ALLOW, Sh::Bash),
+    ("rm _tpm/kb/graph.db", MAIN, ALLOW, Sh::Bash),
     // save-run：只能 status、--selftest
     ("awf save-run approve _tpm/runs/r --stage plan --by human", DEV, BLOCK, Sh::Both),
     ("awf save-run stage _tpm/runs/r plan", DEV, BLOCK, Sh::Both),
@@ -388,6 +414,9 @@ fn messages_name_the_awf_command() {
         ("awf next r", DEV, "不能跑 awf next"),
         ("awf pack plan r", DEV, "不能跑 awf pack"),
         ("awf kb build", DEV, "只能跑 awf kb query／lint"),
+        ("awf kg build", DEV, "不能跑 awf kg build"),
+        ("awf kg trace billing/export --out x", DEV, "不能跑 awf kg trace --out"),
+        ("rm _tpm/kb/graph.db", DEV, "不能寫知識圖的檔"),
         ("awf deliverables sync", DEV, "只能跑 awf deliverables status／check／affected"),
         ("awf publish --branch feature/x", DEV, "不能執行 awf publish"),
         ("awf merge-gate check --pr 3", DEV, "不能跑 awf merge-gate check"),
@@ -435,4 +464,56 @@ fn long_chained_command_stays_fast() {
     let cmd = format!("{} && awf save-run approve r", vec!["ls"; n].join(" && "));
     let r = hook(&ws, "Bash", DEV, &cmd);
     assert_eq!(r.status.code(), Some(2), "{}", String::from_utf8_lossy(&r.stderr));
+}
+
+// ───────── 7. 知識圖的檔 team agent 寫不到（Write／Edit） ─────────
+
+fn paths_hook(ws: &Path, tool: &str, agent: &str, file: &Path) -> Output {
+    let mut c = Command::new(EXE);
+    c.args(["hook", "guard-paths"]);
+    for (k, _) in std::env::vars_os() {
+        let k = k.to_string_lossy().into_owned();
+        if k.starts_with("CLAUDE_") || k.starts_with("AWF_") {
+            c.env_remove(k);
+        }
+    }
+    c.env("CLAUDE_PROJECT_DIR", ws);
+    let mut d = json!({"hook_event_name": "PreToolUse", "tool_name": tool, "cwd": ws.to_string_lossy(),
+        "tool_input": {"file_path": file.to_string_lossy(), "content": "x", "old_string": "a", "new_string": "b"}});
+    if !agent.is_empty() {
+        d["agent_type"] = json!(agent);
+    }
+    let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("啟動 awf");
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(d.to_string().as_bytes());
+    }
+    child.wait_with_output().expect("等 awf 結束")
+}
+
+#[test]
+fn graph_and_vault_are_not_writable_by_team_agents() {
+    let tmp = Tmp::new("kg");
+    let ws = workspace(&tmp.0);
+    std::fs::create_dir_all(ws.join("_tpm/kb/vault/notes")).unwrap();
+    std::fs::write(ws.join("_tpm/kb/graph.db"), "x").unwrap();
+    std::fs::create_dir_all(ws.join("docs/vault")).unwrap();
+    for (rel, agent, want) in [
+        ("_tpm/kb/graph.db", DEV, BLOCK),
+        ("_tpm/kb/graph.db.tmp-1", DEV, BLOCK),
+        ("_tpm/kb/vault/hot.md", DEV, BLOCK),
+        ("_tpm/kb/vault/notes/idea.md", DEV, BLOCK),
+        ("_tpm/kb/vault/notes/idea.md", "agent-workflow:tpm-writer", BLOCK),
+        ("_tpm/kb/vault/notes/idea.md", MAIN, ALLOW),
+        // 專案自己叫 vault 的目錄（旁邊沒有圖）不受影響
+        ("docs/vault/readme.md", "agent-workflow:tpm-writer", ALLOW),
+    ] {
+        for tool in ["Write", "Edit"] {
+            let r = paths_hook(&ws, tool, agent, &ws.join(rel));
+            let err = String::from_utf8_lossy(&r.stderr);
+            assert_eq!(r.status.code(), Some(want), "［{tool}／{agent}］{rel}：{err}");
+            if want == BLOCK && agent == DEV {
+                assert!(err.contains("知識圖"), "［{tool}］{rel} 的訊息：{err}");
+            }
+        }
+    }
 }

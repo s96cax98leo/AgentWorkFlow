@@ -29,7 +29,12 @@ pub const SUBCOMMANDS: &[&str] = &[
     "build", "start", "next", "done", "approve", "render", "handoff", "state", "watch", "statusline", "doctor", "spec", "init",
     "check-agents", "run-brief", "check-envelope", "check-rules", "hook",
     "golden", "tokens",
+    "kg",
 ];
+/// `awf kg` 的唯讀查詢，以及查詢可以帶的選項（值另外一個參數的、不帶值的）。清單外的選項（`--out`、`--full`…）一律當寫入。
+const KG_QUERIES: &[&str] = &["locate", "trace", "impact", "check", "neighbors"];
+const KG_VALUE_FLAGS: &[&str] = &["--root", "--profile", "--dir", "--diff", "--run", "--budget", "--top", "--depth"];
+const KG_BARE_FLAGS: &[&str] = &["--json", "--"];
 const STATE_VERBS: &[&str] = &["start", "next", "done", "approve", "render", "handoff"];
 const HELP: &[&str] = &["-h", "--help"];
 
@@ -318,6 +323,7 @@ pub enum Deny {
     Pack,
     Deliverables,
     Kb,
+    Kg(String),
     SaveRun(String),
     State(String),
     Publish,
@@ -345,6 +351,37 @@ impl Call {
         } else {
             Some(s.to_string())
         }
+    }
+
+    /// `awf kg`：只准唯讀的查詢子指令，而且只能帶查詢的選項。回傳被擋的原因。
+    fn kg_deny(&self) -> Option<String> {
+        let s = self.first();
+        if s == "--selftest" || has(HELP, s) {
+            return None;
+        }
+        if s.is_empty() {
+            return if self.forwarded { Some(NOTE_FORWARD.to_string()) } else { None };
+        }
+        if !has(KG_QUERIES, s) {
+            return Some(s.to_string());
+        }
+        let mut i = 1;
+        while i < self.args.len() {
+            let a = self.args[i].as_str();
+            if a == "--" {
+                break;
+            }
+            if a.starts_with("--") {
+                let name = a.split('=').next().unwrap_or(a);
+                if has(KG_VALUE_FLAGS, name) {
+                    i += usize::from(!a.contains('='));
+                } else if !has(KG_BARE_FLAGS, a) {
+                    return Some(format!("{s} {name}"));
+                }
+            }
+            i += 1;
+        }
+        None
     }
 
     /// `awf spec ids` 只准唯讀的旗標。
@@ -376,6 +413,7 @@ impl Call {
             "pack" => self.write_sub(&["--selftest"]).map(|_| Deny::Pack),
             "deliverables" => self.write_sub(&["status", "check", "affected", "--selftest", "-h", "--help"]).map(|_| Deny::Deliverables),
             "kb" => self.write_sub(&["query", "lint", "--selftest", "-h", "--help"]).map(|_| Deny::Kb),
+            "kg" => self.kg_deny().map(Deny::Kg),
             "save-run" => self.write_sub(&["status", "--selftest"]).map(Deny::SaveRun),
             "state" => {
                 if self.first() == "--selftest" { None } else { Some(Deny::State(format!("state {}", self.first()).trim_end().to_string())) }
@@ -463,6 +501,13 @@ mod tests {
         assert_eq!(d("awf pack --selftest"), None);
         assert_eq!(d("awf deliverables sync"), Some(Deny::Deliverables));
         assert_eq!(d("awf kb build"), Some(Deny::Kb));
+        assert_eq!(d("awf kg build"), Some(Deny::Kg("build".into())));
+        assert_eq!(d("awf kg export --out x"), Some(Deny::Kg("export".into())));
+        assert_eq!(d("awf kg locate x --out y"), Some(Deny::Kg("locate --out".into())));
+        assert_eq!(d("awf kg check --full"), Some(Deny::Kg("check --full".into())));
+        for ok in ["awf kg locate 匯出 發票", "awf kg trace billing/export-invoice --json", "awf kg impact --diff main", "awf kg check --run _tpm/runs/r", "awf kg neighbors a#b --depth=3", "awf kg --selftest", "awf kg"] {
+            assert_eq!(d(ok), None, "{ok}");
+        }
         assert_eq!(d("awf save-run close r"), Some(Deny::SaveRun("close".into())));
         assert_eq!(d("awf next r"), Some(Deny::State("next".into())));
         assert_eq!(d("awf state next"), Some(Deny::State("state next".into())));

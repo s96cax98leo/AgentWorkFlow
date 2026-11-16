@@ -547,6 +547,26 @@ pub fn is_secret_path(p: &str) -> bool {
     SECRET_FILES.is_match(n) && !SECRET_FILE_OK.is_match(n)
 }
 
+/// 知識圖的資料庫檔名（`awf kg`）與它旁邊由工具與人維護的 vault。
+pub const KG_DB_NAMES: &[&str] = &["graph.db", "kb.sqlite"];
+
+/// 知識圖的檔：`graph.db`（含暫存檔與 journal），或 vault 底下的任何檔（`notes/` 是人寫的，也算）。
+/// vault 的認法：路徑裡有一層叫 `vault`，而且它的上一層放著知識層或知識圖的資料庫（所以別的專案自己的 vault 目錄不受影響）。
+pub fn kg_path(p: &str) -> bool {
+    let n = norm(p.trim_matches(|c| c == '"' || c == '\''));
+    let parts: Vec<&str> = n.split('/').collect();
+    let base = fold(parts.last().copied().unwrap_or(""));
+    if base == "graph.db" || base.starts_with("graph.db.") || base.starts_with("graph.db-") {
+        return true;
+    }
+    parts.iter().enumerate().skip(1).any(|(i, seg)| {
+        fold(seg) == "vault" && {
+            let parent = parts[..i].join("/");
+            KG_DB_NAMES.iter().any(|db| std::path::Path::new(&format!("{parent}/{db}")).is_file())
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
