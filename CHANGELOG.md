@@ -4,6 +4,82 @@
 
 ## [Unreleased]
 
+## [1.0.0]
+
+這一版把全部工具改成一個執行檔，並把規格、知識、程式三層用連結接起來。起因：專案端要另外裝 Python、工具複製進每個專案後各自漂移；agent 有程式索引卻不用、需求整份讀；專案都在用 OpenSpec 而模版不認得。
+
+### 破壞性變更
+
+- **不再需要 Python，也不再有 `.claude/teams/tools/`**。全部工具是單一執行檔 `awf`（Rust），由 plugin 的 `bin/` 提供。指令對照是機械的：
+
+  | 0.x | 1.0 |
+  |---|---|
+  | `python3 .claude/teams/tools/awf.py next` | `awf next` |
+  | `save_run.py <子指令>` | `awf save-run <子指令>` |
+  | `merge_gate.py`、`publish.py`、`sync_branch.py` | `awf merge-gate`、`awf publish`、`awf sync-branch` |
+  | `pack.py`、`kb.py`、`locate.py`、`recipe.py` | `awf pack`、`awf kb`、`awf locate`、`awf recipe` |
+  | `deliverables.py`、`checklist.py`、`check_agents.py` | `awf deliverables`、`awf checklist`、`awf check-agents` |
+  | `awf_cost.py`、`awf_watch.py`、`awf_doctor.py`、`awf_script.py` | `awf cost`、`awf watch`、`awf doctor`、`awf script` |
+  | `run_brief.py`、`check_envelope.py`、`check_rules.py`、`build.py` | `awf run-brief`、`awf check-envelope`、`awf check-rules`、`awf build` |
+  | `python3 <模版 repo>/init.py …` | `awf init …`（不用另外 clone 模版 repo） |
+  | `golden-set/run.py` | `awf golden` |
+  | 設計系統 skill 的 `scripts/check-tokens.py`、`verify-tokens.py` | `awf tokens check`、`awf tokens verify` |
+  | `<工具>.py --selftest` | `awf <子指令> --selftest` |
+
+  子指令的參數與旗標不變。資料格式（run.json、信封、trace、稽核紀錄、決策記憶、交付設定）不變，進行中的 run 升級後可以繼續。
+- **hook 的註冊改成執行檔**：`awf hook <guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context>`。`--hooks project` 的專案要重跑 `awf init --upgrade`。
+- **merge gate 的 CI 範本要重新產生**：改成跑專案 `.claude/teams/bin/` 裡的執行檔，執行前核對 sha256。
+- **模版檔搬進 `plugin/`**（`plugin/scaffold/`、`plugin/workflow-templates/` 的片段、情境與 `check_workflows.mjs`）。自己寫腳本引用舊路徑的要改。
+- **閘門類指令要找得到專案根**：`--project-dir` → `CLAUDE_PROJECT_DIR` → 從目前目錄往上找最外層含 `.claude/teams/VERSION` 的目錄。找不到時 `awf merge-gate`、`awf save-run stage／approve／escalate`、`awf publish`、`awf done／approve` 會報錯，不退回目前目錄。
+- **hook 內部出錯時的行為變了**：team agent 一律擋；主 session 與你自己的 agent 維持最小規則（擋 push、合併、approve、GitHub API 寫入）。0.x 是全部退到最小規則。
+- **比 0.x 嚴的判定**（原本會過、現在不會）：
+  - 交件或合併決定的文字有兩個 JSON 區塊時只看最後一個，讀不懂就當沒有。
+  - 子任務的 `owns`、`depends_on` 這類欄位型別不對是錯誤，不再當成空的。
+  - 重存一段時回傳讀不懂，該段標成 invalid 並清掉核准。
+  - run.json 已有 recipe 而專案沒有 `methodology.json` 時，核准、推送、merge gate 都拒絕。
+  - `guard.config.json` 讀不懂時，team agent 的寫入全擋。
+  - `awf run-brief --log` 只能寫 run 目錄底下的紀錄檔。
+  - 守門多擋：指令替換（`X=$(awf save-run approve …)`）、`sudo -u`／`find -exec`／`xargs -I{}` 後面的 `bash -c`、`git bisect run`、`trap`、ANSI-C 引號與大括號展開改寫的子指令。
+
+### 新增
+
+- **規格層 `awf spec`**：讀 OpenSpec 的目錄（現行規格與變更的四種差異），需求與情境有穩定 id，`validate` 檢查、`apply` 把變更併回現行規格（預設只印差異）。需求來源可以設成 `openspec`：proposal 就是 intent，design 與 test 存檔時核對規格 id，merge gate 共用。見 `docs/規格層.md`。
+- **知識圖 `awf kg`**：把規格、文件、決策、連結帳本、程式索引（tree-sitter：TypeScript／TSX、JavaScript、Python、Go、Java、Rust、PHP、Ruby）接成一張圖。`locate`、`trace`、`impact`、`check`、`neighbors` 五個查詢只回 `路徑:起訖行` 加理由；`export` 寫成 Obsidian 可以開的 vault。`knowledge.repos` 可以收別的 repo（唯讀）。見 `docs/知識圖.md`。
+- **連結**：profile 有 `links` 時，每段存檔把宣告的連結（需求→run、驗收條件→規格小節／檔案／測試／commit、決策→需求、改動→交付文件小節）記進 `<runs_dir>/links.jsonl`；`links.enforce` 開啟時連結不齊不能政策核准。
+- **自動接點**（都能在 `knowledge.auto` 關掉；失敗只警告）：`awf next` 每段開跑前更新圖；資料包帶圖查到的行段，派工單多一行「只讀這些行段」；merge 之後提醒把規格差異併回現行規格；結案後重寫 vault；開 session 帶幾行摘要；提問時帶位置（預設關）。預設不會自動建第一份圖。
+- **中斷回收**：plan 段被中斷時，條件全部核對得過的調研結果會被沿用，不用整段重來。
+- **`awf program`**：`<runs_dir>/program.json` 記多個需求的相依，`status`、`next` 只排順序與提示。
+- **init 訪談**：`awf init --detect` 先偵測專案（語言、測試與 lint 指令、commit 樣式、有沒有 `openspec/`、既有 CI）；寫入前列「偵測到／你的回答／會寫成」對照表；答案存成 `init-answers.json`，`--reconfigure [主題]` 可重問。
+- **由你決定的設定**（預設都不啟用或等於原值）：
+  - `scrub` 與 `awf scrub`：自己訂規則的去客戶化掃描，`when: ["publish"]` 時命中就不推。輸出不印規則與命中的字串。
+  - `ci` 與 `awf ci render`：專案的測試／lint CI，預設只印不寫；必過的 job 併進 merge gate 的 required checks。
+  - 原本寫死的值改成可設定：分類信心門檻、修正迴圈輪數、審查信心門檻與 Nit 上限、審查 lens、限制檢查的逾時、查詢量與調研上限、事件的角度與步驟上限、紀錄的必要節、備份 ref 樣式、程式查詢工具、信封長度。會放寬閘門或交件驗證的方向只准調嚴。
+  - `stages.build.affected_tests_only`：build 的修正迴圈只跑受影響的測試（test 段照舊全跑）。
+- **doctor 體檢**：`models.mode` 是 inherit、知識庫沒建、有 `openspec/` 但需求來源沒設、需求來源在工作區外、最近的 run 沒走 `awf next`、CI 檔與 profile 漂移。
+- **對外介面**：`awf save-run status --json` 與進度事件有 `schema_version`；recipe 跳過的段標 `skipped`。相容承諾寫在 `docs/監控與整合.md`。
+- `awf golden`、`awf tokens`。
+
+### 安全
+
+- 移植完成後與新功能完成後各做一次獨立審查，發現的問題在這一版修掉；擋不住的寫法列在 `SECURITY.md`〈守門擋不住的寫法〉（守門是輔助，信任邊界在伺服器端）。
+- team agent 不能寫：`.github/workflows/`、連結帳本、知識圖與 vault、`program.json`、`knowledge.repos` 列的 repo；不能跑 `awf` 會寫入的子指令。
+- 執行檔的來源：`plugin/bin/checksums.json` 記每個平台執行檔的 sha256 與原始碼雜湊，CI 核對。這抓得到過期與損壞，證明不了執行檔確實由這份原始碼建出；要自己建置見 `docs/建置與發佈.md`。
+
+### 沒做
+
+- 基準實跑（plan 段的 token 與中斷後重跑的成本）還沒量。
+- Windows 上沒有實機驗證過，只靠 CI。
+- C# 與 Kotlin 的程式索引沒有放進預設的執行檔（放了會超過大小目標），要自己建置時加 feature。
+- 寫死值的盤點還有約三十項沒處理（角色名單、派工單語言、agent 檔裡的細節等）。
+
+### 升級步驟
+
+1. `claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins`。
+2. 在專案跑 `awf init --target . --upgrade`：移除沒改過的舊工具副本（改過的保留並列出）、改寫 hook 註冊、補新的設定鍵。0.x 的 run 目錄不用轉換。
+3. 用了 merge gate CI 的專案：`awf init --target . --upgrade --with-merge-gate` 重新產生 CI 檔與專案裡的執行檔。
+4. 自己的腳本、CI、文件裡的 `python3 .claude/teams/tools/…` 照上面的對照表改。
+5. `awf doctor` 確認安裝；要用知識圖先跑一次 `awf kg build`。
+
 ## [0.6.0]
 
 這一版讓過程留下來，並且能變成要交給客戶的文件。起因：另一個專案自己寫了交付文件腳本，而且每個 run 結束後的資料沒有人整理，之後也查不到。
