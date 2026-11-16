@@ -723,6 +723,11 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
             && !ph_re().is_match(&body),
         body.chars().take(300).collect(),
     );
+    t.check(
+        "自訂腳本：派工單的共同前綴和內建範本一樣帶知識圖指示與可調的字（awfInit 有 kg、tune；沒有圖、沒設定時前綴不變）",
+        body.contains("constraints: awfConstraints(MP, \"build\"), kg: A.kg === true, tune: awfTune(MP) })") && body.contains("function awfTune("),
+        body.lines().find(|l| l.starts_with("awfInit(")).unwrap_or_default().to_string(),
+    );
     for (bad_name, why) in [("direct.js", "不能直接用 agent()"), ("ext.js", "acme:a11y 不是登記過的角色")] {
         let d_bad = w.cs_run(&format!("custom-{}", bad_name.trim_end_matches(".js")), "build");
         let (c, out, _) = w.call(&["next", "--run", &d_bad, "--script", &format!("scripts/{bad_name}")]);
