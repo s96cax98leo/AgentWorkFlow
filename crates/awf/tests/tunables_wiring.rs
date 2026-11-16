@@ -284,3 +284,64 @@ fn bad_constraint_format_falls_back_on_both_sides() {
         assert_eq!((heading.as_str(), words.each_ref().map(String::as_str)), ("限制對照", ["符合", "偏離", "不適用"]), "{bad}：派工單要退回內建的字");
     }
 }
+
+// ------------------------------------------------------------------ 驗收條件編號的樣式：連結檢查和拆工檢查同一個來源
+
+fn links_profile(pattern: Option<&str>) -> Value {
+    let d = read_json(&scaffold_teams().join("methodologies/default.json"));
+    let mut design = d["stages"]["design"].clone();
+    if let Some(p) = pattern {
+        design["criteria_id_pattern"] = json!(p);
+    }
+    builtin_profile(json!({"links": {"enforce": true}, "stages": {"design": design}}))
+}
+
+fn test_of(rows: &[(&str, &str)]) -> Value {
+    let crit: Vec<Value> = rows.iter().map(|(id, cmd)| json!({"id": id, "criterion": "c", "command": cmd, "result": "pass", "evidence": "e"})).collect();
+    json!({"verifier": envelope(json!({"commit": SHA, "scope_covered": "x", "scope_skipped": "none", "anti_cheat": [], "criteria": crit}))})
+}
+
+/// 走到 test 存檔（links.enforce 開著）。子任務的驗收條件是 `acc`，test 段逐條結果的 id 是 `row`。
+fn links_run(tag: &str, pattern: Option<&str>, acc: &str, row: &str) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("proj");
+    mk(&root, &links_profile(pattern));
+    planned(&root);
+    must(save(&root, "design", design_of(json!([task(&[acc])])), &[]), "stage design");
+    must(approve(&root, "design", "human"), "approve design");
+    let built = json!({"x": envelope(json!({"task_id": "t1", "branch": "b", "commits": [], "files_changed": ["src/export.py"], "tests": []}))});
+    must(save(&root, "build", built.clone(), &[]), "stage build");
+    must(save(&root, "sync", built, &[]), "stage sync");
+    let _ = save(&root, "test", test_of(&[(row, "pytest tests/test_export.py::test_csv")]), &[("verify", "agent-workflow:dev-verifier")]);
+    (t, root)
+}
+
+/// 有設定：照樣式認編號，連結接得起來；分片前綴（`api:ISSUE-12`）也認。政策核准重算、照樣通過。
+#[test]
+fn links_use_the_configured_criteria_id_pattern() {
+    for row in ["ISSUE-12", "api:ISSUE-12"] {
+        let (_t, root) = links_run("links-set", Some(r"\bISSUE-\d+\b"), "ISSUE-12 匯出 CSV", row);
+        assert!(stage_list(&root, "design", "link_gaps").is_empty(), "design：{:?}", stage_list(&root, "design", "link_gaps"));
+        assert!(stage_list(&root, "test", "link_gaps").is_empty(), "test（{row}）：{:?}", stage_list(&root, "test", "link_gaps"));
+        must(approve(&root, "test", "policy"), "連結齊全可以政策核准");
+        let ledger = std::fs::read_to_string(root.join("_runs/links.jsonl")).unwrap_or_default();
+        assert!(ledger.contains("ISSUE-12"), "帳本要記自訂編號的連結：{ledger}");
+    }
+    // 測試結果裡沒有這條編號：照樣列缺口、擋政策核准
+    let (_t, root) = links_run("links-miss", Some(r"\bISSUE-\d+\b"), "ISSUE-12 匯出 CSV", "ISSUE-99");
+    assert_eq!(stage_list(&root, "test", "link_gaps"), ["ISSUE-12：缺 測試、commit"]);
+    let o = approve(&root, "test", "policy");
+    assert!(o.code == 1 && o.all().contains("連結檢查：ISSUE-12：缺 測試、commit"), "{}", o.all());
+}
+
+/// 沒設定：只認內建的「AC-…」，自訂寫法的編號算沒有可辨識的 id（和原本一樣）。
+/// 有設定時內建寫法不再算數，訊息說明現在認的是哪一種編號。
+#[test]
+fn links_without_the_pattern_only_know_builtin_ids() {
+    let (_t, root) = links_run("links-default", None, "ISSUE-12 匯出 CSV", "ISSUE-12");
+    assert_eq!(stage_list(&root, "design", "link_gaps"), ["子任務 t1 的驗收條件沒有可辨識的 id（「AC-…」編號或規格 id），連不到 spec、測試與 commit"]);
+    let (_t, root) = links_run("links-default-ac", None, "AC-1 匯出 CSV", "AC-1");
+    assert!(stage_list(&root, "test", "link_gaps").is_empty(), "{:?}", stage_list(&root, "test", "link_gaps"));
+    let (_t, root) = links_run("links-set-ac", Some(r"\bISSUE-\d+\b"), "AC-1 匯出 CSV", "AC-1");
+    assert_eq!(stage_list(&root, "design", "link_gaps"), ["子任務 t1 的驗收條件沒有可辨識的 id（符合 stages.design.criteria_id_pattern 的編號或規格 id），連不到 spec、測試與 commit"]);
+}

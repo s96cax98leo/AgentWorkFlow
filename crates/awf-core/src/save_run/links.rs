@@ -9,7 +9,8 @@
 //!
 //! 帳本的內容之後會被知識圖顯示給主 session：每個 id、目標、出處寫入前都過 [`safe`]。
 
-use super::checks::{ac_ids, result_subtasks};
+use super::checks::{criteria_pattern, ids_with, result_subtasks};
+use crate::hooks::re::Re;
 use super::py::{self, pj, pname, pparent, R};
 use super::speccheck::{criteria_rows, lead_token, SpecCtx};
 use super::trace::envelopes;
@@ -66,14 +67,31 @@ fn strs(v: Option<&Value>) -> Vec<String> {
     v.and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
 }
 
+/// 連結檢查認驗收條件編號的樣式：profile 的 `stages.design.criteria_id_pattern`（和拆工檢查同一個來源，
+/// [`criteria_pattern`]）。沒寫回 `None`（內建的「AC-…」）；寫壞了也回 `None`——profile 的檢查與拆工檢查會把它列成問題，
+/// 這裡退回內建樣式只會讓自訂編號連不起來（列成缺口），不會少查。
+pub fn id_pattern(profile: &Value) -> Option<Re> {
+    criteria_pattern(profile).ok().flatten()
+}
+
+/// 訊息裡怎麼稱呼驗收條件的編號。
+fn id_name(pat: Option<&Re>) -> &'static str {
+    if pat.is_some() { "符合 stages.design.criteria_id_pattern 的編號" } else { "「AC-…」編號" }
+}
+
 /// 一條 acceptance 裡的驗收條件 id：開頭是規格 id（需求來源是 openspec 時）就用它，另外收「AC-…」這種編號。
 pub fn ac_tokens(entry: &str, known: Option<&BTreeSet<String>>) -> Vec<String> {
+    ac_tokens_with(entry, known, None)
+}
+
+/// 同 [`ac_tokens`]；`pat` 有給時編號照它認（沒給用內建的「AC-…」）。
+pub fn ac_tokens_with(entry: &str, known: Option<&BTreeSet<String>>, pat: Option<&Re>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let tok = lead_token(entry);
     if known.is_some_and(|k| k.contains(tok)) {
         out.push(tok.to_string());
     }
-    for id in ac_ids(entry) {
+    for id in ids_with(entry, pat) {
         if !out.contains(&id) {
             out.push(id);
         }
@@ -82,10 +100,10 @@ pub fn ac_tokens(entry: &str, known: Option<&BTreeSet<String>>) -> Vec<String> {
 }
 
 /// 子任務的驗收條件 id（照出現順序、不重複）。
-fn task_acs(task: &Value, known: Option<&BTreeSet<String>>) -> Vec<String> {
+fn task_acs(task: &Value, known: Option<&BTreeSet<String>>, pat: Option<&Re>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for e in strs(task.get("acceptance")) {
-        for id in ac_tokens(&e, known) {
+        for id in ac_tokens_with(&e, known, pat) {
             if !out.contains(&id) {
                 out.push(id);
             }
@@ -123,8 +141,8 @@ pub fn test_targets(command: &str) -> Vec<String> {
 }
 
 /// 逐條結果的 id 對到哪一條 AC：整個 id、去掉分片前綴的 id，或裡面的「AC-…」編號。
-fn row_matches(ac: &str, id: &str, bare: &str) -> bool {
-    ac == id || ac == bare || ac_ids(id).iter().any(|x| x == ac)
+fn row_matches(ac: &str, id: &str, bare: &str, pat: Option<&Re>) -> bool {
+    ac == id || ac == bare || ids_with(id, pat).iter().any(|x| x == ac)
 }
 
 fn real(v: &str) -> bool {
@@ -148,6 +166,11 @@ fn run_requirements(ctx: &Ctx, run: &str, sc: Option<&SpecCtx>) -> Vec<Value> {
 
 /// 這一段宣告的連結（照固定順序、不重複）。`result` 是這一段 workflow 的回傳。
 pub fn stage_links(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option<&SpecCtx>) -> Vec<Value> {
+    stage_links_with(ctx, run, stage, result, sc, None)
+}
+
+/// 同 [`stage_links`]；`pat` 是驗收條件編號的樣式（[`id_pattern`]）。
+pub fn stage_links_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option<&SpecCtx>, pat: Option<&Re>) -> Vec<Value> {
     let name = run_name(ctx, run);
     let known = sc.map(SpecCtx::known);
     let known = known.as_ref();
@@ -167,7 +190,7 @@ pub fn stage_links(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option
         "design" => {
             for t in result_subtasks(result) {
                 let tid = task_id(&t);
-                for ac in task_acs(&t, known) {
+                for ac in task_acs(&t, known, pat) {
                     if known.is_some_and(|k| k.contains(&ac)) {
                         push(link("ac_spec", node("ac", &ac), node("spec", &ac), &name, stage, &format!("design.json:subtasks[{tid}].acceptance")));
                     }
@@ -186,7 +209,7 @@ pub fn stage_links(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option
             for p in envelopes(result).into_iter().filter_map(|e| e.get("payload")) {
                 let (Some(tid), files) = (p.get("task_id").and_then(Value::as_str), strs(p.get("files_changed"))) else { continue };
                 for t in subs.iter().filter(|t| task_id(t) == tid) {
-                    for ac in task_acs(t, known) {
+                    for ac in task_acs(t, known, pat) {
                         for f in &files {
                             push(link("ac_file", node("ac", &ac), node("file", f), &name, stage, &format!("build.json:files_changed[{tid}]")));
                         }
@@ -197,7 +220,7 @@ pub fn stage_links(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option
         "test" => {
             let mut acs: Vec<String> = Vec::new();
             for t in design_subtasks(ctx, run) {
-                for ac in task_acs(&t, known) {
+                for ac in task_acs(&t, known, pat) {
                     if !acs.contains(&ac) {
                         acs.push(ac);
                     }
@@ -205,7 +228,7 @@ pub fn stage_links(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option
             }
             for (id, bare, command, commit) in criteria_rows(result) {
                 // design 段宣告過的 AC 才連；沒有 design 段時，逐條結果的 id 本身是規格 id 也算
-                let mut hit: Vec<String> = acs.iter().filter(|ac| row_matches(ac, &id, &bare)).cloned().collect();
+                let mut hit: Vec<String> = acs.iter().filter(|ac| row_matches(ac, &id, &bare, pat)).cloned().collect();
                 if hit.is_empty() {
                     hit = [&bare, &id].into_iter().filter(|x| known.is_some_and(|k| k.contains(*x))).take(1).cloned().collect();
                 }
@@ -237,7 +260,7 @@ pub fn stage_links(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option
             let sha = result.get("head_sha").and_then(Value::as_str).unwrap_or_default().trim().to_string();
             if merged && real(&sha) {
                 for t in design_subtasks(ctx, run) {
-                    for ac in task_acs(&t, known) {
+                    for ac in task_acs(&t, known, pat) {
                         push(link("ac_commit", node("ac", &ac), node("commit", &sha), &name, stage, "merge.json:head_sha"));
                     }
                 }
@@ -403,6 +426,11 @@ pub struct GapInput<'a> {
 /// - commit：要是 40 碼十六進位，而且 test 段每一份逐條結果（彙整與各分片）記的是同一個。
 /// - 子任務沒有 `acceptance`：需求來源是 openspec 而變更有條目時算缺；整份 design 一條可辨識的驗收條件都沒有也算缺。
 pub fn link_gaps_of(stage: &str, inp: &GapInput, sc: Option<&SpecCtx>) -> Vec<String> {
+    link_gaps_of_with(stage, inp, sc, None)
+}
+
+/// 同 [`link_gaps_of`]；`pat` 是驗收條件編號的樣式（[`id_pattern`]）。
+pub fn link_gaps_of_with(stage: &str, inp: &GapInput, sc: Option<&SpecCtx>, pat: Option<&Re>) -> Vec<String> {
     if !GAP_STAGES.contains(&stage) {
         return Vec::new();
     }
@@ -414,12 +442,12 @@ pub fn link_gaps_of(stage: &str, inp: &GapInput, sc: Option<&SpecCtx>) -> Vec<St
     let mut out: Vec<String> = Vec::new();
     let mut acs: Vec<(String, bool, bool)> = Vec::new();
     for t in &subs {
-        let ids = task_acs(t, known);
+        let ids = task_acs(t, known, pat);
         let declared = strs(t.get("acceptance"));
         if declared.is_empty() && spec_items > 0 {
             out.push(format!("子任務 {} 沒有 acceptance，而變更的規格有 {spec_items} 條要驗：寫明它負責哪幾條（或可判定的完成條件）", py::take(&task_id(t), 80)));
         } else if ids.is_empty() && !declared.is_empty() {
-            out.push(format!("子任務 {} 的驗收條件沒有可辨識的 id（「AC-…」編號或規格 id），連不到 spec、測試與 commit", task_id(t)));
+            out.push(format!("子任務 {} 的驗收條件沒有可辨識的 id（{}或規格 id），連不到 spec、測試與 commit", task_id(t), id_name(pat)));
         }
         let owns = strs(t.get("owns"));
         let has_spec = !strs(t.get("spec_refs")).is_empty();
@@ -439,7 +467,7 @@ pub fn link_gaps_of(stage: &str, inp: &GapInput, sc: Option<&SpecCtx>) -> Vec<St
         }
     }
     if !subs.is_empty() && acs.is_empty() && out.is_empty() {
-        out.push("design 的子任務沒有任何可辨識的驗收條件 id（「AC-…」編號或規格 id）：沒有東西可以連，不能當成連結齊全".to_string());
+        out.push(format!("design 的子任務沒有任何可辨識的驗收條件 id（{}或規格 id）：沒有東西可以連，不能當成連結齊全", id_name(pat)));
     }
     // 沒有 test 段的結果（recipe 沒有 test 段）時只看 spec 小節與檔案
     let with_test = later && inp.test.is_some();
@@ -458,7 +486,7 @@ pub fn link_gaps_of(stage: &str, inp: &GapInput, sc: Option<&SpecCtx>) -> Vec<St
             lack.push(if later && inp.built.is_some() { "檔案（owns 的檔不在 build 的改動清單、repo 裡也沒有）" } else { "檔案" });
         }
         if with_test {
-            let mine: Vec<&(String, String, String, String)> = rows.iter().filter(|(id, bare, _, _)| row_matches(ac, id, bare)).collect();
+            let mine: Vec<&(String, String, String, String)> = rows.iter().filter(|(id, bare, _, _)| row_matches(ac, id, bare, pat)).collect();
             if !mine.iter().any(|(_, _, command, _)| !noop_command(command)) {
                 lack.push(if mine.iter().any(|(_, _, command, _)| real(command)) { "測試（驗證指令是空操作）" } else { "測試" });
             }
@@ -483,6 +511,11 @@ pub fn link_gaps_of(stage: &str, inp: &GapInput, sc: Option<&SpecCtx>) -> Vec<St
 /// 那個 commit 存在或就是分支的 HEAD（合併前由 merge gate 的 `--reviewed-sha` 對 PR 的 head 把關）。
 /// build 與 test 的結果是 agent 交的，這裡核對的是它們彼此一致，不是替代驗證。
 pub fn link_gaps(ctx: &Ctx, run: &str, stage: &str, sc: Option<&SpecCtx>, data: &Value) -> Vec<String> {
+    link_gaps_with(ctx, run, stage, sc, data, None)
+}
+
+/// 同 [`link_gaps`]；`pat` 是驗收條件編號的樣式（[`id_pattern`]）。
+pub fn link_gaps_with(ctx: &Ctx, run: &str, stage: &str, sc: Option<&SpecCtx>, data: &Value, pat: Option<&Re>) -> Vec<String> {
     if !GAP_STAGES.contains(&stage) {
         return Vec::new();
     }
@@ -505,6 +538,6 @@ pub fn link_gaps(ctx: &Ctx, run: &str, stage: &str, sc: Option<&SpecCtx>, data: 
     // 實際改動的檔：build 回報的，加上 test 段修正時回報的。recipe 沒有 build 段時是 None（只看宣告）
     let built: Option<Vec<String>> = (later && has("build")).then(|| build.iter().chain(test.iter()).flat_map(files_changed).collect());
     let repo = data.get("target_repo").and_then(Value::as_str).filter(|r| !r.trim().is_empty()).map(|r| ctx.abs(&py::pp(r)));
-    out.extend(link_gaps_of(stage, &GapInput { design: &design, test: test.as_ref(), built: built.as_deref(), repo: repo.as_deref() }, sc));
+    out.extend(link_gaps_of_with(stage, &GapInput { design: &design, test: test.as_ref(), built: built.as_deref(), repo: repo.as_deref() }, sc, pat));
     out
 }

@@ -4,7 +4,7 @@
 use super::archive::{next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
 use super::checks::{constraint_issues, intent_errors, plan_check_for_with};
 use super::decisions::{decision_errors, record_decisions, split_answer};
-use super::links::{decision_links, link_gaps, links_setting, stage_links, write_links, LEDGER};
+use super::links::{decision_links, id_pattern, link_gaps_with, links_setting, stage_links_with, write_links, LEDGER};
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
 use super::policy::{abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
@@ -507,7 +507,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             }
         }
         if let Some(enforce) = links_on {
-            let gaps = link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()), &data);
+            let gaps = link_gaps_with(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()), &data, id_pattern(&sprof).as_ref());
             let st = st_mut(&mut data, stage)?;
             if gaps.is_empty() {
                 st.shift_remove("link_gaps");
@@ -552,7 +552,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
     dump(ctx, run, &data)?;
     if links_on.is_some() && in_sdlc {
         // 連結帳本是輔助：寫不了只警告（閘門的連結檢查自己從各段結果重算，不讀帳本）
-        let links = stage_links(ctx, run, stage, result, sc.as_ref().and_then(|r| r.as_ref().ok()));
+        let links = stage_links_with(ctx, run, stage, result, sc.as_ref().and_then(|r| r.as_ref().ok()), id_pattern(&sprof).as_ref());
         if let Err(e) = write_links(ctx, run, stage, &links, true) {
             warns.push(format!("連結帳本 {LEDGER} 寫不了（{}：{}）；這一段的結果已存", e.class, e.msg));
         }
@@ -685,7 +685,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
                     errs.extend(spec_issues(stage, &result, sc, &data)?.into_iter().map(|e| format!("規格檢查：{e}")));
                 }
                 if links_setting(&cprof) == Some(true) {
-                    errs.extend(link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()), &data).into_iter().map(|e| format!("連結檢查：{e}")));
+                    errs.extend(link_gaps_with(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()), &data, id_pattern(&cprof).as_ref()).into_iter().map(|e| format!("連結檢查：{e}")));
                 }
             }
         }
