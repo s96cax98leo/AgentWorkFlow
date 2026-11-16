@@ -162,6 +162,12 @@ impl Guard {
         if has_role && super::guard::kg_path(&p) {
             return Err(self.block(&format!("{agent} 不能寫知識圖的檔（graph.db 與 vault，含 vault/notes/；圖只由主 session 跑 awf kg build／export 產生，筆記是人寫的）（{}）", shown(&rel))));
         }
+        if has_role {
+            if let Some(repo) = self.kg_repo_hit(&p)? {
+                return Err(self.block(&format!("{agent} 不能寫 {repo} 底下的檔（profile 的 knowledge.repos 列的 repo 對 team agent 唯讀：可以讀、不能寫，\
+同時登記在 linked_repos 也一樣；要改它由人或主 session 做，或由人把它從 knowledge.repos 拿掉）（{}）", shown(&rel))));
+            }
+        }
         if has_role && fname == "run.json" && (runs.is_empty() || in_runs_fold) {
             return Err(self.block(&format!("{agent} 不能寫 run.json（run 狀態只由 awf save-run 在主 session 寫）")));
         }

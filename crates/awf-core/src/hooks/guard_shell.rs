@@ -505,6 +505,26 @@ fn save_run_write(seg: &str, tool: &str, readonly: &[&str], depth: usize) -> Opt
     None
 }
 
+/// `hay` 裡有沒有把 `needle` 當路徑寫出來（前後是路徑的邊界，不是別的名字的一部分）。太短的不比（容易誤判）。
+fn mentions_path(hay: &str, needle: &str) -> bool {
+    if needle.chars().count() < 3 {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(i) = hay[from..].find(needle) {
+        let (s, e) = (from + i, from + i + needle.len());
+        let before = hay[..s].strip_suffix("./").unwrap_or(&hay[..s]).chars().next_back();
+        let after = hay[e..].chars().next();
+        let lead = before.is_none_or(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '=' | '(' | '>' | '<' | ':' | ','));
+        let tail = after.is_none_or(|c| c.is_whitespace() || matches!(c, '/' | '"' | '\'' | ')' | ',' | ';'));
+        if lead && tail {
+            return true;
+        }
+        from = s + hay[s..].chars().next().map_or(1, char::len_utf8);
+    }
+    false
+}
+
 impl Guard {
     /// `_resolve(base, p)`：去引號、正規化、展開 ~，相對路徑接在 base 後面再解析。
     fn resolve_arg(&self, base: &str, p: &str) -> R<String> {
@@ -1020,6 +1040,46 @@ impl Guard {
         Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
     }
 
+    /// shell 寫入 profile 的 `knowledge.repos` 列的 repo（盡力而為）：這一段作用的目錄在那個 repo 裡，或指令裡有指到它底下的路徑
+    /// （照寫的路徑、絕對路徑，或解析後落在裡面的參數），而且是寫入的寫法。回那個 repo 照寫的路徑。
+    /// 先找目標再看寫法：寫法的樣式很大，只有真的碰到那個 repo 的指令才值得編譯它（一般指令多花的時間只有幾次路徑解析）。
+    fn shell_writes_kg_repo(&self, seg: &str, cwd: &str) -> R<Option<String>> {
+        let repos = self.kg_repos();
+        if repos.is_empty() {
+            return Ok(None);
+        }
+        let here = match path::resolve(cwd) {
+            Ok(r) => r,
+            Err(e) if e.class == "RuntimeError" || e.class == "ValueError" => return Err(Stop::Err(e)),
+            Err(_) => norm(cwd),
+        };
+        let nseg = norm(seg);
+        let fseg = fold(&nseg);
+        let mut hit = repos.iter().find(|(root, shown)| {
+            path::relative_to(&here, root).is_some() || fseg.contains(&fold(root)) || mentions_path(&fseg, &fold(shown.trim_start_matches("./")))
+        }).map(|(_, shown)| shown.clone());
+        if hit.is_none() {
+            for t in shlex_tokens(seg) {
+                let t = t.trim_start_matches(['>', '<', '=']);
+                let t = if t.starts_with('-') { t.split_once('=').map(|(_, v)| v).unwrap_or(t) } else { t };
+                if !(t.contains('/') || t.contains('\\') || t.starts_with('~')) || t.contains('\0') || t.contains("://") {
+                    continue;
+                }
+                let Ok(full) = self.resolve_arg(cwd, t) else { continue };
+                if let Some((_, shown)) = repos.iter().find(|(root, _)| path::relative_to(&full, root).is_some()) {
+                    hit = Some(shown.clone());
+                    break;
+                }
+            }
+        }
+        let Some(hit) = hit else { return Ok(None) };
+        let probe = GIT_GLOBAL_OPTS.replace_all(&MULTI_SLASH.replace_all(&nseg, "/"), "git ");
+        let probe = NULL_REDIR.replace_all(&probe, " ");
+        let writes = SHELL_WRITE.is_match(&probe) || RECORD_WRITE_CMD.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe)
+            || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe));
+        Ok(if writes { Some(hit) } else { None })
+    }
+
     /// Bash 與 PowerShell 工具共用的 shell 守門規則。
     pub fn check_shell_rules(&self, data: &Value) -> R<()> {
         let ti = tool_input(data)?;
@@ -1190,6 +1250,12 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                 return Err(self.block(&format!("{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json\
 （守門設定、profile 與 workflow 腳本只由人或主 session 改）")));
             }
+            if team {
+                if let Some(repo) = self.shell_writes_kg_repo(seg, d)? {
+                    return Err(self.block(&format!("{agent} 不能寫 {repo} 底下的檔（profile 的 knowledge.repos 列的 repo 對 team agent 唯讀：可以讀、不能寫；\
+寫入的指令不要在那個目錄裡執行，也不要把它的路徑和寫入寫在同一段；要改它由人或主 session 做）")));
+                }
+            }
             if team && self.shell_writes_ci(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（CI 檔決定哪些檢查會跑，只由人或主 session 改，\
 例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）")));
@@ -1312,6 +1378,16 @@ mod tests {
         for r in all_patterns() {
             assert!(r.compiles(), "樣式編不過：{}", r.source());
         }
+    }
+
+    #[test]
+    fn path_mentions() {
+        assert!(mentions_path("echo x > ../kg-ref/docs/a.md", "../kg-ref"));
+        assert!(mentions_path("open('vendor/shared/src/a.ts','w')", "vendor/shared"));
+        assert!(mentions_path("rm -rf ./vendor/shared", "vendor/shared"));
+        assert!(!mentions_path("rm -rf my-vendor/shared-x", "vendor/shared"));
+        assert!(!mentions_path("rm -rf other/vendor/shared", "vendor/shared"));
+        assert!(!mentions_path("rm ab", "ab"));
     }
 
     #[test]

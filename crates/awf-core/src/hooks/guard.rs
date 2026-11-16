@@ -59,6 +59,10 @@ pub struct Guard {
     pub run_stages: Vec<String>,
     pub stage_json_fragment: Re,
     ws_real: OnceLock<Result<String, PyErr>>,
+    /// profile 的 `knowledge.repos[].path` 照寫的原文。
+    kg_repo_paths: Vec<String>,
+    /// 解析後的（絕對路徑, 照寫的路徑）；用到才算。
+    kg_repos: OnceLock<Vec<(String, String)>>,
 }
 
 /// `data.get(key) or ""` 當字串用：假值是空字串，字串原樣，其他型別在 Python 會丟例外。
@@ -238,7 +242,8 @@ impl Guard {
         let repos = if cfg.repos_dir.is_empty() { String::new() } else { format!("{}/", cfg.repos_dir) };
         let am = config::auto_merge(&cfg);
         let mut run_stages: Vec<String> = BUILTIN_STAGES.iter().map(|s| s.to_string()).collect();
-        for s in config::custom_event_stages(&ws) {
+        let bits = config::profile_bits(&ws);
+        for s in bits.event_stages {
             if !run_stages.contains(&s) {
                 run_stages.push(s);
             }
@@ -248,7 +253,7 @@ impl Guard {
         names.sort_by_key(|s| std::cmp::Reverse(s.chars().count()));
         let alt = names.iter().map(|s| regex::escape(s)).collect::<Vec<_>>().join("|");
         let stage_json_fragment = Re::dynamic(format!(r"(?:^|[^\w-])(?:{alt})\W{{0,16}}\.json\b"), "i");
-        Ok(Guard { cfg, ws, runs, repos, am, run_stages, stage_json_fragment, ws_real: OnceLock::new() })
+        Ok(Guard { cfg, ws, runs, repos, am, run_stages, stage_json_fragment, ws_real: OnceLock::new(), kg_repo_paths: bits.knowledge_repos, kg_repos: OnceLock::new() })
     }
 
     /// 印出擋下的訊息，回傳要結束的狀態（呼叫端 `return Err(g.block(…))`）。
@@ -304,6 +309,45 @@ impl Guard {
             }
         }
         Ok(None)
+    }
+
+    /// profile 的 `knowledge.repos`：收進知識圖的別的 repo，對模版角色唯讀。回（解析後的根目錄, 照寫的路徑）。
+    /// 解析不了的、檔案系統根目錄、家目錄、專案自己或專案的上層目錄一律不算（不然會把整個工作區變成唯讀）。
+    pub fn kg_repos(&self) -> &[(String, String)] {
+        self.kg_repos.get_or_init(|| {
+            let mut out: Vec<(String, String)> = Vec::new();
+            if self.kg_repo_paths.is_empty() {
+                return out;
+            }
+            let Ok(ws) = self.ws_real() else { return out };
+            let home = path::home().and_then(|h| path::resolve(&h).ok());
+            for raw in &self.kg_repo_paths {
+                let shown = norm(raw).trim_end_matches('/').to_string();
+                let q = path::pp(&norm(raw));
+                let full = if path::is_abs(&q) { q } else { path::join(&self.ws, &q) };
+                let Ok(root) = path::resolve(&full) else { continue };
+                if path::parts(&root).len() < 3 || home.as_deref() == Some(root.as_str()) || path::relative_to(&ws, &root).is_some() {
+                    continue;
+                }
+                if !out.iter().any(|(r, _)| *r == root) {
+                    out.push((root, shown));
+                }
+            }
+            out
+        })
+    }
+
+    /// 路徑在 `knowledge.repos` 列的某個 repo 底下時，回那個 repo 照寫的路徑。
+    pub fn kg_repo_hit(&self, p: &str) -> R<Option<String>> {
+        if self.kg_repo_paths.is_empty() {
+            return Ok(None);
+        }
+        let target = match path::resolve(&norm(p)) {
+            Ok(t) => t,
+            Err(e) if e.class == "ValueError" => return Err(Stop::Err(e)),
+            Err(_) => return Ok(None),
+        };
+        Ok(self.kg_repos().iter().find(|(root, _)| path::relative_to(&target, root).is_some()).map(|(_, shown)| shown.clone()))
     }
 
     /// 這個 session 自己的 scratchpad（系統暫存目錄底下的 …/<session_id>/scratchpad/…）。

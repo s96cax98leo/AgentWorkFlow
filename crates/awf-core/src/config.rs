@@ -528,16 +528,43 @@ pub fn team_role(agent: &str, cfg: &Config) -> String {
     alias(role_name(agent)).to_string()
 }
 
+/// 守門每次都要從 profile（methodology.json）拿的東西：一次讀檔、一次解析。
+#[derive(Debug, Clone, Default)]
+pub struct ProfileBits {
+    /// `events` 裡自訂的事件類型名（段名）。
+    pub event_stages: Vec<String>,
+    /// `knowledge.repos[].path` 照寫的原文（還沒解析成絕對路徑；不是非空字串的項目不收）。
+    pub knowledge_repos: Vec<String>,
+}
+
+/// 讀不到、格式不對一律當作沒有這些設定（回空的）。
+pub fn profile_bits(ws: &str) -> ProfileBits {
+    let mut out = ProfileBits::default();
+    let Ok(text) = read_text(&methodology_path(ws)) else { return out };
+    let Ok(Value::Object(doc)) = serde_json::from_str::<Value>(&text) else { return out };
+    if let Some(Value::Object(ev)) = doc.get("events") {
+        out.event_stages = ev.keys().filter(|k| {
+            let b = k.as_bytes();
+            !b.is_empty() && b.len() <= 40 && b[0].is_ascii_lowercase()
+                && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        }).cloned().collect();
+    }
+    if let Some(Value::Array(repos)) = doc.get("knowledge").and_then(|k| k.get("repos")) {
+        for r in repos.iter().take(MAX_KNOWLEDGE_REPOS) {
+            if let Some(p) = r.get("path").and_then(Value::as_str).map(py::strip).filter(|p| !p.is_empty() && !p.contains('\0')) {
+                out.knowledge_repos.push(p.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// 守門只看 `knowledge.repos` 的前幾筆（每一筆都要解析路徑；清單再長也不讓 hook 變慢）。
+pub const MAX_KNOWLEDGE_REPOS: usize = 32;
+
 /// profile 的 events 裡自訂的事件類型名（段名）。讀不到、格式不對一律回空清單。
 pub fn custom_event_stages(ws: &str) -> Vec<String> {
-    let Ok(text) = read_text(&methodology_path(ws)) else { return Vec::new() };
-    let Ok(Value::Object(doc)) = serde_json::from_str::<Value>(&text) else { return Vec::new() };
-    let Some(Value::Object(ev)) = doc.get("events") else { return Vec::new() };
-    ev.keys().filter(|k| {
-        let b = k.as_bytes();
-        !b.is_empty() && b.len() <= 40 && b[0].is_ascii_lowercase()
-            && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
-    }).cloned().collect()
+    profile_bits(ws).event_stages
 }
 
 /// 讀取預算設定（methodology.json 的 limits）。
