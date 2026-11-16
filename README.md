@@ -382,6 +382,8 @@ awf init --target <專案> [--config workflow.config] [--answers <答案.json>] 
 | `--config` | 從設定檔讀佔位符（把 plugin 目錄的 `workflow.config.example` 複製成 `workflow.config` 後修改），不給就互動詢問 |
 | `--answers` | 開發規範與慣例的答案檔（JSON），不用互動，適合 CI；格式見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md) |
 | `--defaults` | 全部用預設值，使用 default profile |
+| `--detect [--json]` | 只偵測專案現況並依主題列出建議，不寫任何檔 |
+| `--reconfigure` | 已套用的專案改設定：以上次的答案（`.claude/teams/init-answers.json`）當預設，只改有變的設定 |
 | `--hooks plugin` | 預設。hooks 由 plugin 註冊 |
 | `--hooks project` | hooks 改由專案的 `settings.json` 註冊，並寫入執行檔的絕對路徑。**Windows 建議用這個。** 和 plugin 註冊只能擇一 |
 | `--with-mcp` | 產生正式的 `.mcp.json`，不加時只產生 `.mcp.json.example` |

@@ -21,6 +21,8 @@
 //! 核心函式都收明確的模版根（[`Site`]）與目標路徑，不讀行程的目前目錄與環境變數；那些由 [`Env::from_process`] 收集。
 
 mod args;
+pub mod detect;
+pub mod interview;
 mod legacy;
 pub mod legacy_tools;
 mod merge;
@@ -40,7 +42,7 @@ use crate::merge_gate::pyjson;
 use crate::pyfmt;
 use crate::template;
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -586,6 +588,30 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     }
 
     let target_user = site.user_path(target_arg);
+    if a.json && !a.detect {
+        return die("--json 要搭配 --detect");
+    }
+    if a.detect {
+        // 只印偵測結果：不建目錄、不寫任何檔
+        let root = PathBuf::from(pyutil::resolve(&target_user.real.to_string_lossy()));
+        let topics = detect::detect(&root, cfg!(windows));
+        if a.json {
+            con.say(&crate::recipe::dumps(&detect::to_json(&root, &topics), Some(2)));
+        } else {
+            con.write_raw(&detect::text_of(&root, &topics));
+        }
+        return Ok(0);
+    }
+    if a.reconfigure {
+        if a.upgrade || a.force || a.overwrite_user_files || a.with_merge_gate || a.with_workflows || a.with_mcp {
+            return die("--reconfigure 只改設定（methodology.json、guard.config.json），不能和 --upgrade、--force、--overwrite-user-files、--with-* 一起用");
+        }
+        if !target_user.real.join(".claude").join("teams").is_dir() {
+            return die(format!("{} 還沒 init 過（沒有 .claude/teams/），不能 --reconfigure；先跑一次 init", target_user.shown));
+        }
+        let target = PathBuf::from(pyutil::resolve(&target_user.real.to_string_lossy()));
+        return reconfigure(con, &site, &target, &a);
+    }
     // 既有專案已經有模版產生的 merge gate CI：升級時一起換成執行檔的版本（舊的那份跑的是會被移除的 merge_gate.py）
     let gate_yml = target_user.real.join(".github").join("workflows").join("agent-merge-gate.yml");
     let gate_implied = !a.with_merge_gate && (a.force || a.upgrade) && read_text(&gate_yml).is_ok_and(|t| writer::ours().is_match(&t));
@@ -608,7 +634,8 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     } else {
         None
     };
-    let hook_bin = if a.hooks == "project" { Some(hook_bin_bytes(env)?) } else { None };
+    // 指令列明確要 --hooks project：執行檔先找好（缺了就在動任何檔之前停下）。答案檔或問答才決定的，等答案出來再找
+    let hook_bin_early = if a.hooks == "project" { Some(hook_bin_bytes(env)?) } else { None };
 
     if let Err(e) = std::fs::create_dir_all(&target_user.real) {
         return crash(format!("建不了目錄 {}：{e}", target_user.shown));
@@ -674,8 +701,62 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     let defaults = a.defaults || a.upgrade; // 升級不詢問
     let mut vals = collect_values(con, &site, config.as_ref(), defaults)?;
     let interactive = config.is_none() && !defaults && con.tty;
-    let methodology = profile::build_methodology(con, &site, &mut vals, answers.as_ref(), interactive, defaults)?;
+    // 這次的答案會不會寫成 methodology.json（已經有的專案保留它自己的，--overwrite-user-files 才換）
+    let meth = target.join(".claude").join("teams").join("methodology.json");
+    let applies = !meth.exists() || a.overwrite_user_files;
+    let asking = interactive && answers.is_none();
+    // 訪談：先偵測專案的現況，問答時當預設值；--defaults、--answers 不採用，只列在對照表
+    let topics = if applies || asking { detect::detect(target, cfg!(windows)) } else { Vec::new() };
+    let mut seed = Map::new();
+    if asking {
+        let sug = detect::suggested(&topics);
+        for k in ["code_style", "commit", "commit_regex", "doc_format"] {
+            if let Some(v) = sug.get(k) {
+                seed.insert(k.to_string(), v.clone());
+            }
+        }
+        for t in topics.iter().filter(|t| t.id == "conventions") {
+            for f in &t.detected {
+                con.say(&format!("  偵測到 {}：{}（{}）", f.key, interview::brief(&f.value), f.basis));
+            }
+        }
+    }
+    let (name, mut ans) = profile::collect_answers(con, &site, &vals, answers.as_ref(), interactive, defaults, &seed)?;
     let main_free = profile::ask_main_session(con, answers.as_ref(), interactive)?;
+    if asking {
+        if main_free {
+            ans.insert("main_session_push_merge".to_string(), Value::Bool(true));
+        }
+        if name != "default" {
+            ans.insert("methodology".to_string(), Value::String(name.clone()));
+        }
+        let base = profile::load_profile(&site, &name)?;
+        let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
+        interview::ask_more(con, &mut ans, base, &topics, a.hooks_given)?;
+    }
+    let hooks = match interview::hooks_answer(&ans)? {
+        Some(h) if !a.hooks_given => h,
+        _ => a.hooks.clone(),
+    };
+    let methodology = profile::finish_methodology(&site, &mut vals, &name, &ans)?;
+    let overlay = interview::guard_overlay(&ans, false)?;
+    if applies {
+        for line in interview::table(&topics, &ans, &methodology, &overlay, main_free, &hooks) {
+            con.say(&line);
+        }
+        if asking {
+            let ok = con.ask("照這張表寫入（y／n）", "y");
+            if !pyutil::strip(&ok).to_lowercase().starts_with('y') {
+                con.say("沒有寫入任何設定。");
+                return Ok(1);
+            }
+        }
+    }
+    let hook_bin = match hook_bin_early {
+        Some(b) => Some(b),
+        None if hooks == "project" => Some(hook_bin_bytes(env)?),
+        None => None,
+    };
     let hook_bin_path = target.join(hook_bin_rel());
     let (hook_cmd, hook_shell) = writer::hook_command(&hook_bin_path.to_string_lossy());
     vals.set("AWF_HOOK_CMD", &hook_cmd);
@@ -684,7 +765,7 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     let briefs = vals.get("BRIEFS_DIR").unwrap_or_default().trim_matches('/').to_string();
 
     let mut w = Writer::new(target, &vals, force, a.overwrite_user_files);
-    for it in writer::scaffold_plan(&site.scaffold(), target, &runs, &a.hooks, a.with_mcp, with_merge_gate) {
+    for it in writer::scaffold_plan(&site.scaffold(), target, &runs, &hooks, a.with_mcp, with_merge_gate) {
         w.put(&it.src, &it.dst, it.text_render)?;
     }
 
@@ -762,8 +843,24 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         }
     }
 
+    // 答案檔的 guard／auto_merge：合併進這次寫出的 guard.config.json（答案優先）
+    if !overlay.is_empty() {
+        if w.written.contains(&gcfg) {
+            let doc = match read_text_sig(&gcfg) {
+                Ok(t) => pyjson::loads(&t).ok(),
+                Err(e) => return crash(format!("讀不了 {}：{}", gcfg.display(), e.msg())),
+            };
+            let Some(Value::Object(doc)) = doc else { return crash(format!("{} 不是合法的 JSON 物件", gcfg.display())) };
+            writer::write_text(&gcfg, &format!("{}\n", crate::recipe::dumps(&Value::Object(merge::deep_merge(&doc, &overlay)), Some(2))))?;
+            if overlay.get("auto_merge").and_then(|x| x.get("enabled")) == Some(&Value::Bool(true)) {
+                con.say("自動合併已啟用（auto_merge.enabled = true）。白名單（auto_merge.repos）沒填之前不會合併任何 repo；伺服器端的 ruleset、gate App、CODEOWNERS 要照 docs/自動合併信任模型.md 的啟用前檢查清單設好。");
+            }
+        } else {
+            con.say(&format!("注意：{} 已存在、沒有改；答案檔的 guard／auto_merge 沒有套用（用 awf init --reconfigure 改）。", w.rel(&gcfg)));
+        }
+    }
+
     // 開發規範 profile：寫成專案的 .claude/teams/methodology.json（已存在時保留專案自己的；--overwrite-user-files 才整份換掉）
-    let meth = target.join(".claude").join("teams").join("methodology.json");
     let mut exit_code = 0;
     if meth.exists() && !a.overwrite_user_files {
         w.user_kept.push(meth.clone());
@@ -773,9 +870,12 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     } else {
         write_text_native(&meth, &format!("{}\n", crate::recipe::dumps(&Value::Object(methodology.clone()), Some(2))))?;
         w.written.push(meth.clone());
+        // 這次採用的答案存起來，之後 awf init --reconfigure 拿它當預設
+        save_answers(con, target, &ans)?;
     }
     if !w.user_kept.contains(&meth) {
         con.say(&format!("開發規範 profile：{}（{}）", pyfmt::str_opt(methodology.get("name")), w.rel(&meth)));
+        con.say(&format!("這次的答案存在 {}；之後要改設定：awf init --target <專案> --reconfigure（只改有變的設定）。", interview::ANSWERS_FILE));
     }
 
     // 0.x 複製進專案的工具副本：升級時指紋相符的移除，改過的保留（在算舊版殘留之前做，移除的就不會再被列一次）
@@ -824,16 +924,16 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         list(con, target, &w.skipped);
     }
     if st_path.is_file() {
-        if a.hooks == "plugin" && (old_hooks || new_hooks) {
+        if hooks == "plugin" && (old_hooks || new_hooks) {
             con.say("注意：.claude/settings.json 裡有 awf 的 hooks（先前用 --hooks project init 過），但這次是 --hooks plugin。plugin 也會註冊同一組 hooks，請擇一：刪掉 settings.json 裡 awf 的 hooks，或改回 --hooks project。");
         }
-        if a.hooks == "plugin" && old_hooks {
+        if hooks == "plugin" && old_hooks {
             con.say("  其中有 0.x 的寫法（python … awf_hook.py）：1.0 的 hook 是執行檔。要留在專案就加 --hooks project 重跑升級（會換成 awf hook <種類>）；在那之前 .claude/hooks/ 的舊腳本先留著沒有移除。");
         }
-        if a.hooks == "project" && !new_hooks {
+        if hooks == "project" && !new_hooks {
             con.say("注意：.claude/settings.json 沒有 awf hook 的 hooks（可能不是合法 JSON），請照 .claude/settings.README.md 手動註冊。");
         }
-        if a.hooks == "project" && old_hooks {
+        if hooks == "project" && old_hooks {
             con.say("注意：.claude/settings.json 還有 0.x 的 hook 註冊（python … awf_hook.py）沒有換掉，請手動刪掉那幾筆；.claude/hooks/ 的舊腳本先留著沒有移除。");
         }
     }
@@ -933,8 +1033,215 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         ));
     }
 
-    next_steps(con, &site, target, &a.hooks);
+    next_steps(con, &site, target, &hooks);
     Ok(exit_code)
+}
+
+/// 把採用的答案寫到 `.claude/teams/init-answers.json`（像機敏值的字串不存）。
+fn save_answers(con: &mut Console, target: &Path, ans: &Map<String, Value>) -> R<()> {
+    let (text, redacted) = interview::answers_text(ans);
+    writer::write_text(&target.join(interview::ANSWERS_FILE), &text)?;
+    if !redacted.is_empty() {
+        con.say(&format!("注意：答案裡這些值看起來像機敏值，沒有存進 {}：{}", interview::ANSWERS_FILE, redacted.join("、")));
+    }
+    Ok(())
+}
+
+fn load_object(path: &Path, what: &str) -> R<Map<String, Value>> {
+    let text = match read_text_sig(path) {
+        Ok(t) => t,
+        Err(e) => return die(format!("讀不了 {what}（{}）：{}", path.display(), e.msg())),
+    };
+    match pyjson::loads(&text) {
+        Ok(Value::Object(o)) => Ok(o),
+        _ => die(format!("{what}（{}）不是合法的 JSON 物件", path.display())),
+    }
+}
+
+/// `--reconfigure`：拿存下來的答案當預設重新設定（互動再問一輪，或用 `--answers` 給要改的鍵），
+/// 只把「答案有變的設定」寫回 methodology.json 與 guard.config.json。其他鍵（包含使用者手改過的）不動。
+fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32> {
+    let teams = target.join(".claude").join("teams");
+    let (meth_path, guard_path, record_path) = (teams.join("methodology.json"), teams.join("guard.config.json"), target.join(RECORD_FILE));
+    let answers_path = target.join(interview::ANSWERS_FILE);
+    let cur = load_object(&meth_path, "methodology.json")?;
+    let saved = match interview::load_answers(&answers_path)? {
+        Some(s) => s,
+        None => {
+            con.say(&format!("注意：沒有 {}（這個專案 init 的時候還沒有答案檔）：以「沒有回答」當基準，只會寫入這次回答到的設定。", interview::ANSWERS_FILE));
+            Map::new()
+        }
+    };
+    let vals = if record_path.is_file() { read_kv(&record_path, RECORD_FILE)? } else { Kv::default() };
+    let topics = detect::detect(target, cfg!(windows));
+
+    let mut new_ans = saved.clone();
+    let asked = a.answers.as_deref().filter(|s| !s.is_empty()).is_none() && !a.defaults && con.tty;
+    if let Some(file) = a.answers.as_deref().filter(|s| !s.is_empty()) {
+        let p = site.user_path(file);
+        if !p.real.is_file() {
+            return die(format!("找不到答案檔 {file}"));
+        }
+        // 答案檔只要寫要改的鍵；值寫 null＝拿掉那個答案（回到 profile 的預設）
+        for (k, v) in load_object(&p.real, "答案檔")? {
+            if v.is_null() {
+                new_ans.shift_remove(&k);
+            } else {
+                new_ans.insert(k, v);
+            }
+        }
+    } else if asked {
+        con.say("重新設定：每題的預設值是上次的答案（沒有的用偵測到的現況），Enter＝不改。");
+        let name0 = saved.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
+        let mut seed = saved.clone();
+        let sug = detect::suggested(&topics);
+        for k in ["code_style", "commit", "commit_regex", "doc_format"] {
+            if let (false, Some(v)) = (seed.contains_key(k), sug.get(k)) {
+                seed.insert(k.to_string(), v.clone());
+            }
+        }
+        seed.shift_remove("methodology");
+        let (name, ans) = profile::ask_methodology(con, site, &name0, vals.get("BRANCH_PREFIX").unwrap_or_default(), &seed)?;
+        new_ans = ans;
+        new_ans.insert("methodology".to_string(), Value::String(name.clone()));
+        let was = saved.get("main_session_push_merge").is_some_and(interview::yes);
+        let m = con.ask("你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR（y／n）", if was { "y" } else { "n" });
+        let free = pyutil::strip(&m).to_lowercase().starts_with('y') || pyutil::strip(&m) == "會";
+        if free || saved.contains_key("main_session_push_merge") {
+            new_ans.insert("main_session_push_merge".to_string(), Value::Bool(free));
+        }
+        let base = profile::load_profile(site, &name)?;
+        let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
+        interview::ask_more(con, &mut new_ans, base, &topics, false)?;
+    }
+
+    let name_of = |ans: &Map<String, Value>| ans.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
+    let (mut vals_old, mut vals_new) = (vals.clone(), vals.clone());
+    let p_old = profile::finish_methodology(site, &mut vals_old, &name_of(&saved), &saved)?;
+    let p_new = profile::finish_methodology(site, &mut vals_new, &name_of(&new_ans), &new_ans)?;
+    let mut changes: Vec<interview::Change> = Vec::new();
+    interview::diff_leaves(&p_old, &p_new, &[], &mut changes);
+    let (g_old, g_new) = (interview::guard_overlay(&saved, true)?, interview::guard_overlay(&new_ans, true)?);
+    let mut gchanges: Vec<interview::Change> = Vec::new();
+    interview::diff_leaves(&g_old, &g_new, &[], &mut gchanges);
+    // 答案拿掉的守門設定不知道原本的預設是什麼：不動 guard.config.json，列出來交人
+    let dropped: Vec<String> = gchanges.iter().filter(|c| c.1.is_none()).map(|c| c.0.join(".")).collect();
+    gchanges.retain(|c| c.1.is_some());
+
+    let mut next = cur.clone();
+    let mut lines: Vec<String> = Vec::new();
+    for c in &changes {
+        let path = c.0.join(".");
+        let before = interview::get_path(&cur, &c.0).cloned();
+        if before.as_ref() == c.1.as_ref() {
+            continue; // 已經是這個值
+        }
+        let expected = interview::get_path(&p_old, &c.0);
+        let hand = before.as_ref() != expected;
+        if !interview::apply_change(&mut next, c) {
+            lines.push(format!("  - methodology.json：{path} 沒有改（上層的鍵不是物件）"));
+            continue;
+        }
+        lines.push(format!(
+            "  - methodology.json：{path}：{} → {}{}",
+            before.as_ref().map(|v| merge::short(v, 60)).unwrap_or_else(|| "（沒有）".to_string()),
+            c.1.as_ref().map(|v| merge::short(v, 60)).unwrap_or_else(|| "（拿掉）".to_string()),
+            if hand { "（這個鍵你手改過，這次的回答取代它）" } else { "" }
+        ));
+    }
+    let guard_cur = if guard_path.is_file() { Some(load_object(&guard_path, "guard.config.json")?) } else { None };
+    let mut guard_next = guard_cur.clone().unwrap_or_default();
+    let mut guard_changed = false;
+    for c in &gchanges {
+        let before = interview::get_path(&guard_next, &c.0).cloned();
+        if before.as_ref() == c.1.as_ref() {
+            continue;
+        }
+        if guard_cur.is_none() || !interview::apply_change(&mut guard_next, c) {
+            lines.push(format!("  - guard.config.json：{} 沒有改（檔案不存在或上層的鍵不是物件）", c.0.join(".")));
+            continue;
+        }
+        guard_changed = true;
+        lines.push(format!(
+            "  - guard.config.json：{}：{} → {}",
+            c.0.join("."),
+            before.as_ref().map(|v| merge::short(v, 60)).unwrap_or_else(|| "（沒有）".to_string()),
+            c.1.as_ref().map(|v| merge::short(v, 60)).unwrap_or_default()
+        ));
+    }
+    // 分支前綴改了：紀錄檔與 guard.config 的允許前綴一起跟上（只加不刪）
+    let (bp_old, bp_new) = (vals_old.get("BRANCH_PREFIX").unwrap_or_default().to_string(), vals_new.get("BRANCH_PREFIX").unwrap_or_default().to_string());
+    let prefix_changed = bp_old != bp_new && !bp_new.is_empty();
+    if prefix_changed && guard_cur.is_some() {
+        let list = guard_next.entry("allowed_branch_prefixes").or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(l) = list.as_array_mut() {
+            if !l.iter().any(|x| x.as_str() == Some(bp_new.as_str())) {
+                l.insert(0, Value::String(bp_new.clone()));
+                guard_changed = true;
+                lines.push(format!("  - guard.config.json：allowed_branch_prefixes 加上 {bp_new}"));
+            }
+        }
+    }
+    let meth_changed = next != cur;
+    if meth_changed {
+        let errs = profile::check_methodology(site, &next)?;
+        if !errs.is_empty() {
+            return die(format!("照這些回答改完的 methodology.json 不符合 schema，沒有寫入：{}", errs.iter().take(5).map(String::as_str).collect::<Vec<_>>().join("；")));
+        }
+    }
+    let hooks_new = interview::hooks_answer(&new_ans)?;
+    let main_free = new_ans.get("main_session_push_merge").is_some_and(interview::yes);
+    for line in interview::table(&topics, &new_ans, &next, &g_new, main_free, hooks_new.as_deref().unwrap_or("plugin")) {
+        con.say(&line);
+    }
+    if lines.is_empty() {
+        con.say("和現在的設定比，沒有要改的。");
+    } else {
+        con.say(&format!("會改 {} 項（其他鍵不動）：", lines.len()));
+        for l in &lines {
+            con.say(l);
+        }
+        if asked {
+            let ok = con.ask("照這張表寫入（y／n）", "y");
+            if !pyutil::strip(&ok).to_lowercase().starts_with('y') {
+                con.say("沒有寫入任何設定。");
+                return Ok(1);
+            }
+        }
+    }
+    if meth_changed {
+        write_text_native(&meth_path, &format!("{}\n", crate::recipe::dumps(&Value::Object(next), Some(2))))?;
+    }
+    if guard_changed {
+        writer::write_text(&guard_path, &format!("{}\n", crate::recipe::dumps(&Value::Object(guard_next), Some(2))))?;
+    }
+    if prefix_changed && record_path.is_file() {
+        let mut text = String::from("# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\n");
+        for (k, v) in vals_new.iter().filter(|(k, _)| !writer::COMPUTED.contains(k)) {
+            text.push_str(&format!("{k}={v}\n"));
+        }
+        writer::write_text(&record_path, &text)?;
+        con.say(&format!("分支前綴改成 {bp_new}：{RECORD_FILE} 已更新；rules.md 等模版檔裡的前綴要跑 awf init --target <專案> --upgrade 才會換。"));
+    }
+    if !dropped.is_empty() {
+        con.say(&format!("注意：這次的答案拿掉了這些守門設定，guard.config.json 沒有改回預設（不知道你原本的值），要改請自己改：{}", dropped.join("、")));
+    }
+    if hooks_new != interview::hooks_answer(&saved)? {
+        con.say(&format!("hook 註冊方式改成 {}：跑 awf init --target <專案> --upgrade --hooks {} 才會重新註冊。", hooks_new.as_deref().unwrap_or("plugin"), hooks_new.as_deref().unwrap_or("plugin")));
+    }
+    save_answers(con, target, &new_ans)?;
+    con.say(&format!("答案已存到 {}。", interview::ANSWERS_FILE));
+    if meth_changed {
+        // 有覆寫檔的專案要重新內嵌 profile；沒有覆寫檔時這一步只做檢查
+        let (code, out, err) = run_build(target, &site.snippets());
+        con.write_raw(&out);
+        let _ = con.err.write_all(err.as_bytes());
+        if code != 0 {
+            con.say("警告：內嵌（awf build）失敗，修正後在專案根目錄手動跑 awf build");
+            return Ok(1);
+        }
+    }
+    Ok(0)
 }
 
 /// 結尾的「下一步」說明。
