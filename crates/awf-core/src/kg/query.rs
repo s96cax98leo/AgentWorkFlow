@@ -61,6 +61,8 @@ pub struct Graph {
     pub con: Connection,
     pub meta: BTreeMap<String, String>,
     pub root: String,
+    /// 別的 repo：（id, 設定裡寫的路徑）。
+    pub repos: Vec<(String, String)>,
 }
 
 /// 開圖。圖不存在、沒建完或版本不同都回 Err，訊息裡有怎麼建。
@@ -71,7 +73,8 @@ pub fn open(lay: &Layout) -> Result<Graph, String> {
     let con = store::open_ro(&lay.db)?;
     let meta = store::meta(&con).map_err(|_| "知識圖讀不懂。重建：awf kg build --full".to_string())?;
     store::usable(&meta).map_err(|why| format!("{why}。重建：awf kg build --full"))?;
-    Ok(Graph { con, meta, root: lay.root.clone() })
+    let repos = meta.iter().filter_map(|(k, v)| k.strip_prefix("repo:").map(|id| (id.to_string(), v.clone()))).collect();
+    Ok(Graph { con, meta, root: lay.root.clone(), repos })
 }
 
 impl Graph {
@@ -113,7 +116,7 @@ impl Graph {
         self.edges("SELECT src, dst, kind, strength, provenance, confidence FROM edges WHERE dst=? ORDER BY kind, src, provenance", id)
     }
 
-    fn strings(&self, sql: &str, arg: &str) -> Vec<String> {
+    pub(crate) fn strings(&self, sql: &str, arg: &str) -> Vec<String> {
         let run = || -> rusqlite::Result<Vec<String>> {
             let mut st = self.con.prepare_cached(sql)?;
             let rows = st.query_map([arg], |r| r.get::<_, String>(0))?;
@@ -122,8 +125,28 @@ impl Graph {
         run().unwrap_or_default()
     }
 
-    fn is_test(&self, path: &str) -> bool {
+    pub(crate) fn is_test(&self, path: &str) -> bool {
         self.con.prepare_cached("SELECT is_test FROM files WHERE path=?").and_then(|mut s| s.query_row([path], |r| r.get::<_, i64>(0))).unwrap_or(0) == 1
+    }
+
+    /// 圖裡的路徑 → 讀得到的路徑：別的 repo 的檔（`<repo id>:…`）換成「設定裡寫的那個 repo 的路徑/…」。
+    pub fn readable(&self, path: &str) -> String {
+        if let Some((id, rest)) = super::build::split_repo(path) {
+            if let Some((_, display)) = self.repos.iter().find(|r| r.0 == id) {
+                return format!("{display}/{rest}");
+            }
+        }
+        path.to_string()
+    }
+
+    /// 結果裡的路徑一律換成讀得到的寫法（查詢的最後一步）。
+    pub fn finish(&self, mut ans: Answer) -> Answer {
+        if !self.repos.is_empty() {
+            for i in &mut ans.items {
+                i.path = self.readable(&i.path);
+            }
+        }
+        ans
     }
 
     /// 把使用者給的字串對到節點：id、檔案路徑、`路徑#名稱`、符號名稱（可能不只一個）。
@@ -133,7 +156,11 @@ impl Graph {
         if let Some(id) = resolve_id(&self.con, raw) {
             cands.push(id);
         }
-        let posix = kb::to_posix(raw);
+        let mut posix = kb::to_posix(raw);
+        // 別的 repo 的檔可以寫成輸出裡看到的路徑（設定的 repo 路徑/…）
+        if let Some((id, rest)) = self.repos.iter().find_map(|(id, d)| posix.strip_prefix(d.as_str()).and_then(|r| r.strip_prefix('/')).map(|r| (id, r))) {
+            posix = format!("{id}:{rest}");
+        }
         cands.push(format!("file:{posix}"));
         if raw.contains('#') {
             cands.push(format!("sym:{posix}"));
@@ -152,7 +179,7 @@ impl Graph {
     }
 }
 
-fn label(kind: &str) -> &'static str {
+pub(crate) fn label(kind: &str) -> &'static str {
     match kind {
         "cap" => "能力",
         "req" => "需求",
@@ -165,12 +192,16 @@ fn label(kind: &str) -> &'static str {
         "run" => "run",
         "dec" => "決策",
         "chg" => "變更",
+        "epic" => "需求",
+        "ref" => "規格小節",
+        "cmd" => "驗證指令",
+        "dlv" => "交付文件小節",
         _ => "節點",
     }
 }
 
 /// 節點的短稱呼（id 去掉型別前綴；不含標題原文）。
-fn short(id: &str) -> &str {
+pub(crate) fn short(id: &str) -> &str {
     id.split_once(':').map(|x| x.1).unwrap_or(id)
 }
 
@@ -191,11 +222,16 @@ fn edge_note(ed: &Edge) -> String {
 // ---------------------------------------------------------------- locate
 /// 用需求的文字找位置：詞的種子 → 沿圖擴展兩層 → 依分數排序。
 pub fn locate(g: &Graph, text: &str, top: usize) -> Answer {
+    g.finish(locate_scored(g, text, top).0)
+}
+
+/// [`locate`]，另外回傳哪些節點是用詞直接命中的（其餘是沿連結擴展出來的）。路徑是圖裡的寫法（還沒換成讀得到的）。
+pub fn locate_scored(g: &Graph, text: &str, top: usize) -> (Answer, HashSet<String>) {
     let mut ans = Answer { title: "locate".into(), ..Default::default() };
     let terms = kb::query_terms(&format!("{text} {}", ident_words(text)));
     if terms.is_empty() {
         ans.notes.push("查詢沒有可用的詞".into());
-        return ans;
+        return (ans, HashSet::new());
     }
     let total: f64 = g.con.query_row("SELECT COUNT(*) FROM nodes WHERE ntok > 0", [], |r| r.get::<_, i64>(0)).unwrap_or(0) as f64;
     let avg: f64 = g.con.query_row("SELECT COALESCE(AVG(ntok), 1.0) FROM nodes WHERE ntok > 0", [], |r| r.get(0)).unwrap_or(1.0);
@@ -254,7 +290,9 @@ pub fn locate(g: &Graph, text: &str, top: usize) -> Answer {
                     *total_score.entry(other.clone()).or_insert(0.0) += gain;
                     let better = via.get(&other).is_none_or(|v| gain > v.0);
                     if better {
-                        via.insert(other.clone(), (gain, format!("經 {kind} 連到 {}", short(id))));
+                        // 第二層：寫實際經過的中間節點，再說它連到哪個起點
+                        let why = if cur == id { format!("經 {kind} 連到 {}", short(id)) } else { format!("經 {kind} 連到 {}（它連到命中的 {}）", short(cur), short(id)) };
+                        via.insert(other.clone(), (gain, why));
                     }
                     next.push((other, gain));
                 }
@@ -284,13 +322,13 @@ pub fn locate(g: &Graph, text: &str, top: usize) -> Answer {
     if ans.items.is_empty() {
         ans.notes.push("沒有符合的位置".into());
     }
-    ans
+    (ans, seed_ids)
 }
 
 // ---------------------------------------------------------------- trace
 /// 一個需求、情境或 AC 的整條鏈：規格 → run → 檔案與符號 → 測試 → commit → 交付文件小節。
 pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
-    let root = resolve_id(&g.con, raw).and_then(|id| g.node(&id)).filter(|n| matches!(n.kind.as_str(), "cap" | "req" | "scn" | "ac" | "chg")).ok_or_else(|| format!("找不到這個需求、情境或 AC 的 id：{}", pyish::take(raw, 80)))?;
+    let root = resolve_id(&g.con, raw).and_then(|id| g.node(&id)).filter(|n| matches!(n.kind.as_str(), "cap" | "req" | "scn" | "ac" | "chg" | "epic")).ok_or_else(|| format!("找不到這個需求、情境或 AC 的 id：{}", pyish::take(raw, 80)))?;
     let mut ans = Answer { title: format!("trace {}", root.id), ..Default::default() };
     // 自己與底下的需求、情境
     let mut ids = vec![root.id.clone()];
@@ -303,8 +341,32 @@ pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
         }
         k += 1;
     }
+    // 需求是 epic 或變更的名字時，驗收條件掛在它的 run 底下：把那些 run 寫的 AC 一起算
+    if matches!(root.kind.as_str(), "epic" | "chg") {
+        let runs: Vec<String> = ids.iter().flat_map(|id| g.out_edges(id)).filter(|e| e.kind == "req_run").map(|e| short(&e.dst).to_string()).collect();
+        for r in runs {
+            for src in g.strings("SELECT DISTINCT src FROM edges WHERE owner='@ledger' AND substr(provenance, 1, length(?1) + 8) = 'ledger:' || ?1 || '/' ORDER BY src", &r) {
+                if (src.starts_with("ac:") || src.starts_with("scn:") || src.starts_with("req:")) && !ids.contains(&src) {
+                    ids.push(src);
+                }
+            }
+        }
+    }
+    // 往上：所屬的需求、能力，與碰到它的變更（決策記在需求或變更上）
+    let mut ups: Vec<String> = Vec::new();
+    let mut k = 0;
+    let mut frontier = ids.clone();
+    while k < frontier.len() && frontier.len() < 400 {
+        for ed in g.in_edges(&frontier[k]) {
+            if (ed.kind == "contains" && ed.provenance == "spec" || ed.kind == "changes") && !frontier.contains(&ed.src) {
+                ups.push(ed.src.clone());
+                frontier.push(ed.src);
+            }
+        }
+        k += 1;
+    }
     let mut seen: HashSet<(String, String)> = HashSet::new();
-    let mut files: BTreeSet<String> = BTreeSet::new();
+    let mut runs: BTreeSet<String> = BTreeSet::new();
     let mut push = |ans: &mut Answer, group: &str, id: &str, reason: String| {
         if !seen.insert((group.to_string(), id.to_string())) {
             return;
@@ -325,14 +387,14 @@ pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
             let why = format!("{}{of}", edge_note(&ed));
             match ed.kind.as_str() {
                 "contains" | "changes" => {}
-                "req-run" => push(&mut ans, "run", &ed.dst, why),
-                "ac-spec" => push(&mut ans, "規格小節", &ed.dst, why),
-                "ac-file" => {
-                    files.insert(ed.dst.clone());
-                    push(&mut ans, "檔案與符號", &ed.dst, why)
+                "req_run" => {
+                    runs.insert(ed.dst.clone());
+                    push(&mut ans, "run", &ed.dst, why)
                 }
-                "ac-test" => push(&mut ans, "測試", &ed.dst, why),
-                "ac-commit" => push(&mut ans, "commit", &ed.dst, why),
+                "ac_spec" => push(&mut ans, "規格小節", &ed.dst, why),
+                "ac_file" => push(&mut ans, "檔案與符號", &ed.dst, why),
+                "ac_test" => push(&mut ans, "測試", &ed.dst, why),
+                "ac_commit" => push(&mut ans, "commit", &ed.dst, why),
                 _ => push(&mut ans, "其他連結", &ed.dst, why),
             }
         }
@@ -342,35 +404,38 @@ pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
                 "contains" => {}
                 "marks" => {
                     let path = g.node(&ed.src).map(|n| n.path).unwrap_or_default();
-                    if g.is_test(&path) {
-                        push(&mut ans, "測試", &ed.src, why)
-                    } else {
-                        files.insert(format!("file:{path}"));
-                        push(&mut ans, "檔案與符號", &ed.src, why)
-                    }
+                    push(&mut ans, if g.is_test(&path) { "測試" } else { "檔案與符號" }, &ed.src, why)
                 }
-                "decision-req" => push(&mut ans, "決策", &ed.src, why),
+                "decision_req" => push(&mut ans, "決策", &ed.src, why),
                 "changes" => push(&mut ans, "進行中的變更", &ed.src, why),
                 "mentions" | "links" => push(&mut ans, "文件小節", &ed.src, why),
                 _ => push(&mut ans, "其他連結", &ed.src, why),
             }
         }
     }
-    for f in &files {
-        for ed in g.out_edges(f) {
-            if ed.kind == "change-doc" {
-                push(&mut ans, "交付文件小節", &ed.dst, format!("{}；{}", edge_note(&ed), short(f)));
+    for up in &ups {
+        for ed in g.in_edges(up) {
+            if ed.kind == "decision_req" {
+                push(&mut ans, "決策", &ed.src, format!("{}；{}", edge_note(&ed), short(up)));
+            }
+        }
+    }
+    // 做這個需求的 run 改了哪些交付文件小節
+    for r in &runs {
+        for ed in g.out_edges(r) {
+            if ed.kind == "change_deliverable" {
+                push(&mut ans, "交付文件小節", &ed.dst, format!("{}；{}", edge_note(&ed), short(r)));
             }
         }
     }
     const ORDER: [&str; 10] = ["規格", "進行中的變更", "run", "規格小節", "檔案與符號", "測試", "commit", "交付文件小節", "決策", "文件小節"];
     ans.items.sort_by_key(|i| ORDER.iter().position(|o| *o == i.group).unwrap_or(ORDER.len()));
     for need in ["檔案與符號", "測試", "commit"] {
-        if matches!(root.kind.as_str(), "req" | "scn" | "ac") && !ans.items.iter().any(|i| i.group == need) {
+        if matches!(root.kind.as_str(), "req" | "scn" | "ac" | "epic" | "chg") && !ans.items.iter().any(|i| i.group == need) {
             ans.notes.push(format!("沒有連到{need}"));
         }
     }
-    Ok(ans)
+    Ok(g.finish(ans))
 }
 
 // ---------------------------------------------------------------- impact
@@ -433,7 +498,7 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
             for ed in g.in_edges(m) {
                 let why = format!("{} → {}", edge_note(&ed), short(m));
                 match ed.kind.as_str() {
-                    "ac-file" | "ac-test" => {
+                    "ac_file" | "ac_test" => {
                         reqs.insert(ed.src.clone());
                         push(&mut ans, "需求", &ed.src, why)
                     }
@@ -457,7 +522,6 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
                         reqs.insert(ed.dst.clone());
                         push(&mut ans, "需求", &ed.dst, why)
                     }
-                    "change-doc" => push(&mut ans, "交付文件小節", &ed.dst, why),
                     _ => {}
                 }
             }
@@ -466,15 +530,24 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
     for r in &reqs {
         for ed in g.in_edges(r) {
             match ed.kind.as_str() {
-                "decision-req" => push(&mut ans, "決策", &ed.src, format!("{} → {}", edge_note(&ed), short(r))),
+                "decision_req" => push(&mut ans, "決策", &ed.src, format!("{} → {}", edge_note(&ed), short(r))),
                 "mentions" => push(&mut ans, "文件小節", &ed.src, format!("{} → {}", edge_note(&ed), short(r))),
                 "contains" if ed.provenance == "spec" && ed.src.starts_with("req:") => push(&mut ans, "需求", &ed.src, format!("情境 {} 所屬的需求", short(r))),
                 _ => {}
             }
         }
         for ed in g.out_edges(r) {
-            if ed.kind == "ac-test" {
-                push(&mut ans, "受影響的測試", &ed.dst, format!("{} ← {}", edge_note(&ed), short(r)));
+            match ed.kind.as_str() {
+                "ac_test" => push(&mut ans, "受影響的測試", &ed.dst, format!("{} ← {}", edge_note(&ed), short(r))),
+                // 做過這個需求的 run 改過的交付文件小節
+                "req_run" => {
+                    for d in g.out_edges(&ed.dst) {
+                        if d.kind == "change_deliverable" {
+                            push(&mut ans, "交付文件小節", &d.dst, format!("{} ← {}（{}）", edge_note(&d), short(&ed.dst), short(r)));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -500,7 +573,7 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
     if !starts.is_empty() && reqs.is_empty() {
         ans.notes.push("沒有需求或情境連到這些檔案".into());
     }
-    ans
+    g.finish(ans)
 }
 
 // ---------------------------------------------------------------- check
@@ -571,11 +644,11 @@ pub fn check(g: &Graph, run: Option<&str>) -> Answer {
     for (id, kinds) in &acs {
         // 標記也算連到檔案或測試
         let marks: Vec<String> = g.in_edges(id).into_iter().filter(|e| e.kind == "marks").filter_map(|e| g.node(&e.src)).map(|n| n.path).collect();
-        let has_file = kinds.contains("ac-file") || marks.iter().any(|p| !g.is_test(p));
-        let has_test = kinds.contains("ac-test") || marks.iter().any(|p| g.is_test(p));
-        let has_spec = !id.starts_with("ac:") || kinds.contains("ac-spec");
+        let has_file = kinds.contains("ac_file") || marks.iter().any(|p| !g.is_test(p));
+        let has_test = kinds.contains("ac_test") || marks.iter().any(|p| g.is_test(p));
+        let has_spec = !id.starts_with("ac:") || kinds.contains("ac_spec");
         let mut miss = Vec::new();
-        for (ok, what) in [(has_spec, "規格小節"), (has_file, "檔案"), (has_test, "測試"), (kinds.contains("ac-commit"), "commit")] {
+        for (ok, what) in [(has_spec, "規格小節"), (has_file, "檔案"), (has_test, "測試"), (kinds.contains("ac_commit"), "commit")] {
             if !ok {
                 miss.push(what);
             }
@@ -629,7 +702,7 @@ pub fn check(g: &Graph, run: Option<&str>) -> Answer {
     if ans.items.is_empty() {
         ans.notes.insert(0, "沒有斷掉或缺的連結".into());
     }
-    ans
+    g.finish(ans)
 }
 
 // ---------------------------------------------------------------- neighbors
@@ -664,7 +737,7 @@ pub fn neighbors(g: &Graph, raw: &str, depth: usize) -> Result<Answer, String> {
         }
         frontier = next;
     }
-    Ok(ans)
+    Ok(g.finish(ans))
 }
 
 // ---------------------------------------------------------------- 輸出
@@ -678,7 +751,7 @@ fn loc(i: &Item) -> String {
     }
 }
 
-fn neutral(s: &str) -> String {
+pub(crate) fn neutral(s: &str) -> String {
     kb::neutralize(s).replace("<kg-data", "＜kg-data").replace("</kg-data", "＜/kg-data").replace(['\n', '\r'], " ")
 }
 

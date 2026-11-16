@@ -2,7 +2,7 @@
 //! 這些每次建圖整個重算（`owner` 以 `@` 開頭）。
 
 use super::build::{add_terms, cap_terms, Layout};
-use super::links::{self, End};
+use super::links;
 use super::resolve::{dir_of, join_norm, World};
 use super::store::{self, e, NodeRow};
 use crate::kb::{self, pyish};
@@ -16,13 +16,13 @@ use std::process::Command;
 /// git log 最多看幾個 commit。
 pub const GIT_LOG_LIMIT: usize = 500;
 /// id 可以帶的型別前綴。
-pub const PREFIXES: [&str; 11] = ["req:", "scn:", "cap:", "ac:", "file:", "sym:", "sec:", "commit:", "run:", "dec:", "chg:"];
+pub const PREFIXES: [&str; 15] = ["req:", "scn:", "cap:", "ac:", "file:", "sym:", "sec:", "commit:", "run:", "dec:", "chg:", "epic:", "ref:", "cmd:", "dlv:"];
 
 fn exists(con: &Connection, id: &str) -> bool {
     con.prepare_cached("SELECT 1 FROM nodes WHERE id=?").and_then(|mut s| s.exists([id])).unwrap_or(false)
 }
 
-/// 把人或工具寫的 id 對到節點：已經帶前綴的原樣查，沒帶的依序試情境、需求、能力、決策、變更。
+/// 把人或工具寫的 id 對到節點：已經帶前綴的原樣查，沒帶的依序試情境、需求、能力、決策、變更、AC、epic。
 pub fn resolve_id(con: &Connection, raw: &str) -> Option<String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -31,7 +31,7 @@ pub fn resolve_id(con: &Connection, raw: &str) -> Option<String> {
     if PREFIXES.iter().any(|p| raw.starts_with(p)) {
         return exists(con, raw).then(|| raw.to_string());
     }
-    ["scn:", "req:", "cap:", "dec:", "chg:", "ac:"].iter().map(|p| format!("{p}{raw}")).find(|id| exists(con, id))
+    ["scn:", "req:", "cap:", "dec:", "chg:", "ac:", "epic:"].iter().map(|p| format!("{p}{raw}")).find(|id| exists(con, id))
 }
 
 fn git(root: &str, args: &[&str]) -> Option<String> {
@@ -107,6 +107,9 @@ fn put_req(con: &Connection, lay: &Layout, r: &spec::Requirement, sub: &str) -> 
     ntok += add_terms(&mut terms, &r.id, 2);
     store::put_node(con, &NodeRow { id: &id, kind: "req", sub, name: &r.title, path: &path, start: r.span.start, end: r.span.end, ntok, owner: "@spec" })?;
     store::put_terms(con, &id, &cap_terms(terms), "@spec")?;
+    let text = std::fs::read_to_string(Path::new(&lay.spec_root).join(&r.file)).unwrap_or_default();
+    let lines: Vec<&str> = text.split('\n').collect();
+    store::put_fp(con, &id, &lines, r.span.start, r.span.end, "@spec")?;
     for s in &r.scenarios {
         if s.id.is_empty() {
             continue;
@@ -116,6 +119,7 @@ fn put_req(con: &Connection, lay: &Layout, r: &spec::Requirement, sub: &str) -> 
         let ntok = add_terms(&mut terms, &s.title, 3) + add_terms(&mut terms, &r.title, 1);
         store::put_node(con, &NodeRow { id: &sid, kind: "scn", sub, name: &s.title, path: &path, start: s.span.start, end: s.span.end, ntok, owner: "@spec" })?;
         store::put_terms(con, &sid, &terms, "@spec")?;
+        store::put_fp(con, &sid, &lines, s.span.start, s.span.end, "@spec")?;
         store::put_edge(con, &id, &sid, "contains", "strong", "spec", 1.0, "@spec")?;
     }
     Ok(Some(id))
@@ -173,13 +177,10 @@ pub fn specs(con: &Connection, lay: &Layout, notes: &mut Vec<String>) -> Result<
     Ok(())
 }
 
-/// 決策的 id：紀錄自己有 `id` 就用它，沒有就用 run、時間與問題的雜湊（不含行號）。
-pub fn decision_id(d: &Value) -> String {
-    let s = |k: &str| d.get(k).and_then(Value::as_str).unwrap_or("");
-    if !s("id").trim().is_empty() {
-        return s("id").trim().to_string();
-    }
-    store::sha256_hex(format!("{}\u{1f}{}\u{1f}{}", s("run"), s("at"), s("question")).as_bytes())[..10].to_string()
+/// 決策的 id：`decisions.jsonl` 那一行內容的 sha1 前 12 碼，和連結帳本寫的 `decision` 端點同一個算法
+/// （`save_run::decision_id`），兩邊才接得起來。
+pub fn decision_id(line: &str) -> String {
+    crate::save_run::decision_id(line)
 }
 
 /// 決策記憶 `<runs_dir>/decisions.jsonl`（人在閘門上的答覆）。
@@ -191,11 +192,11 @@ pub fn decisions(con: &Connection, lay: &Layout) -> Result<(), String> {
     let Ok(text) = std::fs::read_to_string(pyish::pjoin(&lay.root, &rel)) else { return Ok(()) };
     for (k, line) in text.lines().enumerate() {
         let Ok(d) = serde_json::from_str::<Value>(line.trim()) else { continue };
+        let key = decision_id(line);
         let s = |key: &str| d.get(key).and_then(Value::as_str).unwrap_or("");
         if !d.is_object() || s("question").trim().is_empty() || s("answer").trim().is_empty() {
             continue;
         }
-        let key = decision_id(&d);
         let id = format!("dec:{key}");
         let mut terms = BTreeMap::new();
         let ntok = add_terms(&mut terms, s("question"), 2) + add_terms(&mut terms, s("answer"), 1);
@@ -278,18 +279,43 @@ fn strip_loc(raw: &str) -> &str {
     }
 }
 
-fn looks_sha(s: &str) -> bool {
-    (7..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 struct Ends<'a> {
     con: &'a Connection,
     lay: &'a Layout,
     w: &'a World,
     has_spec: bool,
+    /// 交付文件 id → 相對於專案根目錄的檔（沒有交付設定是空的）。
+    docs: BTreeMap<String, String>,
+}
+
+/// 交付設定裡每份文件的位置。讀不到設定就是空的。
+fn deliverable_docs(root: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let (Some(cfg), _) = crate::deliverables::load_config(root) else { return out };
+    let cat = crate::deliverables::load_catalog(root);
+    for d in crate::deliverables::resolve_docs(&cfg, &cat) {
+        let Some(id) = d.get("id").and_then(Value::as_str) else { continue };
+        let abs = crate::deliverables::doc_path(&cfg, root, &d);
+        if pyish::is_under(&abs, root) {
+            out.insert(id.to_string(), kb::to_posix(&pyish::relpath(&abs, root)));
+        }
+    }
+    out
 }
 
 impl Ends<'_> {
+    fn ghost(&self, id: &str, kind: &str, sub: &str, name: &str, path: &str) -> Result<String, String> {
+        if !exists(self.con, id) {
+            store::put_node(self.con, &NodeRow { id, kind, sub, name, path, start: 0, end: 0, ntok: 0, owner: "@ledger" })?;
+        }
+        Ok(id.to_string())
+    }
+
+    /// 規格層的節點（情境、需求、能力）。
+    fn spec_node(&self, raw: &str) -> Option<String> {
+        ["scn:", "req:", "cap:"].iter().map(|p| format!("{p}{raw}")).find(|id| exists(self.con, id))
+    }
+
     fn commit(&self, raw: &str) -> Result<String, String> {
         let full: Option<String> = self
             .con
@@ -301,102 +327,107 @@ impl Ends<'_> {
         if let Some(id) = full {
             return Ok(id);
         }
-        let id = format!("commit:{raw}");
-        store::put_node(self.con, &NodeRow { id: &id, kind: "commit", sub: "ledger", name: &raw[..raw.len().min(12)], path: "", start: 0, end: 0, ntok: 0, owner: "@ledger" })?;
-        Ok(id)
+        self.ghost(&format!("commit:{raw}"), "commit", "ledger", &raw[..raw.char_indices().nth(12).map_or(raw.len(), |x| x.0)], "")
     }
 
-    fn sec(&self, raw: &str) -> Result<String, String> {
-        if let Some(id) = resolve_id(self.con, raw) {
-            return Ok(id);
-        }
-        let Some((path, heading)) = raw.split_once('#') else { return Ok(format!("file:{}", kb::to_posix(strip_loc(raw)))) };
-        let path = kb::to_posix(path);
-        let heading = heading.trim();
-        let hit: Option<String> = self
+    /// 文件小節：`路徑#標題`。路徑寫完整的或只寫結尾（例如相對於 spec 目錄的 `spec.md`）都找，只有一個對得上才算。
+    fn sec_by(&self, path: &str, heading: &str) -> Option<String> {
+        let hits: Vec<(String, String)> = self
             .con
-            .prepare_cached("SELECT id FROM nodes WHERE kind='sec' AND path=?1 AND (name=?2 OR id=?3) ORDER BY start LIMIT 1")
-            .and_then(|mut s| s.query_row(params![path, heading, format!("sec:{path}#{heading}")], |r| r.get(0)))
-            .ok();
-        Ok(hit.unwrap_or_else(|| format!("sec:{path}#{heading}")))
+            .prepare_cached("SELECT id, path FROM nodes WHERE kind='sec' AND name=?2 AND (path=?1 OR substr(path, length(path) - length(?1)) = '/' || ?1) ORDER BY id LIMIT 8")
+            .and_then(|mut s| s.query_map(params![path, heading], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).and_then(|it| it.collect::<Result<Vec<_>, _>>()))
+            .unwrap_or_default();
+        let exact: Vec<&(String, String)> = hits.iter().filter(|h| h.1 == path).collect();
+        match (exact.as_slice(), hits.as_slice()) {
+            ([one], _) => Some(one.0.clone()),
+            ([], [one]) => Some(one.0.clone()),
+            _ => None,
+        }
     }
 
-    fn id(&self, raw: &str) -> Result<String, String> {
-        if let Some(id) = resolve_id(self.con, raw) {
+    /// spec 小節：規格層的 id，或子任務 `spec_refs` 的原文（「檔#標題」或「標題」，檔相對於 spec 目錄）。
+    /// 對不到圖裡的小節時留一個只有名字的節點（原文相對於哪個目錄，帳本沒有記，不當成斷掉的連結）。
+    fn spec(&self, raw: &str) -> Result<String, String> {
+        if let Some(id) = self.spec_node(raw) {
             return Ok(id);
         }
-        let id = format!("ac:{raw}");
-        let sub = if self.has_spec { "unknown" } else { "" };
-        store::put_node(self.con, &NodeRow { id: &id, kind: "ac", sub, name: raw, path: "", start: 0, end: 0, ntok: 0, owner: "@ledger" })?;
-        Ok(id)
+        let (path, heading) = match raw.rsplit_once('#') {
+            Some((p, h)) => (kb::to_posix(p.trim()), h.trim()),
+            None => ("spec.md".to_string(), raw),
+        };
+        if let Some(id) = self.sec_by(&path, heading) {
+            return Ok(id);
+        }
+        self.ghost(&format!("ref:{raw}"), "ref", "spec", raw, "")
     }
 
-    fn end(&self, raw: &str, ty: End) -> Result<String, String> {
-        let raw = raw.trim();
-        for (p, t) in [("test:", End::File), ("doc:", End::Sec)] {
-            if let Some(rest) = raw.strip_prefix(p) {
-                return self.end(rest, t);
-            }
-        }
-        if let Some(p) = super::sources::PREFIXES.iter().find(|p| raw.starts_with(**p)) {
-            let rest = &raw[p.len()..];
-            return match *p {
-                "run:" => run_node(self.con, self.lay, rest, "@ledger"),
-                "commit:" => self.commit(rest),
-                "ac:" | "req:" | "scn:" | "cap:" | "dec:" | "chg:" if !exists(self.con, raw) => self.id(rest),
-                _ => Ok(raw.to_string()),
-            };
-        }
-        match ty {
-            End::Id => self.id(raw),
-            End::Run => run_node(self.con, self.lay, raw, "@ledger"),
-            End::File => Ok(format!("file:{}", kb::to_posix(strip_loc(raw)))),
-            End::Sec => self.sec(raw),
-            End::Commit => self.commit(raw),
-            End::Dec => match resolve_id(self.con, raw) {
+    fn end(&self, e: &links::End) -> Result<String, String> {
+        let raw = e.id.trim();
+        match e.ty.as_str() {
+            "requirement" => match self.spec_node(raw) {
                 Some(id) => Ok(id),
-                None => {
-                    let id = format!("dec:{raw}");
-                    store::put_node(self.con, &NodeRow { id: &id, kind: "dec", sub: "ledger", name: raw, path: "", start: 0, end: 0, ntok: 0, owner: "@ledger" })?;
-                    Ok(id)
-                }
+                // 需求來源不是規格層時，需求就是 epic 的名字
+                None => self.ghost(&format!("epic:{raw}"), "epic", "", raw, ""),
             },
-            End::Any => {
-                if let Some(id) = resolve_id(self.con, raw) {
-                    Ok(id)
-                } else if self.w.files.contains_key(&kb::to_posix(strip_loc(raw))) {
-                    Ok(format!("file:{}", kb::to_posix(strip_loc(raw))))
-                } else if raw.contains('#') && self.w.files.contains_key(&kb::to_posix(raw.split('#').next().unwrap_or(""))) {
-                    self.sec(raw)
-                } else if looks_sha(raw) {
-                    self.commit(raw)
+            "change" => self.ghost(&format!("chg:{raw}"), "chg", "ledger", raw, ""),
+            "run" => run_node(self.con, self.lay, raw, "@ledger"),
+            "ac" => match self.spec_node(raw) {
+                Some(id) => Ok(id),
+                None => self.ghost(&format!("ac:{raw}"), "ac", if self.has_spec { "unknown" } else { "" }, raw, ""),
+            },
+            "spec" => self.spec(raw),
+            "file" => Ok(format!("file:{}", kb::to_posix(strip_loc(raw)))),
+            "test" => {
+                let p = kb::to_posix(strip_loc(raw));
+                // 驗證指令裡找不到檔名時，帳本記的是指令本身
+                if self.w.files.contains_key(&p) || !raw.contains(char::is_whitespace) && pyish::basename(&p).contains('.') {
+                    Ok(format!("file:{p}"))
                 } else {
-                    self.id(raw)
+                    self.ghost(&format!("cmd:{raw}"), "cmd", "test", raw, "")
                 }
             }
+            "commit" => self.commit(raw),
+            "decision" => self.ghost(&format!("dec:{raw}"), "dec", "ledger", raw, ""),
+            "deliverable" => {
+                let (doc, sec) = raw.split_once('#').unwrap_or((raw, ""));
+                let path = self.docs.get(doc).cloned().unwrap_or_default();
+                if let Some(id) = Some(&path).filter(|p| !p.is_empty() && !sec.is_empty()).and_then(|p| self.sec_by(p, sec.trim())) {
+                    return Ok(id);
+                }
+                let shown = if !path.is_empty() && Path::new(&pyish::pjoin(&self.lay.root, &path)).is_file() { path.as_str() } else { "" };
+                self.ghost(&format!("dlv:{raw}"), "dlv", "", raw, shown)
+            }
+            _ => Err(format!("不認得的端點型別：{}", e.ty)),
         }
     }
 }
 
-/// 連結帳本 `<runs_dir>/links.jsonl`。回傳略過的壞行數。
-pub fn ledger(con: &Connection, lay: &Layout, w: &World) -> Result<usize, String> {
+/// 連結帳本 `<runs_dir>/links.jsonl`。回傳略過的壞行數；帳本的格式比認得的新時整個略過並在 `notes` 說明。
+pub fn ledger(con: &Connection, lay: &Layout, w: &World, notes: &mut Vec<String>) -> Result<usize, String> {
     if lay.runs.is_empty() {
         return Ok(0);
     }
     let led = links::read_ledger(&pyish::pjoin(&lay.root, &format!("{}/links.jsonl", lay.runs)));
+    if let Some(v) = led.newer {
+        notes.push(format!("連結帳本的格式版本是 {v}，這個執行檔只認得到 {}；整個帳本略過，這次沒有帳本的連結（更新 awf 後重建）", links::KNOWN_VERSION));
+        return Ok(led.bad);
+    }
+    if led.links.is_empty() {
+        return Ok(led.bad);
+    }
     let has_spec = con.query_row("SELECT EXISTS(SELECT 1 FROM nodes WHERE kind='req')", [], |r| r.get::<_, i64>(0)).unwrap_or(0) == 1;
-    let ends = Ends { con, lay, w, has_spec };
+    let ends = Ends { con, lay, w, has_spec, docs: deliverable_docs(&lay.root) };
     for l in &led.links {
-        let (ft, tt) = links::ends_of(&l.kind);
-        let src = ends.end(&l.from, ft)?;
-        let dst = ends.end(&l.to, tt)?;
+        let src = ends.end(&l.from)?;
+        let dst = ends.end(&l.to)?;
         let prov = format!("ledger:{}/{}", l.run, l.stage);
-        store::put_edge(con, &src, &dst, &l.kind, if l.strong { "strong" } else { "weak" }, &prov, l.confidence, "@ledger")?;
-        if !l.run.is_empty() && l.kind != "req-run" {
+        // 情境自己就是驗收條件時，「AC → spec 小節」會指回自己，不用建
+        if src != dst {
+            store::put_edge(con, &src, &dst, &l.kind, if l.strong { "strong" } else { "weak" }, &prov, l.confidence, "@ledger")?;
+        }
+        if l.kind != "req_run" && ["req:", "scn:", "ac:"].iter().any(|p| src.starts_with(p)) {
             let run = run_node(con, lay, &l.run, "@ledger")?;
-            if src.starts_with("req:") || src.starts_with("scn:") || src.starts_with("ac:") {
-                store::put_edge(con, &src, &run, "req-run", "strong", &prov, 1.0, "@ledger")?;
-            }
+            store::put_edge(con, &src, &run, "req_run", "strong", &prov, 1.0, "@ledger")?;
         }
     }
     Ok(led.bad)

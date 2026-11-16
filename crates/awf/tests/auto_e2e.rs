@@ -273,7 +273,7 @@ fn full_flow_updates_graph_ledger_spec_and_vault() {
     let seq = p.walk(
         run,
         &mut |stage, action| {
-            assert!(!action.to_string().contains("知識圖"), "更新成功時不該多說明：{action}");
+            assert!(!action.to_string().contains("資料包用上一版的圖"), "更新成功時不該有更新失敗的警告：{action}");
             // 這一段開跑前的圖，查不查得到上一段結束後才加的符號
             seen.push((stage.to_string(), p.knows("brand_new_helper")));
             if stage == "plan" {
@@ -374,7 +374,7 @@ fn all_off_adds_nothing() {
     let seq = p.walk(
         run,
         &mut |stage, action| {
-            assert!(!action.to_string().contains("知識圖"), "{action}");
+            assert!(!action.to_string().contains("資料包用上一版的圖"), "{action}");
             if stage == "plan" {
                 p.put("src/extra.py", "def brand_new_helper(order):\n    return order\n");
             }

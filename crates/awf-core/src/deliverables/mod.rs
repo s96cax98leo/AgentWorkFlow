@@ -17,19 +17,22 @@
 mod core;
 mod flow;
 mod html5;
+mod kgflow;
 mod py;
 mod selftest;
+mod selftest_v1;
 
 pub use self::core::{
     body_hash, broken_links, builtin_catalog, catalog_index, check_all, config_errors, doc_path, doc_sections, doc_status, glob_re, index_text, is_placeholder,
-    load_catalog, load_config, load_state, match_files, out_dir, parse_doc, privacy_hits, privacy_text, repo_files, resolve_docs, run_name_rule, safe_rel,
+    doc_status_with, load_catalog, load_config, load_state, match_files, out_dir, parse_doc, privacy_hits, privacy_text, repo_files, resolve_docs, run_name_rule, safe_rel,
     save_state, section_sources, section_state, skeleton, source_root, status_all, ExtraRule, Parsed, Section,
 };
 pub use self::flow::{
-    affected, changed_paths, configure, ensure_doc, entry_key, export, init_docs, matrix_block, matrix_rows, match_title, pack_args, record_block, repo_of, run,
+    affected, changed_paths, configure, ensure_doc, entry_key, export, init_docs, matrix_block, matrix_rows, match_title, pack_args, pack_args_with, record_block, repo_of, run,
     run_facts, set_pandoc_override, stamp, strip_paths, suggest, sync, upsert_entry, write_matrix, Facts,
 };
 
+pub use self::kgflow::{project_matrix, Links};
 pub use self::selftest::selftest;
 
 pub const CONFIG_NAME: &str = "deliverables.json";
@@ -77,6 +80,13 @@ const DOC: &str = "交付文件：型錄、交付設定、逐節的來源標記�
 - 這是輔助工具：閘門（save_run、publish、merge_gate）不讀它的輸出。只用標準庫，跨平台。
 ";
 
+/// 1.0 加的說明：接在 [`DOC`] 後面印（`DOC` 本身是對跑基準的一部分，逐字不動）。
+const DOC_V1: &str = "
+1.0（要有知識圖，awf kg build 建的；沒有圖時以下都不做，其他指令的行為不變）：
+    awf deliverables matrix --project [--json]             # 專案層的追溯矩陣：每個現行需求目前由哪些檔案、測試、commit 支撐；沒有圖回非零
+- sync 另外記下小節連到的需求、情境、符號與程式檔的指紋；之後它們變了而內文沒動，那一節也算過期（只會讓更多小節過期）。
+";
+
 /// 沒指定時的專案根目錄：`CLAUDE_PROJECT_DIR`，沒有就用目前的工作目錄。
 pub fn default_root() -> String {
     let raw = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| ".".to_string());
@@ -86,7 +96,14 @@ pub fn default_root() -> String {
 /// `awf deliverables …`
 pub fn main(args: &[String]) -> i32 {
     let mut out = String::new();
-    let code = run(&default_root(), args, &mut out);
+    let mut code = run(&default_root(), args, &mut out);
+    if args.first().map(String::as_str) == Some("--selftest") {
+        // 1.0 的案例接在原本的後面（原本那一段的輸出是對跑基準的一部分，不動）
+        code = code.max(selftest_v1::selftest(&mut out));
+    }
+    if matches!(args.first().map(String::as_str), None | Some("-h") | Some("--help")) {
+        out.push_str(DOC_V1);
+    }
     print!("{out}");
     code
 }

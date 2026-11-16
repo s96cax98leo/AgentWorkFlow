@@ -273,6 +273,10 @@ pub fn archive_text(ctx: &Ctx, run: &str, data: &Value) -> R<String> {
         out.extend([String::new(), "## 執行紀錄".to_string(), String::new()]);
         out.extend(index.iter().map(|x| format!("- [{x}](../{x})")));
     }
+    // 這個 run 的連結（取自連結帳本；帳本不存在或這個 run 沒有連結時不加這一節）
+    if let Ok(resolved) = ctx.resolve(run) {
+        out.extend(crate::kg::links::run_section(&pj(&super::py::pparent(&resolved), super::links::LEDGER), &pname(&resolved)));
+    }
     out.extend([String::new(), "## 成本".to_string(), String::new()]);
     out.push("- 這份摘要不記 token（workflow 紀錄可能已經不在）。要看請跑：`awf cost --project . --run-dir <這個 run 的目錄>`".to_string());
     let fr = get(data, "followup_run")?;

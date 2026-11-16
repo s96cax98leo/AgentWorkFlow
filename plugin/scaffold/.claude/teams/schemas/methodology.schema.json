@@ -132,6 +132,23 @@
         "sources": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "相對專案根目錄的 glob"},
         "exclude": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "dir": {"type": "string", "minLength": 1, "description": "索引與檢視（INDEX.md、cards/、hot.md）放哪；預設 _tpm/kb"},
+        "repos": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "選填：知識圖（awf kg）另外要收的別的 repo（唯讀）。只收 sources 列的檔，不收機敏檔；節點 id 帶「<id>:」前綴",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "path", "sources"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "這個 repo 在圖裡的名字（節點 id 的前綴）"},
+              "path": {"type": "string", "minLength": 1, "description": "repo 的目錄：相對專案根目錄，或絕對路徑（可以在工作區以外）"},
+              "sources": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "相對那個 repo 的 glob；只收這些"}
+            }
+          }
+        },
+        "spec_root": {"type": "string", "minLength": 1, "description": "選填：知識圖讀規格（OpenSpec 目錄）的位置，相對專案根目錄；預設 openspec"},
+        "timeout": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "選填：awf kg build 的逾時秒數；預設 60"},
         "auto": {
           "type": "object",
           "description": "選填：自動接點（流程自己呼叫知識圖與規格層，不用人記指令）。每一項失敗都只警告、不擋流程；閘門不讀它們的輸出。沒有知識圖（<dir>/graph.db）時，除了 update 明確開啟以外全部不做",

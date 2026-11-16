@@ -22,7 +22,9 @@
 //! - 目錄清單裡有不是 utf-8 的檔名時算讀不到（Python 會在算雜湊時丟例外）。
 //! - reuse.json 的原文有落單的代理字元跳脫時整份當成讀不懂；信封裡大到超出 64 位元整數範圍的數字一律當成不相等。
 
+pub mod graph;
 mod selftest;
+mod selftest_v1;
 
 pub use crate::kb::PyErr;
 pub use selftest::selftest;
@@ -60,7 +62,7 @@ pub const USAGE: &str = "資料包與調研重用：每段開跑前由工具（�
 
 用法（在已 init 的專案根目錄）：
     awf pack <段> --run <run 目錄> [--repo <目標 repo>] [--requirement <需求原文或路徑>]
-        [--plan-mode <mode>] [--reuse-from <其他 run 目錄>]… [--keep-research] [--no-kb] [--json]
+        [--plan-mode <mode>] [--reuse-from <其他 run 目錄>]… [--keep-research] [--no-kb] [--no-kg] [--json]
     awf pack build --run <run 目錄> [--subtasks <子任務 JSON 檔>] [--epic <epic>] [--spec <spec 目錄>]
     awf pack --selftest
 
@@ -82,6 +84,11 @@ spec_refs 指到不存在的檔或小節時記在 spec_ref_errors，sdlc-build �
 
 每份資料包都帶〈既有決定〉：<runs_dir>/decisions.jsonl（awf save-run approve --answer／decide 記的）裡和這次需求有關、沒過期的答覆，
 agent 提問前先看，已經答過的不再問。同一個 run／epic 的決定全帶；範圍是整個專案的只帶用詞和需求對得上的。
+
+有知識圖時（awf kg build 建的；沒有圖就完全不做，--no-kg 可關）各段的資料包多帶圖查到的行段（路徑:起訖行＋理由）：
+plan 帶程式行段、相關決策、會碰到的既有需求與情境，程式角度命中夠時把 located 標成夠用（不派定位 agent）；
+design 帶「要改的檔現在連著的需求與測試」；build 的子任務資料包帶檔案的呼叫者與相依；deliver 多列受影響的交付文件小節。
+需求來源是 openspec 時，子任務的 spec_refs 可以寫規格層的穩定 id（<能力>/<需求代稱>、…#<情境代稱>），資料包放它在規格檔裡的行段。
 
 輔助功能失敗不擋流程（I9）：知識庫壞掉、來源讀不到都只印警告，照樣產出資料包（少一節）；
 但 verify_reuse 是閘門的一部分，核對不了一律判不符（只會更嚴）。只用標準庫。
@@ -1174,8 +1181,42 @@ fn flat_list(v: Option<&Value>, limit: usize, sep: &str) -> PyResult<String> {
     Ok(if s.is_empty() { "（沒有）".to_string() } else { s })
 }
 
+/// 規格層（需求來源是 openspec 時）：子任務的 `spec_refs` 可以寫穩定 id（`<能力>/<需求代稱>`、`…#<情境代稱>`）。
+pub struct SpecIds {
+    opened: crate::spec::Opened,
+    /// 這個 run 對應的進行中變更（它的差異優先於現行規格）。
+    change: Option<String>,
+    /// 規格根目錄在資料包裡的寫法（設定裡寫的，例如 `openspec`）。
+    pub display: String,
+}
+
+impl SpecIds {
+    /// 需求來源不是 openspec、或規格讀不到時回 None（照原本的 spec.md 小節寫法）。
+    pub fn open(run: &str, root: &str, data: &Value, profile: Option<&Value>) -> Option<SpecIds> {
+        let ctx = crate::save_run::Ctx::new(root, ".");
+        let sc = crate::save_run::open_spec(&ctx, run, data, profile.unwrap_or(&Value::Null))?.ok()?;
+        Some(SpecIds { display: posix(&sc.conf.display).trim_end_matches('/').to_string(), change: sc.change, opened: sc.opened })
+    }
+
+    /// `reference` 開頭是找得到的 id（這次變更的差異優先，再找現行規格）→（顯示用的檔、起行、迄行、標題）。
+    pub fn locate(&self, reference: &str) -> Option<(String, usize, usize, String)> {
+        let id = crate::save_run::lead_token(reference);
+        if id.is_empty() {
+            return None;
+        }
+        let (file, start, end, title) = crate::spec::locate(&self.opened.tree, self.change.as_deref(), id)?;
+        Some((format!("{}/{}", self.display, posix(&file)), start, end, title))
+    }
+}
+
 /// 一個子任務的資料包（Markdown）與 spec_refs 的錯誤。內容只由輸入決定。
 pub fn build_task_pack(task: &Value, all_tasks: &[Value], spec: Option<&str>, spec_label: &str, profile: Option<&Value>, bases: &[String]) -> PyResult<(String, Vec<String>)> {
+    build_task_pack_with(task, all_tasks, spec, spec_label, profile, bases, None)
+}
+
+/// [`build_task_pack`]，另外認規格層的穩定 id：`ids` 有給時，spec_refs 的每一項先當 id 找，找到就放該需求或情境在規格檔裡的行段；
+/// 不是 id 的照原本「spec.md 小節」的寫法找；兩邊都找不到才算錯。`ids` 是 None 時和 [`build_task_pack`] 完全相同。
+pub fn build_task_pack_with(task: &Value, all_tasks: &[Value], spec: Option<&str>, spec_label: &str, profile: Option<&Value>, bases: &[String], ids: Option<&SpecIds>) -> PyResult<(String, Vec<String>)> {
     let tid = pyfmt::str_opt(task.get("id"));
     let mut errs: Vec<String> = Vec::new();
     let mut l: Vec<String> = vec![
@@ -1196,6 +1237,24 @@ pub fn build_task_pack(task: &Value, all_tasks: &[Value], spec: Option<&str>, sp
     let refs: Vec<String> = py_iter(task.get("spec_refs"))?.iter().filter_map(Value::as_str).map(str::to_string).collect();
     if refs.is_empty() {
         l.push("（這個子任務沒有標 spec_refs；照派工單的 spec 路徑找相關小節）".to_string());
+    } else if let Some(ids) = ids {
+        for r in &refs {
+            if let Some((file, start, end, title)) = ids.locate(r) {
+                l.push(format!("- {}:{start}-{end} ｜ {}", flat_str(&file, 200), flat_str(&title, 120)));
+                continue;
+            }
+            let res = match spec {
+                Some(spec) => resolve_spec_ref(spec, r).map(|hit| format!("- {spec_label}/{}:{}-{} ｜ {}", hit.file, hit.start, hit.end, flat_str(&hit.title, 120))),
+                None => Err(format!("{}：規格（{}）裡沒有這個 id", if pyish::is_blank(r) { "（空）" } else { pyish::strip(r) }, ids.display)),
+            };
+            match res {
+                Ok(line) => l.push(line),
+                Err(err) => {
+                    errs.push(format!("{tid}：{}", flat_str(&err, 200)));
+                    l.push(format!("- （定位不到）{}", flat_str(&err, 200)));
+                }
+            }
+        }
     } else if let Some(spec) = spec {
         for r in &refs {
             match resolve_spec_ref(spec, r) {
@@ -1238,6 +1297,11 @@ pub fn build_task_pack(task: &Value, all_tasks: &[Value], spec: Option<&str>, sp
 
 /// 寫每個子任務的資料包；回傳 ({id: 路徑}, spec_ref_errors, 說明)。
 pub fn write_task_packs(run: &str, root: &str, repo: Option<&str>, argv: &[String]) -> PyResult<(Map<String, Value>, Vec<String>, Vec<String>)> {
+    write_task_packs_with(run, root, repo, argv, None)
+}
+
+/// [`write_task_packs`]，有知識圖時每份子任務資料包後面多一節「這些檔的呼叫者與相依」。
+pub fn write_task_packs_with(run: &str, root: &str, repo: Option<&str>, argv: &[String], kx: Option<&graph::KgCtx>) -> PyResult<(Map<String, Value>, Vec<String>, Vec<String>)> {
     let (subs, epic) = find_subtasks(run, opt(argv, "--subtasks"));
     if subs.is_empty() {
         return Ok((Map::new(), Vec::new(), vec!["子任務資料包：找不到子任務清單（用 --subtasks <檔> 指定），這次不產生".to_string()]));
@@ -1247,28 +1311,48 @@ pub fn write_task_packs(run: &str, root: &str, repo: Option<&str>, argv: &[Strin
     let label = if opt(argv, "--spec").is_empty() { spec.as_deref().map(posix).unwrap_or_default() } else { posix(opt(argv, "--spec")) };
     let profile = load_json(&join(root, ".claude/teams/methodology.json"));
     let bases: Vec<String> = std::iter::once(root.to_string()).chain(repo.map(str::to_string)).collect();
+    // 需求來源是 openspec 時，spec_refs 可以是規格層的穩定 id；不是 openspec（或規格讀不到）時是 None，行為照舊
+    let run_data = load_json(&join(run, "run.json")).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let ids = SpecIds::open(run, root, &run_data, profile.as_ref());
     let mut packs: Map<String, Value> = Map::new();
     let (mut errs, mut skipped): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    let mut with_graph = 0usize;
     for t in &subs {
         let tid = str_or_empty(t.get("id"));
         if !TASK_ID.as_ref().is_some_and(|r| r.is_match(&tid)) {
             skipped.push(if tid.is_empty() { "（沒有 id）".to_string() } else { tid });
             continue;
         }
-        let (text, e) = build_task_pack(t, &subs, spec.as_deref(), &label, profile.as_ref(), &bases)?;
+        let (mut text, e) = build_task_pack_with(t, &subs, spec.as_deref(), &label, profile.as_ref(), &bases, ids.as_ref())?;
         errs.extend(e);
+        if let Some(kx) = kx {
+            let owns: Vec<String> = py_iter(t.get("owns"))?.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            let extra = graph::task(kx, &owns);
+            if !extra.is_empty() {
+                with_graph += 1;
+                text = graph::append(&text, &extra);
+            }
+        }
         let d = join(run, &format!("build/{tid}"));
         pyish::mkdir_p(&d)?;
         let file = join(&d, "pack.md");
         write_lf(&file, &text).map_err(|e| PyErr::os(&e, &file))?;
         packs.insert(tid, json!(posix(&file)));
     }
-    let mut notes = vec![format!("子任務資料包：{} 份{}", packs.len(), if spec.is_some() { format!("（spec 目錄：{label}）") } else { "（找不到 spec 目錄，spec_refs 沒有定位）".to_string() })];
+    let where_spec = match (&spec, &ids) {
+        (Some(_), _) => format!("（spec 目錄：{label}）"),
+        (None, Some(ids)) => format!("（規格層：{}，spec_refs 用穩定 id 定位）", ids.display),
+        (None, None) => "（找不到 spec 目錄，spec_refs 沒有定位）".to_string(),
+    };
+    let mut notes = vec![format!("子任務資料包：{} 份{where_spec}", packs.len())];
     if !skipped.is_empty() {
         notes.push(format!("子任務 id 不能當目錄名，沒有資料包：{}", skipped.iter().map(|x| flat_str(x, 80)).collect::<Vec<_>>().join("、")));
     }
     if !errs.is_empty() {
         notes.push(format!("spec_refs 有 {} 項對不到 spec（sdlc-build 會停下交人）", errs.len()));
+    }
+    if with_graph > 0 {
+        notes.push(format!("知識圖：{with_graph} 份子任務資料包帶了檔案的呼叫者與相依"));
     }
     Ok((packs, errs, notes))
 }
@@ -1340,6 +1424,9 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
     };
     let mut out_args: Map<String, Value> = Map::new();
     let mut notes: Vec<String> = Vec::new();
+    // 知識圖：圖存在而且能開才用；沒有圖時以下每一處都不做事，輸出和沒有這個功能時相同
+    let kx = if has(argv, "--no-kg") { None } else { graph::open(root, repo) };
+    let mut graph_lines: Vec<String> = Vec::new();
     if stage == "plan" {
         let reuse = match reuse_candidates(&run, repo, &requirement, &plan_mode, &opts(argv, "--reuse-from"), has(argv, "--keep-research"), root) {
             Ok((reuse, n)) => {
@@ -1376,9 +1463,23 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
                 notes.push(format!("工具定位：{}", parts.join("；")));
             }
         }
+        if let Some(kx) = &kx {
+            let names = vec![str_or_empty(data.get("args").and_then(|a| a.get("change"))), run_epic(&run, Some(&data))];
+            let located = out_args.get_mut("located").and_then(Value::as_object_mut);
+            let (lines, gnotes) = graph::plan(kx, &requirement_text(&requirement, root), &names, located, &|a| reuse.contains_key(a));
+            graph_lines = lines;
+            notes.extend(gnotes);
+        }
+    }
+    if stage == "design" {
+        if let Some(kx) = &kx {
+            let (lines, gnotes) = graph::design(kx, &run, &requirement_text(&requirement, root));
+            graph_lines = lines;
+            notes.extend(gnotes);
+        }
     }
     if stage == "build" {
-        match write_task_packs(&run, root, repo, argv) {
+        match write_task_packs_with(&run, root, repo, argv, kx.as_ref()) {
             Ok((packs, ref_errs, tnotes)) => {
                 if !packs.is_empty() {
                     out_args.insert("task_packs".into(), Value::Object(packs));
@@ -1403,11 +1504,14 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
         };
         match paths {
             Ok(paths) => {
-                let (extra, dnotes) = deliverables::pack_args(stage, &run, root, repo, &data, paths.as_deref());
+                let (extra, dnotes, glines) = deliverables::pack_args_with(stage, &run, root, repo, &data, paths.as_deref(), kx.as_ref().map(|k| (&k.g, k.prefix.as_deref())));
                 if pyfmt::truthy(&extra) {
                     out_args.insert("deliverables".into(), extra);
                 }
                 notes.extend(dnotes);
+                if stage == "deliver" {
+                    graph_lines = glines;
+                }
             }
             Err(e) => notes.push(format!("交付文件的資訊算不出來，這一段照常跑（{}：{}）", e.class, e.msg)),
         }
@@ -1439,7 +1543,7 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
     if let Err(e) = pyish::mkdir_p(&d) {
         return unwritable(out, &e.msg);
     }
-    let text = build_pack(stage, &run, root, &requirement, &recipe_line_of(&data)?, &hits, &kb_note, &notes, &decs);
+    let text = graph::append(&build_pack(stage, &run, root, &requirement, &recipe_line_of(&data)?, &hits, &kb_note, &notes, &decs), &graph_lines);
     if let Err(e) = write_lf(&pack_md, &text) {
         return unwritable(out, &PyErr::os(&e, &pack_md).msg);
     }
@@ -1491,7 +1595,11 @@ pub fn run(root: &str, argv: &[String], out: &mut String, err: &mut String) -> i
 /// `awf pack …`
 pub fn main(args: &[String]) -> i32 {
     let (mut out, mut err) = (String::new(), String::new());
-    let code = run(&deliverables::default_root(), args, &mut out, &mut err);
+    let mut code = run(&deliverables::default_root(), args, &mut out, &mut err);
+    if has(args, "--selftest") {
+        // 1.0 的案例接在原本的後面（原本那一段的輸出是對跑基準的一部分，不動）
+        code = code.max(selftest_v1::selftest(&mut out));
+    }
     print!("{out}");
     eprint!("{err}");
     code
