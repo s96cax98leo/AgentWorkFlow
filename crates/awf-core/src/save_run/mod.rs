@@ -44,8 +44,8 @@ pub use links::{
     LEDGER_TEXT_MAX, LINK_KINDS, LINK_SCHEMA_VERSION,
 };
 pub use policy::{
-    abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors,
-    required_roles_missing, REVIEW_ROLES,
+    abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors,
+    required_roles_missing, EXTRA_GATE_STAGES, REVIEW_ROLES,
 };
 pub use selftest::selftest;
 pub use speccheck::{

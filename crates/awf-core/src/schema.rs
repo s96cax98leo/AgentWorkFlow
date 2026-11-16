@@ -880,6 +880,24 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             },
         }
     }
+    // 另外加的閘門（gates.extra）：寫錯不能默默當成沒加（使用者會以為那一段有人把關）
+    if let Some(g) = get(doc, "gates").filter(|g| !g.is_null()) {
+        match g.as_object() {
+            None => errs.push("gates 要是物件（例如 {\"extra\": [\"build\"]}）".into()),
+            Some(o) => {
+                for k in o.keys().filter(|k| k.as_str() != "extra") { errs.push(format!("gates 不認得的鍵：{k}")); }
+                match o.get("extra") {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Array(a)) => {
+                        for x in a.iter().filter(|x| !x.as_str().is_some_and(|s| crate::save_run::EXTRA_GATE_STAGES.contains(&s))) {
+                            errs.push(format!("gates.extra 只能列 {}（plan、design、test、deliver 本來就有閘門、merge 由 merge gate 判定；收到 {x}）", crate::save_run::EXTRA_GATE_STAGES.join("、")));
+                        }
+                    }
+                    Some(other) => errs.push(format!("gates.extra 要是陣列（收到 {}）", type_name(other))),
+                }
+            }
+        }
+    }
     if let Some(l) = get(doc, "links") {
         // 這裡的 enforce 會擋政策核准：寫錯型別不能默默當成沒開
         match l.as_object() {
