@@ -18,6 +18,8 @@ pub const USAGE: &str = "先壓縮、再給模型讀：跑一個指令，完整�
     awf run-brief [--log <檔>] [--name <名>] [--tail <行數>] -- <指令…>
         跑 <指令>（不經 shell；需要 shell 語法時寫成 -- bash -c \"…\" 或 -- pwsh -c \"…\"）。
         完整 stdout＋stderr 寫進 log。派工單會指定 --log <run 目錄>/<段>/logs/<label>.log（和執行紀錄放一起留存）；
+        --log 的目標只能是 runs_dir 底下某個 run 目錄裡的 .md／.log／.txt，不能是工具自己的狀態檔（run.json、稽核檔、
+        決策與連結帳本、資料包、執行紀錄索引…）或 archive/ 底下；不合就拒絕（exit 2）、不執行指令。
         沒給時寫到環境變數 AWF_LOG_DIR，再沒有就寫到系統暫存目錄的 awf-logs/<名>-<序號>.log（不寫進目標 repo，避免誤 commit）。
         終端只印：結束碼、偵測到的框架、失敗的測試（最多 20 則）、最後 N 行（預設 20；認不得格式時 40）、log 路徑。
         結束碼原樣傳回（指令找不到時 127）。
@@ -238,6 +240,64 @@ fn emit(kind: &str) -> i32 {
     }
 }
 
+/// `--log` 不能指到的檔名（不分大小寫）：工具自己的狀態檔與主 session 才能寫的共用檔。
+/// 副檔名規則已經擋掉 .json／.jsonl，這裡仍然列出來：規則是「這些檔不能被 log 蓋掉」，不靠副檔名剛好不同。
+fn reserved_log_names() -> Vec<String> {
+    let mut v: Vec<String> = ["run.json", "merge-audit.jsonl", "publish-audit.jsonl", "links.jsonl", "decisions.jsonl", "reuse.json", "pack-args.json", "progress.jsonl"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    v.extend(crate::hooks::guard::SHARED_CONTEXT_NAMES.iter().map(|s| s.to_lowercase()));
+    v.push(crate::save_run::INDEX_NAME.to_lowercase());
+    v.push(crate::state::HANDOFF.to_lowercase());
+    v
+}
+
+/// `--log <log>` 能不能寫：回 None 是可以，否則回拒絕的理由。
+/// 規則（照解開符號連結與 `..` 之後的實際位置判）：在 `<root>/<runs_dir>/<run>/` 底下、副檔名是 .md／.log／.txt、
+/// 檔名不是工具的狀態檔、路徑不經過 `archive/`。`root` 是專案根、`cwd` 是相對路徑的基準。
+pub fn log_target_error(log: &str, root: &str, runs_dir: &str, cwd: &str) -> Option<String> {
+    use crate::kb::pyish;
+    let abs = |p: &str, base: &str| if pyish::is_abs(p) { p.to_string() } else { pyish::pjoin(base, p) };
+    let real = |p: &str| pyish::resolve(p).ok().map(|r| r.replace('\\', "/"));
+    let runs_dir = if runs_dir.trim().is_empty() { "_tpm/runs" } else { runs_dir };
+    let Some(runs) = real(&abs(runs_dir, root)) else { return Some(format!("解析不了 runs_dir（{runs_dir}）")) };
+    let Some(target) = real(&abs(log, cwd)) else { return Some(format!("解析不了路徑 {log}")) };
+    let base = format!("{}/", runs.trim_end_matches('/'));
+    let Some(rel) = target.strip_prefix(&base) else {
+        return Some(format!("的目標要在 {runs_dir}/<run>/ 底下（{log} 實際是 {target}）"));
+    };
+    let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() < 2 {
+        return Some(format!("的目標要在某個 run 目錄裡（{runs_dir}/<run>/…），不能直接放在 {runs_dir}/"));
+    }
+    let name = parts[parts.len() - 1].to_lowercase();
+    if ![".md", ".log", ".txt"].iter().any(|e| name.len() > e.len() && name.ends_with(e)) {
+        return Some(format!("的副檔名只能是 .md、.log、.txt（{log}）"));
+    }
+    if reserved_log_names().contains(&name) {
+        return Some(format!("不能指到工具自己的檔（{}）", parts[parts.len() - 1]));
+    }
+    if parts[1..parts.len() - 1].iter().any(|d| d.to_lowercase() == "archive") {
+        return Some(format!("不能寫到 run 目錄的 archive/ 底下（{log}）"));
+    }
+    None
+}
+
+/// 用行程的環境檢查 `--log`：專案根照 [`crate::project`] 的解析，runs_dir 取自守門設定。
+/// 專案根找不到、守門設定讀不懂都拒絕（確認不了 runs_dir 在哪）；不帶 `--log` 不受影響。
+fn check_log_opt(log: &str) -> Result<(), String> {
+    let Some(found) = crate::project::find(None) else {
+        return Err(format!("要寫在專案的 run 目錄裡，但{}（不帶 --log 會寫到暫存目錄）", crate::project::not_found_message()));
+    };
+    let cfg = crate::config::load(&found.root).map_err(|e| format!("要寫在 runs_dir 底下，但守門設定讀不懂（{}：{}）；不帶 --log 會寫到暫存目錄", e.class, e.msg))?;
+    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| ".".to_string());
+    match log_target_error(log, &found.root, &cfg.runs_dir, &cwd) {
+        Some(m) => Err(m),
+        None => Ok(()),
+    }
+}
+
 /// `awf run-brief …`
 pub fn main(argv: &[String]) -> i32 {
     match argv.first().map(String::as_str) {
@@ -252,6 +312,10 @@ pub fn main(argv: &[String]) -> i32 {
     let (opts, cmd) = (&argv[..i], &argv[i + 1..]);
     let log_opt = opt(opts, "--log");
     let log = if !log_opt.is_empty() {
+        if let Err(m) = check_log_opt(&log_opt) {
+            eprintln!("awf run-brief：--log {m}。沒有執行指令");
+            return 2;
+        }
         log_opt
     } else {
         let name = opt(opts, "--name");

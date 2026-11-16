@@ -535,3 +535,108 @@ fn low_unreadable_plan_json_blocks_policy_approval_of_design() {
         assert!(!approved(&root, "design"));
     }
 }
+
+
+// ------------------------------------------------------------------ run-brief --log 只能寫 run 目錄裡的 log
+
+/// 審查的重現：`awf run-brief --log <任意路徑> -- echo <內容>` 可以把內容原樣寫進工具自己的狀態檔。
+/// `--log` 的目標只能是 runs_dir 底下某個 run 目錄裡的 .md／.log／.txt，而且不是狀態檔、不在 archive/ 底下。
+#[test]
+fn run_brief_log_cannot_overwrite_state_files() {
+    let t = Tmp::new("rb");
+    let root = t.path().join("proj");
+    mk_project(&root);
+    write_json(&root.join(".claude/teams/guard.config.json"), &json!({"runs_dir": "_tpm/runs"}));
+    let run = root.join("_tpm/runs/r1");
+    write(&run.join("run.json"), "{\"keep\": 1}\n");
+    write(&root.join("_tpm/runs/merge-audit.jsonl"), "keep\n");
+    write(&run.join("archive/結案摘要.md"), "keep\n");
+    write(&run.join("context.md"), "keep\n");
+    let rb = |log: &str, cwd: &Path| awf(&["run-brief", "--log", log, "--", "echo", "{\"decision\": \"merge\"}"], cwd, None, &[]);
+    let refused = [
+        "_tpm/runs/r1/run.json",
+        "_tpm/runs/merge-audit.jsonl",
+        "_tpm/runs/r1/links.jsonl",
+        "_tpm/runs/decisions.jsonl",
+        "_tpm/runs/r1/plan/reuse.json",
+        "_tpm/runs/r1/plan/pack-args.json",
+        "_tpm/runs/r1/archive/結案摘要.md",
+        "_tpm/runs/r1/archive/x.log",
+        "_tpm/runs/r1/context.md",
+        "_tpm/runs/r1/plan/logs/a.sh",
+        "_tpm/runs/r1/plan/logs/a",
+        "_tpm/runs/x.log",
+        ".claude/teams/guard.config.json",
+        ".claude/teams/notes.md",
+        "src/a.log",
+        "_tpm/runs/r1/../../../.claude/teams/x.md",
+        "_tpm/runs/r1/plan/../run.json",
+        "_tpm/runs/r1/RUN.JSON",
+        "_tpm/runs/r1/Archive/x.md",
+    ];
+    for log in refused {
+        let o = rb(log, &root);
+        assert_ne!(o.code, 0, "{log} 應該被拒絕：{}{}", o.out, o.err);
+        assert!(o.err.contains("--log"), "{log}：要說明原因：{}", o.err);
+        assert!(!o.out.contains("decision"), "{log}：被拒絕時不能執行指令：{}", o.out);
+    }
+    let outside = t.path().join("outside.log");
+    let o = rb(&s(&outside), &root);
+    assert_ne!(o.code, 0, "專案外的路徑應該被拒絕：{}{}", o.out, o.err);
+    assert!(!outside.exists());
+    // 原本的內容都沒被動到，被拒絕的目標也沒有被建立
+    assert_eq!(std::fs::read_to_string(run.join("run.json")).expect("run.json"), "{\"keep\": 1}\n");
+    assert_eq!(std::fs::read_to_string(root.join("_tpm/runs/merge-audit.jsonl")).expect("audit"), "keep\n");
+    assert_eq!(std::fs::read_to_string(run.join("archive/結案摘要.md")).expect("摘要"), "keep\n");
+    assert_eq!(std::fs::read_to_string(run.join("context.md")).expect("context"), "keep\n");
+    assert_eq!(std::fs::read_to_string(root.join(".claude/teams/guard.config.json")).expect("設定"), json!({"runs_dir": "_tpm/runs"}).to_string());
+    for p in ["_tpm/runs/r1/links.jsonl", "_tpm/runs/decisions.jsonl", "src/a.log", ".claude/teams/notes.md", "_tpm/runs/x.log"] {
+        assert!(!root.join(p).exists(), "{p} 不該被建立");
+    }
+    // 符號連結指到 run 目錄外面：照實際位置判
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(root.join("elsewhere")).expect("建立目錄");
+        std::os::unix::fs::symlink(root.join("elsewhere"), run.join("link")).expect("建立連結");
+        let o = rb("_tpm/runs/r1/link/a.log", &root);
+        assert_ne!(o.code, 0, "經過符號連結寫到外面應該被拒絕：{}{}", o.out, o.err);
+        assert!(!root.join("elsewhere/a.log").exists());
+        std::os::unix::fs::symlink(run.join("run.json"), run.join("alias.log")).expect("建立連結");
+        let o = rb("_tpm/runs/r1/alias.log", &root);
+        assert_ne!(o.code, 0, "目標是符號連結應該被拒絕：{}{}", o.out, o.err);
+        assert_eq!(std::fs::read_to_string(run.join("run.json")).expect("run.json"), "{\"keep\": 1}\n");
+    }
+}
+
+/// 既有用法不能被擋：派工單指定的 `--log <run 目錄>/<段>/logs/<label>.log`（相對、絕對、從子目錄執行），以及不帶 `--log`。
+#[test]
+fn run_brief_log_inside_a_run_directory_still_works() {
+    let t = Tmp::new("rb-ok");
+    let root = t.path().join("proj");
+    mk_project(&root);
+    write_json(&root.join(".claude/teams/guard.config.json"), &json!({"runs_dir": "_tpm/runs"}));
+    std::fs::create_dir_all(root.join("_tpm/runs/r1")).expect("建立 run 目錄");
+    std::fs::create_dir_all(root.join("repo")).expect("建立子目錄");
+    let rb = |log: &str, cwd: &Path| awf(&["run-brief", "--log", log, "--", "echo", "hello"], cwd, None, &[]);
+    let abs = s(&root.join("_tpm/runs/r1/build/logs/c.log"));
+    for (log, cwd, file) in [
+        ("_tpm/runs/r1/plan/logs/a.log", root.clone(), "_tpm/runs/r1/plan/logs/a.log"),
+        ("../_tpm/runs/r1/test/logs/b.log", root.join("repo"), "_tpm/runs/r1/test/logs/b.log"),
+        (abs.as_str(), root.join("repo"), "_tpm/runs/r1/build/logs/c.log"),
+        ("_tpm/runs/r1/test/logs/verify.txt", root.clone(), "_tpm/runs/r1/test/logs/verify.txt"),
+        ("_tpm/runs/r1/test/輸出.md", root.clone(), "_tpm/runs/r1/test/輸出.md"),
+    ] {
+        let o = rb(log, &cwd);
+        assert_eq!(o.code, 0, "{log} 應該可以寫：{}{}", o.out, o.err);
+        assert_eq!(std::fs::read_to_string(root.join(file)).expect("log 檔"), "hello\n", "{log}");
+    }
+    // 沒有設定檔時用預設的 runs_dir（_tpm/runs）
+    std::fs::remove_file(root.join(".claude/teams/guard.config.json")).expect("刪設定");
+    let o = rb("_tpm/runs/r1/plan/logs/d.log", &root);
+    assert_eq!(o.code, 0, "{}{}", o.out, o.err);
+    // 不帶 --log：寫到 AWF_LOG_DIR，不受限制
+    let logs = t.path().join("logs");
+    let o = awf(&["run-brief", "--name", "demo", "--", "echo", "hello"], &root, None, &[("AWF_LOG_DIR", &s(&logs))]);
+    assert_eq!(o.code, 0, "{}{}", o.out, o.err);
+    assert!(logs.join("demo-1.log").is_file());
+}
