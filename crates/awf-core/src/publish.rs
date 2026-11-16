@@ -465,7 +465,12 @@ pub fn check_shape(ctx: &Ctx, run_dir: &str, paths: &[String]) -> R<String> {
     };
     let r = recipe::recipe_of_run(&data).map_err(py::from_recipe)?;
     let name = py::s(get(&r, "name")?);
-    let short = recipe::diff_shortfalls(&r, &json!(paths)).map_err(py::from_recipe)?;
+    // 專案加的路徑分類（profile 的 diff_classes_extra，只會多出不符）；寫壞了不能當成沒設定
+    let extra = match recipe::diff_extra(&save_run::load_profile(ctx, "").0) {
+        Ok(x) => x,
+        Err(es) => return refused(format!("profile 的路徑分類設定讀不懂，無法確認 diff 形狀：{}", es.iter().take(3).cloned().collect::<Vec<_>>().join("；"))),
+    };
+    let short = recipe::diff_shortfalls_with(&r, &json!(paths), Some(&extra)).map_err(py::from_recipe)?;
     if !short.is_empty() {
         return refused(format!(
             "diff 形狀和 recipe {name} 不符：{}（要升級 recipe 用 awf save-run escalate {run_dir} --recipe <名> --by --at --reason，重跑缺的段後再推）",

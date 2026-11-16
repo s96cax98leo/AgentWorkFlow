@@ -888,6 +888,10 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
     if let Err(e) = crate::save_run::criteria_pattern(doc) {
         errs.push(e);
     }
+    // 專案加的路徑分類（diff_classes_extra）：只能加嚴，樣式要編得過
+    if let Err(es) = crate::recipe::diff_extra(doc) {
+        errs.extend(es);
+    }
     // 另外加的閘門（gates.extra）：寫錯不能默默當成沒加（使用者會以為那一段有人把關）
     if let Some(g) = get(doc, "gates").filter(|g| !g.is_null()) {
         match g.as_object() {

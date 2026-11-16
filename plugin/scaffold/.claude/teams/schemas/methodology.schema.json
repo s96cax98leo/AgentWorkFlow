@@ -260,6 +260,17 @@
         }
       }
     },
+    "diff_classes_extra": {
+      "type": "object",
+      "description": "選填：專案另外加的路徑分類（awf publish 與 awf merge-gate 的 diff 反查用）。只能加嚴：把更多路徑算成 migration、manifest、agent_config 或 code；不能把路徑歸成 doc 或 test。樣式是 Python re 的寫法、不分大小寫，比對相對 repo 根的路徑",
+      "additionalProperties": false,
+      "properties": {
+        "migration": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算資料庫 migration 的路徑（需要 design 段與回滾計畫；merge-gate 交給人）"},
+        "manifest": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算依賴宣告或鎖檔的路徑（需要安全審查；merge-gate 交給人）"},
+        "agent_config": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算 agent 或 CI 設定的路徑（需要安全審查；merge-gate 交給人）"},
+        "code": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算產品程式的路徑（原本算文件或測試的，兩邊的要求都要滿足；merge-gate 不再當成低風險）"}
+      }
+    },
     "gates": {
       "type": "object",
       "description": "選填：另外加的核准閘門。plan、design、test、deliver 本來就有、拿不掉；這裡只能再加",

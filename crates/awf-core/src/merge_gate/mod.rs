@@ -22,6 +22,7 @@ pub mod pyjson;
 pub mod pyutil;
 mod selftest;
 
+use crate::hooks::re::Re;
 use crate::pyfmt::{self, repr_str, str_of, truthy};
 use crate::recipe;
 use crate::schema::{self, Schemas};
@@ -1011,12 +1012,59 @@ pub fn parse_diff(text: &str) -> Result<Diff, Crash> {
     Ok(d)
 }
 
+/// `auto_merge.sensitive_paths_extra` 最多幾條、每條最多幾個字。
+pub const SENSITIVE_EXTRA_MAX: usize = 64;
+pub const SENSITIVE_EXTRA_PATTERN_MAX: usize = 300;
+
+/// guard.config.json 的 `auto_merge.sensitive_paths_extra`：專案另外加的高風險路徑樣式（Python `re` 的寫法，分大小寫，
+/// 和內建樣式一樣用 search）。只能加：內建清單拿不掉。寫得不對回 `Err(說明)`，呼叫端一律交給人。
+pub fn sensitive_extra(am: &Value) -> Result<Vec<Re>, String> {
+    let what = "auto_merge.sensitive_paths_extra";
+    let v = g(am, "sensitive_paths_extra");
+    if v.is_null() { return Ok(Vec::new()); }
+    let Some(items) = v.as_array() else { return Err(format!("{what} 要是正規式的陣列")) };
+    if items.len() > SENSITIVE_EXTRA_MAX { return Err(format!("{what} 最多 {SENSITIVE_EXTRA_MAX} 條（收到 {} 條）", items.len())); }
+    let mut out = Vec::new();
+    for (i, it) in items.iter().enumerate() {
+        let Some(src) = it.as_str().filter(|t| !strip(t).is_empty() && t.chars().count() <= SENSITIVE_EXTRA_PATTERN_MAX) else {
+            return Err(format!("{what}[{i}] 要是 1–{SENSITIVE_EXTRA_PATTERN_MAX} 個字的正規式"));
+        };
+        out.push(Re::python(src, "").map_err(|e| format!("{what}[{i}] {e}"))?);
+    }
+    Ok(out)
+}
+
+/// 專案在 profile 的 `diff_classes_extra` 加的類別，對應到 gate 的高風險說明（code 不算高風險，只是不再當成文件或測試）。
+fn extra_class_label(cls: &str) -> Option<&'static str> {
+    match cls {
+        "migration" => Some("資料庫 migration"),
+        "manifest" => Some("依賴或版本宣告"),
+        "agent_config" => Some("agent 設定、守門或 gate"),
+        _ => None,
+    }
+}
+
 /// 風險等級與交給人的理由。
 pub fn risk_tier(diff: &Diff, am: &Value) -> Result<(&'static str, Vec<String>), Crash> {
+    risk_tier_with(diff, am, None)
+}
+
+/// 同 [`risk_tier`]，另外套用專案加的設定（都只會往嚴的方向）：
+/// - `auto_merge.sensitive_paths_extra` 命中的路徑算高風險；寫壞了整個判 high、交給人。
+/// - `classes`（profile 的 `diff_classes_extra`）：命中 migration、manifest、agent_config 的路徑算高風險；
+///   命中任何一類（含 code）的路徑不再當成文件或測試，所以不會落在 low。
+pub fn risk_tier_with(diff: &Diff, am: &Value, classes: Option<&recipe::DiffExtra>) -> Result<(&'static str, Vec<String>), Crash> {
     let lines: i128 = diff.files.iter().map(|(_, c)| (c[0] + c[1]) as i128).sum();
     let count = diff.files.len() as i128;
+    let extra = match sensitive_extra(am) {
+        Ok(x) => x,
+        Err(e) => return Ok(("high", vec![format!("高風險路徑的設定讀不懂（{e}），無法確認這次改動的風險")])),
+    };
+    let class_hits = |path: &str| -> Vec<&'static str> { classes.map(|c| c.hits(path)).unwrap_or_default() };
     let hits: Vec<String> = diff.files.iter().filter_map(|(path, _)| {
         sensitive().iter().find(|(re, _)| re.is_match(path)).map(|(_, what)| format!("{path}（{what}）"))
+            .or_else(|| extra.iter().any(|re| re.is_match(path)).then(|| format!("{path}（專案設定的高風險路徑）")))
+            .or_else(|| class_hits(path).into_iter().find_map(extra_class_label).map(|what| format!("{path}（{what}；專案設定的分類）")))
     }).collect();
     let large = int_or(g(am, "large_lines"), DEFAULT_LARGE_LINES, "large_lines")?;
     let small = int_or(g(am, "small_lines"), DEFAULT_SMALL_LINES, "small_lines")?;
@@ -1024,7 +1072,7 @@ pub fn risk_tier(diff: &Diff, am: &Value) -> Result<(&'static str, Vec<String>),
     if lines > large || count > int_or(g(am, "large_files"), DEFAULT_LARGE_FILES, "large_files")? {
         return Ok(("high", vec![format!("diff 過大：{count} 個檔、{lines} 行")]));
     }
-    let all = |re: &Regex| diff.files.iter().all(|(p, _)| re.is_match(p));
+    let all = |re: &Regex| diff.files.iter().all(|(p, _)| re.is_match(p) && class_hits(p).is_empty());
     if !diff.files.is_empty() && lines <= small && (all(doc_re()) || all(test_re())) { return Ok(("low", Vec::new())); }
     Ok(("medium", Vec::new()))
 }
@@ -1055,6 +1103,8 @@ pub struct Inp {
     pub findings: Vec<Value>,
     pub diff: Option<Diff>,
     pub recipe: Option<Value>,
+    /// 專案 profile 的 `diff_classes_extra`（原值；None＝沒設定）。
+    pub diff_extra: Option<Value>,
     pub patch_ids: HashMap<String, Option<String>>,
     pub frozen: Option<String>,
 }
@@ -1294,12 +1344,20 @@ pub fn evaluate(sch: &Schemas, inp: &Inp, cfg: &Value, audit_lines: &[Value]) ->
         let sup = show(suppress_re());
         if !sup.is_empty() { v.esc.push(format!("新增壓制註解（放寬 lint／型別／覆蓋率檢查，要人會簽）：{}", repr_strs(first(&sup, 5)))); }
         if diff.files.is_empty() { v.hold.push("diff 是空的".into()); }
-        let (t, why) = risk_tier(diff, am)?;
-        tier = t;
+        // 專案加的路徑分類（profile 的 diff_classes_extra）：寫壞了不能當成沒設定，交給人
+        let classes = match recipe::diff_extra_of(inp.diff_extra.as_ref()) {
+            Ok(c) => Some(c),
+            Err(es) => {
+                v.esc.push(format!("profile 的路徑分類設定讀不懂（{}），無法確認這次改動的分類", first(&es, 3).join("；")));
+                None
+            }
+        };
+        let (t, why) = risk_tier_with(diff, am, classes.as_ref())?;
+        tier = if classes.is_none() { "high" } else { t };
         v.esc.extend(why);
         if let Some(r) = &inp.recipe {
             let paths = Value::Array(diff.files.iter().map(|(p, _)| json!(p)).collect());
-            let short = recipe::diff_shortfalls(r, &paths).map_err(|e| crash(&e.to_string()))?;
+            let short = recipe::diff_shortfalls_with(r, &paths, classes.as_ref()).map_err(|e| crash(&e.to_string()))?;
             let name = r.as_object().and_then(|o| o.get("name")).map(str_of).unwrap_or_else(|| "?".into());
             v.hold.extend(short.into_iter().map(|x| format!("recipe 不足（{name}）：{x}")));
         }
@@ -1603,6 +1661,10 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
         }
         Ok(())
     })())?;
+    // 專案加的路徑分類：只取 profile 的 diff_classes_extra 這一個鍵（profile 不存在、讀不懂或沒寫這個鍵＝沒設定，照舊）
+    inp.diff_extra = pyutil::read_text(&pyutil::join(proj, ".claude/teams/methodology.json")).ok()
+        .and_then(|t| pyjson::loads(&t).ok())
+        .and_then(|p| p.get("diff_classes_extra").filter(|v| !v.is_null()).cloned());
     attempt((|| {
         let Some(p) = a.truthy("--recipe") else { return Ok(()) };
         // 只接受 run.json：不接受呼叫端自備的 resolved（可以拿 feature 的定義蓋過 docs）；

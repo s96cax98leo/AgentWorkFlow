@@ -413,6 +413,94 @@ fn t7_bad_pattern_is_an_error() {
     }
 }
 
+// ------------------------------------------------------------------ T10、T11：merge-gate 的高風險路徑與路徑分類
+
+const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn one_file_diff(path: &str) -> String {
+    format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-a\n+b\n")
+}
+
+/// 跑一次 merge-gate（其他輸入都沒給，所以一定是 hold 或 escalate；這裡只看風險等級與交給人的理由）。
+fn gate(tag: &str, auto_merge: Value, profile: Option<Value>, path: &str) -> Value {
+    let t = Tmp::new(tag);
+    let root = t.path().join("proj");
+    mk(&root, &profile.unwrap_or_else(|| builtin_profile(json!({}))));
+    let mut am = json!({"enabled": true, "repos": {"acme-fork/app": "medium"}});
+    for (k, v) in auto_merge.as_object().cloned().unwrap_or_default() {
+        am[k] = v;
+    }
+    write_json(&root.join(".claude/teams/guard.config.json"), &json!({"auto_merge": am}));
+    write(&root.join("d.diff"), &one_file_diff(path));
+    let o = awf(&["merge-gate", "check", "--repo", "acme-fork/app", "--pr", "3", "--head-sha", SHA, "--diff", "d.diff", "--project-dir", &s(&root), "--no-audit"], &root, None);
+    serde_json::from_str(&o.out).unwrap_or_else(|e| panic!("merge-gate 的輸出不是 JSON（{e}）：{}", o.all()))
+}
+
+fn escalations(v: &Value) -> String {
+    v["escalations"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")).unwrap_or_default()
+}
+
+/// 沒設定：一般的程式檔是 medium，沒有高風險路徑的理由。
+#[test]
+fn t10_default_sensitive_paths_unchanged() {
+    let v = gate("t10-default", json!({}), None, "src/billing/x.py");
+    assert!(v["risk_tier"] == "medium" && !escalations(&v).contains("高風險"), "{v}");
+    let v = gate("t10-builtin", json!({}), None, ".github/workflows/ci.yml");
+    assert!(v["risk_tier"] == "high" && escalations(&v).contains("改到高風險路徑：.github/workflows/ci.yml（GitHub 設定或 CI）"), "{v}");
+}
+
+/// 有設定：命中的路徑算高風險、交給人；內建清單照舊。
+#[test]
+fn t10_extra_sensitive_paths_escalate() {
+    let am = json!({"sensitive_paths_extra": ["(^|/)billing/"]});
+    let v = gate("t10-set", am.clone(), None, "src/billing/x.py");
+    assert!(v["risk_tier"] == "high" && escalations(&v).contains("改到高風險路徑：src/billing/x.py（專案設定的高風險路徑）"), "{v}");
+    let v = gate("t10-set-other", am.clone(), None, "src/orders/x.py");
+    assert!(v["risk_tier"] == "medium", "沒命中的路徑不受影響：{v}");
+    let v = gate("t10-set-builtin", am, None, ".github/workflows/ci.yml");
+    assert!(escalations(&v).contains("（GitHub 設定或 CI）"), "內建清單拿不掉：{v}");
+}
+
+/// 寫壞的設定（樣式編不過、不是陣列、元素不是字串）：這次判定一律 high、交給人。
+#[test]
+fn t10_bad_setting_escalates() {
+    for bad in [json!(["billing/("]), json!("billing/"), json!([12]), json!([""])] {
+        let v = gate("t10-bad", json!({"sensitive_paths_extra": bad.clone()}), None, "docs/a.md");
+        assert!(v["risk_tier"] == "high" && escalations(&v).contains("高風險路徑的設定讀不懂（auto_merge.sensitive_paths_extra"), "{bad}：{v}");
+        assert_ne!(v["decision"], "merge");
+    }
+}
+
+/// T11 沒設定：只改文件是 low。
+#[test]
+fn t11_default_docs_only_is_low() {
+    let v = gate("t11-default", json!({}), None, "docs/api/a.md");
+    assert!(v["risk_tier"] == "low", "{v}");
+}
+
+/// T11 有設定：歸成 code 的文件不再是 low；歸成 migration、manifest、agent_config 的路徑交給人。
+#[test]
+fn t11_extra_classes_only_tighten() {
+    let prof = |extra: Value| Some(builtin_profile(json!({"diff_classes_extra": extra})));
+    let v = gate("t11-code", json!({}), prof(json!({"code": ["^docs/api/"]})), "docs/api/a.md");
+    assert!(v["risk_tier"] == "medium", "歸成 code 的文件不是 low：{v}");
+    let v = gate("t11-code-miss", json!({}), prof(json!({"code": ["^docs/api/"]})), "docs/guide/a.md");
+    assert!(v["risk_tier"] == "low", "沒命中的文件照舊：{v}");
+    for (cls, what) in [("migration", "資料庫 migration"), ("manifest", "依賴或版本宣告"), ("agent_config", "agent 設定、守門或 gate")] {
+        let v = gate("t11-cls", json!({}), prof(json!({cls: ["(^|/)schema/.*\\.ya?ml$"]})), "db/schema/Orders.YML");
+        assert!(v["risk_tier"] == "high" && escalations(&v).contains(&format!("db/schema/Orders.YML（{what}；專案設定的分類）")), "{cls}：{v}");
+    }
+}
+
+/// T11 寫壞的設定（樣式編不過、想把路徑歸成 doc）：交給人，不當成沒設定。
+#[test]
+fn t11_bad_classes_escalate() {
+    for bad in [json!({"migration": ["schema/("]}), json!({"doc": ["^src/generated/"]}), json!({"code": "src/"}), json!(["src/"])] {
+        let v = gate("t11-bad", json!({}), Some(builtin_profile(json!({"diff_classes_extra": bad.clone()}))), "docs/a.md");
+        assert!(v["risk_tier"] == "high" && escalations(&v).contains("profile 的路徑分類設定讀不懂（diff_classes_extra"), "{bad}：{v}");
+    }
+}
+
 #[allow(dead_code)]
 fn unused_helpers(p: &Path) -> String {
     let _ = awf_env(&[], p, None, &[]);
