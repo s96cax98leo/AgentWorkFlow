@@ -131,7 +131,20 @@
       "properties": {
         "sources": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "相對專案根目錄的 glob"},
         "exclude": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "dir": {"type": "string", "minLength": 1, "description": "索引與檢視（INDEX.md、cards/、hot.md）放哪；預設 _tpm/kb"}
+        "dir": {"type": "string", "minLength": 1, "description": "索引與檢視（INDEX.md、cards/、hot.md）放哪；預設 _tpm/kb"},
+        "auto": {
+          "type": "object",
+          "description": "選填：自動接點（流程自己呼叫知識圖與規格層，不用人記指令）。每一項失敗都只警告、不擋流程；閘門不讀它們的輸出。沒有知識圖（<dir>/graph.db）時，除了 update 明確開啟以外全部不做",
+          "additionalProperties": false,
+          "properties": {
+            "update": {"type": "boolean", "description": "awf next 每段開跑前更新知識圖。沒寫＝圖已經存在才更新（不會自動建第一份圖）；true＝沒有圖也建；false＝不更新"},
+            "timeout": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "更新知識圖的時限（秒），預設 60。逾時只警告，這一段照常跑"},
+            "session": {"type": "boolean", "description": "SessionStart 時帶幾行摘要（進行中的 run、斷掉的連結數、最近三筆決策）。預設 true"},
+            "prompt": {"type": "boolean", "description": "UserPromptSubmit 時，訊息裡有需求 id、檔名或符號名就查知識圖、帶幾行位置。預設 false"},
+            "spec_apply": {"type": "boolean", "description": "需求來源是 openspec、merge 段確認合併後，awf next 多回一個「把變更併回現行規格」的動作（附試跑摘要，由人確認）。預設 true"},
+            "export": {"type": "boolean", "description": "結案或取消（awf save-run close／abandon）寫完結案摘要後重寫 vault。預設 true；沒有圖時不做"}
+          }
+        }
       }
     },
     "links": {
