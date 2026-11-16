@@ -652,3 +652,54 @@ const SUBSTITUTED: &[Case] = &[
 fn substituted_commands_are_checked() {
     check("subst", SUBSTITUTED);
 }
+
+// ───────── 9. 不認得的包裝加子指令改寫（ANSI-C 引號、大括號展開） ─────────
+
+const REWRITTEN: &[Case] = &[
+    ("caffeinate awf $'save-run' approve r", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 awf {save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("{awf,save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf {save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 awf $'save-run' approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf $'save\\x2drun' approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf $'\\163ave-run' approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf $\"save-run\" approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate $'\\x61wf' save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate {plugin/bin/awf,save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf {publish,--branch,feature/x}", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf save-{run,} approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf {save-run,{approve,r}}", DEV, BLOCK, Sh::Bash),
+    ("bash -c $'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c '{awf,save-run,approve,r}'", DEV, BLOCK, Sh::Both),
+    // 不認得的包裝後面的 awf，子指令是變數：看不到就不允許
+    ("caffeinate awf $SUB approve r", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 plugin/bin/awf \"$1\" r", DEV, BLOCK, Sh::Bash),
+    // 同樣的寫法跑唯讀子指令：放行
+    // 子指令寫成 $'…' 的，唯讀的也不放（和直接寫 awf $'kb' query x 原本就擋一致：請直接寫子指令）
+    ("caffeinate awf $'kb' query x", DEV, BLOCK, Sh::Bash),
+    ("awf $'kb' query x", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf kb query $'發票\\t匯出'", DEV, ALLOW, Sh::Bash),
+    ("arch -arm64 awf {kb,query,x}", DEV, ALLOW, Sh::Bash),
+    ("{awf,kb,query,x}", DEV, ALLOW, Sh::Bash),
+    ("caffeinate awf {save-run,status,r}", DEV, ALLOW, Sh::Bash),
+    ("caffeinate awf save-run status \"$RUN\"", DEV, ALLOW, Sh::Bash),
+    // 只是提到 awf：放行
+    ("echo {awf,save-run,approve,r}", DEV, ALLOW, Sh::Bash),
+    ("ls plugin/bin/{awf,awf.cmd}", DEV, ALLOW, Sh::Bash),
+    ("mkdir -p docs/{awf,save-run}", DEV, ALLOW, Sh::Bash),
+    ("git commit -m $'awf save-run approve r 的說明'", DEV, ALLOW, Sh::Bash),
+    ("grep -rn $'awf\\tsave-run' docs", DEV, ALLOW, Sh::Bash),
+    ("echo \"${AWF_BIN:-awf} save-run approve\"", DEV, ALLOW, Sh::Bash),
+    ("cargo build -p awf", DEV, ALLOW, Sh::Bash),
+    ("cargo test -p awf \"$FILTER\"", DEV, ALLOW, Sh::Bash),
+    ("cargo build -p awf $CARGO_FLAGS", DEV, ALLOW, Sh::Bash),
+    ("caffeinate -i cargo test -p awf --test hooks_entry", DEV, ALLOW, Sh::Bash),
+    // 主 session 與使用者自己的 agent：照舊
+    ("caffeinate awf $'save-run' approve r plan --by human", MAIN, ALLOW, Sh::Bash),
+    ("{awf,save-run,approve,r}", MINE, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn rewritten_subcommands_are_recognised() {
+    check("rewrite", REWRITTEN);
+}

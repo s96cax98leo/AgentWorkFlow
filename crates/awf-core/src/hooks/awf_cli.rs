@@ -65,6 +65,14 @@ const HARMLESS: &[&str] = &[
     "write-host", "write-output", "get-filehash", "resolve-path",
 ];
 
+/// 建置、套件與檔案工具：`awf` 在它們的參數裡是 crate、目標或檔案的名字（`cargo build -p awf $FLAGS`、`rsync bin/awf "$DEST"`），
+/// 不是被執行的指令。只用在「子指令看不到」的保守判斷；後面明寫 awf 子指令的照樣算（`cargo run -p awf -- save-run …`）。
+const BUILDERS: &[&str] = &[
+    "cargo", "rustup", "go", "npm", "npx", "pnpm", "yarn", "node", "pip", "pip3", "uv", "brew", "apt", "apt-get", "docker", "podman",
+    "kubectl", "bazel", "cmake", "ninja", "gcc", "clang", "cc", "ld", "ar", "code", "open", "rsync", "scp", "sftp", "shellcheck", "bat",
+    "vim", "vi", "nano", "emacs",
+];
+
 fn has(list: &[&str], s: &str) -> bool {
     list.contains(&s)
 }
@@ -129,6 +137,7 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
     let mut forwarder = false;
     let mut transparent = true;
     let mut consumed = false; // 已經進到某次 awf 呼叫的參數裡
+    let mut builder = false; // 前面有建置工具：awf 多半是它的參數
     for (k, t) in toks.iter().enumerate() {
         let (core, opened) = clean_head(t);
         if opened {
@@ -136,6 +145,7 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
             forwarder = false;
             transparent = true;
             consumed = false;
+            builder = false;
             first.clear();
         }
         if ENV_ASSIGN.is_match(t) {
@@ -155,7 +165,8 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
             } else if has(HARMLESS, &first) {
                 false
             } else {
-                has(SUBCOMMANDS, &sub) // 前面是不認得的指令：後面接的是 awf 的子指令才算
+                // 前面是不認得的指令：後面接的是 awf 的子指令才算；子指令是變數（看不到）而且前面不是建置工具時，保守地也算
+                has(SUBCOMMANDS, &sub) || (!builder && sub.contains(['$', '`']))
             };
             if take {
                 let from = (k + 2 + skip).min(toks.len());
@@ -207,6 +218,9 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
         if has(FORWARDERS, &name) {
             forwarder = true;
         }
+        if has(BUILDERS, &name) {
+            builder = true;
+        }
         if !has(TRANSPARENT, &name) {
             transparent = false;
         }
@@ -245,6 +259,14 @@ fn calls_at(seg: &str, depth: usize, out: &mut Vec<Call>) {
     if !maybe(seg) {
         return;
     }
+    // ANSI-C 引號（$'save-run'）與大括號展開（{awf,save-run,approve}）：照 shell 會展開的樣子再看一次
+    if let Some(nz) = normalize(seg) {
+        calls_raw(&nz, depth, out);
+    }
+    calls_raw(seg, depth, out);
+}
+
+fn calls_raw(seg: &str, depth: usize, out: &mut Vec<Call>) {
     let toks = shlex_tokens(seg);
     let mut found: Vec<Call> = Vec::new();
     scan_tokens(&toks, &mut found, 0);
@@ -356,6 +378,225 @@ fn head_inner(head: Vec<&String>) -> (String, Vec<(String, bool)>) {
         inner.push((args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "), false));
     }
     (name, inner)
+}
+
+/// 大括號展開的數量上限（超過就不展開，照原字串判）。
+const MAX_BRACE_WORDS: usize = 64;
+
+/// 解 `$'…'` 的跳脫（`\n`、`\x2d`、`\055`、`-`…）。
+fn ansi_c(body: &[char]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    let num = |from: usize, max: usize, radix: u32| -> (Option<char>, usize) {
+        let mut j = from;
+        let mut v: u32 = 0;
+        while j < body.len() && j - from < max {
+            let Some(d) = body[j].to_digit(radix) else { break };
+            v = v * radix + d;
+            j += 1;
+        }
+        (if j > from { char::from_u32(v) } else { None }, j)
+    };
+    while i < body.len() {
+        let c = body[i];
+        if c != '\\' || i + 1 >= body.len() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let e = body[i + 1];
+        i += 2;
+        let (ch, next) = match e {
+            'n' => (Some('\n'), i),
+            't' => (Some('\t'), i),
+            'r' => (Some('\r'), i),
+            'a' => (Some('\x07'), i),
+            'b' => (Some('\x08'), i),
+            'e' | 'E' => (Some('\x1b'), i),
+            'f' => (Some('\x0c'), i),
+            'v' => (Some('\x0b'), i),
+            'x' => num(i, 2, 16),
+            'u' => num(i, 4, 16),
+            'U' => num(i, 8, 16),
+            '0'..='7' => num(i - 1, 3, 8),
+            other => (Some(other), i),
+        };
+        match ch {
+            Some(x) => out.push(x),
+            None => {
+                out.push('\\');
+                out.push(e);
+            }
+        }
+        i = next;
+    }
+    out
+}
+
+/// 展開一個字裡沒加引號的 `{a,b,c}`（巢狀也展開）。`${VAR}` 不是。超過上限回 None。
+fn brace_expand(word: &str, depth: usize, budget: &mut usize) -> Option<Vec<String>> {
+    let ch: Vec<char> = word.chars().collect();
+    let n = ch.len();
+    let mut i = 0;
+    while i < n {
+        match ch[i] {
+            '\\' => i += 2,
+            '\'' => {
+                i += 1;
+                while i < n && ch[i] != '\'' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            '"' => {
+                i += 1;
+                while i < n && ch[i] != '"' {
+                    i += if ch[i] == '\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            '$' if ch.get(i + 1) == Some(&'{') => {
+                while i < n && ch[i] != '}' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            '{' => {
+                // 找配對的 }，記下最外層的逗號
+                let mut level = 0usize;
+                let mut commas: Vec<usize> = Vec::new();
+                let mut j = i + 1;
+                let mut close = None;
+                while j < n {
+                    match ch[j] {
+                        '\\' => j += 1,
+                        '{' => level += 1,
+                        '}' if level == 0 => {
+                            close = Some(j);
+                            break;
+                        }
+                        '}' => level -= 1,
+                        ',' if level == 0 => commas.push(j),
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                let Some(close) = close.filter(|_| !commas.is_empty()) else {
+                    i += 1;
+                    continue;
+                };
+                if depth >= 4 {
+                    return None;
+                }
+                let prefix: String = ch[..i].iter().collect();
+                let suffix: String = ch[close + 1..].iter().collect();
+                let mut cuts = vec![i];
+                cuts.extend(commas);
+                cuts.push(close);
+                let mut out = Vec::new();
+                for w in cuts.windows(2) {
+                    let alt: String = ch[w[0] + 1..w[1]].iter().collect();
+                    out.extend(brace_expand(&format!("{prefix}{alt}{suffix}"), depth + 1, budget)?);
+                }
+                return Some(out);
+            }
+            _ => i += 1,
+        }
+    }
+    if *budget == 0 {
+        return None;
+    }
+    *budget -= 1;
+    Some(vec![word.to_string()])
+}
+
+/// 一個字（引號照留）：有沒加引號的大括號就展開，接到 `out`。
+fn push_word(word: &mut String, out: &mut String, changed: &mut bool, budget: &mut usize) {
+    if word.contains('{') && word.contains(',') {
+        if let Some(ws) = brace_expand(word, 0, budget) {
+            if ws.len() > 1 {
+                *changed = true;
+            }
+            out.push_str(&ws.join(" "));
+            word.clear();
+            return;
+        }
+    }
+    out.push_str(word);
+    word.clear();
+}
+
+/// 照 bash 會展開的樣子改寫：`$'…'` 解成一般的引號字串、`$"…"` 去掉 `$`、沒加引號的 `{a,b}` 展開成多個字。
+/// 沒有這些寫法（或展開超過上限）回 None。
+fn normalize(seg: &str) -> Option<String> {
+    let brace = seg.contains('{') && seg.contains(',');
+    if !(seg.contains("$'") || seg.contains("$\"") || brace) {
+        return None;
+    }
+    let ch: Vec<char> = seg.chars().collect();
+    let n = ch.len();
+    let mut out = String::with_capacity(seg.len());
+    let mut word = String::new();
+    let mut budget = MAX_BRACE_WORDS;
+    let mut changed = false;
+    let mut i = 0;
+    while i < n {
+        let c = ch[i];
+        if c == '\\' {
+            word.push(c);
+            if let Some(x) = ch.get(i + 1) {
+                word.push(*x);
+            }
+            i += 2;
+            continue;
+        }
+        if c == '$' && ch.get(i + 1) == Some(&'\'') {
+            let mut j = i + 2;
+            while j < n && ch[j] != '\'' {
+                j += if ch[j] == '\\' { 2 } else { 1 };
+            }
+            let j = j.min(n);
+            word.push_str(&py::shlex_quote(&ansi_c(&ch[i + 2..j])));
+            changed = true;
+            i = j + 1;
+            continue;
+        }
+        if c == '$' && ch.get(i + 1) == Some(&'"') {
+            changed = true;
+            i += 1;
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            word.push(c);
+            i += 1;
+            while i < n {
+                let x = ch[i];
+                word.push(x);
+                i += 1;
+                if x == '\\' && c == '"' {
+                    if let Some(y) = ch.get(i) {
+                        word.push(*y);
+                        i += 1;
+                    }
+                    continue;
+                }
+                if x == c {
+                    break;
+                }
+            }
+            continue;
+        }
+        if py::is_space(c) {
+            push_word(&mut word, &mut out, &mut changed, &mut budget);
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        word.push(c);
+        i += 1;
+    }
+    push_word(&mut word, &mut out, &mut changed, &mut budget);
+    if changed { Some(out) } else { None }
 }
 
 /// 這一段裡所有的 awf 呼叫（含 `bash -c`、`eval`、`pwsh -Command`、`cmd /c` 的內層）。
