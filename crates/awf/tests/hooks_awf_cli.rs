@@ -846,3 +846,111 @@ const BRIEF_LOG: &[Case] = &[
 fn run_brief_log_target_is_guarded() {
     check("brieflog", BRIEF_LOG);
 }
+
+// ───────── 13. guard.config.json 讀得懂與讀不懂（審查 M4） ─────────
+
+/// 專案的設定檔換成指定的內容。
+fn workspace_with(root: &Path, config: &str) -> PathBuf {
+    let ws = workspace(root);
+    std::fs::write(ws.join(".claude/teams/guard.config.json"), config).unwrap();
+    ws
+}
+
+/// Python 的 `json.loads` 讀得懂、嚴格的 JSON 解析器不收的寫法：設定照樣要生效。
+const ODD_BUT_VALID: &str = r#"{
+  "runs_dir": "work/runs",
+  "forbidden_paths": ["repos/readonly-ref"],
+  "extension_agents": {"my:auditor": "tpm-reviewer"},
+  "team_agent_namespaces": ["acme:"],
+  "_note": {"ratio": NaN, "limit": Infinity, "low": -Infinity, "big": 1e999,
+            "id": 123456789012345678901234567890123456789012345678901234567890, "half": "\ud800"}
+}"#;
+
+const ODD_CONFIG: &[Case] = &[
+    // forbidden_paths 生效
+    ("rm -rf repos/readonly-ref/src", MAIN, BLOCK, Sh::Both),
+    // extension_agents 生效：登記的擴充 agent 套唯讀角色的規則
+    ("awf save-run approve r", "my:auditor", BLOCK, Sh::Both),
+    ("echo x > src/a.txt", "my:auditor", BLOCK, Sh::Bash),
+    // team_agent_namespaces 生效
+    ("awf save-run approve r", "acme:dev-helper", BLOCK, Sh::Both),
+    // 自訂的 runs_dir 生效（唯讀角色的 log 要在它底下）
+    ("awf run-brief --log work/runs/r/plan/logs/a.log -- npm test", REV, ALLOW, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log -- npm test", REV, BLOCK, Sh::Both),
+    // 其餘照常
+    ("echo x > src/a.txt", DEV, ALLOW, Sh::Bash),
+    ("rm -rf build", MAIN, ALLOW, Sh::Both),
+    ("awf save-run approve r", MINE, ALLOW, Sh::Both),
+];
+
+#[test]
+fn config_python_reads_stays_effective() {
+    let tmp = Tmp::new("oddcfg");
+    let ws = workspace_with(&tmp.0, ODD_BUT_VALID);
+    let bad = run_table(&ws, ODD_CONFIG);
+    assert!(bad.is_empty(), "{} 個案例不符：\n{}", bad.len(), bad.join("\n"));
+    // 沒有被當成讀不懂
+    let r = hook(&ws, "Bash", MAIN, "rm -rf repos/readonly-ref/src");
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("禁止路徑") && !err.contains("讀不懂"), "{err}");
+}
+
+/// 真的不是 JSON：模版角色的寫入全擋，主 session 與使用者自己的 agent 照舊。
+const BROKEN_CONFIG: &[Case] = &[
+    ("echo x > src/a.txt", DEV, BLOCK, Sh::Both),
+    ("touch src/a.txt", DEV, BLOCK, Sh::Bash),
+    ("git commit -m x", DEV, BLOCK, Sh::Both),
+    ("sed -i s/a/b/ src/a.txt", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'rm -rf src'", DEV, BLOCK, Sh::Bash),
+    ("X=$(touch src/a.txt)", DEV, BLOCK, Sh::Bash),
+    ("python3 -c \"open('src/a.txt', 'w').write('x')\"", DEV, BLOCK, Sh::Bash),
+    ("'x' | Out-File src/a.txt", DEV, BLOCK, Sh::Ps),
+    ("Remove-Item src/a.txt", "agent-workflow:tpm-writer", BLOCK, Sh::Ps),
+    // 唯讀的用法照常
+    ("git status", DEV, ALLOW, Sh::Both),
+    ("ls -la src", DEV, ALLOW, Sh::Bash),
+    ("cat README.md | head -5", DEV, ALLOW, Sh::Bash),
+    ("cargo test 2>&1 | tail -20", DEV, ALLOW, Sh::Bash),
+    ("awf kg locate export", DEV, ALLOW, Sh::Both),
+    ("X=$(awf kg locate export)", DEV, ALLOW, Sh::Bash),
+    ("awf save-run status r", DEV, ALLOW, Sh::Both),
+    ("awf deliverables status", DEV, ALLOW, Sh::Both),
+    ("awf state --selftest", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log -- npm test", DEV, ALLOW, Sh::Both),
+    ("Get-Content README.md", DEV, ALLOW, Sh::Ps),
+    // 主 session 與使用者自己的 agent：不鎖死
+    ("echo x > src/a.txt", MAIN, ALLOW, Sh::Both),
+    ("git commit -m x", MAIN, ALLOW, Sh::Both),
+    ("touch src/a.txt", MINE, ALLOW, Sh::Bash),
+    ("gh pr merge 3 --repo acme-fork/app", MAIN, BLOCK, Sh::Both),
+];
+
+#[test]
+fn broken_config_blocks_team_writes_only() {
+    let tmp = Tmp::new("badcfg");
+    let ws = workspace_with(&tmp.0, "{ 壞掉的 json");
+    let bad = run_table(&ws, BROKEN_CONFIG);
+    assert!(bad.is_empty(), "{} 個案例不符：\n{}", bad.len(), bad.join("\n"));
+    let r = hook(&ws, "Bash", DEV, "echo x > src/a.txt");
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("讀不懂") && err.contains("JSONDecodeError"), "{err}");
+    // Edit／Write：模版角色擋，讀照常；主 session 與使用者自己的 agent 照舊（主 session 要能修設定檔）
+    for (tool, rel, agent, want) in [
+        ("Write", "src/a.rs", DEV, BLOCK),
+        ("Edit", "src/a.rs", DEV, BLOCK),
+        ("Write", "_tpm/runs/r/plan/review.md", REV, BLOCK),
+        ("Write", "docs/a.md", "agent-workflow:tpm-writer", BLOCK),
+        ("Read", "src/a.rs", DEV, ALLOW),
+        ("Grep", "src", DEV, ALLOW),
+        ("Write", "src/a.rs", MAIN, ALLOW),
+        ("Edit", ".claude/teams/guard.config.json", MAIN, ALLOW),
+        ("Write", "src/a.rs", MINE, ALLOW),
+    ] {
+        let r = paths_hook(&ws, tool, agent, &ws.join(rel));
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert_eq!(r.status.code(), Some(want), "［{tool}／{agent}］{rel}：{err}");
+        if want == BLOCK {
+            assert!(err.contains("讀不懂"), "［{tool}／{agent}］{rel} 的訊息：{err}");
+        }
+    }
+}

@@ -268,7 +268,8 @@ fn str_list(v: Option<&Value>, key: &str, fault: &mut Option<String>) -> Vec<Str
     }
 }
 
-/// 回傳合併預設後的設定。設定檔存在但讀不到或不是 JSON 物件時 fail-closed：視為已設定，其餘欄位用預設值，`broken` 記下原因。
+/// 回傳合併預設後的設定。設定檔存在但讀不到或不是 JSON 物件時 fail-closed：視為已設定，其餘欄位用預設值，`broken` 記下原因
+/// （守門看到 `broken` 會把模版角色的寫入全部擋下，主 session 與使用者自己的 agent 照預設值的規則）。
 /// `Err`＝0.x 的 Python 版在載入階段就會丟例外的寫法。
 pub fn load(ws: &str) -> Result<Config, PyErr> {
     let mut cfg = defaults();
@@ -282,8 +283,14 @@ pub fn load(ws: &str) -> Result<Config, PyErr> {
                 broken = class.to_string();
                 None
             }
-            Ok(text) => match serde_json::from_str::<Value>(&text) {
+            // 和 0.x 的 json.loads 同一套寬鬆規則：NaN、Infinity、超大的數字、落單的 surrogate 都讀得懂，
+            // 不能因為某個用不到的欄位裡有這種值就把整份設定當成壞掉（那樣 forbidden_paths、extension_agents 會一起失效）
+            Ok(text) => match crate::merge_gate::pyjson::loads_lenient(&text) {
                 Ok(v) => Some(v),
+                Err(crate::merge_gate::pyjson::JsonErr::TooDeep) => {
+                    broken = "RecursionError".to_string();
+                    None
+                }
                 Err(_) => {
                     broken = "JSONDecodeError".to_string();
                     None

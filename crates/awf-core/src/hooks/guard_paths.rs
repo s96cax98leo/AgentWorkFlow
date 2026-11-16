@@ -231,6 +231,10 @@ impl Guard {
             // 這個 session 的 scratchpad：模版角色都可以寫（中間產物）。上面的規則已經判過
             return self.forward(git_toplevel(&parent), "guard-paths", data);
         }
+        if has_role && !self.cfg.broken.is_empty() {
+            // 設定讀不懂：寫入範圍、禁止路徑、linked_repos 都不知道，模版角色的寫入先全部擋（讀與 scratchpad 照常）
+            return Err(self.block(&format!("{agent} 的寫入先全部擋下：守門設定讀不懂時，不知道哪些路徑可以寫（{}）", shown(&rel))));
+        }
         let lrel = if has_role { self.linked_rel(&p)? } else { None };
         if config::RECORD_ONLY_ROLES.contains(&role.as_str()) {
             // 只寫執行紀錄的角色：只能寫 <runs_dir>/<run>/<段>/<檔名>.md（白名單，照原樣比對；至少兩層子目錄，上一層是段名）

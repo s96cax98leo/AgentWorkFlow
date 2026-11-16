@@ -1220,6 +1220,11 @@ impl Guard {
         let rest_merge = std::cell::OnceCell::new();
         let record_only = team && config::RECORD_ONLY_ROLES.contains(&config::team_role(&raw_agent, cfg).as_str());
 
+        // 設定讀不懂：模版角色的寫入先全部擋（判法和唯讀角色的「不能用 shell 寫檔」同一套；唯讀的指令照常）
+        let broken_ro = team && !record_only && !cfg.broken.is_empty();
+        if broken_ro && !is_ps && INTERP.is_match(&cmd) && HEREDOC.is_match(&cmd) && INTERP_WRITE.is_match(&cmd) {
+            return Err(self.block(&format!("{agent} 的寫入先全部擋下（heredoc／stdin 餵給直譯器的程式會寫檔或開子程序）：守門設定讀不懂時，不知道哪些路徑可以寫")));
+        }
         if record_only && !is_ps && INTERP.is_match(&cmd) && HEREDOC.is_match(&cmd) && INTERP_WRITE.is_match(&cmd) {
             // heredoc／stdin 餵給直譯器的程式碼被換行切成好幾段，整條一起看
             return Err(self.block(&format!("{agent} 是唯讀角色，不能用 heredoc／stdin 餵給直譯器的程式寫檔或開子程序")));
@@ -1337,6 +1342,12 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
                 if let Some(why) = self.record_shell_write(seg, d, 0)? {
                     return Err(self.block(&format!("{agent} 是唯讀角色（只有 Write 能寫 {runs_label}<run>/<段>/<label>.md 的執行紀錄），不能用 shell 寫檔\
 （{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 awf run-brief --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
+                }
+            }
+            if broken_ro {
+                if let Some(why) = self.record_shell_write(seg, d, 0)? {
+                    return Err(self.block(&format!("{agent} 的寫入先全部擋下（{why}）：守門設定讀不懂時，不知道哪些路徑可以寫；唯讀的指令照常，\
+長輸出用 awf run-brief --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
                 }
             }
             if team && self.agent_writes_state(seg, d)? {
