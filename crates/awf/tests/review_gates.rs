@@ -473,3 +473,65 @@ fn m3_awf_done_with_an_unreadable_output_file_invalidates_the_stage() {
     assert_ne!(o.code, 0, "{}{}", o.out, o.err);
     assert!(approved(&root2, "test"), "路徑打錯不該讓核准失效");
 }
+
+
+// ------------------------------------------------------------------ 低：自訂 id_pattern 的「字」、plan.json 讀不懂
+
+/// 自訂的 `requirements.id_pattern`：`\b`、`\w` 對「字」的看法要和 0.x 一樣（結合符號不算字）。
+/// 需求文件裡編號後面緊接一個結合符號：0.x 認得出這條需求；之前這裡認不出來、整條需求從清單消失，沒被對照也判 merge。
+#[test]
+fn low_custom_id_pattern_treats_combining_marks_like_python() {
+    let t = Tmp::new("low-idp");
+    let root = t.path().join("proj");
+    mk_project(&root);
+    write_json(&root.join(".claude/teams/guard.config.json"), &json!({"runs_dir": "_tpm/runs",
+        "auto_merge": {"enabled": true, "repos": {"acme-fork/app": "high"}, "daily_cap": 99},
+        "requirements": {"source": "spec-md", "path": "reqs.md", "id_pattern": "^- (REQ-\\d+)\\b"}}));
+    write(&root.join("reqs.md"), "- REQ-1 匯出按鈕下載 CSV\n- REQ-2\u{301} 超過一萬筆時提示\n");
+    let inp = t.path().join("in");
+    write_json(&inp.join("d.json"), &decision(json!([row("REQ-1", "匯出按鈕下載 CSV")])));
+    write_json(&inp.join("e.json"), &json!({"commit": SHA, "results": [{"requirement_id": "REQ-1", "result": "pass"}]}));
+    write_json(&inp.join("c.json"), &json!({"ci": "success"}));
+    write(&inp.join("diff.txt"), &mk_diff("src/a.py", &["x = 1"]));
+    let (o, v) = gate(&gate_args(&inp, "d.json", "e.json", "diff.txt"), &["--reviewed-sha", SHA], &root, &[]);
+    assert_ne!(v["decision"], "merge", "REQ-2 沒被對照，不能判 merge：{}{}", o.out, o.err);
+    assert!(o.out.contains("REQ-2"), "要指出 REQ-2 沒被對照：{}", o.out);
+    // 對照組：兩條都對照到就可以 merge（確認上面擋下來的原因是 REQ-2，不是別的）
+    write_json(&inp.join("d2.json"), &decision(json!([row("REQ-1", "匯出按鈕下載 CSV"), row("REQ-2", "超過一萬筆時提示")])));
+    write_json(&inp.join("e2.json"), &json!({"commit": SHA, "results": [{"requirement_id": "REQ-1", "result": "pass"}, {"requirement_id": "REQ-2", "result": "pass"}]}));
+    let (o, v) = gate(&gate_args(&inp, "d2.json", "e2.json", "diff.txt"), &["--reviewed-sha", SHA], &root, &[]);
+    assert_eq!(v["decision"], "merge", "{}{}", o.out, o.err);
+    // 寫壞的樣式照舊是錯誤（不是當成沒有需求）
+    write_json(&root.join(".claude/teams/guard.config.json"), &json!({"runs_dir": "_tpm/runs",
+        "auto_merge": {"enabled": true, "repos": {"acme-fork/app": "high"}, "daily_cap": 99},
+        "requirements": {"source": "spec-md", "path": "reqs.md", "id_pattern": "^- (REQ-\\d+"}}));
+    let (o, v) = gate(&gate_args(&inp, "d2.json", "e2.json", "diff.txt"), &["--reviewed-sha", SHA], &root, &[]);
+    assert_ne!(o.code, 0, "{}{}", o.out, o.err);
+    assert_ne!(v["decision"], "merge", "{}{}", o.out, o.err);
+}
+
+/// plan.json 讀不懂（NaN、巢狀太深）時，epic 不能當成沒有而跳過拆工檢查的 spec 對照：記成一條問題，政策核准因此不過。
+#[test]
+fn low_unreadable_plan_json_blocks_policy_approval_of_design() {
+    let deep = format!("{{\"epic_dir\": \"specs/e\", \"x\": {}1{}}}", "[".repeat(300), "]".repeat(300));
+    for (tag, text) in [("nan", "{\"epic_dir\": \"specs/e\", \"x\": NaN}".to_string()), ("deep", deep), ("cut", "{\"epic_dir\": ".to_string())] {
+        let t = Tmp::new(&format!("low-plan-{tag}"));
+        let root = t.path().join("proj");
+        mk_run_project(&root, &builtin_profile());
+        baseline(&root, "plan");
+        must(sr(&root, &["approve", RUN, "plan", "--by", "human", "--at", "t"], None), "approve plan");
+        // 對照組：plan.json 正常時 design 可以政策核准
+        let r = traced(&root, "design", json!({"design": design_env()}), &[]);
+        must(sr(&root, &["stage", RUN, "design"], Some(&r.to_string())), "stage design");
+        let ok = sr(&root, &["approve", RUN, "design", "--by", "policy", "--note", "p", "--at", "t"], None);
+        assert_eq!(ok.code, 0, "{tag}：對照組應該可以政策核准：{}{}", ok.out, ok.err);
+        // plan.json 壞掉之後重存 design：要記成問題，政策核准不過
+        write(&root.join(RUN).join("plan.json"), &text);
+        let o = sr(&root, &["stage", RUN, "design"], Some(&r.to_string()));
+        assert!(o.err.contains("plan.json"), "{tag}：存檔時要指出 plan.json 讀不懂：{}{}", o.out, o.err);
+        let o = sr(&root, &["approve", RUN, "design", "--by", "policy", "--note", "p", "--at", "t"], None);
+        assert_ne!(o.code, 0, "{tag}：plan.json 讀不懂時不能政策核准：{}{}", o.out, o.err);
+        assert!(o.err.contains("plan.json"), "{tag}：{}", o.err);
+        assert!(!approved(&root, "design"));
+    }
+}

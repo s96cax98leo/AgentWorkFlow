@@ -227,7 +227,13 @@ pub fn plan_check_for(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &
         epic = if truthy(args) { s_or(get(args, "epic")?, "") } else { String::new() };
     }
     let sd = pack::spec_dir(repo.as_deref(), &epic, "", &ctx.pack_root);
-    plan_check_issues(ctx, result, sd.map(|d| pj(&d, "spec.md")).as_deref())
+    let mut issues = plan_check_issues(ctx, result, sd.map(|d| pj(&d, "spec.md")).as_deref())?;
+    // plan.json 在、但讀不懂（NaN、巢狀太深、寫壞）：epic 可能就寫在裡面，不能當成「沒有 epic」而默默少做 spec 對照
+    let plan_json = pj(&ctx.abs(run), "plan.json");
+    if std::path::Path::new(&plan_json).is_file() && pack::load_json(&plan_json).is_none() {
+        issues.push(format!("{} 讀不懂（不是工具看得懂的 JSON）：無法確認 epic，拆工檢查的 spec 對照可能沒做", pj(run, "plan.json")));
+    }
+    Ok(issues)
 }
 
 /// `sh -c <cmd>`（Python 的 `subprocess.run(cmd, shell=True)`）。

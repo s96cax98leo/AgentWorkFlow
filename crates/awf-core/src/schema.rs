@@ -99,10 +99,13 @@ impl Schemas {
     }
 
     /// 上層系統發的任務編號長相：task_id_prefix 後接數字；沒設定前綴就不檢查。
-    pub fn task_id_regex(&self) -> Option<Regex> {
+    /// 用 [`crate::hooks::re::Re`]：`\w`、`\b` 對「字」的看法和 0.x 的 Python 版一致（結合符號不算字；
+    /// 直接用 Rust 的引擎時，編號前後緊接結合符號就認不出來）。
+    pub fn task_id_regex(&self) -> Option<crate::hooks::re::Re> {
         let prefix = self.config_str("task_id_prefix");
         if prefix.is_empty() { return None; }
-        Regex::new(&format!(r"(?<![\w-]){}\d+\b", regex::escape(&prefix))).ok()
+        let re = crate::hooks::re::Re::dynamic(format!(r"(?<![\w-]){}\d+\b", regex::escape(&prefix)), "");
+        re.compiles().then_some(re)
     }
 
     pub fn task_authority(&self) -> String {
@@ -176,7 +179,7 @@ impl Schemas {
         let tid = self.task_id_regex();
         for (i, w) in items(get(env, "derived_work")).iter().enumerate() {
             if let (Some(re), Some(s)) = (&tid, w.as_str()) {
-                if re.is_match(s).unwrap_or(false) {
+                if re.is_match(s) {
                     errs.push(format!("derived_work[{i}]：不可自編任務編號（交 {} 編）：{s}", self.task_authority()));
                 }
             }

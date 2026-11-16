@@ -454,25 +454,47 @@ fn adapter_command(ctx: &Ctx, command: &Value, proj: &str, env_extra: &[(&str, S
 /// 只是示範怎麼把 markdown 轉成正規化清單，不代表需求必須這樣寫。
 fn adapter_spec_md(path: &str, id_pattern: &Value) -> Result<Vec<Req>, Fail> {
     let text = pyutil::read_text(path).map_err(|e| read_fail(e, |m| format!("讀不到需求文件 {path}：{m}")))?;
+    // 使用者自訂的樣式走 hooks::re：`\w`、`\b`、`\s`、`$` 對照 0.x 的 Python 版（直接用 Rust 的引擎時，
+    // 編號旁邊緊接結合符號的那一行會認不出來，整條需求就從清單消失）。內建樣式的差異已經在 py_word_space 補過，照舊。
+    enum Pat {
+        Builtin(FRegex),
+        Custom(crate::hooks::re::Re),
+    }
     let pat = match id_pattern {
-        v if !truthy(v) => FRegex::new(&py_word_space(&DEFAULT_ID_PATTERN.replace(r"[\s:", "[@S@:")).replace("@S@", r"\s\x1c-\x1f")),
-        Value::String(s) => FRegex::new(s),
+        v if !truthy(v) => Pat::Builtin(
+            FRegex::new(&py_word_space(&DEFAULT_ID_PATTERN.replace(r"[\s:", "[@S@:")).replace("@S@", r"\s\x1c-\x1f"))
+                .map_err(|e| Fail::Crash(crash(&format!("re.error：requirements.id_pattern 寫壞了（{e}）"))))?,
+        ),
+        Value::String(s) => {
+            let re = crate::hooks::re::Re::dynamic(s.clone(), "");
+            if !re.compiles() {
+                return Err(Fail::Crash(crash(&format!("re.error：requirements.id_pattern 寫壞了（{s}）"))));
+            }
+            Pat::Custom(re)
+        }
         other => return Err(Fail::Crash(crash(&format!("TypeError：requirements.id_pattern 要是字串（{}）", pyfmt::repr(other))))),
     };
-    let pat = pat.map_err(|e| Fail::Crash(crash(&format!("re.error：requirements.id_pattern 寫壞了（{e}）"))))?;
     let mut out: Vec<Req> = Vec::new();
     for (n, line) in pyutil::splitlines(&text).into_iter().enumerate() {
-        let caps = match pat.captures(line) {
-            Ok(Some(c)) => c,
-            Ok(None) => continue,
-            Err(e) => return Err(Fail::Crash(crash(&format!("requirements.id_pattern 配對失敗（{e}）")))),
+        // （整個符合的區間, 第一個群組的區間）
+        let spans: (Option<(usize, usize)>, Option<(usize, usize)>) = match &pat {
+            Pat::Builtin(re) => match re.captures(line) {
+                Ok(Some(c)) => (c.get(0).map(|m| (m.start(), m.end())), c.get(1).map(|m| (m.start(), m.end()))),
+                Ok(None) => continue,
+                Err(e) => return Err(Fail::Crash(crash(&format!("requirements.id_pattern 配對失敗（{e}）")))),
+            },
+            Pat::Custom(re) => match re.captures(line) {
+                Some(c) => (c.first().copied().flatten(), c.get(1).copied().flatten()),
+                None => continue,
+            },
         };
-        let (Some(whole), Some(id)) = (caps.get(0), caps.get(1)) else {
+        let (Some(whole), Some(id)) = spans else {
             return Err(Fail::Crash(crash("IndexError：requirements.id_pattern 沒有第一個群組")));
         };
-        if out.iter().any(|x| x.id == id.as_str()) { continue; }
-        let rest = line[whole.end()..].trim_matches(|c| " \t:：|*`-、.)".contains(c));
-        out.push(Req { id: id.as_str().to_string(), text: rest.to_string(), source: format!("{}:{}", pyutil::name(path), n + 1) });
+        let id = &line[id.0..id.1];
+        if out.iter().any(|x| x.id == id) { continue; }
+        let rest = line[whole.1..].trim_matches(|c| " \t:：|*`-、.)".contains(c));
+        out.push(Req { id: id.to_string(), text: rest.to_string(), source: format!("{}:{}", pyutil::name(path), n + 1) });
     }
     if out.is_empty() {
         return Err(Fail::Input(format!("{path} 裡找不到符合 id_pattern 的需求（spec-md 是範例 adapter，需求寫法不同請改用 json 或 command）")));

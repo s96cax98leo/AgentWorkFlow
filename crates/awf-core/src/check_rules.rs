@@ -31,7 +31,7 @@ struct Ctx {
     forbidden: Vec<String>,
     methodology: PathBuf,
     estimate: Regex,
-    tnum: Option<FRegex>,
+    tnum: Option<crate::hooks::re::Re>,
     internal: Vec<FRegex>,
     judge: Regex,
 }
@@ -84,7 +84,7 @@ impl Ctx {
 
     fn tnum_all(&self, text: &str) -> Vec<String> {
         match &self.tnum {
-            Some(re) => re.find_iter(text).filter_map(Result::ok).map(|m| m.as_str().to_string()).collect(),
+            Some(re) => re.find_all(text).into_iter().map(|(a, b)| text[a..b].to_string()).collect(),
             None => Vec::new(),
         }
     }

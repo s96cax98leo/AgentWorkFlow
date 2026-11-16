@@ -183,3 +183,18 @@ fn m2_backticks_inside_a_json_string_do_not_break_the_last_block() {
     // 沒有收尾圍欄、但內容完整：一樣是最後一個區塊
     assert_eq!(schema::extract_json(&format!("```json\n{{\"old\": 1}}\n```\n```json\n{v}")), Some(v));
 }
+
+#[test]
+fn low_task_id_pattern_treats_combining_marks_like_python() {
+    let mut s = Schemas::new(teams());
+    s.config_override = json!({"task_id_prefix": "T-"}).as_object().cloned();
+    let check = |w: &str| s.semantic_errors(&json!({"derived_work": [w]}));
+    assert!(has(&check("另開 T-12 處理"), "不可自編任務編號"));
+    // 編號後面接結合符號（U+0301）：0.x 的 \b 不把它當成字，照樣認得出編號
+    assert!(has(&check("另開 T-12\u{301} 處理"), "不可自編任務編號"), "帶結合符號的編號要認得出來");
+    // 編號前面是結合符號：0.x 的 (?<![\w-]) 不把它當成字
+    assert!(has(&check("另開\u{301}T-12 處理"), "不可自編任務編號"), "前面是結合符號的編號要認得出來");
+    // 不是編號的照舊不擋
+    assert!(check("另開 XT-12 處理").is_empty());
+    assert!(check("另開 T-12a 處理").is_empty());
+}
