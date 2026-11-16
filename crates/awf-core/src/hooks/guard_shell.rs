@@ -61,6 +61,13 @@ re!(STATE_FRAGMENT, r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config|
 re!(WRITE_API, r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.write\b|write_text|write_bytes|>>?|\bFile\.(?:write|open)|out-file|set-content|add-content", "i");
 re!(CONTEXT_FRAGMENT, r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\b(?:decisions|links)\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md|結案摘要\W{0,16}\.md|[/\\]archive[/\\]", "i");
 re!(RUN_INDEX_FRAGMENT, r"執行紀錄索引");
+re!(KG_TARGET, r"(?:^|[^\w.-])graph\.db(?![\w])|(?:^|[/\\\s'\x22=])vault[/\\](?:notes|能力|需求|決策|模組|hot\.md|index\.md)", "i");
+
+/// shell 寫知識圖的檔（graph.db、vault 的頁與 notes/；盡力而為，看不到實際路徑時只比對寫法）。
+fn shell_writes_kg(seg: &str) -> bool {
+    let probe = NULL_REDIR.replace_all(&norm(seg), " ");
+    KG_TARGET.is_match(&probe) && (SHELL_WRITE.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+}
 re!(NULL_REDIR, r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", "i");
 re!(HARMLESS, r"[\d&]?>>?\s*/dev/null\b|[\d&]?>>?\s*\$null\b|\d?>&\d", "i");
 re!(QUOTED, r#"'[^']*'|"(?:\\.|[^"\\])*""#);
@@ -111,7 +118,7 @@ re!(REFS_HEADS, r"^refs/heads/");
 pub fn all_patterns() -> Vec<&'static Re> {
     vec![&GH_WRITE, &GH_BYPASS, &GH_ACCOUNT_WRITE, &GH_INNER_REPO, &GH_API_WRITE, &DESTRUCTIVE, &GH_PR_MERGE, &GH_PR_REVIEW, &API_CLIENT,
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
-         &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT,
+         &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
          &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
@@ -1138,6 +1145,7 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                         Deny::Init => "不能跑 awf init（套用與升級會改寫 .claude/ 底下的設定與工具，只由人或主 session 執行）".to_string(),
                         Deny::Build => "不能跑 awf build（會改寫 workflow 腳本的內嵌內容，只由人或主 session 執行）".to_string(),
                         Deny::Spec(x) => format!("不能跑 awf spec {x}（規格與編號登記只由主 session 改；team agent 只能跑 awf spec status／validate／show，以及不帶 --write／--adopt／--retire 的 ids）"),
+                        Deny::Kg(x) => format!("不能跑 awf kg {x}（圖與 vault 只由主 session 建與匯出；team agent 只能跑 awf kg locate／trace／impact／check／neighbors）"),
                         Deny::Watch => "只能跑 awf watch --once（持續監看會一直寫進度事件，由主 session 或人執行）".to_string(),
                         Deny::Unknown(x) => format!("不能跑 awf {x}（看不出是哪個子指令，無法確認是否允許；請直接寫 awf <子指令> <參數>）"),
                         Deny::Opaque(x) => format!("不能這樣呼叫 awf{x}；請直接寫 awf <子指令> <參數>"),
@@ -1154,6 +1162,9 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
             }
             if team && self.agent_writes_state(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 awf save-run 在主 session 寫")));
+            }
+            if team && shell_writes_kg(seg) {
+                return Err(self.block(&format!("{agent} 不能寫知識圖的檔（graph.db 與 vault，含 vault/notes/；圖只由主 session 跑 awf kg build／export 產生，筆記是人寫的）")));
             }
             if team && self.shell_writes_team_config(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json\
