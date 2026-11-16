@@ -387,10 +387,9 @@ pub fn run_captured(argv: &[String], claude: &str) -> (i32, String, String) {
     run_with(argv, claude, env_plugin.as_deref(), &home.replace('\\', "/"))
 }
 
-/// `awf check-agents [--plugin-dir <plugin 目錄>] [--agents-dir <dir>]`：專案是 CLAUDE_PROJECT_DIR，沒設就用目前目錄。
+/// `awf check-agents [--plugin-dir <plugin 目錄>] [--agents-dir <dir>]`：專案根照 [`crate::project`] 的解析，找不到就用目前目錄。
 pub fn main(args: &[String]) -> i32 {
-    let project = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|s| !s.is_empty())
-        .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned())).unwrap_or_else(|| ".".into());
+    let project = crate::project::root_or_cwd(None);
     let (code, out, err) = run_captured(args, &join(&project.replace('\\', "/"), ".claude"));
     print!("{out}");
     eprint!("{err}");

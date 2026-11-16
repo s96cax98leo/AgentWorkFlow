@@ -25,11 +25,17 @@ pub struct Config {
 /// 沒給 --root 時的專案根目錄。
 ///
 /// 原本的 kb.py 用「工具往上三層」（工具放在 <專案>/.claude/teams/tools/）。單一執行檔沒有這個位置，
-/// 改成 `CLAUDE_PROJECT_DIR`，沒有就用目前的工作目錄。
+/// 改用全部子指令共用的解析（[`crate::project`]）：`CLAUDE_PROJECT_DIR` → 從目前目錄往上找最外層的 `.claude/teams/VERSION`
+/// → 都沒有就用目前的工作目錄。
 pub fn default_root() -> Result<String, PyErr> {
-    match std::env::var("CLAUDE_PROJECT_DIR") {
-        Ok(d) if !d.is_empty() => pyish::resolve(&d),
-        _ => pyish::resolve("."),
+    match crate::project::find(None) {
+        Some(f) => {
+            if let Some(n) = &f.note {
+                eprintln!("awf：{n}");
+            }
+            pyish::resolve(&f.root)
+        }
+        None => pyish::resolve("."),
     }
 }
 

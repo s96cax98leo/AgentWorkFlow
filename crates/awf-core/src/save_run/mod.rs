@@ -41,7 +41,7 @@ pub use cli::{approve, run, stage, USAGE};
 pub use decisions::{decision_errors, record_decisions, split_answer};
 pub use links::{ac_tokens, active_links, decision_id, decision_links, link_gaps, link_gaps_of, links_setting, stage_links, test_targets, write_links, GAP_STAGES, LEDGER, LINK_KINDS, LINK_SCHEMA_VERSION};
 pub use policy::{
-    abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, recipe_mismatch, recipe_tamper_errors,
+    abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors,
     required_roles_missing, REVIEW_ROLES,
 };
 pub use selftest::selftest;
@@ -95,10 +95,20 @@ impl Ctx {
         Ctx { profile: pyish::pjoin(&teams, "methodology.json"), teams, pack_root: root.to_string(), cwd: cwd.to_string(), today: None }
     }
 
-    /// 命令列用：專案根目錄取 `CLAUDE_PROJECT_DIR`（沒有就用目前目錄），相對路徑以目前目錄為基準。
+    /// 行程的目前目錄（相對路徑的基準）。
+    fn process_cwd() -> String {
+        std::env::current_dir().ok().and_then(|p| p.to_str().map(|t| t.replace('\\', "/"))).unwrap_or_else(|| ".".to_string())
+    }
+
+    /// 命令列用（輔助工具）：專案根目錄照全部子指令共用的解析（[`crate::project`]），找不到就用目前目錄；相對路徑以目前目錄為基準。
     pub fn from_env() -> Ctx {
-        let cwd = std::env::current_dir().ok().and_then(|p| p.to_str().map(|t| t.replace('\\', "/"))).unwrap_or_else(|| ".".to_string());
-        Ctx::new(&crate::deliverables::default_root(), &cwd)
+        Ctx::new(&crate::deliverables::default_root(), &Ctx::process_cwd())
+    }
+
+    /// 命令列用（閘門）：同 [`Ctx::from_env`]，但找不到專案根就回錯誤，不退回目前目錄
+    /// （目前目錄自帶的 `.claude/teams` 不能拿來當這次判定的設定、schema 與 profile）。`explicit` 是 `--project-dir`。
+    pub fn for_gate(explicit: Option<&str>) -> Result<Ctx, String> {
+        Ok(Ctx::new(&crate::project::require(explicit)?, &Ctx::process_cwd()))
     }
 
     /// 0.x 的 Python 版的 `project_root()`：profile 在 `<專案>/.claude/teams/` 底下。
@@ -229,7 +239,19 @@ pub fn run_captured(argv: &[String], stdin: &str, ctx: &Ctx) -> (i32, String, St
 
 /// `awf save-run …`
 pub fn main(args: &[String]) -> i32 {
-    let ctx = Ctx::from_env();
+    // 會改變閘門狀態、或要用專案的 schema 與 profile 判定的指令：一定要找得到專案根。其他（init、status、archive、selftest…）照舊
+    let gate = matches!(args.first().map(String::as_str), Some("stage" | "approve" | "escalate"));
+    let ctx = if gate {
+        match Ctx::for_gate(None) {
+            Ok(c) => c,
+            Err(m) => {
+                eprintln!("awf save-run：{m}");
+                return 1;
+            }
+        }
+    } else {
+        Ctx::from_env()
+    };
     let (mut out, mut err) = (String::new(), String::new());
     let mut read_stdin = || -> R<String> {
         use std::io::Read;

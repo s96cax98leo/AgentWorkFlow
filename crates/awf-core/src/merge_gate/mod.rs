@@ -175,9 +175,12 @@ pub fn line_kind(line: &str) -> (bool, bool) {
 
 /// 執行環境：測試可以換掉 teams 目錄、環境變數與 stdin。
 pub struct Ctx {
-    /// `.claude/teams`（schema、預設的 guard.config.json 與 methodology.json 都在這裡）。
-    pub teams: PathBuf,
-    /// 環境變數 `CLAUDE_PROJECT_DIR`。
+    /// schema 所在的 `.claude/teams`。`None`（實際執行）＝跟著專案根：`<專案>/.claude/teams`，所以 schema、guard.config.json、
+    /// methodology.json 一定來自同一個專案，和在哪個目錄執行無關。`Some`（測試、selftest）＝固定用這一份；
+    /// 這時沒給專案根就用它往上兩層（0.x 的 Python 版「工具檔所在的專案」）。
+    pub teams: Option<PathBuf>,
+    /// 沒給 `--project-dir` 時的專案根：實際執行時是 [`crate::project::find`] 的結果
+    /// （`CLAUDE_PROJECT_DIR`，沒有就從目前目錄往上找最外層的 `.claude/teams/VERSION`）。
     pub project_dir_env: Option<String>,
     /// 另外加給子程序（git、需求清單指令）的環境變數。
     pub env: Vec<(String, String)>,
@@ -186,9 +189,19 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    /// 實際執行時的環境：teams 目錄是目前目錄的 `.claude/teams`。
+    /// 實際執行時的環境：專案根照全部子指令共用的解析（[`crate::project`]），schema 跟著專案根。
+    /// 找不到專案根時 `project_dir_env` 是 None：沒帶 `--project-dir` 就報錯，不退回目前目錄。
     pub fn real() -> Self {
-        Ctx { teams: PathBuf::from(".claude/teams"), project_dir_env: std::env::var("CLAUDE_PROJECT_DIR").ok(), env: Vec::new(), stdin: None }
+        let found = crate::project::find(None);
+        if let Some(n) = found.as_ref().and_then(|f| f.note.as_ref()) {
+            eprintln!("awf merge-gate：{n}");
+        }
+        Ctx { teams: None, project_dir_env: found.map(|f| f.root), env: Vec::new(), stdin: None }
+    }
+
+    /// 這次判定用的 `.claude/teams`（schema 在它底下）。
+    fn teams_of(&self, proj: &str) -> PathBuf {
+        self.teams.clone().unwrap_or_else(|| PathBuf::from(pyutil::join(proj, ".claude/teams")))
     }
 }
 
@@ -270,15 +283,20 @@ fn int_or(v: &Value, default: i128, what: &str) -> Result<i128, Crash> {
 
 // ------------------------------------------------------------------ 設定與路徑
 
-fn project_dir(ctx: &Ctx, arg: Option<&str>) -> String {
-    if let Some(a) = arg.filter(|a| !a.is_empty()) { return pyutil::resolve(a); }
-    if let Some(e) = ctx.project_dir_env.as_deref().filter(|e| !e.is_empty()) { return pyutil::resolve(e); }
-    pyutil::parent(&pyutil::parent(&pyutil::resolve(&ctx.teams.to_string_lossy())))
+/// 專案根：`--project-dir` → 環境給的（見 [`Ctx::project_dir_env`]）→ 固定的 teams 往上兩層（只有測試與 selftest）。
+/// 都沒有就是錯誤：不拿目前目錄當專案（目前目錄可以是 PR 的 checkout，自帶一份 `.claude/teams`）。
+fn project_dir(ctx: &Ctx, arg: Option<&str>) -> Result<String, Crash> {
+    if let Some(a) = arg.filter(|a| !a.is_empty()) { return Ok(pyutil::resolve(a)); }
+    if let Some(e) = ctx.project_dir_env.as_deref().filter(|e| !e.is_empty()) { return Ok(pyutil::resolve(e)); }
+    match &ctx.teams {
+        Some(t) => Ok(pyutil::parent(&pyutil::parent(&pyutil::resolve(&t.to_string_lossy())))),
+        None => Err(crate::project::not_found_message()),
+    }
 }
 
 fn load_config(ctx: &Ctx, proj: &str) -> Value {
     let p = pyutil::join(proj, ".claude/teams/guard.config.json");
-    let sch = Schemas::new(&ctx.teams);
+    let sch = Schemas::new(ctx.teams_of(proj));
     let path = PathBuf::from(&p);
     Value::Object(sch.config(if path.exists() { Some(path.as_path()) } else { None }))
 }
@@ -1557,9 +1575,11 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
             return Err(Fail::Input(format!("--recipe {p} 的 recipe 還沒鎖定（plan 沒核准）")));
         }
         let meth = pyutil::join(proj, ".claude/teams/methodology.json");
-        let teams = pyutil::resolve(&ctx.teams.to_string_lossy());
-        let profile = if PathBuf::from(&meth).is_file() { Some(meth.as_str()) } else { None };
-        let tamper = recipe_tamper_errors(&teams, &data, profile).map_err(Fail::Crash)?;
+        let teams = pyutil::resolve(&ctx.teams_of(proj).to_string_lossy());
+        // run.json 已經有 recipe（plan 段用專案的 profile 解析、鎖定的）：這時專案的 profile 不見了，
+        // 重算只會退回內建節，profile 定得更嚴的部分就漏掉了，所以不採信（0.x 這裡退回工具旁的 profile 或內建節）
+        if !PathBuf::from(&meth).is_file() { return Err(Fail::Input(crate::save_run::profile_missing(&meth))); }
+        let tamper = recipe_tamper_errors(&teams, &data, Some(meth.as_str())).map_err(Fail::Crash)?;
         if !tamper.is_empty() { return Err(Fail::Input(first(&tamper, 3).join("；"))); }
         inp.recipe = Some(r.clone());
         Ok(())
@@ -1593,7 +1613,7 @@ fn exit_code(decision: &str) -> i32 {
 }
 
 fn cmd_check(ctx: &Ctx, a: &Parsed, out: &mut String) -> Result<i32, Crash> {
-    let proj = project_dir(ctx, a.get("--project-dir"));
+    let proj = project_dir(ctx, a.get("--project-dir"))?;
     let cfg = load_config(ctx, &proj);
     let audit = pyutil::join(&runs_dir(&proj, &cfg, a.get("--runs-dir"))?, "merge-audit.jsonl");
     let (mut inp, errors) = gather(ctx, a, &cfg, &proj)?;
@@ -1606,7 +1626,7 @@ fn cmd_check(ctx: &Ctx, a: &Parsed, out: &mut String) -> Result<i32, Crash> {
             inp.frozen = Some(format!("{ff}：{reason}"));
         }
     }
-    let sch = Schemas::new(&ctx.teams);
+    let sch = Schemas::new(ctx.teams_of(&proj));
     let mut result = evaluate(&sch, &inp, &cfg, &read_audit(&audit)?)?;
     if !errors.is_empty() {
         // 輸入讀不到：一律 hold
@@ -1628,7 +1648,10 @@ fn cmd_check(ctx: &Ctx, a: &Parsed, out: &mut String) -> Result<i32, Crash> {
 pub fn run(ctx: &Ctx, argv: &[String], out: &mut String, errs: &mut String) -> i32 {
     if argv.iter().any(|a| a == "--selftest") {
         let me = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "awf".into());
-        return selftest(ctx, &json!([me, "merge-gate", "--selftest-requirements"]), out);
+        // selftest 在暫存目錄跑，只借用 schema：固定的 teams → 專案的 → 目前目錄的（原本的行為）
+        let teams = ctx.teams.clone().unwrap_or_else(|| ctx.teams_of(ctx.project_dir_env.as_deref().unwrap_or(".")));
+        let fixed = Ctx { teams: Some(teams), project_dir_env: None, env: ctx.env.clone(), stdin: ctx.stdin.clone() };
+        return selftest(&fixed, &json!([me, "merge-gate", "--selftest-requirements"]), out);
     }
     let parsed = pyargs::split_cmd(argv, &["check"]).and_then(|(_, rest, extras)| pyargs::parse(OPTS, rest, extras));
     let a = match parsed {

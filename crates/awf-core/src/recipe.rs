@@ -1073,7 +1073,8 @@ fn real_git(args: &[String]) -> Result<GitOut, String> {
 /// `awf recipe <resolve|check-diff|--selftest>`：teams 目錄是目前目錄的 `.claude/teams`。回傳 exit code。
 pub fn main(args: &[String]) -> i32 {
     let (mut out, mut errs) = (String::new(), String::new());
-    let code = run(Path::new(".claude/teams"), args, &real_git, &mut out, &mut errs);
+    let teams = Path::new(&crate::project::root_or_cwd(None)).join(".claude/teams");
+    let code = run(&teams, args, &real_git, &mut out, &mut errs);
     print!("{out}");
     eprint!("{errs}");
     code

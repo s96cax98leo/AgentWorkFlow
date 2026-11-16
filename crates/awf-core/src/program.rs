@@ -22,7 +22,7 @@ pub const USAGE: &str = "多需求排程：讀 <runs_dir>/program.json（一批 
     awf program --selftest
 
 共同選項：
-    --root <目錄>    專案根目錄（預設 CLAUDE_PROJECT_DIR，再沒有就是目前目錄）
+    --root <目錄>    專案根目錄（預設 CLAUDE_PROJECT_DIR，再沒有就從目前目錄往上找最外層的 .claude/teams/VERSION，都沒有才用目前目錄）
     --file <檔>      program.json 的位置（預設 <runs_dir>/program.json）
 
 program.json 由人維護，例如：

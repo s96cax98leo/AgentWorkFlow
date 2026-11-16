@@ -22,6 +22,7 @@ pub mod locate;
 pub mod merge_gate;
 pub mod pack;
 pub mod program;
+pub mod project;
 pub mod publish;
 pub mod pyfmt;
 pub mod recipe;

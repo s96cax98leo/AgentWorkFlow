@@ -423,10 +423,9 @@ pub fn run_captured(args: &[String], paths: &Paths) -> (i32, String, String) {
     (0, out, String::new())
 }
 
-/// `awf build [--check]`：`CLAUDE_PROJECT_DIR`（沒有就用目前目錄）交給 [`Paths::detect`] 判斷處理哪個目錄。
+/// `awf build [--check]`：專案根（[`crate::project`] 的解析，找不到就用目前目錄）交給 [`Paths::detect`] 判斷處理哪個目錄。
 pub fn main(args: &[String]) -> i32 {
-    let start = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|s| !s.is_empty()).map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."));
+    let start = PathBuf::from(crate::project::root_or_cwd(None));
     // 專案模式：片段先找專案自己的，再找模版／plugin 的（1.0 的專案沒有自己的片段）
     let template_snippets = template::find().map(|r| template::snippets(&r));
     let (code, out, err) = run_captured(args, &Paths::detect_with(&start, template_snippets));

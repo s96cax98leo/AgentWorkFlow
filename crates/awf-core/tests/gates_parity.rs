@@ -22,6 +22,10 @@ use std::sync::{Mutex, OnceLock};
 const STRICTER: &[(&str, &str)] = &[
     ("merged-today '２'", "全形數字：Python 的 int() 收，這裡只收 ASCII 數字 → hold"),
     ("diff：hunk 標頭用全形數字（Python 收、另一個實作只會更嚴）", "hunk 標頭只收 ASCII 數字 → diff 解析不了、hold"),
+    (
+        "recipe：專案沒有 methodology.json（用工具旁的，沒有就當內建節）",
+        "run.json 已有 recipe 而專案沒有 profile 檔：Python 退回工具旁的 profile 或內建節重算（這一例重算後一樣 hold）；這裡不重算，直接當成輸入錯誤 → hold（1.0 審查 H1）",
+    ),
 ];
 
 /// 只有說明文字不同的案例：exit code 要相同，文字不比（argparse 自動產生的英文說明沒有照抄）。
@@ -245,7 +249,7 @@ fn run_mg_case(c: &Value) -> Got {
     }
     let argv: Vec<String> = strings(&c["argv"]).iter().map(|a| fill(a, &tmp)).collect();
     let ctx = mg::Ctx {
-        teams: teams(),
+        teams: Some(teams()),
         project_dir_env: c.get("project_dir_env").map(|v| fill(s(v), &tmp)),
         env,
         stdin: Some(c.get("stdin").map(|v| s(v).to_string()).unwrap_or_default()),
@@ -425,7 +429,7 @@ fn merge_gate_selftest_matches_python() {
     let _serial = serial();
     let tmp = Tmp::new();
     tmp.write("gitconfig", b"");
-    let ctx = mg::Ctx { teams: teams(), project_dir_env: None, env: git_env(&format!("{}/gitconfig", tmp.raw)), stdin: Some(String::new()) };
+    let ctx = mg::Ctx { teams: Some(teams()), project_dir_env: None, env: git_env(&format!("{}/gitconfig", tmp.raw)), stdin: Some(String::new()) };
     let mut out = String::new();
     let code = mg::selftest(&ctx, &gen_cmd(), &mut out);
     let want = &expected()["mg"]["selftest"];

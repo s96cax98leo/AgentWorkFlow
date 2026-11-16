@@ -260,10 +260,9 @@ pub fn run_captured(argv: &[String], project: &Path) -> (i32, String, String) {
     (if errs.is_empty() { 0 } else { 1 }, out, String::new())
 }
 
-/// `awf check-rules …`（專案根目錄：`CLAUDE_PROJECT_DIR`，沒有就用目前目錄）
+/// `awf check-rules …`（專案根目錄照 [`crate::project`] 的解析，找不到就用目前目錄）
 pub fn main(argv: &[String]) -> i32 {
-    let project = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|s| !s.is_empty()).map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."));
+    let project = PathBuf::from(crate::project::root_or_cwd(None));
     let (code, out, err) = run_captured(argv, &project);
     print!("{out}");
     eprint!("{err}");

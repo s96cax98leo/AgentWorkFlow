@@ -16,11 +16,9 @@ pub const USAGE: &str = "驗證一份交件信封：schema＋交接語意規則�
 通過 exit 0；不通過 exit 1，原因印到 stderr。
 ";
 
-/// 專案的 `.claude/teams`：`CLAUDE_PROJECT_DIR`，沒有就用目前目錄。
+/// 專案的 `.claude/teams`：專案根照全部子指令共用的解析（[`crate::project`]），找不到就用目前目錄。
 pub fn default_teams() -> PathBuf {
-    let root = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|s| !s.is_empty()).map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."));
-    root.join(".claude").join("teams")
+    PathBuf::from(crate::project::root_or_cwd(None)).join(".claude").join("teams")
 }
 
 /// 回（exit code，stdout，stderr）。`stdin` 只在來源是 `-` 時才會被呼叫。

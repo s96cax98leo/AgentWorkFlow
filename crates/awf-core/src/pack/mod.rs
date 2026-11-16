@@ -11,7 +11,7 @@
 //! 閘門不採信 workflow 的說法：save_run 用 [`verify_reuse`] 重新核對沿用的角度，不符就判 invalid；存檔後用 [`record_reuse`] 更新 reuse.json。
 //! 輔助功能失敗不擋流程（I9）：知識庫壞掉、來源讀不到都只記說明，照樣產出資料包；但 `verify_reuse` 是閘門的一部分，核對不了一律判不符。
 //!
-//! 路徑一律是用 `/` 的字串（和 kb、locate、deliverables 相同）。專案根目錄由呼叫端給（CLI 用 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄）。
+//! 路徑一律是用 `/` 的字串（和 kb、locate、deliverables 相同）。專案根目錄由呼叫端給（CLI 用 `crate::project` 的解析：`CLAUDE_PROJECT_DIR` → 往上找最外層的 `.claude/teams/VERSION` → 目前目錄）。
 //!
 //! 和 0.x 的 Python 版的差別（都不放寬判定）：
 //! - Python 碰到型別不對的輸入會丟例外的地方（例如子任務的 owns 是數字），這裡回 [`PyErr`]（類別名與訊息照 Python），

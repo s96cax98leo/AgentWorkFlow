@@ -35,7 +35,7 @@ pub const USAGE: &str = "知識圖：規格、文件、連結帳本、程式索�
     awf kg --selftest
 
 共同選項：
-    --root <目錄>       專案根目錄（預設 CLAUDE_PROJECT_DIR，再沒有就是目前目錄）
+    --root <目錄>       專案根目錄（預設 CLAUDE_PROJECT_DIR，再沒有就從目前目錄往上找最外層的 .claude/teams/VERSION，都沒有才用目前目錄）
     --profile <檔>      開發規範 profile（預設 .claude/teams/methodology.json）
     --dir <目錄>        圖所在的目錄（預設 profile 的 knowledge.dir，再沒有就是 _tpm/kb）
     --spec-root <目錄>  規格根目錄（預設 profile 的 knowledge.spec_root，再沒有就是 openspec；只有 build 用）

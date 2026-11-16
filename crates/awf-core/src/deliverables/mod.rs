@@ -10,7 +10,7 @@
 //!   `.claude/teams/deliverables.state.json`（team agent 寫不到），來源改了而內文沒動，那一節就是過期。
 //! - 這是輔助工具：閘門（save_run、publish、merge_gate）不讀它的輸出。
 //!
-//! 專案根目錄：原本的工具用「工具往上三層」；單一執行檔沒有這個位置，改成 `CLAUDE_PROJECT_DIR`，沒有就用目前的工作目錄。
+//! 專案根目錄：原本的工具用「工具往上三層」；單一執行檔沒有這個位置，改用全部子指令共用的解析（`crate::project`）。
 //!
 //! 隱私規則（`privacy_rules`、`privacy_text`、`run_name_rule`）只能加、不能拿掉：交付文件是給外部的人看的。
 
@@ -87,10 +87,10 @@ const DOC_V1: &str = "
 - sync 另外記下小節連到的需求、情境、符號與程式檔的指紋；之後它們變了而內文沒動，那一節也算過期（只會讓更多小節過期）。
 ";
 
-/// 沒指定時的專案根目錄：`CLAUDE_PROJECT_DIR`，沒有就用目前的工作目錄。
+/// 沒指定時的專案根目錄：全部子指令共用的解析（[`crate::project`]：`CLAUDE_PROJECT_DIR` → 從目前目錄往上找最外層的
+/// `.claude/teams/VERSION`）；找不到就用目前的工作目錄（輔助工具的行為；閘門改用 `project::require`）。
 pub fn default_root() -> String {
-    let raw = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| ".".to_string());
-    crate::kb::pyish::resolve(&raw).unwrap_or(raw)
+    crate::project::root_or_cwd(None)
 }
 
 /// `awf deliverables …`
