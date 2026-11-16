@@ -312,6 +312,20 @@ target/release/awf init --target ~/work/my-project
 
 plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。其他功能是 skill，用 `/agent-workflow:<skill 名>` 叫用（例如 `/agent-workflow:add-agent`）；依 [Claude Code 文件](https://code.claude.com/docs/en/skills)，沒有其他指令同名時，也可以省略 `agent-workflow:` 前綴。`status`、`cost`、`doctor` 和 Claude Code 內建指令同名，要用完整名稱。
 
+### 1.0 新增的子指令
+
+流程會自動呼叫其中幾個（例如資料包查知識圖、存檔時核對規格）；要自己跑的時候，入口與說明在這裡。每個子指令都有 `--help`。
+
+| 子指令 | 做什麼 | 說明 |
+|---|---|---|
+| `awf kg` | 知識圖：把規格、文件、連結帳本與程式索引接成一張圖（`build`、`locate`、`trace`、`impact`、`check`）；資料包與派工單會帶位置。輔助功能，可以不建 | [`docs/知識圖.md`](docs/知識圖.md) |
+| `awf spec` | 規格層：讀規格目錄（現行規格與變更），`status`、`validate`、`show`、`apply`；需求來源設成 `openspec` 時閘門會用它核對 | [`docs/規格層.md`](docs/規格層.md) |
+| `awf program` | 多需求排程：讀 `<runs_dir>/program.json`，列每個需求的狀態、被誰擋住、現在可以開工的（`status`、`next`；唯讀） | [`docs/監控與整合.md`](docs/監控與整合.md)〈多需求排程〉 |
+| `awf scrub` | 去客戶化掃描：用專案自己訂的規則掃檔案內容與路徑名。預設不啟用 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈去客戶化掃描〉 |
+| `awf ci` | 專案的測試／lint CI：依 profile 的 `ci` 產生 GitHub Actions 的檔（`render` 只印、`--write` 才寫；`check`）。預設不啟用 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈專案的 CI〉 |
+| `awf golden` | 跑專案的 golden-set：交件信封與各種 payload、profile 的正例與反例。改了 schema 或 profile 格式之後用 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈新增 payload〉 |
+| `awf tokens` | 設計系統的 token 檢查：掃寫死的色碼（`check`）、核對 `tokens.css` 與正本（`verify`） | [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈設計系統 skill〉與 `design-system-template` skill |
+
 ## 角色
 
 | 組 | 角色 | 職責 |
@@ -384,6 +398,7 @@ awf init --target <專案> [--config workflow.config] [--answers <答案.json>] 
 | `--defaults` | 全部用預設值，使用 default profile |
 | `--detect [--json]` | 只偵測專案現況並依主題列出建議，不寫任何檔 |
 | `--reconfigure` | 已套用的專案改設定：以上次的答案（`.claude/teams/init-answers.json`）當預設，只改有變的設定 |
+| `--reconfigure <主題>` | 只重問一個主題，其他主題不問、不動（也可以寫 `--reconfigure=<主題>`；搭配 `--answers` 時答案檔只能有那個主題的鍵）。可以單獨問的主題：`requirements`、`models`、`scrub`、`links`、`ci`、`build_loop`、`auto_merge`、`hooks`、`knowledge`、`deliverables`、`parallelism`、`guard`、`main_session`；開發規範、慣例、限制文件、讀取預算的題目互相有關，要不帶主題問一整輪。主題的說明見 `awf init --detect` |
 | `--hooks plugin` | 預設。hooks 由 plugin 註冊 |
 | `--hooks project` | hooks 改由專案的 `settings.json` 註冊，並寫入執行檔的絕對路徑。**Windows 建議用這個。** 和 plugin 註冊只能擇一 |
 | `--with-mcp` | 產生正式的 `.mcp.json`，不加時只產生 `.mcp.json.example` |
@@ -406,12 +421,17 @@ init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`
 | `{{OUTPUT_LANGUAGE}}` | agent 的輸出語言 | 繁體中文 |
 | `{{TASK_ID_PREFIX}}`、`{{TASK_AUTHORITY}}` | 任務編號前綴、負責發編號的上層系統 | `TASK-`、任務管理系統 |
 | `{{DECISION_OWNER}}`、`{{STAKEHOLDER}}` | 拍板的人、需求方 | 使用者、需求方 |
+| `{{NOTIFY_HOW}}` | 需要人決策時怎麼通知（寫進 rules.md 規則 11 的一句話；留空＝在對話中提問即可）。進度事件送到外部指令是另一件事，設 profile 的 `progress.notify` | 推播到手機（PushNotification） |
 | `{{BRANCH_PREFIX}}`、`{{ALLOWED_BRANCH_PREFIXES}}` | 開發分支前綴、允許的新分支前綴 | `feature/`；`feature/,bugfix/,hotfix/,release/,merge/` |
+| `{{PROTECTED_BRANCHES}}` | 受保護分支（`guard.config.json` 的 `protected_branches`；不能直接 push，合併走 PR），逗號分隔；留空＝`main,master` | `main,master` |
 | `{{RUNS_DIR}}`、`{{BRIEFS_DIR}}` | run 目錄、簡報目錄 | `_tpm/runs`、`_tpm/briefs` |
+| `{{DOCS_DIRS}}` | tpm-writer 可以寫的文件目錄（和 run 目錄、簡報目錄一起寫成 `guard.config.json` 的 `writer_dirs`），逗號分隔；只收工作區裡的相對路徑 | `docs` |
 | `{{ATTRIBUTION_LINE}}` | commit 結尾的署名行 | `Assisted-by: Claude` |
 | `{{DESIGN_SYSTEM_NAME}}` | 設計系統名稱 | `my-design-system` |
 | `{{AGENT_NS}}` | 呼叫 agent 時的命名空間前綴 | `agent-workflow:` |
 | `{{METHODOLOGY}}` | 開發規範 profile：內建名稱或自己的 JSON 路徑 | `default` |
+
+互動模式下，`PROTECTED_BRANCHES` 與 `DOCS_DIRS` 在訪談的守門主題一起問（不在佔位符那一輪重複問）；之後要改用 `awf init --reconfigure guard`。
 
 另有 `AWF_HOOK_CMD`、`AWF_HOOK_SHELL` 兩個佔位符，是 `--hooks project` 的啟動指令與 shell，由 init 自動計算，不用填。
 
@@ -467,7 +487,9 @@ AgentWorkFlow/
 | [`docs/自動合併信任模型.md`](docs/自動合併信任模型.md) | 自動合併的防線分層、啟用前檢查清單、revert 演練 |
 | [`docs/adr-agent-auto-merge.md`](docs/adr-agent-auto-merge.md) | 自動合併的架構決策紀錄 |
 | [`docs/自訂與擴充.md`](docs/自訂與擴充.md) | 開發規範 profile、recipe、平行參數、把自己的 agent 加進 workflow、新增 agent／skill／hook／workflow、套用到既有專案、升級 |
-| [`docs/監控與整合.md`](docs/監控與整合.md) | 從外面看進度與成本：`awf watch`、事件流、通知、狀態列、OTel |
+| [`docs/監控與整合.md`](docs/監控與整合.md) | 從外面看進度與成本：`awf watch`、事件流、通知、狀態列、OTel、多需求排程（`awf program`） |
+| [`docs/知識圖.md`](docs/知識圖.md) | 知識圖（`awf kg`）：建圖、查詢、流程怎麼用它、自動接點 |
+| [`docs/規格層.md`](docs/規格層.md) | 規格層（`awf spec`）：規格目錄的格式、子指令、接進存檔與閘門 |
 | [`docs/踩坑手冊.md`](docs/踩坑手冊.md) | 實戰教訓：症狀、原因、做法 |
 | [`docs/參考-pstack.md`](docs/參考-pstack.md) | 參考過的外部 plugin（pstack）：差異、引進與沒引進的做法 |
 | [`docs/套用範例.md`](docs/套用範例.md) | 用虛構的「示範客戶 ACME」從 init 走到 deliver |

@@ -6,7 +6,7 @@
 - 結構與工具：`.claude/teams/README.md`
 
 ## 語言（強約束）
-- 所有輸出一律使用 **{{OUTPUT_LANGUAGE}}**，包括回覆、派工單、agent 之間的訊息、信封、文件、commit 訊息內文、推播通知。
+- 所有輸出一律使用 **{{OUTPUT_LANGUAGE}}**，包括回覆、派工單、agent 之間的訊息、信封、文件、commit 訊息內文、通知訊息。
 - 程式碼識別字、指令、路徑、技術專有名詞保留原文。
 
 ## 先 plan、後動手
@@ -28,7 +28,7 @@
 - push、開 PR、寫上游（{{UPSTREAM_REPO}}）、刪資料、對外寄送：一律停下，等 {{DECISION_OWNER}} 當下同意。先前的同意不延伸到下一次。
 - agent 不推送，也不核准 PR。推送由主 session 在取得同意後執行；gh 寫入要明確寫 `--repo {{FORK_REPO}}`。
 - 合併：只有在 `guard.config.json` 的 `auto_merge` 啟用時，才可以由 `dev-merge-steward` 對照需求後合併，而且 `awf merge-gate` 要判定為 merge。其餘情況一律由人合併，主 session 也不合併。
-- 需要決策時用選項式提問（2–3 個選項，附代價與建議），並推播到手機。
+- 需要決策時用選項式提問（2–3 個選項，附代價與建議），並通知（{{NOTIFY_HOW}}）。
 
 ## 機敏檔
 - `.env`、金鑰、憑證不讀、不印、不提交；只能用 `grep -q` 判斷有沒有。

@@ -981,15 +981,27 @@ fn e_reconfigure_one_topic_only_asks_and_changes_that_topic() {
     assert_eq!(json_of(&meth), par);
 
     // 4. 守門設定：受保護分支多一個；不能清空
-    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "main, master, release\n\ny\n");
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "main, master, release\n\n\ny\n");
     assert_eq!(r.code, 0, "{}{}", r.out, r.err);
     let g = json_of(&guard);
     assert_eq!(g["protected_branches"], serde_json::json!(["main", "master", "release"]));
     assert_eq!(g["acceptance_test_dirs"], guard_before["acceptance_test_dirs"]);
+    assert_eq!(g["writer_dirs"], guard_before["writer_dirs"], "文件目錄沒改就不動");
     assert_eq!(json_of(&meth), par, "守門主題不動 methodology.json");
     let bad = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "-\n");
     assert_ne!(bad.code, 0, "受保護分支不能清空");
     assert_eq!(json_of(&guard), g);
+    // 文件目錄：多一個；run 目錄與簡報目錄一律保留。不能指到模版設定或工作區外
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "\n\ndocs, handbook\ny\n");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    let g = json_of(&guard);
+    assert_eq!(g["writer_dirs"], serde_json::json!(["_tpm/runs", "_tpm/briefs", "docs", "handbook"]));
+    assert_eq!(g["protected_branches"], serde_json::json!(["main", "master", "release"]));
+    for dir in [".claude/teams", "../outside", "/etc"] {
+        let bad = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], &format!("\n\n{dir}\ny\n"));
+        assert!(bad.code != 0 && bad.err.contains("文件目錄"), "{dir}：{}{}", bad.out, bad.err);
+        assert_eq!(json_of(&guard), g);
+    }
 
     // 5. 交付文件：內建 profile 有文件清單、預設不啟用 → 回答 y 才啟用
     assert_ne!(before["deliverables"]["enabled"], true);
@@ -1079,4 +1091,72 @@ fn e_required_checks_is_documented_but_never_added() {
     assert_eq!(r.code, 0, "{}{}", r.out, r.err);
     assert_eq!(json_of(&guard)["auto_merge"]["required_checks"], serde_json::json!(["test", "lint"]));
     let _ = std::fs::remove_dir_all(&d);
+}
+
+/// 佔位符 PROTECTED_BRANCHES、DOCS_DIRS、NOTIFY_HOW：設定檔的值寫進 guard.config.json 與 rules.md；預設＝範本原本寫死的值。
+#[test]
+fn f_guard_and_notify_placeholders() {
+    let d = tmp("ph");
+    // 1. 預設：守門讀到的和以前寫死的一樣
+    let p = d.join("dflt");
+    let ps = p.to_string_lossy().into_owned();
+    let r = run(&d, None, &["--target", &ps, "--defaults"]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    let g = json_of(&p.join(".claude/teams/guard.config.json"));
+    assert_eq!(g["protected_branches"], "main,master");
+    assert_eq!(g["writer_dirs"], "_tpm/runs,_tpm/briefs,docs");
+    let rules = read(&p.join(".claude/teams/rules.md"));
+    assert!(rules.contains("通知方式：推播到手機（PushNotification）") && !rules.contains("NOTIFY_HOW"), "規則 11 要帶預設的通知方式");
+    let cfg = awf_core::config::load(&ps).unwrap_or_else(|_| panic!("守門設定讀不了"));
+    assert_eq!(cfg.protected_branches, vec!["main", "master"]);
+    assert_eq!(cfg.writer_dirs, vec!["_tpm/runs/", "_tpm/briefs/", "docs/"]);
+
+    // 2. 設定檔指定：清單照寫；留空的受保護分支退回 main、master，留空的通知方式換成「不另外通知」
+    let c = d.join("workflow.config.acme");
+    write(&c, "PROJECT_NAME=acme-portal\nPROTECTED_BRANCHES=main, release\nDOCS_DIRS=docs,handbook\nBRIEFS_DIR=\nNOTIFY_HOW=送到團隊聊天室\n");
+    let p = d.join("set");
+    let ps = p.to_string_lossy().into_owned();
+    let cs = c.to_string_lossy().into_owned();
+    let r = run(&d, None, &["--target", &ps, "--config", &cs]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    let cfg = awf_core::config::load(&ps).unwrap_or_else(|_| panic!("守門設定讀不了"));
+    assert_eq!(cfg.protected_branches, vec!["main", "release"]);
+    assert_eq!(cfg.writer_dirs, vec!["_tpm/runs/", "docs/", "handbook/"]);
+    assert!(read(&p.join(".claude/teams/rules.md")).contains("通知方式：送到團隊聊天室"));
+    assert!(read(&p.join("CLAUDE.md")).contains("並通知（送到團隊聊天室）"));
+    write(&c, "PROTECTED_BRANCHES=\nDOCS_DIRS=\nNOTIFY_HOW=\n");
+    let p = d.join("empty");
+    let ps = p.to_string_lossy().into_owned();
+    let r = run(&d, None, &["--target", &ps, "--config", &cs]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    let cfg = awf_core::config::load(&ps).unwrap_or_else(|_| panic!("守門設定讀不了"));
+    assert_eq!(cfg.protected_branches, vec!["main", "master"], "留空不會變成沒有受保護分支");
+    assert_eq!(cfg.writer_dirs, vec!["_tpm/runs/", "_tpm/briefs/"]);
+    assert!(read(&p.join(".claude/teams/rules.md")).contains("通知方式：在對話中提問即可，不另外通知"));
+
+    // 3. 文件目錄指到模版設定、CI 或工作區外：拒絕、不寫任何檔
+    for bad in [".claude/teams", "docs,../outside", "/etc", ".github/workflows"] {
+        write(&c, &format!("DOCS_DIRS={bad}\n"));
+        let p = d.join("bad");
+        let ps = p.to_string_lossy().into_owned();
+        let r = run(&d, None, &["--target", &ps, "--config", &cs]);
+        assert!(r.code != 0 && r.err.contains("DOCS_DIRS"), "{bad}：{}{}", r.out, r.err);
+        assert!(!p.join(".claude/teams/guard.config.json").exists(), "{bad}");
+    }
+
+    // 4. 升級：舊的紀錄檔沒有這三個鍵，用範例的預設；guard.config.json 既有的值不動
+    let p = d.join("dflt");
+    let ps = p.to_string_lossy().into_owned();
+    let rec = p.join(".claude/teams/workflow.config");
+    let kept: String = read(&rec).lines().filter(|l| !["PROTECTED_BRANCHES=", "DOCS_DIRS=", "NOTIFY_HOW="].iter().any(|k| l.starts_with(k))).map(|l| format!("{l}\n")).collect();
+    write(&rec, &kept);
+    let gp = p.join(".claude/teams/guard.config.json");
+    let mut hand = json_of(&gp);
+    hand["protected_branches"] = serde_json::json!(["main", "develop"]);
+    write(&gp, &serde_json::to_string_pretty(&hand).expect("json"));
+    let r = run(&d, None, &["--target", &ps, "--upgrade"]);
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    assert_eq!(json_of(&gp)["protected_branches"], serde_json::json!(["main", "develop"]));
+    assert!(read(&rec).contains("PROTECTED_BRANCHES=main,master") && read(&rec).contains("NOTIFY_HOW=推播到手機"));
+    assert!(read(&p.join(".claude/teams/rules.md")).contains("通知方式：推播到手機（PushNotification）"));
 }
