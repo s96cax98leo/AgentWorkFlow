@@ -152,6 +152,13 @@ const RULES: &[Case] = &[
     ("awf kg neighbors src/a.ts#main --depth 3", DEV, ALLOW, Sh::Both),
     ("awf kg --selftest", DEV, ALLOW, Sh::Both),
     ("awf kg build", MAIN, ALLOW, Sh::Both),
+    // program：team agent 只能看狀態；開工建議給主 session 與人
+    ("awf program status", DEV, ALLOW, Sh::Both),
+    ("awf program status --json", REV, ALLOW, Sh::Both),
+    ("awf program --selftest", DEV, ALLOW, Sh::Both),
+    ("awf program next", DEV, BLOCK, Sh::Both),
+    ("awf program next --json", REV, BLOCK, Sh::Both),
+    ("awf program next", MAIN, ALLOW, Sh::Both),
     ("awf kg export", MAIN, ALLOW, Sh::Both),
     ("rm _tpm/kb/graph.db", DEV, BLOCK, Sh::Bash),
     ("Remove-Item _tpm/kb/graph.db", DEV, BLOCK, Sh::Ps),

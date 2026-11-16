@@ -31,6 +31,7 @@ fn usage() -> &'static str {
 查詢與輔助：
   kb               知識層：建索引、查詢專案文件與結案摘要
   kg               知識圖：規格、文件、連結帳本與程式索引接成的圖（locate、trace、impact、check）
+  program          多需求排程：讀 program.json，列每個 epic 的狀態、被誰擋住、現在可以開工的
   locate           用需求的用詞在 repo 裡定位相關的檔案行段
   recipe           依需求類型解析這次要跑哪些段、用什麼模型
   deliverables     交付文件的設定、盤點、同步與匯出
@@ -74,6 +75,7 @@ fn main() -> ExitCode {
         Some("checklist") => ExitCode::from(awf_core::checklist::main(&args[1..]).clamp(0, 255) as u8),
         Some("kb") => ExitCode::from(awf_core::kb::main(&args[1..]).clamp(0, 255) as u8),
         Some("kg") => ExitCode::from(awf_core::kg::main(&args[1..]).clamp(0, 255) as u8),
+        Some("program") => ExitCode::from(awf_core::program::main(&args[1..]).clamp(0, 255) as u8),
         Some("recipe") => ExitCode::from(awf_core::recipe::main(&args[1..]).clamp(0, 255) as u8),
         Some("merge-gate") => ExitCode::from(awf_core::merge_gate::main(&args[1..]).clamp(0, 255) as u8),
         Some("sync-branch") => ExitCode::from(awf_core::sync_branch::main(&args[1..]).clamp(0, 255) as u8),

@@ -31,6 +31,7 @@ pub const SUBCOMMANDS: &[&str] = &[
     "golden", "tokens",
     "scrub",
     "kg",
+    "program",
 ];
 /// `awf kg` 的唯讀查詢，以及查詢可以帶的選項（值另外一個參數的、不帶值的）。清單外的選項（`--out`、`--full`…）一律當寫入。
 const KG_QUERIES: &[&str] = &["locate", "trace", "impact", "check", "neighbors"];
@@ -325,6 +326,7 @@ pub enum Deny {
     Deliverables,
     Kb,
     Kg(String),
+    Program(String),
     SaveRun(String),
     State(String),
     Publish,
@@ -415,6 +417,7 @@ impl Call {
             "deliverables" => self.write_sub(&["status", "check", "affected", "--selftest", "-h", "--help"]).map(|_| Deny::Deliverables),
             "kb" => self.write_sub(&["query", "lint", "--selftest", "-h", "--help"]).map(|_| Deny::Kb),
             "kg" => self.kg_deny().map(Deny::Kg),
+            "program" => self.write_sub(&["status", "--selftest", "-h", "--help"]).map(Deny::Program),
             "save-run" => self.write_sub(&["status", "--selftest"]).map(Deny::SaveRun),
             "state" => {
                 if self.first() == "--selftest" { None } else { Some(Deny::State(format!("state {}", self.first()).trim_end().to_string())) }

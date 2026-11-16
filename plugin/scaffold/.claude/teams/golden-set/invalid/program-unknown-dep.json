@@ -1,0 +1,15 @@
+{
+  "schema": "program",
+  "description": "相依指到不存在的 epic",
+  "semantic": true,
+  "data": {
+    "epics": [
+      {
+        "id": "a",
+        "depends_on": [
+          "zzz"
+        ]
+      }
+    ]
+  }
+}

@@ -152,6 +152,7 @@ impl Schemas {
         let mut errs = validate(data, &self.doc_schema(name)?, "$");
         if name == "methodology" && data.is_object() { errs.extend(methodology_errors(data)); }
         if name == "deliverables" && data.is_object() { errs.extend(deliverables_errors(Some(data), "交付設定")); }
+        if name == "program" && data.is_object() { errs.extend(crate::program::semantic_errors(data)); }
         Ok(errs)
     }
 

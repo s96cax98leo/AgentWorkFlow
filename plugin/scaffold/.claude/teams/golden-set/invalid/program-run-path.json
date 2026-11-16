@@ -1,0 +1,12 @@
+{
+  "schema": "program",
+  "description": "run 只能是 runs_dir 底下的目錄名，不能帶路徑",
+  "data": {
+    "epics": [
+      {
+        "id": "a",
+        "run": "../outside"
+      }
+    ]
+  }
+}
