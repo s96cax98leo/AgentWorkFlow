@@ -311,6 +311,15 @@ pub fn constraint_issues(ctx: &Ctx, run: &str, stage: &str, profile: &Value, rep
 /// 一定要有 intent：intent 信封 payload.documents 裡 kind=intent 的檔要存在，而且有必要的節（I1）。
 /// `profile` 是 null 表示沒有 profile；`plan_mode` 是 recipe 的 plan_mode（原值）。
 pub fn intent_errors(ctx: &Ctx, result: &Value, profile: &Value, plan_mode: &Value) -> R<Vec<String>> {
+    let paths = intent_paths(result)?;
+    if paths.is_empty() {
+        return Ok(vec!["intent：回傳的信封 payload.documents 沒有 kind=intent 的文件（一定要有 intent）".to_string()]);
+    }
+    intent_file_errors(ctx, result, &paths, profile, plan_mode)
+}
+
+/// 回傳的信封 payload.documents 裡 kind=intent 的檔（照出現順序、不重複）。
+pub fn intent_paths(result: &Value) -> R<Vec<String>> {
     let mut paths: Vec<String> = Vec::new();
     let empty = json!({});
     for env in envelopes(result) {
@@ -330,13 +339,15 @@ pub fn intent_errors(ctx: &Ctx, result: &Value, profile: &Value, plan_mode: &Val
             }
         }
     }
-    if paths.is_empty() {
-        return Ok(vec!["intent：回傳的信封 payload.documents 沒有 kind=intent 的文件（一定要有 intent）".to_string()]);
-    }
+    Ok(paths)
+}
+
+/// 這幾個 intent 檔要存在，而且有必要的節。
+pub fn intent_file_errors(ctx: &Ctx, result: &Value, paths: &[String], profile: &Value, plan_mode: &Value) -> R<Vec<String>> {
     let epic = result.as_object().and_then(|r| r.get("epic_dir")).and_then(Value::as_str).unwrap_or_default();
     let need = Value::Array(recipe::required_sections(profile, plan_mode).map_err(py::from_recipe)?);
     let mut errs = Vec::new();
-    for raw in &paths {
+    for raw in paths {
         let p = py::pp(raw);
         let mut cands: Vec<String> = Vec::new();
         if !pyish::is_abs(&p) && !epic.is_empty() {

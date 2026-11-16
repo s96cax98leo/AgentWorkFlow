@@ -44,7 +44,7 @@ const DEFAULT_LARGE_FILES: i128 = 20;
 const PASS_CHECK: &[&str] = &["success", "pass"];
 // skipped／neutral 預設不算通過（required check 被跳過＝沒驗到）；只有列在 auto_merge.allowed_skipped_checks 的 check 名稱才算
 const SKIP_CHECK: &[&str] = &["skipped", "skipping", "skip", "neutral"];
-const ADAPTERS: &[&str] = &["json", "command", "spec-md"];
+const ADAPTERS: &[&str] = &["json", "command", "spec-md", "openspec"];
 
 pub const USAGE: &str = "確定性 merge gate（只有 merge 時 exit 0）
 
@@ -57,7 +57,7 @@ pub const USAGE: &str = "確定性 merge gate（只有 merge 時 exit 0）
       --diff <git diff base...head 的輸出檔> \\
       --tests-before N --tests-after N \\
       [--findings <審查發現 JSON> ...] [--reviewed-sha SHA ...] [--base-sha SHA] [--git-dir <repo>] \\
-      [--requirements <路徑>] [--requirements-source json|command|spec-md] \\
+      [--requirements <路徑>] [--requirements-source json|command|spec-md|openspec] [--requirements-change <變更名>] \\
       [--timestamp <ISO 8601>] [--project-dir <專案根>] [--runs-dir <目錄>] [--no-audit] \\
       [--merged-today N] [--frozen <理由>] [--recipe <run.json>]
   awf merge-gate --selftest
@@ -456,8 +456,43 @@ fn adapter_spec_md(path: &str, id_pattern: &Value) -> Result<Vec<Req>, Fail> {
     Ok(out)
 }
 
+/// 需求來源 `openspec`：這次變更（進行中）要驗的每一條情境是一筆需求，id 用規格層的穩定 id。
+/// 變更名稱：`--requirements-change` → 設定的 `requirements.change` → 只有一個進行中的變更時用它；判不出來就是輸入缺漏（hold）。
+/// 規格檢查（`awf spec validate --change`）有問題一樣當成輸入缺漏：差異指到不存在的需求時，對照沒有意義。
+/// 回傳（需求清單、來源標籤）。`save_run` 的規格檢查讀同一份設定（[`crate::spec::source_cfg`]）。
+pub fn adapter_openspec(rc: &Value, proj: &str, change_override: Option<&str>) -> Result<(Vec<Req>, String), Fail> {
+    use crate::spec;
+    let conf = spec::source_cfg(rc, proj).map_err(|e| Fail::Input(format!("需求來源 openspec 的設定不對：{e}")))?;
+    let opened = spec::open_source(&conf).map_err(|e| Fail::Input(format!("讀不到規格目錄 {}：{e}", conf.display)))?;
+    let active = spec::active_changes(&opened.tree);
+    let named = change_override.map(str::trim).filter(|c| !c.is_empty()).map(str::to_string).or_else(|| Some(conf.change.clone()).filter(|c| !c.is_empty()));
+    let change = match named {
+        Some(c) => {
+            spec::check_change_name(&c).map_err(Fail::Input)?;
+            c
+        }
+        None => match active.as_slice() {
+            [one] => (*one).to_string(),
+            [] => return Err(Fail::Input(format!("規格目錄 {} 沒有進行中的變更，不知道這次要對照哪些需求（用 --requirements-change 指定）", conf.display))),
+            many => return Err(Fail::Input(format!("規格目錄 {} 有 {} 個進行中的變更（{}），用 --requirements-change 或 requirements.change 指定這次是哪一個", conf.display, many.len(), many.join("、")))),
+        },
+    };
+    let Some(items) = spec::change_items(&opened.tree, &change) else {
+        return Err(Fail::Input(format!("規格目錄 {} 沒有進行中的變更「{change}」", conf.display)));
+    };
+    let problems = spec::validate(&opened.tree, &opened.ids, Some(&change));
+    if let Some(first) = problems.first() {
+        return Err(Fail::Input(format!("變更「{change}」的規格檢查有 {} 項問題（awf spec validate --change {change}）：{}", problems.len(), spec::format_problem(&conf.display, first))));
+    }
+    if items.is_empty() {
+        return Err(Fail::Input(format!("變更「{change}」的規格差異沒有任何要驗的需求或情境（ADDED／MODIFIED 是空的）")));
+    }
+    let reqs = items.into_iter().map(|i| Req { source: format!("{}/{}:{}", conf.display, i.file, i.line), id: i.id, text: i.title }).collect();
+    Ok((reqs, format!("openspec:{}#{change}", conf.display)))
+}
+
 /// 需求設定「有設」＝path 或 command 不是空的（還沒替換的佔位符當成空）。
-fn configured(rc: &Value) -> bool {
+pub(crate) fn configured(rc: &Value) -> bool {
     if !rc.is_object() { return false; }
     ["path", "command"].iter().any(|k| {
         let v = g(rc, k);
@@ -492,7 +527,7 @@ fn requirements_config(cfg: &Value, proj: &str) -> Result<(Value, &'static str),
     Ok((rc, "guard.config.json"))
 }
 
-fn load_requirements(ctx: &Ctx, cfg: &Value, proj: &str, path_override: Option<&str>, source_override: Option<&str>, env_extra: &[(&str, String)]) -> Result<(Vec<Req>, String), Fail> {
+fn load_requirements(ctx: &Ctx, cfg: &Value, proj: &str, path_override: Option<&str>, source_override: Option<&str>, change_override: Option<&str>, env_extra: &[(&str, String)]) -> Result<(Vec<Req>, String), Fail> {
     let (rc, origin) = requirements_config(cfg, proj)?;
     let path_override = path_override.filter(|p| !p.is_empty());
     let source: Value = match source_override.filter(|s| !s.is_empty()) {
@@ -514,6 +549,14 @@ fn load_requirements(ctx: &Ctx, cfg: &Value, proj: &str, path_override: Option<&
         },
     };
     let path = if raw.is_empty() { None } else { Some(pyutil::join(proj, &raw)) };
+    if source == "openspec" {
+        let mut conf = if rc.is_object() { rc.clone() } else { json!({}) };
+        if let (Some(p), Some(o)) = (path_override, conf.as_object_mut()) {
+            o.insert("path".into(), json!(p));
+        }
+        let (reqs, label) = adapter_openspec(&conf, proj, change_override)?;
+        return Ok((reqs, if origin == "methodology.json" && path_override.is_none() { format!("{label}（methodology.json）") } else { label }));
+    }
     let reqs = match (source, &path) {
         ("command", _) => adapter_command(ctx, g(&rc, "command"), proj, env_extra)?,
         (_, None) => return Err(Fail::Input("沒有需求來源：請在 guard.config.json 或 .claude/teams/methodology.json 設 requirements.path，或帶 --requirements".into())),
@@ -1361,7 +1404,8 @@ const OPTS: &[Opt] = &[
     opt("--git-dir", Kind::Str),
     opt("--evidence", Kind::Str),
     opt("--requirements", Kind::Str),
-    opt("--requirements-source", Kind::Choice(&["command", "json", "spec-md"])),
+    opt("--requirements-source", Kind::Choice(&["command", "json", "openspec", "spec-md"])),
+    opt("--requirements-change", Kind::Str),
     opt("--checks", Kind::Str),
     opt("--findings", Kind::Append),
     opt("--diff", Kind::Str),
@@ -1459,7 +1503,7 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
     })())?;
     attempt((|| {
         let env = [("AWF_REPO", inp.repo.clone()), ("AWF_PR", inp.pr.to_string()), ("AWF_HEAD_SHA", inp.head_sha.clone())];
-        let (reqs, source) = load_requirements(ctx, cfg, proj, a.get("--requirements"), a.get("--requirements-source"), &env)?;
+        let (reqs, source) = load_requirements(ctx, cfg, proj, a.get("--requirements"), a.get("--requirements-source"), a.get("--requirements-change"), &env)?;
         inp.requirements = Some(reqs);
         inp.requirements_source = source;
         Ok(())

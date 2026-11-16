@@ -8,6 +8,7 @@
   "additionalProperties": false,
   "properties": {
     "v": {"const": 1},
+    "schema_version": {"type": "integer", "minimum": 1, "description": "格式版本。只加欄位時不變；欄位改名、移除或換意思才遞增"},
     "run": {"type": "string", "minLength": 1},
     "event": {"type": "string"},
     "target": {"type": "string"},
@@ -40,7 +41,10 @@
           },
           "agents": {"type": "integer", "minimum": 0},
           "agents_missing": {"type": "integer", "minimum": 0},
-          "missing_records": {"type": "integer", "minimum": 0}
+          "missing_records": {"type": "integer", "minimum": 0},
+          "skipped": {"type": "boolean", "description": "recipe 跳過的段（這個需求類型不跑這一段）"},
+          "spec_issues": {"type": "integer", "minimum": 0, "description": "規格檢查的問題數（需求來源是 openspec 才會有）"},
+          "link_gaps": {"type": "integer", "minimum": 0, "description": "連結不齊的條數（profile 有 links 才會有）"}
         }
       }
     },

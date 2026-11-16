@@ -202,6 +202,14 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **守門**：team agent 只能跑 `awf deliverables status`／`check`／`affected`（`save_run_write` 會展開 `bash -c`、`eval`、`pwsh -Command` 的內層指令，`xargs` 這類轉呼叫看不到子指令就當寫入；save_run、pack、kb 同樣適用）；`deliverables.json`、`deliverables.state.json` 在 `.claude/teams/`，team agent 寫不到。
 - 測試：`awf deliverables --selftest`、`awf pack --selftest` 與 `awf state --selftest` 的交付案例、`plugin/workflow-templates/scenarios/sdlc-deliver.mjs`／`sdlc-design.mjs` 的「交付文件」情境、hook 測試的 C1／C2 案例、golden 的 `deliverables*`、`methodology-deliverables*`。說明在 `docs/交付文件.md`。
 
+### 規格層與連結接進存檔與閘門（1.0）
+
+- **需求來源 `openspec`**：`crates/awf-core/src/spec/source.rs`（`source_cfg`、`change_items`、`known_ids`、`proposal_missing`、`DEFAULT_SECTION_MAP`）是 save-run 與 merge-gate 共用的介面；`merge_gate::adapter_openspec` 取需求清單，`save_run/speccheck.rs` 做 intent（proposal 對必要節）與 design／test 的 id 核對（`spec_issues`）。只有實際採用的需求來源是 openspec 時才啟用；`approve --by policy` 重算、人工核准只警告。
+- **連結帳本**：`save_run/links.rs`。`<runs_dir>/links.jsonl` 只附加，格式 `schemas/link.schema.json`；重存有變時先寫 `op: supersede` 再寫新的，一樣就不寫。寫入失敗只警告，閘門不讀它。檔名在 `hooks/guard.rs` 的 `SHARED_CONTEXT_NAMES`，team agent 不能寫。
+- **連結檢查**：`links::link_gaps` 只讀 design.json、test.json、run.json（不讀帳本）。profile 有 `links` 物件才做；`links.enforce` 開啟時有缺口不能政策核准。
+- **對外介面**：`awf save-run status --json` 與 `progress.jsonl` 帶 `schema_version`（`STATUS_SCHEMA_VERSION`、`watch::PROGRESS_SCHEMA_VERSION`），同版本內只加不改；status 的每段有 `skipped`。承諾寫在 `docs/監控與整合.md`〈相容承諾〉。
+- 測試：`awf save-run --selftest` 的 1.0 案例（`save_run/selftest_v1.rs`）、golden 的 `methodology-openspec*`、`methodology-links*`、`link*`、hook 案例的「D1 連結帳本」。
+
 ### 平行處理
 
 - **`sdlc-design`**：先由 dev-spec-author 出大綱（`plan-outline`）。預估子任務超過 `parallelism.split_threshold`，或有多個可以各自規劃的區塊時，拆成最多 `max_sub_plans` 個子計劃。每個子計劃由一個 dev-spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，不 commit；最後由一個 dev-spec-author 彙整並 commit。跨子計劃的相依寫成 `@<子計劃 id>`，由 workflow 展開；指向不存在、沒有子任務或自己的子計劃時 halted。
@@ -310,6 +318,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改讀取預算**：`tests/hooks/cases.jsonl` 的 A2 一段補該擋與該放（Bash 與 PowerShell 各一），並確認效能檢查（計數路徑 50ms 內）仍通過；任何新的失敗路徑都要放行。
 - **改 awf pack／awf kb／awf locate**：各自的 `--selftest`；改了子任務資料包的路徑或 `pack-args.json` 的鍵，`sdlc-build.js` 的 `taskPack`／`REF_ERRS` 與 `plugin/workflow-templates/scenarios/sdlc-build.mjs` 的「子任務資料包」情境要一起改；改了 `awf locate` 的輸出格式，`sdlc-plan.js` 的 `toolLocated` 與 `plugin/workflow-templates/scenarios/sdlc-plan.mjs` 的「工具先定位」情境要一起改；`pack.md` 的內容不能有時間戳或絕對路徑以外會變動的東西（可重現是 `cargo xtask bench --selftest` 的檢查項）。
 - **改交付文件**：`awf deliverables --selftest`；改了型錄的欄位，`schemas/deliverables.schema.json`、`methodology.schema.json` 的 `deliverables`、`docs/交付文件.md` 一起改；改了 `pack_args` 的輸出鍵，`sdlc-design.js`／`sdlc-deliver.js` 與 `plugin/workflow-templates/scenarios/` 的「交付文件」情境一起改；隱私規則只能加不能拿掉（交付文件給外部的人看）。
+- **改規格檢查、連結或對外介面**：`awf save-run --selftest`；沒啟用時輸出要逐字相同（`tests/parity/` 的基準不該變）；連結種類或欄位改了，`schemas/link.schema.json` 與 `docs/自訂與擴充.md`〈連結〉一起改；`status --json` 或進度事件拿掉、改名欄位要遞增 `schema_version` 並寫 CHANGELOG。
 - **改 doctor**：`awf doctor --selftest`；新的檢查項要有修法（`fix`），而且單項出錯不能讓整支失敗。
 - **改 watcher**：`awf watch --selftest`；事件類型或欄位改了，`schemas/progress-event.schema.json`、`methodology.schema.json` 的 `progress.notify.events`、`docs/監控與整合.md` 的事件表要一起改；送給外部指令的欄位只能加進 `NOTIFY_FIELDS`（不放需求內容、摘要、路徑）；任何失敗都只警告。
 - **改派工單或派工數**：跑 `cargo xtask check-budget`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。

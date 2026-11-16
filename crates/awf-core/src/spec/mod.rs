@@ -7,16 +7,19 @@
 //! - `check`：validate。
 //! - `apply`：把差異併回現行規格並歸檔（先算好、再一次寫入，失敗還原）。
 //! - `diff`：unified diff。
+//! - `source`：給流程用的介面（需求來源 adapter、存檔與閘門的檢查）。
 
 pub mod apply;
 pub mod check;
 pub mod diff;
 pub mod ids;
 pub mod read;
+pub mod source;
 
 pub use apply::{commit, merge_text, plan, FileWrite, Plan};
 pub use check::{cross_check, format_problem, validate};
 pub use ids::{assign, load_registry, registry_text, slugify, write_registry, IdOptions, IdReport, Pending, RegEntry, Registry};
+pub use source::{active_changes, change_items, change_requirements, known_ids, locate, open_source, proposal_missing, section_aliases, source_cfg, Item, SourceCfg, DEFAULT_SECTION_MAP, SCENARIOS_TOKEN};
 pub use read::{load, Capability, Change, ChangeState, Delta, DeltaKind, Found, Problem, Rename, Requirement, Scenario, Span, TaskStats, Tree};
 
 use read::clean;

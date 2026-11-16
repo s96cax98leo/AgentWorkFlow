@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "link.schema.json",
+  "title": "連結帳本 <runs_dir>/links.jsonl 的一行",
+  "description": "awf save-run 在每段存檔時附加的連結（profile 有 links 才寫）。只追加：重存同一段而內容有變時，先寫一筆 op=supersede（只有 schema_version、op、run、stage 四個欄位），表示同一個 run、同一段在它之前的連結全部作廢，再寫新的；內容沒變就不寫。讀的時候照順序套用。op=add 的行一定有 kind、from、to、source、strength。帳本是給知識圖用的；閘門的連結檢查不讀它。",
+  "type": "object",
+  "required": ["schema_version", "op", "run", "stage"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1, "description": "格式版本。只加欄位或連結種類時不變；欄位改名、移除或換意思才遞增"},
+    "op": {"enum": ["add", "supersede"], "description": "add＝一條連結；supersede＝這個 run 這一段先前的連結作廢"},
+    "kind": {"enum": ["req_run", "ac_spec", "ac_file", "ac_test", "ac_commit", "decision_req", "change_deliverable"], "description": "req_run 需求→run；ac_spec 驗收條件→spec 小節；ac_file 驗收條件→檔案；ac_test 驗收條件→測試；ac_commit 驗收條件→commit；decision_req 決策→需求；change_deliverable 改動（run）→交付文件小節"},
+    "from": {
+      "type": "object",
+      "required": ["type", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["requirement", "change", "run", "ac", "spec", "file", "test", "commit", "decision", "deliverable"]},
+        "id": {"type": "string", "minLength": 1}
+      }
+    },
+    "to": {
+      "type": "object",
+      "required": ["type", "id"],
+      "additionalProperties": false,
+      "description": "節點的 id：ac、requirement、spec 在需求來源是 openspec 時是規格層的穩定 id（否則 ac 是「AC-…」編號、requirement 是 epic 名、spec 是子任務 spec_refs 的原文）；change 是變更名稱；run 是 run 目錄名；file 是子任務的 owns 或實際改到的檔；test 是驗證指令裡的檔名（找不到檔名時是指令本身）；commit 是 SHA；decision 是 decisions.jsonl 那一行內容的 sha1 前 12 碼；deliverable 是「文件 id#小節」",
+      "properties": {
+        "type": {"enum": ["requirement", "change", "run", "ac", "spec", "file", "test", "commit", "decision", "deliverable"]},
+        "id": {"type": "string", "minLength": 1}
+      }
+    },
+    "run": {"type": "string", "minLength": 1, "description": "run 目錄名"},
+    "stage": {"type": "string", "minLength": 1, "description": "哪一段寫的：plan、design、build、test、deliver、merge；決策連結是 approve:<段> 或 decide"},
+    "source": {"type": "string", "minLength": 1, "description": "這條連結取自哪個欄位，例如 design.json:subtasks[t1].spec_refs"},
+    "strength": {"enum": ["strong"], "description": "宣告出來的連結一律是 strong"}
+  }
+}

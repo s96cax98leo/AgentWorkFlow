@@ -134,6 +134,14 @@
         "dir": {"type": "string", "minLength": 1, "description": "索引與檢視（INDEX.md、cards/、hot.md）放哪；預設 _tpm/kb"}
       }
     },
+    "links": {
+      "type": "object",
+      "description": "選填：連結帳本與連結檢查。有這個物件，awf save-run 每段存檔時把宣告的連結記進 <runs_dir>/links.jsonl，並檢查每條驗收條件有沒有 spec 小節、檔案、測試、commit；沒寫＝都不做",
+      "additionalProperties": false,
+      "properties": {
+        "enforce": {"type": "boolean", "description": "true＝連結不齊就不能政策核准；false（預設）＝只列警告"}
+      }
+    },
     "progress": {
       "type": "object",
       "description": "選填：進度監看（awf watch）。不設就只寫 <run_dir>/progress.jsonl，不呼叫任何外部指令",
@@ -411,8 +419,10 @@
       "description": "需求來源；格式同 awf merge-gate 的 adapter（guard.config.json 的 requirements）。guard.config.json 沒設 path／command 時，merge_gate 讀這裡",
       "required": ["source"],
       "properties": {
-        "source": {"type": "string", "enum": ["json", "command", "spec-md"]},
+        "source": {"type": "string", "enum": ["json", "command", "spec-md", "openspec"], "description": "openspec＝規格層（awf spec）：path 是規格根目錄（預設 openspec，可以是另一個 repo 的絕對路徑），需求與驗收條件用規格的穩定 id；選了它，awf save-run 才會做規格檢查"},
         "path": {"type": "string"},
+        "change": {"type": "string", "minLength": 1, "description": "source=openspec 才用：這個專案目前對應的變更名稱（changes/ 底下的目錄名）。通常不用寫：save-run 先看 run.json 的 args.change，再看這裡，再用 epic 名"},
+        "section_map": {"type": "object", "description": "source=openspec 才用：intent 的必要節 → proposal 裡算數的節名（標題含這個字就算）。有寫的那一項整項取代內建的對照；「@scenarios」表示變更的規格差異裡有情境就算有這一節", "additionalProperties": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}},
         "command": {"type": "string"},
         "id_pattern": {"type": "string"},
         "notes": {"type": "string"}

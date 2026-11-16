@@ -14,7 +14,9 @@ const SKEPTIC: &str = "agent-workflow:tpm-skeptic";
 
 /// 判定程式的原始碼（不含這支 selftest）：B4.2 用來確認它們不讀 watcher 的兩個檔。
 /// publish 還沒移植完，等它移植時在自己的 selftest 檢查。
-const SOURCES: [&str; 9] = [
+const SOURCES: [&str; 11] = [
+    include_str!("speccheck.rs"),
+    include_str!("links.rs"),
     include_str!("mod.rs"),
     include_str!("cli.rs"),
     include_str!("policy.rs"),
@@ -1067,6 +1069,8 @@ pub fn selftest(ctx: &Ctx, out: &mut String) -> i32 {
     );
     check!("B4.2 事件檔：save_run、publish、merge_gate 的判定程式不讀這兩個檔", SOURCES.iter().all(|src| !src.contains(&events) && !src.contains(".watch-state")));
     let _ = std::fs::remove_dir_all(&tmp);
+    // ── 1.0：規格層、連結帳本、連結檢查、對外介面（各有該擋、該放、沒啟用時不變）
+    ok_all = super::selftest_v1::run(ctx, out) && ok_all;
     out.push_str(&format!("save_run selftest：{}\n", if ok_all { "全部通過" } else { "有失敗" }));
     i32::from(!ok_all)
 }

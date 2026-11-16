@@ -7,6 +7,8 @@
 //! - `policy`：政策核准的判定、recipe 的一致與竄改檢查、整條閘門鏈、開發規範 profile 的讀法。
 //! - `checks`：限制文件、拆工檢查、intent 檢查。
 //! - `decisions`：決策記憶的輸入檢查與寫入。
+//! - `speccheck`：規格層接進存檔與閘門（需求來源是 openspec 時的 intent、design、test 檢查）。
+//! - `links`：連結帳本（links.jsonl）與閘門端的連結檢查。
 //! - `archive`：結案摘要、狀態快照、context.md、recipe 摘要。
 //! - `cli`：各個子指令（init、stage、approve、decide、escalate、followup、close、abandon、archive、status）。
 //! - `selftest`：`--selftest`。
@@ -24,21 +26,26 @@ mod archive;
 mod checks;
 mod cli;
 mod decisions;
+mod links;
 mod policy;
 pub(crate) mod py;
 mod selftest;
+mod selftest_v1;
+mod speccheck;
 mod trace;
 
 pub use crate::kb::PyErr;
 pub use archive::{archive_text, clip, next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
-pub use checks::{ac_ids, constraint_file, constraint_issues, constraint_rows, intent_errors, plan_check_for, plan_check_issues, result_subtasks, CONSTRAINT_CHECK_TIMEOUT, CONSTRAINT_VERDICTS};
+pub use checks::{ac_ids, constraint_file, constraint_issues, constraint_rows, intent_errors, intent_file_errors, intent_paths, plan_check_for, plan_check_issues, result_subtasks, CONSTRAINT_CHECK_TIMEOUT, CONSTRAINT_VERDICTS};
 pub use cli::{approve, run, stage, USAGE};
 pub use decisions::{decision_errors, record_decisions, split_answer};
+pub use links::{ac_tokens, active_links, decision_links, link_gaps, link_gaps_of, links_setting, stage_links, test_targets, write_links, GAP_STAGES, LEDGER, LINK_KINDS, LINK_SCHEMA_VERSION};
 pub use policy::{
     abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, recipe_mismatch, recipe_tamper_errors,
     required_roles_missing, REVIEW_ROLES,
 };
 pub use selftest::selftest;
+pub use speccheck::{criteria_rows, intent_errors_spec, lead_token, open_spec, spec_issues, spec_setting, SpecCtx};
 pub use trace::{envelope_of, envelopes, ghostwrite, is_envelope, md_cell, md_cell_str, missing_agents, model_errors, process_trace, record_candidates, retried_ok, Row};
 
 use crate::kb::pyish;
@@ -60,6 +67,8 @@ pub const INDEX_NAME: &str = "執行紀錄索引.md";
 pub const STEWARD: &str = "dev-merge-steward";
 pub const GHOSTWRITTEN: &str = "由 save_run 代寫";
 pub const BLOCKING_SEVERITIES: [&str; 2] = ["blocker", "important"];
+/// `awf save-run status --json` 的格式版本：只加欄位時不變，欄位改名、移除或換意思才遞增（相容承諾見 docs/監控與整合.md）。
+pub const STATUS_SCHEMA_VERSION: u64 = 1;
 /// 已經改用執行核心（kernel 片段）的段：profile 有設 models 時，trace 每筆都要有 model 與 tier。0.5 起 SDLC 每一段都是。
 pub const KERNEL_STAGES: [&str; 7] = ["plan", "design", "build", "sync", "test", "deliver", "merge"];
 

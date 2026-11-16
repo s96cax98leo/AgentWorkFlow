@@ -50,9 +50,11 @@ pub const EVENT_TYPES: [&str; 11] = [
     "run_state", "stage_started", "stage_saved", "waiting_gate", "stage_approved", "record_written",
     "agent_started", "agent_progress", "workflow_finished", "workflow_stalled", "watch_note",
 ];
+/// `progress.jsonl` 事件的格式版本：只加欄位或事件類型時不變，欄位改名、移除或換意思才遞增（相容承諾見 docs/監控與整合.md）。
+pub const PROGRESS_SCHEMA_VERSION: u64 = 1;
 /// 送給外部指令（notify）的欄位白名單：都是狀態與數字，沒有需求內容、摘要、問題、路徑。
-pub const NOTIFY_FIELDS: [&str; 18] = [
-    "v", "seq", "at", "type", "run", "stage", "status", "state", "by", "kind", "label", "role", "model", "tokens", "requests",
+pub const NOTIFY_FIELDS: [&str; 19] = [
+    "v", "schema_version", "seq", "at", "type", "run", "stage", "status", "state", "by", "kind", "label", "role", "model", "tokens", "requests",
     "idle_seconds", "workflow", "wf_run",
 ];
 pub static SECRETISH: Re = Re::new(
@@ -722,6 +724,7 @@ pub fn tick(ctx: &Ctx, run: &str, tr: Option<&mut Transcripts>, stall_seconds: i
         seq = seq.saturating_add(1);
         let mut m = Map::new();
         m.insert("v".into(), json!(1));
+        m.insert("schema_version".into(), json!(PROGRESS_SCHEMA_VERSION));
         m.insert("seq".into(), json!(seq));
         m.insert("at".into(), json!(at));
         m.insert("run".into(), f(&snap, "run").clone());
