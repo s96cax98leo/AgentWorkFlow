@@ -157,8 +157,9 @@ impl Schemas {
     /// 獨立文件（methodology、deliverables）：schema＋語意規則。
     pub fn check_doc(&self, data: &Value, name: &str) -> Result<Vec<String>, String> {
         let mut errs = validate(data, &self.doc_schema(name)?, "$");
-        if name == "methodology" && data.is_object() { errs.extend(methodology_errors(data)); }
-        if name == "deliverables" && data.is_object() { errs.extend(deliverables_errors(Some(data), "交付設定")); }
+        // 型別錯誤 JSON Schema 已經報過（上一行），語意規則這裡不重複報
+        if name == "methodology" && data.is_object() { errs.extend(methodology_errors_with(data, false)); }
+        if name == "deliverables" && data.is_object() { errs.extend(deliverables_errors_with(Some(data), "交付設定", false)); }
         if name == "program" && data.is_object() { errs.extend(crate::program::semantic_errors(data)); }
         Ok(errs)
     }
@@ -584,8 +585,17 @@ fn dup_strings(vals: &[Option<&Value>]) -> BTreeSet<String> {
 }
 
 /// 開發規範 profile 的語意規則（schema 表達不了的部分）。
+/// 清單與物件欄位的型別也在這裡檢查：閘門讀 profile（`save_run::load_profile`、merge gate）只跑這個函式，沒有 JSON Schema 先擋。
 pub fn methodology_errors(doc: &Value) -> Vec<String> {
+    methodology_errors_with(doc, true)
+}
+
+/// `typed`：要不要回報「型別不對」。[`Schemas::check_doc`] 已經跑過 JSON Schema（同一個欄位的型別錯誤它報過了），傳 false 不重複報；
+/// 型別不對的欄位不管回不回報，都當成空的繼續檢查其他規則。
+fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
     let mut errs = Vec::new();
+    // JSON Schema 也擋得到的型別錯誤先收在這裡，最後依 typed 決定要不要回報
+    let mut terrs: Vec<String> = Vec::new();
     let rx = get(doc, "conventions").and_then(|c| get(c, "commit")).and_then(|c| get(c, "check_regex")).and_then(Value::as_str);
     if let Some(rx) = rx.filter(|r| !r.is_empty()) {
         if let Err(e) = Regex::new(rx) {
@@ -599,18 +609,23 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
         }
     }
     // 清單不能有重複的項目（schema 的檢查器沒有 uniqueItems）
-    let record_sections: Vec<Option<&Value>> = items(get(doc, "stages").and_then(|s| get(s, "deliver")).and_then(|d| get(d, "record_sections"))).iter().map(Some).collect();
+    // 以下幾個清單欄位：型別不對記錯誤（閘門讀 profile 時只跑這裡，沒有 JSON Schema 先擋；當成沒寫就什麼都沒檢查到）
+    let record_sections: Vec<Option<&Value>> =
+        list_of(get(doc, "stages").and_then(|s| get(s, "deliver")).and_then(|d| get(d, "record_sections")), "stages.deliver.record_sections", &mut terrs).iter().map(Some).collect();
     for n in dup_strings(&record_sections) {
         errs.push(format!("stages.deliver.record_sections 的「{n}」重複"));
     }
-    let code_tools: Vec<Option<&Value>> = items(get(doc, "knowledge").and_then(|k| get(k, "code_tools"))).iter().map(Some).collect();
+    if let Some(k) = get(doc, "knowledge").filter(|k| !k.is_null() && !k.is_object()) {
+        terrs.push(format!("knowledge 要是物件（收到 {}）", type_name(k)));
+    }
+    let code_tools: Vec<Option<&Value>> = list_of(get(doc, "knowledge").and_then(|k| get(k, "code_tools")), "knowledge.code_tools", &mut terrs).iter().map(Some).collect();
     for n in dup_strings(&code_tools) {
         errs.push(format!("knowledge.code_tools 的「{n}」重複"));
     }
     // 知識圖另外收的 repo（knowledge.repos）：id 不重複；
     // sources 是相對那個 repo 的 glob（不能是絕對路徑或含 ..），不能指名機敏檔；spec_root 要在專案裡
     if let Some(know) = get(doc, "knowledge").filter(|k| k.is_object()) {
-        let repos: Vec<&Value> = items(get(know, "repos")).iter().filter(|r| r.is_object()).collect();
+        let repos: Vec<&Value> = objects_of(get(know, "repos"), "knowledge.repos", &mut terrs);
         for n in dup_strings(&repos.iter().map(|r| get(r, "id")).collect::<Vec<_>>()) {
             errs.push(format!("knowledge.repos 的 id「{n}」重複"));
         }
@@ -620,7 +635,7 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             if get(r, "path").and_then(Value::as_str).is_some_and(|p| p.trim().is_empty() || p.contains('\0')) {
                 errs.push(format!("knowledge.repos[{rid}].path 不能是空白"));
             }
-            for g in items(get(r, "sources")).iter().filter_map(Value::as_str) {
+            for g in strings_of(get(r, "sources"), &format!("knowledge.repos[{rid}].sources"), &mut terrs).into_iter().filter_map(Value::as_str) {
                 if outside(g) {
                     errs.push(format!("knowledge.repos[{rid}].sources 要是相對那個 repo 的 glob，不能是絕對路徑或含 ..（收到 {g}）"));
                 } else if sensitive.is_match(&g.replace('\\', "/")) {
@@ -644,15 +659,24 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
         n.filter(|n| (lo..=hi).contains(n)).unwrap_or(d) as usize
     };
     let (max_angles, max_steps) = (ev_limit("max_angles", 1, 16, EVENT_MAX_ANGLES), ev_limit("max_steps", 0, 6, EVENT_MAX_STEPS));
+    if let Some(v) = get(doc, "events").filter(|v| !v.is_null() && !v.is_object()) {
+        terrs.push(format!("events 要是物件（事件名 → 定義；收到 {}）", type_name(v)));
+    }
     if let Some(events) = obj(get(doc, "events")) {
         for (name, ev) in events {
-            if !ev.is_object() { continue; }
-            let n_angles = items(get(ev, "gather").and_then(|g| get(g, "angles"))).len();
+            if !ev.is_object() {
+                terrs.push(format!("events[{name}] 要是物件（收到 {}）", type_name(ev)));
+                continue;
+            }
+            // 型別先看過：角度、前後步驟、data 都要是物件的陣列（型別不對時上限、重複、from 都檢查不到）
+            let angles = objects_of(get(ev, "gather").and_then(|g| get(g, "angles")), &format!("events[{name}].gather.angles"), &mut terrs);
+            let before_steps = objects_of(get(ev, "before"), &format!("events[{name}].before"), &mut terrs);
+            let after_steps = objects_of(get(ev, "after"), &format!("events[{name}].after"), &mut terrs);
+            let n_angles = angles.len();
             if n_angles > max_angles {
                 errs.push(format!("events[{name}].gather.angles 有 {n_angles} 個，超過上限 {max_angles}（limits.event.max_angles；沒寫用 {EVENT_MAX_ANGLES}，最多 16）"));
             }
-            for k in ["before", "after"] {
-                let n_steps = items(get(ev, k)).len();
+            for (k, n_steps) in [("before", before_steps.len()), ("after", after_steps.len())] {
                 if n_steps > max_steps {
                     errs.push(format!("events[{name}].{k} 有 {n_steps} 步，超過上限 {max_steps}（limits.event.max_steps；沒寫用 {EVENT_MAX_STEPS}，最多 6）"));
                 }
@@ -663,7 +687,7 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             if EVENT_RESERVED.contains(&name.as_str()) {
                 errs.push(format!("events 不能用「{name}」當事件名（已經是別的流程或 SDLC 的段）"));
             }
-            let steps: Vec<&Value> = ["before", "after"].iter().flat_map(|k| items(get(ev, k)).iter()).filter(|s| s.is_object()).collect();
+            let steps: Vec<&Value> = before_steps.iter().chain(after_steps.iter()).copied().collect();
             let names: Vec<String> = steps.iter().map(|s| str_opt(get(s, "name"))).collect();
             let labels: Vec<String> = steps.iter().map(|s| str_opt(get(s, "label"))).collect();
             let uniq = |v: &[String]| v.iter().collect::<HashSet<_>>().len() == v.len();
@@ -671,7 +695,7 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
                 errs.push(format!("events[{name}] 的 before／after 步驟 name 或 label 重複"));
             }
             let gather = get(ev, "gather").filter(|g| g.is_object());
-            let keys: Vec<String> = items(gather.and_then(|g| get(g, "angles"))).iter().filter(|a| a.is_object()).map(|a| str_opt(get(a, "key"))).collect();
+            let keys: Vec<String> = angles.iter().map(|a| str_opt(get(a, "key"))).collect();
             if !uniq(&keys) {
                 errs.push(format!("events[{name}].gather.angles 的 key 重複"));
             }
@@ -680,13 +704,12 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             if clash || glabel == "write" || glabel == "challenge" {
                 errs.push(format!("events[{name}] 的 label 和 challenge、write 或角度的 label 撞名"));
             }
-            let before: BTreeSet<String> = items(get(ev, "before")).iter().filter(|s| s.is_object()).map(|s| str_opt(get(s, "name"))).collect();
+            let before: BTreeSet<String> = before_steps.iter().map(|s| str_opt(get(s, "name"))).collect();
             let mut write_pool: BTreeSet<String> = names.iter().cloned().collect();
             for k in ["all", "kept", "doubted", "doubted_ids"] { write_pool.insert(k.into()); }
             for (place, pool) in [("gather", &before), ("write", &write_pool)] {
                 let part = get(ev, place).filter(|p| p.is_object());
-                for d in items(part.and_then(|p| get(p, "data"))) {
-                    if !d.is_object() { continue; }
+                for d in objects_of(part.and_then(|p| get(p, "data")), &format!("events[{name}].{place}.data"), &mut terrs) {
                     let from = get(d, "from");
                     let hit = matches!(from, Some(Value::String(s)) if pool.contains(s));
                     if !hit {
@@ -740,7 +763,7 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             }
         }
     }
-    let ext_names: Vec<Value> = items(get(doc, "extensions")).iter().filter(|e| e.is_object()).map(|e| get(e, "name").cloned().unwrap_or(Value::Null)).collect();
+    let ext_names: Vec<Value> = objects_of(get(doc, "extensions"), "extensions", &mut terrs).into_iter().map(|e| get(e, "name").cloned().unwrap_or(Value::Null)).collect();
     let mut dup: Vec<String> = ext_names.iter().filter(|x| ext_names.iter().filter(|y| pyfmt::eq(x, y)).count() > 1).map(str_of).collect();
     dup.sort();
     dup.dedup();
@@ -832,7 +855,13 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             }
         }
     }
-    errs.extend(deliverables_errors(get(doc, "deliverables"), "deliverables"));
+    if let Some(v) = get(doc, "deliverables").filter(|v| !v.is_null() && !v.is_object()) {
+        terrs.push(format!("deliverables 要是物件（收到 {}）", type_name(v)));
+    }
+    errs.extend(deliverables_errors_with(get(doc, "deliverables"), "deliverables", typed));
+    if typed {
+        errs.extend(terrs);
+    }
     // 去客戶化掃描（awf scrub）：路徑要在專案裡、規則要編得過（訊息只說第幾條，不印規則）、when 只能是做得到的時機
     if let Some(scrub) = get(doc, "scrub").filter(|s| !s.is_null()) {
         errs.extend(crate::scrub::config_errors(scrub));
@@ -846,7 +875,13 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
 
 /// 交付設定的語意規則（profile 的 deliverables 與專案的 deliverables.json 共用）。
 pub fn deliverables_errors(d: Option<&Value>, place: &str) -> Vec<String> {
+    deliverables_errors_with(d, place, true)
+}
+
+/// `typed` 同 [`methodology_errors_with`]。
+fn deliverables_errors_with(d: Option<&Value>, place: &str, typed: bool) -> Vec<String> {
     let mut errs = Vec::new();
+    let mut terrs: Vec<String> = Vec::new();
     let Some(d) = d.filter(|d| d.is_object()) else { return errs };
     for key in ["dir", "repo", "banned_terms_file"] {
         if let Some(v) = get(d, key).and_then(Value::as_str).filter(|v| !v.is_empty()) {
@@ -861,13 +896,14 @@ pub fn deliverables_errors(d: Option<&Value>, place: &str) -> Vec<String> {
             errs.push(format!("{place}.banned_terms_file 不能是機敏檔（{bt}）"));
         }
     }
-    let docs: Vec<&Value> = items(get(d, "documents")).iter().filter(|x| x.is_object()).collect();
+    // 型別不對記錯誤：這幾個清單管的是路徑範圍與隱私放行，當成沒寫就檢查不到
+    let docs: Vec<&Value> = objects_of(get(d, "documents"), &format!("{place}.documents"), &mut terrs);
     for n in dup_strings(&docs.iter().map(|x| get(x, "id")).collect::<Vec<_>>()) {
         errs.push(format!("{place}.documents 的 id「{n}」重複"));
     }
     for x in &docs {
         let xid = str_opt(get(x, "id"));
-        for g in items(get(x, "sources")) {
+        for g in strings_of(get(x, "sources"), &format!("{place}.documents[{xid}].sources"), &mut terrs) {
             if let Some(gs) = g.as_str() {
                 if outside(gs) {
                     errs.push(format!("{place}.documents[{xid}].sources 的 glob 要相對目標 repo，不能是絕對路徑或含 ..（收到 {gs}）"));
@@ -881,9 +917,12 @@ pub fn deliverables_errors(d: Option<&Value>, place: &str) -> Vec<String> {
             }
         }
     }
-    for rx in items(get(d, "privacy_allow")) {
+    for rx in list_of(get(d, "privacy_allow"), &format!("{place}.privacy_allow"), &mut terrs) {
         let ok = rx.as_str().is_some_and(|s| Regex::new(s).is_ok());
         if !ok { errs.push(format!("{place}.privacy_allow 有寫壞的正規式")); }
+    }
+    if typed {
+        errs.extend(terrs);
     }
     errs
 }
