@@ -501,6 +501,136 @@ fn t11_bad_classes_escalate() {
     }
 }
 
+// ------------------------------------------------------------------ T15：專案另外加的機敏樣式（hook、kb、kg）
+
+const DEV: &str = "agent-workflow:dev-implementer";
+
+/// 一個有守門設定的專案；`extra` 併進 guard.config.json。
+fn guarded(tag: &str, extra: Value) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("ws");
+    mk(&root, &builtin_profile(json!({})));
+    let mut cfg = json!({"runs_dir": "_runs", "fork_repo": "acme-fork/app", "writer_dirs": ["_runs", "docs"]});
+    for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+        cfg[k] = v;
+    }
+    write_json(&root.join(".claude/teams/guard.config.json"), &cfg);
+    (t, root)
+}
+
+/// 跑一次 hook；回（exit code, stderr）。
+fn hook(root: &Path, mode: &str, tool: &str, agent: &str, input: Value) -> (i32, String) {
+    let mut d = json!({"hook_event_name": "PreToolUse", "tool_name": tool, "cwd": s(root), "session_id": "abcdefgh12", "tool_input": input});
+    if !agent.is_empty() {
+        d["agent_type"] = json!(agent);
+    }
+    let o = awf_env(&["hook", mode], root, Some(&d.to_string()), &[("CLAUDE_PROJECT_DIR", &s(root))]);
+    assert!(!o.err.contains("panicked at") && !o.err.contains("意外錯誤"), "hook 不能出意外錯誤：{}", o.err);
+    (o.code, o.err)
+}
+
+fn read_code(root: &Path, agent: &str, file: &str) -> i32 {
+    hook(root, "guard-paths", "Read", agent, json!({"file_path": file})).0
+}
+
+fn shell_code(root: &Path, tool: &str, agent: &str, cmd: &str) -> i32 {
+    hook(root, "guard-shell", tool, agent, json!({"command": cmd})).0
+}
+
+fn secret_files() -> Value {
+    json!({"secret_files_extra": ["(^|/)vault/.*\\.ya?ml$"]})
+}
+
+/// 沒設定：只擋內建的機敏檔。
+#[test]
+fn t15_default_secret_files_unchanged() {
+    let (_t, root) = guarded("t15-default", json!({}));
+    assert_eq!(read_code(&root, "", "conf/vault/prod.yaml"), 0);
+    assert_eq!(read_code(&root, "", "conf/.env"), 2);
+    assert_eq!(read_code(&root, "", "conf/.env.example"), 0);
+    for (tool, cmd) in [("Bash", "cat conf/vault/prod.yaml"), ("PowerShell", "Get-Content conf/vault/prod.yaml")] {
+        assert_eq!(shell_code(&root, tool, "", cmd), 0, "{tool}：{cmd}");
+    }
+}
+
+/// 有設定：命中的檔不能讀（Read、Grep 的 glob、Bash、PowerShell），主 session 與 agent 都擋；沒命中的照舊；內建的照舊。
+#[test]
+fn t15_extra_secret_files_block_reads() {
+    let (_t, root) = guarded("t15-set", secret_files());
+    for agent in ["", DEV] {
+        assert_eq!(read_code(&root, agent, "conf/vault/prod.yaml"), 2, "Read 要擋（{agent}）");
+        assert_eq!(read_code(&root, agent, "conf/Vault/PROD.YML"), 2, "不分大小寫（{agent}）");
+        assert_eq!(read_code(&root, agent, "conf/app.yaml"), 0, "沒命中的照舊（{agent}）");
+        assert_eq!(read_code(&root, agent, "conf/.env"), 2, "內建的照舊擋（{agent}）");
+        for (tool, block, allow) in [("Bash", "cat conf/vault/prod.yaml", "cat conf/app.yaml"), ("PowerShell", "Get-Content conf/vault/prod.yaml", "Get-Content conf/app.yaml")] {
+            assert_eq!(shell_code(&root, tool, agent, block), 2, "{tool}：{block}（{agent}）");
+            assert_eq!(shell_code(&root, tool, agent, allow), 0, "{tool}：{allow}（{agent}）");
+        }
+    }
+    let (code, _) = hook(&root, "guard-paths", "Grep", "", json!({"pattern": "password", "glob": "conf/vault/prod.yaml"}));
+    assert_eq!(code, 2, "Grep 的 glob 指到機敏檔也擋");
+}
+
+/// 寫壞的設定（樣式編不過、不是陣列、元素不是字串）：照「設定檔讀不懂」處理——模版角色的寫入全擋；
+/// 主 session 不被鎖死（要能修設定檔）；內建的機敏檔照舊擋；hook 不 panic。
+#[test]
+fn t15_bad_secret_setting_goes_strict_without_locking_the_user_out() {
+    let write_in = |root: &Path, agent: &str| hook(root, "guard-paths", "Write", agent, json!({"file_path": s(&root.join("docs/a.md")), "content": "x"}));
+    let (_t, good) = guarded("t15-good", secret_files());
+    assert_eq!(write_in(&good, "agent-workflow:tpm-writer").0, 0, "設定正常時 tpm-writer 可以寫 docs/");
+    for bad in [json!({"secret_files_extra": ["vault/("]}), json!({"secret_files_extra": "vault/"}), json!({"secret_files_extra": [12]}), json!({"secret_patterns_extra": ["ACME-(\\d+"]})] {
+        let (_t, root) = guarded("t15-bad", bad.clone());
+        let (code, err) = write_in(&root, "agent-workflow:tpm-writer");
+        assert!(code == 2 && err.contains("guard.config.json 讀不懂") && err.contains("secret_"), "{bad}：模版角色的寫入要擋並說明：{code} {err}");
+        assert_eq!(write_in(&root, "").0, 0, "{bad}：主 session 不被鎖死");
+        assert_eq!(read_code(&root, "", "conf/.env"), 2, "{bad}：內建的機敏檔照舊擋");
+        assert_eq!(read_code(&root, "", "conf/app.yaml"), 0, "{bad}：一般的檔照舊可以讀");
+    }
+}
+
+fn kb_project(tag: &str, extra: Value) -> (Tmp, PathBuf) {
+    let (t, root) = guarded(tag, extra);
+    write(&root.join("docs/a.md"), "# 正常\n\n內文 okmarker\n");
+    write(&root.join("docs/internal/b.md"), "# 內部\n\n內文 innermarker\n");
+    (t, root)
+}
+
+/// kb：沒設定時 docs/internal 照收；有設定時不收（列在略過的清單）；寫壞了不建索引。
+#[test]
+fn t15_kb_skips_extra_secret_files() {
+    let (_t, root) = kb_project("t15-kb-default", json!({}));
+    must(awf(&["kb", "build"], &root, None), "kb build");
+    assert!(awf(&["kb", "query", "innermarker"], &root, None).out.contains("docs/internal/b.md"), "沒設定時照收");
+
+    let (_t, root) = kb_project("t15-kb-set", json!({"secret_files_extra": ["(^|/)internal/"]}));
+    let o = must(awf(&["kb", "build"], &root, None), "kb build");
+    assert!(o.all().contains("docs/internal/b.md") && o.all().contains("機敏檔"), "要列出略過的機敏檔：{}", o.all());
+    assert!(!awf(&["kb", "query", "innermarker"], &root, None).out.contains("b.md"), "命中的檔不進索引");
+    assert!(awf(&["kb", "query", "okmarker"], &root, None).out.contains("docs/a.md"), "其他檔照收");
+
+    let (_t, root) = kb_project("t15-kb-bad", json!({"secret_files_extra": ["internal/("]}));
+    let o = awf(&["kb", "build"], &root, None);
+    // kb 是輔助工具：失敗只警告、不擋流程（exit 0），但索引不能建出來
+    assert!(o.all().contains("機敏檔的設定用不了"), "寫壞了不建索引：{}", o.all());
+    let q = awf(&["kb", "query", "innermarker"], &root, None);
+    assert!(!q.out.contains("b.md") && !q.out.contains("docs/a.md"), "寫壞了不該有索引內容：{}", q.all());
+}
+
+/// kg：和 kb 同一份樣式。
+#[test]
+fn t15_kg_skips_extra_secret_files() {
+    let (_t, root) = kb_project("t15-kg-default", json!({}));
+    must(awf(&["kg", "build"], &root, None), "kg build");
+    assert!(awf(&["kg", "locate", "innermarker"], &root, None).out.contains("docs/internal/b.md"), "沒設定時照收");
+    let (_t, root) = kb_project("t15-kg-set", json!({"secret_files_extra": ["(^|/)internal/"]}));
+    let o = must(awf(&["kg", "build"], &root, None), "kg build");
+    let hit = awf(&["kg", "locate", "innermarker"], &root, None);
+    assert!(!hit.out.contains("docs/internal/b.md"), "命中的檔不進圖：{}\n{}", o.all(), hit.all());
+    let (_t, root) = kb_project("t15-kg-bad", json!({"secret_files_extra": ["internal/("]}));
+    let o = awf(&["kg", "build"], &root, None);
+    assert!(o.code != 0 && o.all().contains("機敏檔的設定用不了"), "寫壞了不建圖：{}", o.all());
+}
+
 #[allow(dead_code)]
 fn unused_helpers(p: &Path) -> String {
     let _ = awf_env(&[], p, None, &[]);

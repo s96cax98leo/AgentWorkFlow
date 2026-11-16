@@ -181,6 +181,12 @@ pub fn scan(cfg: &Config, max_bytes: u64) -> Result<(BTreeMap<String, String>, V
     let mut found: BTreeMap<String, String> = BTreeMap::new();
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut failure: Option<PyErr> = None;
+    // 專案另外加的機敏檔樣式（guard.config.json 的 secret_files_extra；和 publish、hook 同一份）。
+    // 設定用不了時不建索引：分不出哪些檔是機敏的
+    let extra = crate::config::SecretExtra::for_project(root);
+    if let Some(e) = extra.errors.first() {
+        return Err(PyErr::kb(format!("機敏檔的設定用不了（{e}）：不建索引，請先修正 .claude/teams/guard.config.json")));
+    }
 
     let consider = |abs_p: &str, found: &mut BTreeMap<String, String>, skipped: &mut Vec<(String, String)>, failure: &mut Option<PyErr>| {
         let rel = to_posix(&pyish::relpath(abs_p, root));
@@ -194,7 +200,7 @@ pub fn scan(cfg: &Config, max_bytes: u64) -> Result<(BTreeMap<String, String>, V
         if excludes.iter().flatten().any(|rx| rx.is_match(&rel)) {
             return;
         }
-        if is_sensitive(pyish::basename(abs_p)) {
+        if is_sensitive(pyish::basename(abs_p)) || extra.file_hit(&rel) {
             skipped.push((rel, "機敏檔".into()));
             return;
         }
@@ -209,7 +215,7 @@ pub fn scan(cfg: &Config, max_bytes: u64) -> Result<(BTreeMap<String, String>, V
             skipped.push((rel, "連到專案外".into()));
             return;
         }
-        if is_sensitive(pyish::basename(&real)) {
+        if is_sensitive(pyish::basename(&real)) || extra.file_hit(&to_posix(&pyish::relpath(&real, root))) {
             // 連結的名字正常、指到的卻是機敏檔（docs/notes.md -> ../.env）
             skipped.push((rel, "機敏檔".into()));
             return;

@@ -11,6 +11,7 @@
 
 use crate::hooks::path;
 use crate::hooks::py;
+use crate::hooks::re::Re;
 use crate::pyfmt;
 use serde_json::{json, Map, Value};
 
@@ -120,6 +121,10 @@ pub struct Config {
     pub auto_merge: Value,
     pub extension_agents: Value,
     pub acceptance_test_dirs: Vec<String>,
+    /// 專案另外加的機敏檔樣式（`secret_files_extra`，正規式；只能加）。
+    pub secret_files_extra: Vec<String>,
+    /// 專案另外加的機敏值樣式（`secret_patterns_extra`，正規式；只能加）。
+    pub secret_patterns_extra: Vec<String>,
     /// 專案有設定檔（讀不懂也算：fail-closed）。
     pub configured: bool,
     /// 設定檔讀不懂的原因；空字串＝沒問題。
@@ -274,6 +279,99 @@ fn str_list(v: Option<&Value>, key: &str, fault: &mut Option<String>) -> Vec<Str
     }
 }
 
+/// `secret_files_extra`、`secret_patterns_extra` 最多幾條、每條最多幾個字。
+pub const SECRET_EXTRA_MAX: usize = 64;
+pub const SECRET_EXTRA_PATTERN_MAX: usize = 300;
+
+/// 專案另外加的機敏樣式清單：沒寫或 null 是空的；要是「非空字串的陣列」，條數與長度有上限。
+/// 不合規定時回空清單並把原因記進 `bad`（只記第一個）。
+fn extra_patterns(v: Option<&Value>, key: &str, bad: &mut String) -> Vec<String> {
+    let mut fail = |why: String| {
+        if bad.is_empty() {
+            *bad = why;
+        }
+        Vec::new()
+    };
+    match v {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(a)) => {
+            if a.len() > SECRET_EXTRA_MAX {
+                return fail(format!("{key} 最多 {SECRET_EXTRA_MAX} 條"));
+            }
+            let mut out = Vec::new();
+            for x in a {
+                match x.as_str().filter(|s| !py::strip(s).is_empty() && s.chars().count() <= SECRET_EXTRA_PATTERN_MAX) {
+                    Some(s) => out.push(s.to_string()),
+                    None => return fail(format!("{key} 的每一項要是 1–{SECRET_EXTRA_PATTERN_MAX} 個字的正規式")),
+                }
+            }
+            out
+        }
+        Some(_) => fail(format!("{key} 要是正規式的陣列")),
+    }
+}
+
+/// 編譯過的專案機敏樣式（guard.config.json 的 `secret_files_extra`、`secret_patterns_extra`）。
+/// publish、hook、kb、kg 共用這一份；內建的清單各自照舊，這裡只會多擋。
+#[derive(Default)]
+pub struct SecretExtra {
+    /// 機敏檔的路徑樣式（Python `re` 的寫法，不分大小寫，search）。
+    pub files: Vec<Re>,
+    /// 機敏值的樣式（Python `re` 的寫法，分大小寫，search；比對新增的每一行）。
+    pub patterns: Vec<Re>,
+    /// 用不了的原因（設定檔讀不懂、樣式編不過）。非空時呼叫端要往嚴的方向處理。
+    pub errors: Vec<String>,
+}
+
+impl SecretExtra {
+    /// 從載入好的設定編譯。
+    pub fn of(cfg: &Config) -> SecretExtra {
+        let mut out = SecretExtra::default();
+        if !cfg.broken.is_empty() && (cfg.broken.starts_with("secret_files_extra") || cfg.broken.starts_with("secret_patterns_extra")) {
+            out.errors.push(cfg.broken.clone());
+        }
+        for (i, src) in cfg.secret_files_extra.iter().enumerate() {
+            match Re::python(src, "i") {
+                Ok(re) => out.files.push(re),
+                Err(e) => out.errors.push(format!("secret_files_extra[{i}] {e}")),
+            }
+        }
+        for (i, src) in cfg.secret_patterns_extra.iter().enumerate() {
+            match Re::python(src, "") {
+                Ok(re) => out.patterns.push(re),
+                Err(e) => out.errors.push(format!("secret_patterns_extra[{i}] {e}")),
+            }
+        }
+        out
+    }
+
+    /// 讀 `<專案>/.claude/teams/guard.config.json` 並編譯；沒有設定檔是空的。
+    /// 整份設定檔讀不懂（不是 JSON、別的欄位型別不對）時也是空的：那是各工具原本就有的處理，這裡只管這兩個欄位自己寫壞的情況。
+    pub fn for_project(root: &str) -> SecretExtra {
+        if !path::exists(&config_path(root)) {
+            return SecretExtra::default();
+        }
+        load(root).map(|cfg| SecretExtra::of(&cfg)).unwrap_or_default()
+    }
+
+    /// 路徑命中專案加的機敏檔樣式（路徑用斜線）。
+    pub fn file_hit(&self, p: &str) -> bool {
+        !self.files.is_empty() && {
+            let n = p.replace('\\', "/");
+            self.files.iter().any(|re| re.is_match(&n))
+        }
+    }
+
+    /// 這一行命中的機敏值樣式（第幾條，從 1 算）。
+    pub fn line_hits(&self, line: &str) -> Vec<usize> {
+        self.patterns.iter().enumerate().filter(|(_, re)| re.is_match(line)).map(|(i, _)| i + 1).collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty() && self.patterns.is_empty() && self.errors.is_empty()
+    }
+}
+
 /// 回傳合併預設後的設定。設定檔存在但讀不到或不是 JSON 物件時 fail-closed：視為已設定，其餘欄位用預設值，`broken` 記下原因
 /// （守門看到 `broken` 會把模版角色的寫入全部擋下，主 session 與使用者自己的 agent 照預設值的規則）。
 /// `Err`＝0.x 的 Python 版在載入階段就會丟例外的寫法。
@@ -397,6 +495,13 @@ pub fn load(ws: &str) -> Result<Config, PyErr> {
             Map::new()
         }
     };
+    // 專案另外加的機敏樣式：寫壞了（型別不對、太多、太長）照「設定檔讀不懂」處理——模版角色的寫入全擋、主 session 照預設規則
+    let mut extra_bad = String::new();
+    let secret_files_extra = extra_patterns(cfg.get("secret_files_extra"), "secret_files_extra", &mut extra_bad);
+    let secret_patterns_extra = extra_patterns(cfg.get("secret_patterns_extra"), "secret_patterns_extra", &mut extra_bad);
+    if broken.is_empty() {
+        broken = extra_bad;
+    }
     let out = Config {
         runs_dir,
         briefs_dir,
@@ -416,6 +521,8 @@ pub fn load(ws: &str) -> Result<Config, PyErr> {
         auto_merge: cfg.get("auto_merge").cloned().unwrap_or(Value::Null),
         extension_agents: cfg.get("extension_agents").cloned().unwrap_or(Value::Null),
         acceptance_test_dirs: str_list(cfg.get("acceptance_test_dirs"), "acceptance_test_dirs", &mut fault),
+        secret_files_extra,
+        secret_patterns_extra,
         configured,
         broken,
         type_fault: fault,

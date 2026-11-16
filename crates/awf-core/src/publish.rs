@@ -314,11 +314,21 @@ pub fn secret_file(path: &str) -> bool {
 /// 所以沒有 ---／+++ 行的二進位檔與空檔也會命中。`names` 是 `git diff --name-only --diff-filter=ACMRT` 的結果，再比對一次。
 /// diff 解析不了就當成命中（無法確認沒有機敏值，fail-closed）。Err 是 0.x 的 Python 版在 parse_diff 丟例外的地方。
 pub fn scan_secrets(diff: &str, literals: &[String], names: &[String]) -> Result<Vec<String>, String> {
+    scan_secrets_with(diff, literals, names, &crate::config::SecretExtra::default())
+}
+
+/// 同 [`scan_secrets`]，另外比對專案加的機敏樣式（guard.config.json 的 `secret_files_extra`、`secret_patterns_extra`；只會多命中）。
+/// 設定用不了（`extra.errors` 非空）也當成命中：無法確認沒有機敏值。
+pub fn scan_secrets_with(diff: &str, literals: &[String], names: &[String], extra: &crate::config::SecretExtra) -> Result<Vec<String>, String> {
     let parsed = parse_diff(diff)?;
     let mut hits: Vec<String> = parsed.errors.iter().map(|e| format!("diff：{e}，無法確認沒有機敏值")).collect();
     let kept = parsed.entries.iter().filter(|e| !e.deleted).filter_map(|e| e.new.as_deref()).filter(|p| !p.is_empty());
-    hits.extend(kept.chain(names.iter().map(String::as_str)).filter(|p| secret_file(p)).map(|p| format!("{p}：機敏檔名")));
+    hits.extend(extra.errors.iter().map(|e| format!("guard.config.json：{e}，無法確認沒有機敏值")));
+    hits.extend(kept.chain(names.iter().map(String::as_str)).filter(|p| secret_file(p) || (*p != "/dev/null" && extra.file_hit(p))).map(|p| format!("{p}：機敏檔名")));
     for (cur, body) in &parsed.added_lines {
+        for n in extra.line_hits(body) {
+            hits.push(format!("{cur}：專案設定的機敏樣式（secret_patterns_extra 第 {n} 條）"));
+        }
         for (name, rx) in &SECRET_PATTERNS {
             if rx.is_match(body) {
                 hits.push(format!("{cur}：{name}"));
@@ -633,7 +643,9 @@ fn steps(env: &Env, a: &Args, cfg: &Config, repo: &str, run_dir: Option<&str>, r
             Err(e) => return refused(format!("讀不到 --secrets-file：{}", e.msg)),
         }
     }
-    let hits = scan_secrets(&d.stdout, &literals, &names).map_err(Stop::Crash)?;
+    // 專案另外加的機敏樣式（guard.config.json；沒設定時是空的，結果和以前逐字相同）
+    let extra = crate::config::SecretExtra::for_project(&ctx.abs(&ctx.project_root()));
+    let hits = scan_secrets_with(&d.stdout, &literals, &names, &extra).map_err(Stop::Crash)?;
     if !hits.is_empty() {
         return refused(format!("diff 疑似含機敏值（{} 處）：{}", hits.len(), hits.iter().take(10).cloned().collect::<Vec<_>>().join("、")));
     }
