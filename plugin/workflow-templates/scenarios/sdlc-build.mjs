@@ -318,5 +318,37 @@ export default [
     profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), patterns: { task: '<prefix><epic>/<task>' } } } }),
     expect: (r) => (/ -b \S*demo-999-sample--t1 /.test(r.prompts['Implement:t1'] || '') && /branch=\S*demo-999-sample--t1、/.test(r.prompts['Implement:t1'] || '') ? [] : [`不合法的樣式要退回內建：${(r.prompts['Implement:t1'] || '').match(/worktree add[^\n]*/)}`]),
   },
+  {
+    // 子任務分支的合併方式（profile 的 conventions.branch.integrate）：只有 merge --no-ff（預設）與 merge
+    name: '合併方式：conventions.branch.integrate=merge → 整合的派工單寫 git merge（沒有 --no-ff）',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), integrate: 'merge' } } }),
+    expect: (r) => (/依序把這些分支 git merge 進 /.test(r.prompts['integrate:layer1'] || '') && !/--no-ff/.test(r.prompts['integrate:layer1'] || '') ? [] : [`整合的派工單沒有照設定：${(r.prompts['integrate:layer1'] || '').match(/依序把這些分支[^（]*/)}`]),
+  },
+  {
+    name: '合併方式：沒設定 → 整合的派工單照舊寫 git merge --no-ff',
+    profile: (p) => { const c = { ...(p.conventions || {}) }; const b = { ...(c.branch || {}) }; delete b.integrate; return { conventions: { ...c, branch: b } } },
+    expect: (r) => (/依序把這些分支 git merge --no-ff 進 /.test(r.prompts['integrate:layer1'] || '') ? [] : [`沒設定時要是 merge --no-ff：${(r.prompts['integrate:layer1'] || '').match(/依序把這些分支[^（]*/)}`]),
+  },
+  {
+    name: '合併方式不合法（squash、rebase 會改寫子任務的 commit）→ 照 merge --no-ff',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), integrate: 'merge --squash' } } }),
+    expect: (r) => (/依序把這些分支 git merge --no-ff 進 /.test(r.prompts['integrate:layer1'] || '') && !/squash/.test(r.prompts['integrate:layer1'] || '') ? [] : ['不合法的合併方式要退回 merge --no-ff']),
+  },
+  {
+    // 限制對照的用語（profile 的 constraints_format）：派工單要 agent 寫的節名與判定詞，和 awf save-run 認的是同一份設定
+    name: '限制對照的用語：constraints_format 設了英文的節名與判定詞 → 每張派工單的前綴照設定寫',
+    profile: { constraints: [{ id: 'arch', file: 'ARCHITECTURE.md', stages: ['build'], trace: 'table' }], constraints_format: { heading: 'Constraint trace', verdicts: { ok: 'compliant', deviation: 'deviates', na: 'n/a' } } },
+    expect: (r) => { const ps = Object.entries(r.prompts).filter(([, v]) => v); return [...(ps.length ? [] : ['沒有派出任何 agent']), ...ps.filter(([, v]) => !/在執行紀錄檔加〈Constraint trace〉一節，每個限制一列，格式固定：\| <id> \| compliant／deviates／n\/a \|/.test(v) || /符合／偏離／不適用/.test(v)).map(([k]) => `${k} 的前綴沒有照 constraints_format 寫`)] },
+  },
+  {
+    name: '限制對照的用語：沒設定 → 前綴是內建的〈限制對照〉與「符合／偏離／不適用」',
+    profile: { constraints: [{ id: 'arch', file: 'ARCHITECTURE.md', stages: ['build'], trace: 'table' }] },
+    expect: (r) => Object.entries(r.prompts).filter(([, v]) => v && !/在執行紀錄檔加〈限制對照〉一節，每個限制一列，格式固定：\| <id> \| 符合／偏離／不適用 \|/.test(v)).map(([k]) => `${k} 的前綴應該是內建的用語`),
+  },
+  {
+    name: '限制對照的用語不合法（判定詞含表格線、把內建的詞改成別的意思）→ 整份不採用，照內建的字',
+    profile: { constraints: [{ id: 'arch', file: 'ARCHITECTURE.md', stages: ['build'], trace: 'table' }], constraints_format: { heading: 'Constraint trace', verdicts: { ok: '偏離', deviation: 'a|b' } } },
+    expect: (r) => Object.entries(r.prompts).filter(([, v]) => v && (!/〈限制對照〉一節，每個限制一列，格式固定：\| <id> \| 符合／偏離／不適用 \|/.test(v) || /Constraint trace/.test(v))).map(([k]) => `${k} 的前綴應該退回內建的用語`),
+  },
   ...kgScenarios(),
 ]

@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -92,10 +92,10 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(!/限制文件/.test(k.awfPrefix()), '沒有限制時前綴不該多出規則')
   // 可調的值（1.0）：沒寫或不合法一律用預設；前綴在沒有 tune、沒有 kg 時逐字不變
   need(k.awfInt({ n: 5 }, 'n', 1, 9, 3) === 5 && k.awfInt({ n: 0 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 10 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 2.5 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: '5' }, 'n', 1, 9, 3) === 3 && k.awfInt(null, 'n', 1, 9, 3) === 3 && k.awfInt('x', 'n', 1, 9, 3) === 3, 'awfInt 的範圍或型別判斷不對')
-  const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12 })
+  const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12, constraints_format: null })
   need(JSON.stringify(k.awfTune(null)) === T0 && JSON.stringify(k.awfTune({})) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: 'graft' }, limits: { envelope: { summary_chars: 401, evidence_items: 2 } } })) === T0, `awfTune 的預設不對：${JSON.stringify(k.awfTune(null))}`)
   need(JSON.stringify(k.awfTune({ knowledge: { code_tools: ['a', 'a'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: ['x\ny'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: Array.from({ length: 9 }, (_, i) => `t${i}`) } })) === T0, 'code_tools 重複、含換行或超過 8 個要退回預設')
-  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3 }), 'awfTune 沒有採用合法的設定')
+  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3, constraints_format: null }), 'awfTune 沒有採用合法的設定')
   const SIX = '產出、驗證'
   const rs = (v) => k.awfRecordSections({ stages: { deliver: { record_sections: v } } }, SIX)
   need(rs(['甲', '乙']) === '甲、乙' && rs([]) === SIX && rs(['甲', '甲']) === SIX && rs(['甲\n乙']) === SIX && rs([' 甲']) === SIX && rs(['x'.repeat(41)]) === SIX && rs('甲') === SIX && rs(Array.from({ length: 13 }, (_, i) => `節${i}`)) === SIX && k.awfRecordSections(null, SIX) === SIX, 'awfRecordSections 的判斷不對')
@@ -109,6 +109,30 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(k.awfPrefix().startsWith(plain) && /awf kg locate "<文字>"/.test(k.awfPrefix().slice(plain.length)) && /awf kg impact <檔>/.test(k.awfPrefix()) && /_runs\/r1\/plan\/pack\.md 列了行段/.test(k.awfPrefix()), 'kg=true 時前綴要在最後多一行查圖的指示')
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', tune: k.awfTune({ knowledge: { code_tools: ['ast-grep'] }, limits: { envelope: { summary_chars: 200, evidence_items: 6 } } }) })
   need(/程式碼有 ast-grep 就先用。/.test(k.awfPrefix()) && /summary 不超過 200 字、evidence 最多 6 則/.test(k.awfPrefix()) && !/graft/.test(k.awfPrefix()), 'tune 的值沒有寫進前綴')
+  // 限制對照的用語（constraints_format）、合併方式、提問選項數：沒寫或不合法一律是內建的字（規則要和工具端的 constraint_format_errors 一致）
+  const cf = (v) => k.awfConstraintFormat({ constraints_format: v })
+  const EN = { heading: 'Constraint trace', verdicts: { ok: 'compliant', deviation: 'deviates', na: 'n/a' } }
+  need(JSON.stringify(cf(EN)) === JSON.stringify({ heading: 'Constraint trace', ok: 'compliant', deviation: 'deviates', na: 'n/a' }), `awfConstraintFormat 沒有採用合法的設定：${JSON.stringify(cf(EN))}`)
+  need(JSON.stringify(cf({ verdicts: { deviation: 'deviates' } })) === JSON.stringify({ heading: '限制對照', ok: '符合', deviation: 'deviates', na: '不適用' }), '只給部分的詞時，沒給的要用內建的')
+  const BAD = [null, 'x', ['x'], {}, { extra: 1 }, { heading: '' }, { heading: ' x' }, { heading: 'a|b' }, { heading: 'a`b' }, { heading: 'a\nb' }, { heading: 'x'.repeat(41) }, { heading: 7 }, { heading: null }, { verdicts: 'x' }, { verdicts: { yes: 'y' } },
+    { verdicts: { ok: 7 } }, { verdicts: { ok: 'same', na: 'same' } }, { verdicts: { ok: '偏離' } }, { verdicts: { na: '偏離' } }, { verdicts: { deviation: '符合' } }, { verdicts: { deviation: '不適用' } }, { verdicts: { ok: '不適用' } }, { verdicts: { na: '符合' } },
+    { heading: 'ok', verdicts: { ok: 'a|b' } }, { heading: '限制對照', verdicts: { ok: '符合', deviation: '偏離', na: '不適用' } }]
+  const kept = BAD.filter((v) => cf(v) !== null)
+  need(kept.length === 0 && k.awfConstraintFormat(null) === null && k.awfConstraintFormat({}) === null, `awfConstraintFormat 對不合法或等於內建的設定要回 null：${JSON.stringify(kept)}`)
+  need(cf({ heading: '字'.repeat(40) }) !== null, '40 個字的節名要採用（長度照字元數算）')
+  const TL = [{ id: 'arch', file: 'A.md', note: '', paths: [], table: true }]
+  need(k.awfConstraintRule(TL, null) === k.awfConstraintRule(TL) && k.awfConstraintRule(TL, 'x') === k.awfConstraintRule(TL) && /〈限制對照〉.*\| <id> \| 符合／偏離／不適用 \|/.test(k.awfConstraintRule(TL)), '沒給用語時規則要是內建的字')
+  need(/〈Constraint trace〉一節.*\| <id> \| compliant／deviates／n\/a \|/.test(k.awfConstraintRule(TL, cf(EN))) && !/符合／偏離／不適用/.test(k.awfConstraintRule(TL, cf(EN))), `設定的用語沒有寫進規則：${k.awfConstraintRule(TL, cf(EN))}`)
+  k.awfInit({ run_dir: '_runs/r1', stage: 'deliver', lang: 'en', constraints: TL })
+  const preZh = k.awfPrefix()
+  k.awfInit({ run_dir: '_runs/r1', stage: 'deliver', lang: 'en', constraints: TL, tune: k.awfTune({ constraints_format: { heading: ' bad' } }) })
+  need(k.awfPrefix() === preZh, '用語不合法時前綴要和沒設定時逐字相同')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'deliver', lang: 'en', constraints: TL, tune: k.awfTune({ constraints_format: EN }) })
+  need(/〈Constraint trace〉/.test(k.awfPrefix()) && /compliant／deviates／n\/a/.test(k.awfPrefix()) && !/〈限制對照〉/.test(k.awfPrefix()), 'awfTune 沒有把限制對照的用語帶進前綴')
+  const ig = (v) => k.awfIntegrate({ conventions: { branch: { integrate: v } } })
+  need(ig('merge') === 'merge' && ig('merge --no-ff') === 'merge --no-ff' && ig('merge --squash') === 'merge --no-ff' && ig('rebase') === 'merge --no-ff' && ig(7) === 'merge --no-ff' && ig(' merge') === 'merge --no-ff' && k.awfIntegrate(null) === 'merge --no-ff' && k.awfIntegrate({ conventions: 'x' }) === 'merge --no-ff', 'awfIntegrate 只該認 merge 與 merge --no-ff')
+  const qo = (v) => k.awfQuestionOptions({ conventions: { questions: { options: v } } })
+  need(qo('至少 2') === '至少 2' && qo('') === '2–3' && qo('a\nb') === '2–3' && qo('x'.repeat(21)) === '2–3' && qo(3) === '2–3' && k.awfQuestionOptions(null) === '2–3' && k.awfQuestionOptions({ conventions: { questions: [] } }) === '2–3', 'awfQuestionOptions 的判斷不對')
   // 名稱表、短字、分支樣式、換角色（1.0）：沒寫或不合法一律是原本的值
   const D = k.awfDefs({ ok: { ask: '問法' }, 'Bad Name': { ask: 'x' }, n1: 'x', n2: { ask: 7 }, n3: { ask: '  ' }, n4: { ask: 'x'.repeat(2001) }, n5: ['x'], __proto__: { ask: 'x' } }, 'ask')
   need(Object.keys(D).join(',') === 'ok' && Object.getPrototypeOf(D) === null, `awfDefs 只該收合法的項目：${Object.keys(D).join(',')}`)
