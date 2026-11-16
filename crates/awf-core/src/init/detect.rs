@@ -18,6 +18,12 @@ pub const SCHEMA_VERSION: u64 = 1;
 /// 設定檔最多讀這麼多位元組（再大就不是手寫的設定檔了）。
 const MAX_READ: u64 = 512 * 1024;
 const MAX_LIST: usize = 50;
+/// 找旁邊的 repo 時最多看幾個目錄項、最多列幾個候選。
+const MAX_SIBLINGS_SCAN: usize = 500;
+const MAX_REPO_CANDIDATES: usize = 10;
+/// guard.config.json 範本的預設（要和 `guard.config.json.tmpl` 一致；訪談與偵測拿它當基準）。
+pub const GUARD_PROTECTED: &[&str] = &["main", "master"];
+pub const GUARD_ACCEPTANCE: &[&str] = &["tests/acceptance", "e2e"];
 
 /// 偵測到的一件事：鍵、值、依據（從哪裡看出來的）。
 #[derive(Debug, Clone, PartialEq)]
@@ -195,6 +201,68 @@ fn conventional_type(subject: &str) -> Option<&str> {
     (CONVENTIONAL.contains(&ty) && (head == ty || head.ends_with(')'))).then_some(ty)
 }
 
+/// 專案旁邊（同一層目錄）的 git repo，寫成 `../<名>`；知識圖「別的 repo」的候選。只看有沒有 `.git`，不讀內容。
+fn sibling_repos(root: &Path) -> Vec<String> {
+    let Some(parent) = root.parent() else { return Vec::new() };
+    let me = root.file_name();
+    let mut out: Vec<String> = std::fs::read_dir(parent).into_iter().flatten().flatten().take(MAX_SIBLINGS_SCAN)
+        .filter(|e| Some(e.file_name().as_os_str()) != me && e.path().join(".git").symlink_metadata().is_ok())
+        .filter_map(|e| e.file_name().to_str().map(|n| format!("../{n}")))
+        .collect();
+    out.sort();
+    out.truncate(MAX_REPO_CANDIDATES);
+    out
+}
+
+/// 已經套用過的專案：需求來源（methodology.json 或 guard.config.json 的 `requirements.path`）指到工作區外時，
+/// 回它所在的 repo（往上找最近一個有 `.git` 的目錄；找不到就用那個路徑所在的目錄）。寫法照設定檔裡的寫法（相對或絕對）。
+fn requirements_outside(root: &Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for file in [".claude/teams/methodology.json", ".claude/teams/guard.config.json"] {
+        let Some(doc) = read_small(root, file).and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+        let Some(p) = doc.pointer("/requirements/path").and_then(Value::as_str) else { continue };
+        let norm = p.replace('\\', "/");
+        let abs = Path::new(p).is_absolute() || norm.starts_with('/');
+        let mut parts: Vec<&str> = norm.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+        if !(abs || parts.contains(&"..")) {
+            continue;
+        }
+        let join = |parts: &[&str]| if abs { format!("/{}", parts.join("/")) } else { parts.join("/") };
+        let is_repo = |parts: &[&str]| root.join(join(parts)).join(".git").symlink_metadata().is_ok();
+        let written = parts.clone();
+        let mut hit: Option<String> = None;
+        for _ in 0..6 {
+            if parts.is_empty() || parts.last() == Some(&"..") {
+                break;
+            }
+            if is_repo(&parts) {
+                hit = Some(join(&parts));
+                break;
+            }
+            parts.pop();
+        }
+        let dir = hit.or_else(|| {
+            // 沒有找到 repo：檔案就用它所在的目錄
+            let mut w = written.clone();
+            if root.join(join(&w)).is_file() {
+                w.pop();
+            }
+            (!w.is_empty() && w.last() != Some(&"..")).then(|| join(&w))
+        });
+        if let Some(d) = dir.filter(|d| !out.contains(d)) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// guard.config.json 的 `linked_repos`（工作區以外、dev-* 可以改的我方 repo）。
+fn linked_repos(root: &Path) -> Vec<String> {
+    read_small(root, ".claude/teams/guard.config.json").and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|d| d.get("linked_repos").and_then(Value::as_array).cloned()).unwrap_or_default()
+        .iter().filter_map(Value::as_str).map(str::to_string).collect()
+}
+
 fn finding(key: &str, value: Value, basis: impl Into<String>) -> Finding {
     Finding { key: key.to_string(), value, basis: basis.into() }
 }
@@ -340,6 +408,20 @@ pub fn detect(root: &Path, windows: bool) -> Vec<Topic> {
         if !tools.is_empty() {
             t.detected.push(finding("code_index", json!(tools), "專案已經有程式索引"));
         }
+        if exists(root, "_tpm/kb/graph.db") {
+            t.detected.push(finding("graph", json!("_tpm/kb/graph.db"), "已經有知識圖（knowledge.auto.update 沒寫時，流程只更新已經存在的圖）"));
+        }
+        // 別的 repo 的候選：已經登記成 linked_repos（dev-* 可以改）的不列，因為收進知識圖的 repo 對 team agent 唯讀
+        let linked = linked_repos(root);
+        let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/') || root.join(a) == root.join(b);
+        let sib: Vec<String> = sibling_repos(root).into_iter().filter(|s| !linked.iter().any(|l| same(l, s))).collect();
+        if !sib.is_empty() {
+            t.detected.push(finding("sibling_repos", json!(sib), "專案旁邊（同一層目錄）的 git repo：knowledge.repos 的候選（不自動加；收進來的 repo 對 team agent 唯讀）"));
+        }
+        let req: Vec<String> = requirements_outside(root).into_iter().filter(|s| !sib.contains(s) && !linked.iter().any(|l| same(l, s))).collect();
+        if !req.is_empty() {
+            t.detected.push(finding("requirements_outside", json!(req), "需求來源（requirements.path）指到工作區外：knowledge.repos 的候選（不自動加）"));
+        }
     });
 
     at("deliverables", &mut |t| {
@@ -390,6 +472,29 @@ pub fn detect(root: &Path, windows: bool) -> Vec<Topic> {
         }
         if exists(root, ".claude/teams/VERSION") {
             t.detected.push(finding("installed", json!(read_small(root, ".claude/teams/VERSION").unwrap_or_default().trim()), "這個專案已經套用過（改設定用 --reconfigure，換新版用 --upgrade）"));
+        }
+    });
+
+    at("guard", &mut |t| {
+        let mut sug = Map::new();
+        if let Some(d) = default_branch.as_deref().filter(|d| !GUARD_PROTECTED.contains(d)) {
+            t.detected.push(finding("default_branch", json!(d), "遠端 origin 的預設分支不在範本預設的受保護分支（main、master）裡：建議加進 protected_branches"));
+            let mut list: Vec<&str> = GUARD_PROTECTED.to_vec();
+            list.push(d);
+            sug.insert("protected_branches".to_string(), json!(list));
+        }
+        let dirs: Vec<&str> = ["tests/acceptance", "e2e", "tests/e2e", "test/acceptance", "test/e2e", "acceptance"].into_iter().filter(|d| is_dir(root, d)).collect();
+        if !dirs.is_empty() {
+            t.detected.push(finding("acceptance_dirs", json!(dirs), "看起來像驗收測試的目錄（acceptance_test_dirs 的候選；dev-implementer 不能改裡面的檔）"));
+            let extra: Vec<&str> = dirs.iter().copied().filter(|d| !GUARD_ACCEPTANCE.contains(d)).collect();
+            if !extra.is_empty() {
+                let mut list: Vec<&str> = GUARD_ACCEPTANCE.to_vec();
+                list.extend(extra);
+                sug.insert("acceptance_test_dirs".to_string(), json!(list));
+            }
+        }
+        if !sug.is_empty() {
+            t.suggest.insert("guard".into(), Value::Object(sug));
         }
     });
     out
@@ -487,11 +592,35 @@ mod tests {
 
     #[test]
     fn empty_dir_detects_nothing() {
-        let d = std::env::temp_dir().join(format!("awf-detect-empty-{}", std::process::id()));
+        // 包一層：偵測會看「同一層目錄」有沒有別的 repo，系統暫存目錄底下可能正好有
+        let top = std::env::temp_dir().join(format!("awf-detect-empty-{}", std::process::id()));
+        let d = top.join("proj");
         let _ = std::fs::create_dir_all(&d);
         let topics = detect(&d, false);
         assert!(topics.iter().all(|t| t.detected.is_empty() && t.suggest.is_empty()), "{topics:?}");
         assert!(suggested(&topics).is_empty());
-        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&top);
+    }
+
+    #[test]
+    fn knowledge_repo_candidates_and_guard_suggestions() {
+        let top = std::env::temp_dir().join(format!("awf-detect-repos-{}", std::process::id()));
+        let d = top.join("proj");
+        for sub in ["proj/.claude/teams", "proj/tests/e2e", "acme-specs/.git", "acme-lib/.git", "plain", "shared/reqs/.git"] {
+            let _ = std::fs::create_dir_all(top.join(sub));
+        }
+        let _ = std::fs::write(top.join("shared/reqs/requirements.json"), "[]");
+        let _ = std::fs::write(d.join(".claude/teams/methodology.json"), r#"{"requirements": {"source": "json", "path": "../shared/reqs/requirements.json"}}"#);
+        let _ = std::fs::write(d.join(".claude/teams/guard.config.json"), r#"{"linked_repos": ["../acme-lib"]}"#);
+        let topics = detect(&d, false);
+        let get = |topic: &str, key: &str| topics.iter().filter(|t| t.id == topic).flat_map(|t| t.detected.iter()).find(|f| f.key == key).map(|f| f.value.clone());
+        // 同一層的 repo 列成候選；登記成 linked_repos 的不列（收進知識圖就變唯讀）；沒有 .git 的不列
+        assert_eq!(get("knowledge", "sibling_repos"), Some(json!(["../acme-specs"])));
+        assert_eq!(get("knowledge", "requirements_outside"), Some(json!(["../shared/reqs"])));
+        assert_eq!(get("guard", "acceptance_dirs"), Some(json!(["tests/e2e"])));
+        assert_eq!(suggested(&topics).get("guard"), Some(&json!({"acceptance_test_dirs": ["tests/acceptance", "e2e", "tests/e2e"]})));
+        // 候選不會變成建議的答案（不自動加）
+        assert!(!suggested(&topics).contains_key("knowledge"));
+        let _ = std::fs::remove_dir_all(&top);
     }
 }

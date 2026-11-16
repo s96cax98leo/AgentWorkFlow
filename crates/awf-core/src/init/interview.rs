@@ -143,22 +143,82 @@ fn yn(b: bool) -> &'static str {
     if b { "y" } else { "n" }
 }
 
+/// `ask_more` 問的主題（順序就是問的順序）；`--reconfigure <主題>` 可以只重問其中一個（另外加上 `main_session`）。
+pub const MORE_TOPICS: &[&str] = &["requirements", "models", "scrub", "links", "ci", "build_loop", "auto_merge", "hooks", "knowledge", "deliverables", "parallelism", "guard"];
+
+/// 可以單獨重問的主題。其餘的（開發規範、慣例、限制文件、讀取預算）題目互相有關，要整輪一起問。
+pub fn single_topics() -> Vec<&'static str> {
+    let mut v: Vec<&str> = MORE_TOPICS.to_vec();
+    v.push("main_session");
+    v
+}
+
+/// `knowledge.repos` 的上限（同 methodology.schema.json 的 maxItems）。
+const MAX_REPOS: usize = 16;
+
+/// 逗號分隔的清單（去空白；空的與 `-` 不算）。
+fn comma_list(s: &str) -> Vec<String> {
+    s.split([',', '，']).map(pyutil::strip).filter(|x| !x.is_empty() && *x != "-").map(str::to_string).collect()
+}
+
+fn str_list(v: Option<&Value>) -> Option<Vec<String>> {
+    v.and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+}
+
+/// 從路徑取一個知識圖用的 repo id（小寫英數與連字號、字母開頭、最多 32 字），和已經用掉的不重複。
+pub fn repo_id(path: &str, used: &[String]) -> String {
+    let base = path.replace('\\', "/");
+    let base = base.trim_end_matches('/').rsplit('/').next().unwrap_or_default().to_lowercase();
+    let mut id: String = base.chars().map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() { c } else { '-' }).collect();
+    id = id.trim_matches('-').to_string();
+    if !id.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
+        id = format!("repo-{id}");
+    }
+    let id: String = id.trim_matches('-').chars().take(28).collect();
+    let id = id.trim_matches('-').to_string();
+    let mut out = id.clone();
+    let mut n = 2;
+    while used.contains(&out) {
+        out = format!("{id}-{n}");
+        n += 1;
+    }
+    out
+}
+
+/// 偵測到的清單（某個主題的某一項）。
+fn found_list(topics: &[Topic], topic: &str, key: &str) -> Vec<String> {
+    topics.iter().filter(|t| t.id == topic).flat_map(|t| t.detected.iter()).filter(|f| f.key == key)
+        .flat_map(|f| match &f.value {
+            Value::Array(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>(),
+            Value::String(s) => vec![s.clone()],
+            _ => Vec::new(),
+        }).collect()
+}
+
 /// 互動模式：問 1.0 新增的主題（接在既有的題目後面）。預設值的來源：存下來的答案（`ans` 裡已有的）＞偵測＞profile。
-/// 回答和預設相同、而且預設來自 profile 時不寫進答案。
-pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<String, Value>, topics: &[Topic], hooks_given: bool) -> R<()> {
+/// 回答和預設相同、而且預設來自 profile 時不寫進答案。`only`＝只問這一個主題（`--reconfigure <主題>`）。
+pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<String, Value>, topics: &[Topic], hooks_given: bool, only: Option<&str>) -> R<()> {
     let sug = detect::suggested(topics);
-    con.say("\n== 其他設定（都可以之後改 methodology.json；Enter＝用預設值） ==");
+    let want = |id: &str| only.is_none_or(|o| o == id);
+    if only.is_none() {
+        con.say("\n== 其他設定（都可以之後改 methodology.json；Enter＝用預設值） ==");
+    }
     let at = |v: Option<&Value>, k: &str| v.and_then(|x| x.get(k)).cloned();
 
     // 需求來源：偵測到規格層才問
-    if let Some(req) = sug.get("requirements").filter(|_| !ans.contains_key("requirements")) {
+    if want("requirements") {
+    if let Some(req) = sug.get("requirements").filter(|_| !ans.contains_key("requirements") || only.is_some()) {
         let a = con.ask("偵測到 openspec/：需求來源要不要用規格層（y／n；n＝照 profile）", "y");
         if starts_y(&a) {
             ans.insert("requirements".to_string(), req.clone());
         }
+    } else if only.is_some() {
+        con.say("  需求來源：沒有偵測到規格層（openspec/）。其他來源（需求 JSON、指令、spec 檔）寫在答案檔的 requirements，或直接改 methodology.json 的 requirements。");
+    }
     }
 
     // 模型分級
+    if want("models") {
     let mode_prof = at(prof.get("models"), "mode").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "inherit".to_string());
     let mode_now = match ans.get("models") {
         Some(Value::String(s)) => s.clone(),
@@ -177,8 +237,10 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
         m.insert("mode".to_string(), json!(mode));
         ans.insert("models".to_string(), Value::Object(m));
     }
+    }
 
     // 去客戶化掃描
+    if want("scrub") {
     let scrub_seed = ans.get("scrub").or_else(|| sug.get("scrub")).or_else(|| prof.get("scrub")).cloned();
     let scrub_on = match &scrub_seed {
         Some(Value::Bool(b)) => *b,
@@ -197,8 +259,10 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
     } else if scrub_on || ans.contains_key("scrub") {
         ans.insert("scrub".to_string(), json!({"enabled": false}));
     }
+    }
 
     // 連結帳本
+    if want("links") {
     let links_seed = ans.get("links").cloned().or_else(|| prof.get("links").cloned());
     let links_on = matches!(&links_seed, Some(Value::Bool(true)) | Some(Value::Object(_)));
     let a = con.ask("要不要記連結帳本（每段存檔時記驗收條件 ↔ spec 小節、檔案、測試、commit 的連結並檢查有沒有缺；y／n）", yn(links_on));
@@ -211,8 +275,10 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
     } else if links_on {
         ans.insert("links".to_string(), json!(false));
     }
+    }
 
     // 專案的 CI
+    if want("ci") {
     let ci_seed = ans.get("ci").or_else(|| sug.get("ci")).or_else(|| prof.get("ci")).cloned();
     let ci_on = match &ci_seed {
         Some(Value::Bool(b)) => *b,
@@ -250,24 +316,29 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
     } else if ci_on || ans.contains_key("ci") {
         ans.insert("ci".to_string(), json!({"enabled": false}));
     }
+    }
 
     // build 修正迴圈
+    if want("build_loop") {
     let aff_prof = at(at(prof.get("stages"), "build").as_ref(), "affected_tests_only") == Some(Value::Bool(true));
     let aff_now = ans.get("affected_tests_only").and_then(Value::as_bool).unwrap_or(aff_prof);
     let a = con.ask("build 的修正迴圈要不要只跑受影響的測試（用知識圖算；test 段的閘門照舊全跑；y／n）", yn(aff_now));
     if starts_y(&a) != aff_prof || ans.contains_key("affected_tests_only") {
         ans.insert("affected_tests_only".to_string(), json!(starts_y(&a)));
     }
+    }
 
     // 自動合併
+    if want("auto_merge") {
     let am_now = ans.get("auto_merge").and_then(Value::as_bool).unwrap_or(false);
     let a = con.ask("要不要啟用自動合併（y／n；啟用前要先完成 docs/自動合併信任模型.md 的檢查清單，白名單沒填之前不會合併任何 repo）", yn(am_now));
     if starts_y(&a) || ans.contains_key("auto_merge") {
         ans.insert("auto_merge".to_string(), json!(starts_y(&a)));
     }
+    }
 
     // hook 註冊方式（指令列已經指定就不問）
-    if !hooks_given {
+    if !hooks_given && want("hooks") {
         let h_now = ans.get("hooks").or_else(|| sug.get("hooks")).and_then(Value::as_str).unwrap_or("plugin").to_string();
         let h = con.ask("hook 註冊方式（plugin＝由 plugin 註冊；project＝註冊在專案的 settings.json，Windows 建議）", &h_now);
         if h != "plugin" && h != "project" {
@@ -277,7 +348,155 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
             ans.insert("hooks".to_string(), json!(h));
         }
     }
-    con.say("  沒有問的主題（知識圖 knowledge.auto／knowledge.repos、交付文件、平行與拆分、守門設定）：寫在答案檔的 knowledge、deliverables、parallelism、guard，或之後直接改設定檔；交付文件用 /agent-workflow:deliverables。");
+
+    // 知識圖：要不要建、提問時要不要帶位置、別的 repo
+    if want("knowledge") {
+        let seed = ans.get("knowledge").filter(|v| v.is_object()).cloned();
+        let auto_now = |k: &str| at(at(seed.as_ref(), "auto").as_ref(), k).or_else(|| at(at(prof.get("knowledge"), "auto").as_ref(), k)) == Some(Value::Bool(true));
+        con.say("  知識圖（可以不建）：把規格、文件、程式的位置連成一張圖（awf kg），資料包與派工單會帶位置。全部是輔助：失敗只警告、不擋流程。");
+        let (up_now, pr_now) = (auto_now("update"), auto_now("prompt"));
+        let up = starts_y(&con.ask("要不要建知識圖（y＝每段開跑前自動建立與更新；n＝不自動建，你手動跑過 awf kg build 之後才會跟著更新）", yn(up_now)));
+        let pr = starts_y(&con.ask("提問時要不要帶位置（訊息提到需求 id、檔名或符號名時查圖，帶幾行位置；y／n）", yn(pr_now)));
+        let repos_now: Vec<Value> = at(seed.as_ref(), "repos").or_else(|| at(prof.get("knowledge"), "repos")).and_then(|v| v.as_array().cloned()).unwrap_or_default();
+        let paths_now: Vec<String> = repos_now.iter().filter_map(|r| r.get("path").and_then(Value::as_str)).map(str::to_string).collect();
+        let mut cands = found_list(topics, "knowledge", "sibling_repos");
+        cands.extend(found_list(topics, "knowledge", "requirements_outside"));
+        cands.retain(|c| !paths_now.contains(c));
+        if !cands.is_empty() {
+            con.say(&format!("    候選（同一層目錄的 git repo、需求來源指到的工作區外路徑；不會自動加）：{}", cands.join("、")));
+        }
+        let shown = if paths_now.is_empty() { "-".to_string() } else { paths_now.join(",") };
+        let paths = comma_list(&con.ask("有沒有別的 repo 要收進知識圖（路徑，逗號分隔；- ＝沒有；收進來的 repo 對 team agent 唯讀，和 linked_repos 重複時也是）", &shown));
+        if paths.len() > MAX_REPOS {
+            return die(format!("knowledge.repos 最多 {MAX_REPOS} 個（收到 {} 個）", paths.len()));
+        }
+        let mut repos: Vec<Value> = Vec::new();
+        let mut used: Vec<String> = Vec::new();
+        let mut added: Vec<usize> = Vec::new();
+        for p in &paths {
+            if repos.iter().any(|r: &Value| r.get("path").and_then(Value::as_str) == Some(p.as_str())) {
+                continue;
+            }
+            let entry = match repos_now.iter().find(|r| r.get("path").and_then(Value::as_str) == Some(p.as_str())) {
+                Some(r) => r.clone(),
+                None => {
+                    added.push(repos.len());
+                    json!({"id": repo_id(p, &used), "path": p, "sources": []})
+                }
+            };
+            used.push(entry.get("id").and_then(Value::as_str).unwrap_or_default().to_string());
+            repos.push(entry);
+        }
+        if !added.is_empty() {
+            let globs = comma_list(&con.ask("新加的 repo 要收哪些檔（相對那個 repo 的 glob，逗號分隔；機敏檔不會收）", "**/*.md"));
+            if globs.is_empty() {
+                return die("別的 repo 至少要有一個要收的 glob（例如 docs/**/*.md）");
+            }
+            for i in &added {
+                if let Some(o) = repos.get_mut(*i).and_then(Value::as_object_mut) {
+                    o.insert("sources".to_string(), json!(globs));
+                }
+            }
+        }
+        let mut k = seed.as_ref().and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut auto = k.get("auto").and_then(Value::as_object).cloned().unwrap_or_default();
+        if up != up_now {
+            auto.insert("update".to_string(), json!(up));
+        }
+        if pr != pr_now {
+            auto.insert("prompt".to_string(), json!(pr));
+        }
+        if !auto.is_empty() {
+            k.insert("auto".to_string(), Value::Object(auto));
+        }
+        if repos != repos_now {
+            k.insert("repos".to_string(), Value::Array(repos));
+        }
+        if !k.is_empty() {
+            ans.insert("knowledge".to_string(), Value::Object(k));
+        }
+    }
+
+    // 交付文件：只問要不要開（文件清單用 awf deliverables configure）
+    if want("deliverables") {
+        let own_file = !found_list(topics, "deliverables", "config").is_empty();
+        let seed = ans.get("deliverables").cloned();
+        let has_docs = prof.get("deliverables").is_some_and(Value::is_object) || seed.as_ref().is_some_and(Value::is_object);
+        if own_file {
+            con.say("  交付文件：專案已經有 .claude/teams/deliverables.json，以那一份為準（用 /agent-workflow:deliverables 或 awf deliverables configure 調整）。");
+        } else if !has_docs {
+            con.say("  交付文件：這個 profile 沒有文件清單，之後用 /agent-workflow:deliverables（或 awf deliverables configure）設定與啟用。");
+        } else {
+            let on_now = match &seed {
+                Some(Value::Bool(b)) => *b,
+                Some(o) => o.get("enabled") == Some(&Value::Bool(true)),
+                None => at(prof.get("deliverables"), "enabled") == Some(Value::Bool(true)),
+            };
+            con.say("  交付文件（可以不開）：流程照 profile 的文件清單維護給外部看的文件（deliver 段只改受影響的小節）。清單與細項之後用 /agent-workflow:deliverables 調整。");
+            let on = starts_y(&con.ask("要不要產交付文件（y／n）", yn(on_now)));
+            if on != on_now || seed.is_some() {
+                match seed {
+                    Some(Value::Object(mut o)) => {
+                        o.insert("enabled".to_string(), json!(on));
+                        ans.insert("deliverables".to_string(), Value::Object(o));
+                    }
+                    _ => {
+                        ans.insert("deliverables".to_string(), json!(on));
+                    }
+                }
+            }
+        }
+    }
+
+    // 平行與拆分：兩個門檻
+    if want("parallelism") {
+        let seed = ans.get("parallelism").and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut out = seed.clone();
+        for (key, dflt, prompt) in [
+            ("split_threshold", 8u64, "預估子任務超過幾個就拆成子計劃平行規劃（整數，至少 2）"),
+            ("max_sub_plans", 4u64, "最多拆幾個子計劃（也是平行規劃與分片驗證的 agent 數上限；整數，至少 2）"),
+        ] {
+            let prof_v = at(prof.get("parallelism"), key).and_then(|v| v.as_u64()).unwrap_or(dflt);
+            let now = seed.get(key).and_then(Value::as_u64).unwrap_or(prof_v);
+            let a = con.ask(prompt, &now.to_string());
+            let Some(n) = pyutil::strip(&a).parse::<u64>().ok().filter(|n| (2..=1000).contains(n)) else {
+                return die(format!("{key} 要是 2 以上的整數（收到 {}）", pyfmt::repr_str(&a)));
+            };
+            if n != prof_v || seed.contains_key(key) {
+                out.insert(key.to_string(), json!(n));
+            }
+        }
+        if !out.is_empty() {
+            ans.insert("parallelism".to_string(), Value::Object(out));
+        }
+    }
+
+    // 守門設定：受保護分支、驗收測試目錄（其餘的寫在答案檔的 guard 或直接改 guard.config.json）
+    if want("guard") {
+        let seed = ans.get("guard").and_then(Value::as_object).cloned().unwrap_or_default();
+        let sug_guard = sug.get("guard").and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut out = seed.clone();
+        for (key, base, prompt) in [
+            ("protected_branches", detect::GUARD_PROTECTED, "受保護分支（逗號分隔；agent 與主 session 都不能直接 push，合併走 PR）"),
+            ("acceptance_test_dirs", detect::GUARD_ACCEPTANCE, "驗收測試目錄（逗號分隔；dev-implementer 不能改裡面的檔）"),
+        ] {
+            let base: Vec<String> = base.iter().map(|s| s.to_string()).collect();
+            let now = str_list(seed.get(key)).or_else(|| str_list(sug_guard.get(key))).unwrap_or_else(|| base.clone());
+            let list = comma_list(&con.ask(prompt, &now.join(",")));
+            if list.is_empty() {
+                return die(format!("{key} 不能是空的（守門設定只能更嚴；要拿掉請由人直接改 guard.config.json）"));
+            }
+            if list != base || seed.contains_key(key) {
+                out.insert(key.to_string(), json!(list));
+            }
+        }
+        if !out.is_empty() {
+            ans.insert("guard".to_string(), Value::Object(out));
+        }
+    }
+    if only.is_none() {
+        con.say("  其餘的細項（知識庫來源 knowledge.sources、交付文件清單、分片驗證與分波、其他守門設定）：寫在答案檔的 knowledge、deliverables、parallelism、guard，或之後直接改設定檔。");
+    }
     Ok(())
 }
 
@@ -518,6 +737,19 @@ mod tests {
             assert!(apply_change(&mut doc, c));
         }
         assert_eq!(Value::Object(doc), json!({"a": {"b": 2, "mine": true}, "keep": "x", "f": {"g": 1}}));
+    }
+
+    #[test]
+    fn repo_ids_and_lists() {
+        assert_eq!(repo_id("../acme-specs", &[]), "acme-specs");
+        assert_eq!(repo_id("/srv/Shared Lib/", &[]), "shared-lib");
+        assert_eq!(repo_id("../2024_api", &[]), "repo-2024-api");
+        assert_eq!(repo_id("C:\\work\\App", &["app".to_string()]), "app-2");
+        assert_eq!(repo_id("..", &[]), "repo");
+        let long = repo_id(&format!("../{}", "a".repeat(80)), &[]);
+        assert!(long.len() <= 32 && long.starts_with('a'), "{long}");
+        assert_eq!(comma_list(" a , -, ,b，c "), vec!["a", "b", "c"]);
+        assert!(single_topics().contains(&"knowledge") && single_topics().contains(&"main_session") && !single_topics().contains(&"conventions"));
     }
 
     #[test]

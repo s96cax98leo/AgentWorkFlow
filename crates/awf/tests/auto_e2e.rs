@@ -390,6 +390,194 @@ fn all_off_adds_nothing() {
     assert!(!r.all().contains("vault") && !p.vault().exists(), "export 關掉時結案不碰 vault：\n{}", r.all());
 }
 
+// ------------------------------------------------------------------ 更新失敗／逾時只警告；取消之後也重寫 vault
+
+/// 動作裡「知識圖沒更新成」的警告（`notes` 裡的那一行）。
+fn graph_warnings(action: &Value) -> Vec<String> {
+    action["notes"].as_array().map(|a| a.iter().filter_map(Value::as_str).filter(|n| n.contains("資料包用上一版的圖")).map(str::to_string).collect()).unwrap_or_default()
+}
+
+impl Proj {
+    fn abandon(&self, run: &str) -> Out {
+        self.awf(&["save-run", "abandon", self.dir.join(run).to_str().unwrap(), "--reason", "需求取消", "--by", "human", "--at", "t"])
+    }
+
+    /// 改 profile 的 `knowledge.auto`。
+    fn set_auto(&self, auto: Value) {
+        let mp = self.dir.join(".claude/teams/methodology.json");
+        let mut m = load(&mp);
+        if !m["knowledge"].is_object() {
+            m["knowledge"] = json!({});
+        }
+        m["knowledge"]["auto"] = auto;
+        put(&mp, &m.to_string());
+    }
+}
+
+/// 圖更新不了（圖檔的位置被一個目錄佔住，寫不進去）：`awf next` 照樣回這一段的動作，多一行警告；
+/// 這一段存得進去，下一段開跑前再試一次、再警告一行。圖檔只是內容壞掉則會重建，不算失敗。
+/// 取消時 vault 寫不了只在 stderr 提醒，取消本身照樣成功、結案摘要照寫。
+#[test]
+fn failed_update_only_warns_and_the_flow_goes_on() {
+    let p = Proj::new("broken", Some(json!({"update": true})));
+    assert_eq!(p.awf(&["kg", "build"]).code, 0);
+    let run = "_tpm/runs/r1";
+    p.start(run);
+
+    // 1. 圖檔內容壞掉（不是 SQLite）：更新時整份重建，不警告
+    let garbage = b"this is not a sqlite database, just bytes ".repeat(64);
+    std::fs::write(p.graph(), &garbage).expect("把圖寫壞");
+    let a = p.next(run, &[]);
+    assert_eq!((a["action"].as_str(), a["stage"].as_str()), (Some("run_workflow"), Some("plan")), "{a}");
+    assert!(graph_warnings(&a).is_empty(), "讀不懂的圖檔會重建，不算更新失敗：{a}");
+    assert_ne!(std::fs::read(p.graph()).expect("圖檔還在"), garbage, "圖重建了");
+    assert_eq!(p.awf(&["kg", "locate", "refund"]).code, 0, "重建的圖查得到東西");
+    p.done(run, "plan");
+
+    // 2. 圖檔的位置變成目錄：更新失敗 → 閘門不警告；下一段開跑的動作照樣回來，警告正好一行
+    std::fs::remove_file(p.graph()).expect("拿掉圖檔");
+    std::fs::create_dir_all(p.graph().join("x")).expect("用目錄佔住圖檔的位置");
+    let g = p.next(run, &[]);
+    assert_eq!(g["action"], "gate", "{g}");
+    assert!(graph_warnings(&g).is_empty(), "閘門不是開跑，不更新圖也不警告：{g}");
+    assert_eq!(p.awf(&["approve", "--run", run, "--stage", "plan", "--by", "human"]).code, 0);
+    let mut d = p.next(run, &[]);
+    if d["action"] == "need_input" {
+        let keys: Vec<String> = d["need"].as_object().expect("need 是物件").keys().cloned().collect();
+        let mut argv: Vec<String> = Vec::new();
+        for k in keys {
+            argv.push("--set".to_string());
+            argv.push(format!("{k}=false"));
+        }
+        d = p.next(run, &argv.iter().map(String::as_str).collect::<Vec<_>>());
+    }
+    assert_eq!((d["action"].as_str(), d["stage"].as_str()), (Some("run_workflow"), Some("design")), "更新失敗時動作照樣回來：{d}");
+    let w = graph_warnings(&d);
+    assert_eq!(w.len(), 1, "警告正好一行：{d}");
+    assert!(w[0].starts_with("警告：") && w[0].contains("知識圖") && !w[0].contains('\n'), "{w:?}");
+    assert!(p.dir.join(d["script"].as_str().unwrap_or("?")).is_file(), "腳本照樣產生：{d}");
+    assert!(p.dir.join(run).join("design/pack.md").is_file(), "資料包照樣產生");
+    assert!(p.graph().join("x").is_dir(), "更新失敗不能動原本在那裡的東西");
+    p.done(run, "design");
+    // 同一段再問一次 next：再試一次、還是只有一行
+    assert_eq!(p.next(run, &[])["action"], "gate");
+
+    // 3. 圖修好了，但 vault 的位置被一個檔案佔住：取消照樣成功，只提醒 vault 沒重寫
+    std::fs::remove_dir_all(p.graph()).expect("拿掉佔位的目錄");
+    assert_eq!(p.awf(&["kg", "build"]).code, 0);
+    p.put("_tpm/kb/vault", "不是目錄\n");
+    let r = p.abandon(run);
+    assert_eq!(r.code, 0, "vault 寫不了不能讓取消失敗：\n{}", r.all());
+    assert!(p.run_json(run)["abandoned"].is_object());
+    assert!(p.dir.join(run).join("archive/結案摘要.md").is_file(), "結案摘要照寫");
+    assert!(r.stderr.contains("vault 沒有重寫") && r.stderr.contains("awf kg export"), "要說明沒重寫與怎麼補：\n{}", r.all());
+    assert_eq!(std::fs::read_to_string(p.vault()).unwrap(), "不是目錄\n", "佔位的檔不能被改掉");
+}
+
+/// 更新逾時（`knowledge.auto.timeout` 設最小的 1 秒、專案大到 1 秒掃不完）：動作照樣回來、警告一行、上一版的圖原封不動。
+/// 專案大小看這台機器調：先量一次完整建圖，不到 3 秒就加倍，確定 1 秒一定不夠才測。
+#[test]
+fn update_timeout_only_warns_and_keeps_the_previous_graph() {
+    let p = Proj::new("timeout", None);
+    let write_all = |n: usize, tail: &str| {
+        for i in 0..n {
+            let mut text = String::new();
+            for j in 0..150 {
+                text.push_str(&format!("def fn_{i}_{j}(order):\n    return helper_{j}(order)\n\n"));
+            }
+            text.push_str(tail);
+            p.put(&format!("src/bulk/m{i}.py"), &text);
+        }
+    };
+    let mut n = 200;
+    let mut slow_enough = false;
+    for _ in 0..5 {
+        write_all(n, "");
+        let t = std::time::Instant::now();
+        let r = p.awf(&["kg", "build", "--timeout", "600"]);
+        assert_eq!(r.code, 0, "awf kg build：\n{}", r.all());
+        if t.elapsed() >= std::time::Duration::from_secs(3) {
+            slow_enough = true;
+            break;
+        }
+        n *= 2;
+    }
+    if !slow_enough {
+        eprintln!("略過：這台機器建 {n} 個檔的圖還不到 3 秒，做不出穩定的逾時");
+        return;
+    }
+    let before = std::fs::read(p.graph()).expect("上一版的圖");
+    // 每個檔都改過：這次更新要全部重算，1 秒做不完
+    write_all(n, "def brand_new_tail(order):\n    return order\n");
+    p.set_auto(json!({"timeout": 1}));
+    let run = "_tpm/runs/r1";
+    p.start(run);
+    let a = p.next(run, &[]);
+    assert_eq!((a["action"].as_str(), a["stage"].as_str()), (Some("run_workflow"), Some("plan")), "逾時時動作照樣回來：{a}");
+    let w = graph_warnings(&a);
+    assert_eq!(w.len(), 1, "警告正好一行：{a}");
+    assert!(w[0].starts_with("警告：") && w[0].contains("逾時") && !w[0].contains('\n'), "{w:?}");
+    assert_eq!(std::fs::read(p.graph()).expect("圖檔還在"), before, "逾時放棄這次，上一版的圖原封不動");
+    let left: Vec<String> = std::fs::read_dir(p.dir.join("_tpm/kb")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|f| f.contains(".tmp-")).collect()).unwrap_or_default();
+    assert!(left.is_empty(), "沒有留下暫存檔：{left:?}");
+    assert!(p.dir.join(run).join("plan/pack.md").is_file(), "資料包照樣產生（用上一版的圖）");
+    p.done(run, "plan");
+    assert_eq!(p.next(run, &[])["action"], "gate", "這一段照常存、照常到閘門");
+}
+
+/// 取消（`awf save-run abandon`）之後和結案一樣重寫 vault：有圖才做、`notes/` 不動；
+/// `knowledge.auto.export` 關掉或沒有圖時不碰。
+#[test]
+fn abandon_rewrites_the_vault() {
+    let p = Proj::new("abandon", None);
+    assert_eq!(p.awf(&["kg", "build"]).code, 0);
+    p.put("_tpm/kb/vault/notes/mine.md", "我自己的筆記\n");
+    let run = "_tpm/runs/r1";
+    p.start(run);
+    assert_eq!(p.next(run, &[])["action"], "run_workflow");
+    p.done(run, "plan");
+    let pages = |p: &Proj| -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![p.vault()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let path = e.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    out.push(path.strip_prefix(p.vault()).unwrap_or(&path).to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        out.sort();
+        out
+    };
+    assert_eq!(pages(&p), ["notes/mine.md"], "取消之前 vault 只有使用者的筆記");
+    let r = p.abandon(run);
+    assert_eq!(r.code, 0, "awf save-run abandon：\n{}", r.all());
+    assert!(r.stdout.contains("已取消") && r.stdout.contains("vault 已重寫"), "取消之後要重寫 vault：\n{}", r.all());
+    let after = pages(&p);
+    assert!(after.len() > 1 && after.iter().any(|f| f.ends_with(".md") && !f.starts_with("notes/")), "vault 有寫出頁面：{after:?}");
+    assert_eq!(std::fs::read_to_string(p.vault().join("notes/mine.md")).unwrap(), "我自己的筆記\n", "notes/ 不動");
+    assert!(p.dir.join(run).join("archive/結案摘要.md").is_file());
+    // 已經取消過：保留原紀錄，不再重寫
+    let again = p.abandon(run);
+    assert!(again.code == 0 && again.stdout.contains("已經取消過") && !again.all().contains("vault"), "{}", again.all());
+
+    // export 關掉：取消不碰 vault
+    let q = Proj::new("abandon-off", Some(json!({"export": false})));
+    assert_eq!(q.awf(&["kg", "build"]).code, 0);
+    q.start(run);
+    let r = q.abandon(run);
+    assert!(r.code == 0 && !r.all().contains("vault") && !q.vault().exists(), "export 關掉時取消不碰 vault：\n{}", r.all());
+
+    // 沒有圖：取消不碰 vault，也不會建圖
+    let z = Proj::new("abandon-nograph", None);
+    z.start(run);
+    let r = z.abandon(run);
+    assert!(r.code == 0 && !r.all().contains("vault") && !z.vault().exists() && !z.graph().exists(), "沒有圖時取消不碰 vault：\n{}", r.all());
+}
+
 // ------------------------------------------------------------------ E1：中斷回收
 
 /// 假的 agent transcript：派工單（提到 run 目錄）與最後交的信封。

@@ -165,7 +165,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **知識層**：`awf kb`（FTS5，退回內建的 BM25；中文 bigram）。輸出包在資料標籤裡；卡片只放標題樹與行號，不放內文。
 - **讀取預算**：`crates/awf-core/src/hooks/read_budget.rs`（`check_read`、`check_shell`），由 hook 的入口（`crates/awf-core/src/hooks/mod.rs`）呼叫。只套模版角色；**預設不啟用**（`limits` 沒寫 `mode` 就關閉，內建 profile 不預設 `mode`，由使用者在 init 問答、答案檔的 `read_limits` 或 `methodology.json` 決定要不要開與門檻）；任何例外都放行（I9）。狀態檔在系統暫存目錄的 `awf-read-budget/<session_id>/<agent_id>.json`（`AWF_READ_BUDGET_DIR` 可覆寫，測試用）。
 - **量成本**：`awf cost` 讀 Claude Code 的 workflow transcript（格式沒承諾穩定，解析集中在 `read_agent`、`read_wf_meta`）。基準實跑是 `cargo xtask bench`（`crates/xtask/src/bench_fixture.rs` 產生虛構專案、`bench.rs` 真的呼叫 claude，會花 token，check-all 只跑它的 `--selftest`；需求在 `tests/bench/requirement.md`）。
-- **doctor（0.5）**：`awf doctor`（`crates/awf-core/src/doctor.rs`）。只讀、不連網：環境、plugin 與專案版本、安裝來源（`installed_plugins.json`、`known_marketplaces.json`，格式沒承諾穩定，讀不懂就略過）、hook 編譯與重複註冊、`schema::check_doc` 驗 methodology、覆寫檔版本。每項 `{id, level, msg, fix}`；有 error 才 exit 1。別的專案的安裝不算衝突（和 `state::find_plugin` 一致）。1.0 另有體檢五項，只提示、附修法（info 或 warn，沒事時不列）：`models.mode` 是 inherit、知識庫沒建、有 `openspec/` 但需求來源不是它、需求來源在工作區外而 `linked_repos` 沒涵蓋、最近的 run 沒有走 `awf next`。
+- **doctor（0.5）**：`awf doctor`（`crates/awf-core/src/doctor.rs`）。只讀、不連網：環境、plugin 與專案版本、安裝來源（`installed_plugins.json`、`known_marketplaces.json`，格式沒承諾穩定，讀不懂就略過）、hook 編譯與重複註冊、`schema::check_doc` 驗 methodology、覆寫檔版本。每項 `{id, level, msg, fix}`；有 error 才 exit 1。別的專案的安裝不算衝突（和 `state::find_plugin` 一致）。1.0 另有體檢五項，只提示、附修法（info 或 warn，沒事時不列）：`models.mode` 是 inherit、知識庫沒建（只在 profile 有 `knowledge` 或專案有 `docs/`、`openspec/` 時才提示）、有 `openspec/` 但需求來源不是它、需求來源在工作區外而 `linked_repos` 沒涵蓋、最近的 run 沒有走 `awf next`。
 - **watcher（0.5）**：`awf watch`、`awf statusline`（`crates/awf-core/src/watch.rs`）。唯讀合併 run.json、執行紀錄檔、workflow transcript（`cost::tail_agent` 增量讀），把前後兩份快照的差異（`diff_events`）附加到 `<run>/progress.jsonl`（格式 `schemas/progress-event.schema.json`），記憶在 `<run>/.watch-state.json`。`workflow_stalled` 只回報、不處理。profile 的 `progress.notify` 預設不設；有設時只送 `NOTIFY_FIELDS` 的欄位，命中 `SECRETISH` 整筆不送。閘門工具不讀這兩個檔（`awf save-run --selftest` 的 B4.2 案例）。整合方式見 `docs/監控與整合.md`。
 - 這些都是輔助：失敗只警告、不擋流程；gate 判定不看它們的輸出（調研重用例外：`verify_reuse` 不符會判 invalid，只會更嚴）。
 
@@ -291,6 +291,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - 交件 hook（`envelope`）自己出錯時刻意放行，避免卡住所有 subagent；信封仍由 workflow 的 `schema` 與 `awf save-run stage` 驗證。
 - **`session-start`（0.5）**：SessionStart 時比對 plugin 版本與專案 `.claude/teams/VERSION`，不一致印一行 JSON（`systemMessage` 與 `additionalContext`）。只是提示：永遠 exit 0，沒套用、讀不到、輸入壞掉、任何例外都不印；版本字串只收單純的版本格式（會進對話）。找不到 plugin.json 時不提示。測試在 `crates/awf/tests/hooks_entry.rs` 的第 6 段。
 - **`guard-paths` 的範圍**：Edit、Write、NotebookEdit、Read、Grep。`guard.config.json` 的 `linked_repos`（工作區以外的我方 repo，`hooks::guard::linked_rel`）讓 dev-* 可以改裡面的檔、tpm-writer 可以寫它的 specs，其餘規則照舊；模版角色可以寫這個 session 的 scratchpad（`hooks::guard::in_scratchpad`：系統暫存目錄底下的 `<session_id>/scratchpad/`）。Read、Grep 讀機敏檔（`.env`、金鑰、憑證）一律擋，主 session 也擋；`acceptance_test_dirs` 裡的檔案 dev-implementer 不能寫。
+- **`knowledge.repos`（1.0）**：profile 的 `knowledge.repos[].path` 底下對模版角色唯讀（`config::profile_bits` 和自訂事件段名同一次讀檔；`hooks::guard::kg_repos`／`kg_repo_hit`、`guard_shell` 的 `shell_writes_kg_repo`）。讀照既有規則（工作區外的 Read／Grep 本來就放行，機敏檔一律擋）；Edit／Write 與 shell 寫入都擋，同時登記在 `linked_repos` 也擋。根目錄、家目錄、專案自己或上層目錄的項目不算；profile 讀不懂當作沒設定。shell 那一條先找目標再比對寫法（寫法的樣式大，先比對會讓每個指令多 30ms 以上）。
+- **CI 檔（1.0）**：模版角色不能寫任何 repo 的 `.github/workflows/`（`guard_paths::ci_workflow_path`、`guard_shell` 的 `shell_writes_ci`／`CI_TARGET`；Edit／Write 與 shell 寫入都擋，讀可以）。CI 檔由人或主 session 改（`awf ci render --write`）。這是事前擋；`awf merge-gate` 對 diff 動到 `.github/` 一律 escalate 是事後的另一層，兩邊不衝突。主 session 與使用者自己的 agent 不受影響。
 - **`guard-shell` 擋什麼**：同時處理 Bash 與 PowerShell 工具。擋推送、寫上游、推受保護分支、越權寫入，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - **steward 合併什麼時候放行**：由 `crates/awf-core/src/hooks/guard_shell.rs` 的 `merge_refusal` 判斷，以下全部成立才放行：
   - `auto_merge` 已啟用。
@@ -304,7 +306,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **沒有設定檔時**：採安全預設，只套用 `tpm-`／`dev-` 的角色規則，不擋主 session，所以還沒 init 的專案不會被誤擋。
 - **註冊方式**：兩種只能擇一。
   - plugin 註冊：`awf init --hooks plugin`，預設。
-  - 註冊在專案的 `.claude/settings.json`：`--hooks project`，Windows 建議用這個，init 會寫入執行檔的絕對路徑。
+  - 註冊在專案的 `.claude/settings.json`：`--hooks project`，Windows 建議用這個，init 會寫入執行檔的絕對路徑。範本（`settings.project-hooks.json.tmpl`）註冊七筆：守門兩筆 `onFailure: block`，交件三筆，加上輔助的 `mark-dirty`（PostToolUse）與 `prompt-context`（UserPromptSubmit）兩筆 `onFailure: continue`。`--upgrade` 時 settings.json 已經有 1.0 寫法的註冊就自動照 project 模式升級（補缺的註冊、更新執行檔複本）；`init::merge::merge_hooks` 讓每個種類在每個事件只留一份。`awf doctor` 的重複註冊檢查（`project_hook_re`）認得全部六個種類。
 
 ### Slash commands 與 skills
 
@@ -312,7 +314,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - `plugin/skills/tpm-team/SKILL.md` 只寫 `awf next` → 照做 → `done` 的迴圈（不超過 60 行、描述不超過 200 字，`VP B1.5` 檢查）；事件對照表、recipe、閘門規則與手動執行在同目錄的 `reference/*.md`。
 - plugin 有 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`，都是薄殼。
 - 其他入口是 skill，用 `/agent-workflow:<skill>` 叫用（沒有同名指令時可省略前綴）。不要再新增和 skill 同名的 command。
-  - `/agent-workflow:init-workflow`：先跑 `awf init --detect`，逐主題在對話中確認使用者的做法，再跑 `awf init --answers` 並唸出對照表（訪談在 `crates/awf-core/src/init/detect.rs`、`interview.rs`；答案存 `.claude/teams/init-answers.json`，`--reconfigure` 只改有變的設定）。
+  - `/agent-workflow:init-workflow`：先跑 `awf init --detect`，逐主題在對話中確認使用者的做法，再跑 `awf init --answers` 並唸出對照表（訪談在 `crates/awf-core/src/init/detect.rs`、`interview.rs`；答案存 `.claude/teams/init-answers.json`，`--reconfigure` 只改有變的設定；`--reconfigure <主題>` 只重問一個主題，可以單獨問的主題是 `interview::single_topics()`）。
   - `/agent-workflow:add-agent`：把使用者自己的 agent 加進 SDLC。
   - `/agent-workflow:correct`：把一則教訓變成最高可行層級的強制機制，並在 rules.md〈專案規則〉維護「規則 ↔ 強制方式」對照表。
   - `/agent-workflow:deliverables`：薄殼，在對話中走交付設定（提案 → 人確認 → `--write`）與盤點（`status`、`check`）。

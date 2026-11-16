@@ -103,6 +103,8 @@ re!(TEAM_TOOL_CALL, r#"(?:python[\d.]*|py|pypy[\d.]*)(?:\.exe)?(?:\s+-\S+)*\s+["
 re!(TEAM_CONFIG_MKDIR, r"(?:^|[\s;&|(`])(?:mkdir|md|rmdir)(?:\.exe)?(?=\s|$)", "i");
 re!(MULTI_SLASH, r"(?<![:/])[/\\\\]{2,}");
 re!(TEAMS_REL, r#"(?:^|[\s"'=])\.?[/\\\\]?(?:teams|workflows)(?:[/\\\\]|\s|$)"#);
+re!(CI_TARGET, r#"(?:^|[/\\\s"'=])\.github[/\\]workflows(?:[/\\"']|\s|$)"#, "i");
+re!(CI_REL, r#"(?:^|[\s"'=])\.?[/\\]?workflows(?:[/\\"']|\s|$)"#, "i");
 re!(PUSH_RE, r"\bgit\b.*\b(?:push|send-pack)\b");
 re!(GIT_WORD, r"\bgit\b");
 re!(NO_VERIFY, r"(?:^|\s)--no-verify\b");
@@ -120,7 +122,7 @@ pub fn all_patterns() -> Vec<&'static Re> {
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
-         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &PUSH_RE, &GIT_WORD,
+         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
 }
 
@@ -501,6 +503,26 @@ fn save_run_write(seg: &str, tool: &str, readonly: &[&str], depth: usize) -> Opt
         }
     }
     None
+}
+
+/// `hay` 裡有沒有把 `needle` 當路徑寫出來（前後是路徑的邊界，不是別的名字的一部分）。太短的不比（容易誤判）。
+fn mentions_path(hay: &str, needle: &str) -> bool {
+    if needle.chars().count() < 3 {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(i) = hay[from..].find(needle) {
+        let (s, e) = (from + i, from + i + needle.len());
+        let before = hay[..s].strip_suffix("./").unwrap_or(&hay[..s]).chars().next_back();
+        let after = hay[e..].chars().next();
+        let lead = before.is_none_or(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '=' | '(' | '>' | '<' | ':' | ','));
+        let tail = after.is_none_or(|c| c.is_whitespace() || matches!(c, '/' | '"' | '\'' | ')' | ',' | ';'));
+        if lead && tail {
+            return true;
+        }
+        from = s + hay[s..].chars().next().map_or(1, char::len_utf8);
+    }
+    false
 }
 
 impl Guard {
@@ -1002,6 +1024,78 @@ impl Guard {
         Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
     }
 
+    /// shell 寫入某個 repo 的 `.github/workflows/`（CI 檔；盡力而為，判法比照 [`Self::shell_writes_team_config`]）。
+    fn shell_writes_ci(&self, seg: &str, cwd: &str) -> R<bool> {
+        let probe = MULTI_SLASH.replace_all(&norm(seg), "/");
+        let here = self.folded_here(cwd)?;
+        let inside = here.contains("/.github/workflows/") || (here.ends_with("/.github/") && CI_REL.is_match(&probe));
+        if !inside && !CI_TARGET.is_match(&probe) {
+            return Ok(false);
+        }
+        let probe = NULL_REDIR.replace_all(&probe, " ");
+        Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    }
+
+    /// 作用目錄解析並摺疊後的路徑（前後帶 `/`）。同一個目錄連續問只解析一次。
+    fn folded_here(&self, cwd: &str) -> R<String> {
+        if let Ok(memo) = self.here_memo.lock() {
+            if let Some((k, v)) = memo.as_ref() {
+                if k == cwd {
+                    return Ok(v.clone());
+                }
+            }
+        }
+        let here = match path::resolve(cwd) {
+            Ok(r) => format!("/{}/", fold(&r).trim_matches('/')),
+            Err(e) if e.class == "RuntimeError" || e.class == "ValueError" => return Err(Stop::Err(e)),
+            Err(_) => format!("/{}/", fold(&norm(cwd)).trim_matches('/')),
+        };
+        if let Ok(mut memo) = self.here_memo.lock() {
+            *memo = Some((cwd.to_string(), here.clone()));
+        }
+        Ok(here)
+    }
+
+    /// shell 寫入 profile 的 `knowledge.repos` 列的 repo（盡力而為）：這一段作用的目錄在那個 repo 裡，或指令裡有指到它底下的路徑
+    /// （照寫的路徑、絕對路徑，或解析後落在裡面的參數），而且是寫入的寫法。回那個 repo 照寫的路徑。
+    /// 先找目標再看寫法：寫法的樣式很大，只有真的碰到那個 repo 的指令才值得編譯它（一般指令多花的時間只有幾次路徑解析）。
+    fn shell_writes_kg_repo(&self, seg: &str, cwd: &str) -> R<Option<String>> {
+        let repos = self.kg_repos();
+        if repos.is_empty() {
+            return Ok(None);
+        }
+        let here = match path::resolve(cwd) {
+            Ok(r) => r,
+            Err(e) if e.class == "RuntimeError" || e.class == "ValueError" => return Err(Stop::Err(e)),
+            Err(_) => norm(cwd),
+        };
+        let nseg = norm(seg);
+        let fseg = fold(&nseg);
+        let mut hit = repos.iter().find(|(root, shown)| {
+            path::relative_to(&here, root).is_some() || fseg.contains(&fold(root)) || mentions_path(&fseg, &fold(shown.trim_start_matches("./")))
+        }).map(|(_, shown)| shown.clone());
+        if hit.is_none() {
+            for t in shlex_tokens(seg) {
+                let t = t.trim_start_matches(['>', '<', '=']);
+                let t = if t.starts_with('-') { t.split_once('=').map(|(_, v)| v).unwrap_or(t) } else { t };
+                if !(t.contains('/') || t.contains('\\') || t.starts_with('~')) || t.contains('\0') || t.contains("://") {
+                    continue;
+                }
+                let Ok(full) = self.resolve_arg(cwd, t) else { continue };
+                if let Some((_, shown)) = repos.iter().find(|(root, _)| path::relative_to(&full, root).is_some()) {
+                    hit = Some(shown.clone());
+                    break;
+                }
+            }
+        }
+        let Some(hit) = hit else { return Ok(None) };
+        let probe = GIT_GLOBAL_OPTS.replace_all(&MULTI_SLASH.replace_all(&nseg, "/"), "git ");
+        let probe = NULL_REDIR.replace_all(&probe, " ");
+        let writes = SHELL_WRITE.is_match(&probe) || RECORD_WRITE_CMD.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe)
+            || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe));
+        Ok(if writes { Some(hit) } else { None })
+    }
+
     /// Bash 與 PowerShell 工具共用的 shell 守門規則。
     pub fn check_shell_rules(&self, data: &Value) -> R<()> {
         let ti = tool_input(data)?;
@@ -1172,6 +1266,16 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                 return Err(self.block(&format!("{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json\
 （守門設定、profile 與 workflow 腳本只由人或主 session 改）")));
             }
+            if team {
+                if let Some(repo) = self.shell_writes_kg_repo(seg, d)? {
+                    return Err(self.block(&format!("{agent} 不能寫 {repo} 底下的檔（profile 的 knowledge.repos 列的 repo 對 team agent 唯讀：可以讀、不能寫；\
+寫入的指令不要在那個目錄裡執行，也不要把它的路徑和寫入寫在同一段；要改它由人或主 session 做）")));
+                }
+            }
+            if team && self.shell_writes_ci(seg, d)? {
+                return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（CI 檔決定哪些檢查會跑，只由人或主 session 改，\
+例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）")));
+            }
             for (tool_name, sub, tool_re) in [("awf publish", "publish", &PUBLISH_PY), ("awf merge-gate", "merge-gate", &MERGE_GATE_PY)] {
                 let via_awf: Vec<&awf_cli::Call> = awf.iter().filter(|c| c.sub == sub).collect();
                 if tool_re.is_match(seg) || !via_awf.is_empty() {
@@ -1290,6 +1394,16 @@ mod tests {
         for r in all_patterns() {
             assert!(r.compiles(), "樣式編不過：{}", r.source());
         }
+    }
+
+    #[test]
+    fn path_mentions() {
+        assert!(mentions_path("echo x > ../kg-ref/docs/a.md", "../kg-ref"));
+        assert!(mentions_path("open('vendor/shared/src/a.ts','w')", "vendor/shared"));
+        assert!(mentions_path("rm -rf ./vendor/shared", "vendor/shared"));
+        assert!(!mentions_path("rm -rf my-vendor/shared-x", "vendor/shared"));
+        assert!(!mentions_path("rm -rf other/vendor/shared", "vendor/shared"));
+        assert!(!mentions_path("rm ab", "ab"));
     }
 
     #[test]

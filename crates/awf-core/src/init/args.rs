@@ -34,6 +34,8 @@ pub struct Args {
     pub json: bool,
     /// 拿存下來的答案（`.claude/teams/init-answers.json`）當預設重新設定，只改有變的設定。
     pub reconfigure: bool,
+    /// `--reconfigure <主題>`：只重問這一個主題（主題 id 見 `--detect`）。
+    pub reconfigure_topic: Option<String>,
     /// 指令列有沒有明確給 `--hooks`（沒給時答案檔的 `hooks` 才算數）。
     pub hooks_given: bool,
 }
@@ -70,7 +72,7 @@ const OPTS: &[(&str, bool)] = &[
 ];
 
 pub const USAGE: &str = "usage: awf init [-h] [--target TARGET] [--config CONFIG] [--answers ANSWERS] [--upgrade] [--adopt-new-fields] [--force] \
-[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--source SOURCE] [--merge-gate-bin MERGE_GATE_BIN] [--merge-gate-checksums MERGE_GATE_CHECKSUMS] [--detect] [--json] [--reconfigure] [positional]";
+[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--source SOURCE] [--merge-gate-bin MERGE_GATE_BIN] [--merge-gate-checksums MERGE_GATE_CHECKSUMS] [--detect] [--json] [--reconfigure [TOPIC]] [positional]";
 
 enum Seen {
     Plain,
@@ -179,6 +181,21 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgStop> {
         };
         let Some(&(name, takes)) = OPTS.get(idx) else { continue };
         if !takes {
+            if name == "--reconfigure" {
+                // 後面可以接一個主題 id（`--reconfigure knowledge` 或 `--reconfigure=knowledge`）。
+                // 沒有 `=` 時只有「下一個參數正好是主題 id」才當成主題，不然它是位置參數（專案目錄）。
+                a.reconfigure = true;
+                match explicit {
+                    Some(v) => a.reconfigure_topic = Some(v),
+                    None => {
+                        if let Some(n) = argv.get(i).filter(|n| super::detect::TOPICS.iter().any(|t| t.0 == n.as_str())) {
+                            a.reconfigure_topic = Some(n.clone());
+                            i += 1;
+                        }
+                    }
+                }
+                continue;
+            }
             if let Some(v) = explicit {
                 return Err(ArgStop::Error(format!("argument {name}: ignored explicit argument {}", repr_str(&v))));
             }
@@ -193,7 +210,6 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgStop> {
                 "--defaults" => a.defaults = true,
                 "--detect" => a.detect = true,
                 "--json" => a.json = true,
-                "--reconfigure" => a.reconfigure = true,
                 _ => {}
             }
             continue;
@@ -273,6 +289,16 @@ mod tests {
         assert!(b.force && b.defaults && !b.hooks_given && !b.detect);
         let d = run(&["--detect", "--json", "--reconf", "--hooks", "plugin"]).ok().unwrap_or_default();
         assert!(d.detect && d.json && d.reconfigure && d.hooks_given);
+        assert_eq!(d.reconfigure_topic, None);
+        // --reconfigure 後面接主題 id 才當主題；別的字照舊是位置參數
+        let e = run(&["--reconfigure", "knowledge", "--target", "p"]).ok().unwrap_or_default();
+        assert_eq!((e.reconfigure, e.reconfigure_topic.as_deref(), e.target.as_deref(), e.positional.as_deref()), (true, Some("knowledge"), Some("p"), None));
+        let f = run(&["--reconfigure", "proj"]).ok().unwrap_or_default();
+        assert_eq!((f.reconfigure, f.reconfigure_topic.as_deref(), f.positional.as_deref()), (true, None, Some("proj")));
+        let g = run(&["proj", "--reconfigure=guard"]).ok().unwrap_or_default();
+        assert_eq!((g.reconfigure_topic.as_deref(), g.positional.as_deref()), (Some("guard"), Some("proj")));
+        let h = run(&["--reconfigure=nope"]).ok().unwrap_or_default();
+        assert_eq!(h.reconfigure_topic.as_deref(), Some("nope"), "不認得的主題留給 init 回錯誤（列出可以用的主題）");
         let c = run(&["--python", "/x/py", "--merge-gate-b", "awf", "--merge-gate-checksums=c.json"]).ok().unwrap_or_default();
         assert_eq!((c.python.as_deref(), c.merge_gate_bin.as_deref(), c.merge_gate_checksums.as_deref()), (Some("/x/py"), Some("awf"), Some("c.json")));
     }
