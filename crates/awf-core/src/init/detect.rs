@@ -100,8 +100,10 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
     }
     let out = Command::new("git")
         .arg("-C").arg(root)
-        .args(["-c", "core.fsmonitor=false", "-c", "core.pager=cat"])
+        // 偵測的對象是還沒看過的 repo：它自己的設定不能讓 git 去跑別的程式（fsmonitor、pager、簽章檢查）
+        .args(["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "log.showSignature=false"])
         .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())

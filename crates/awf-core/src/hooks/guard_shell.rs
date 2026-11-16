@@ -196,7 +196,8 @@ re!(CLAUDE_PROJECTS_TARGET, r#"(?:^|[/\\\s"'=(:])\.claude[/\\]projects(?:[/\\"')
 re!(PROJECT_ENV_SET, concat!(
     r#"(?:^|[\s;&|('"])(?:\$env:)?CLAUDE_PROJECT_DIR\s*=(?!=)"#,
     r#"|(?:set-item|si|new-item|ni)\s+(?:-path\s+)?["']?env:CLAUDE_PROJECT_DIR"#,
-    r#"|SetEnvironmentVariable\s*\(\s*["']CLAUDE_PROJECT_DIR"#), "i");
+    r#"|SetEnvironmentVariable\s*\(\s*["']CLAUDE_PROJECT_DIR"#,
+    r#"|\bunset\b[^;&|\n]*\bCLAUDE_PROJECT_DIR\b|(?:-u\s*|--unset[=\s])CLAUDE_PROJECT_DIR\b|(?:remove-item|ri|rm|del|clear-item)\s+(?:-path\s+)?["']?env:CLAUDE_PROJECT_DIR"#), "i");
 re!(PUSH_RE, r"\bgit\b.*\b(?:push|send-pack)\b");
 re!(GIT_WORD, r"\bgit\b");
 re!(NO_VERIFY, r"(?:^|\s)--no-verify\b");
@@ -1410,7 +1411,7 @@ impl Guard {
         }
         // 換專案根：awf（與它代為執行的通知指令、hook 的輔助功能）靠 CLAUDE_PROJECT_DIR 認專案，team agent 沒有理由改它
         if team && fold(&cmd).contains("claude_project_dir") && PROJECT_ENV_SET.is_match(&cmd) {
-            return Err(self.block(&format!("{agent} 不能設定 CLAUDE_PROJECT_DIR（awf 靠它認專案根：換掉之後工具會去讀別的目錄的設定，包括會被執行的通知指令）；\
+            return Err(self.block(&format!("{agent} 不能設定或拿掉 CLAUDE_PROJECT_DIR（awf 靠它認專案根：換掉之後工具會去讀別的目錄的設定，包括會被執行的通知指令）；\
 要對別的目錄跑工具，用該子指令自己的 --root／--repo")));
         }
         let (fpaths, fslugs) = self.forbidden_entries();

@@ -476,3 +476,30 @@ fn hooks_json_registers_auto_hooks() {
         assert_ne!(h["onFailure"], "block", "{event} 不能設 onFailure=block");
     }
 }
+
+// ───────── 知識圖：符號連結解開後再過機敏檔與排除規則（1.0 第二次審查待查項） ─────────
+
+#[cfg(unix)]
+#[test]
+fn graph_skips_links_into_secret_or_excluded_places() {
+    let tmp = Tmp::new("kgl");
+    let p = project(&tmp, "proj", json!({"knowledge": {"sources": ["docs/**/*.md", "openspec/**/*.md"], "exclude": ["docs/private/**"]}}));
+    put(&p.join("secrets/prod.env"), "# 正式環境的金鑰 linkedSecretHeading\n\nTOKEN=x\n");
+    put(&p.join("docs/private/plan.md"), "# 不公開的計畫 excludedHeading\n\n內容。\n");
+    put(&p.join("docs/guide.md"), "# 使用手冊 plainHeading\n\n## 匯出\n\n說明。\n");
+    put(&p.join("docs/real.md"), "# 另一份 linkedPlainHeading\n\n說明。\n");
+    std::os::unix::fs::symlink("../secrets/prod.env", p.join("docs/prod.md")).expect("建連結");
+    std::os::unix::fs::symlink("private/plan.md", p.join("docs/plan-link.md")).expect("建連結");
+    std::os::unix::fs::symlink("real.md", p.join("docs/alias.md")).expect("建連結");
+    let r = run(awf(&["kg", "build", "--root", &p.to_string_lossy()], &p), b"");
+    let out = format!("{}{}", out_of(&r), String::from_utf8_lossy(&r.stderr));
+    assert_eq!(r.status.code(), Some(0), "{out}");
+    let locate = |q: &str| out_of(&run(awf(&["kg", "locate", q, "--root", &p.to_string_lossy()], &p), b""));
+    assert!(locate("plainHeading 使用手冊").contains("docs/guide.md"), "正常的文件照收：{}", locate("plainHeading 使用手冊"));
+    for (q, file) in [("linkedSecretHeading 正式環境的金鑰", "docs/prod.md"), ("excludedHeading 不公開的計畫", "docs/plan-link.md")] {
+        let got = locate(q);
+        assert!(!got.contains(file) && !got.contains("prod.env") && !got.contains("private/plan.md"), "{file} 指到機敏檔或被排除的位置，不該進圖：{got}");
+    }
+    assert!(locate("linkedPlainHeading 另一份").contains("docs/"), "指到一般文件的連結照收：{}", locate("linkedPlainHeading 另一份"));
+    assert!(out.contains("docs/prod.md") || out.contains("略過"), "略過的檔有說明：{out}");
+}

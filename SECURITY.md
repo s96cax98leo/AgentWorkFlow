@@ -53,6 +53,15 @@
 - **別的語言的程式文字只做字面比對**：awk、`osascript` 裡要看得到 `awf <子指令>` 才擋；把名稱拆開或用變數組合就看不到。沒有列出的「會執行參數」的程式（編輯器的 `-c '!…'`、`git -c core.pager=…`、`GIT_EXTERNAL_DIFF=…` 這類環境變數）也看不到。
 - **here-doc 的內文不當成指令**：內文餵給誰由前面的指令決定（同上面「從 stdin 餵給 shell」）；只有沒加引號的 here-doc 內文裡的指令替換會檢查。
 
+1.0 第二次審查後另外補上的（都只對 team agent），和它們各自仍然看不到的部分：
+
+- **變數間接**：同一條指令裡的簡單賦值（`d=_tpm/runs; echo x >> $d/links.jsonl`、`export 名=值`、PowerShell 的 `$名 = '值'`）會展開一次再比對。看不到的：值本身來自另一個變數、指令替換或運算的；超過 16 個變數、值超過 256 字、指令超過 16KB 的；前一條指令設好、這一條才用的環境變數；`read`、`printf -v`、陣列、`${名:-預設}` 這類寫法。
+- **整個目錄搬進受保護的位置**：`cp -r`、`mv`、`rsync`、`ln`、`Copy-Item -Recurse`、`Move-Item` 的目的地是 `.github` 或 `.claude`，或來源本身就叫這個名字時擋。看不到的：**`git apply`、`git am`、`patch`、`tar`／`unzip` 解到上層目錄**——內容在 patch 或壓縮檔裡，指令文字看不出會寫到 `.github/workflows/`；`git checkout <別的分支> -- .github`、`git stash pop`、`git merge` 帶進來的檔同樣看不到。這些改動仍然要過 PR 與伺服器端的 CODEOWNERS。
+- **知識圖的檔**：作用目錄已經在 vault 裡的寫入、`sqlite3 <graph.db>` 會擋。看不到的：用別的程式開 SQLite 檔（直譯器裡的 sqlite 模組沒有寫出 `graph.db` 的檔名時）。
+- **「唯讀」子指令裡會寫檔或執行東西的旗標**：`awf script assemble`／`--out`、`awf checklist check … --write`、`awf deliverables status … --write`、把 git 的選項塞進參數（`awf check-rules --git . --output=<檔>`、`--upload-pack=<指令>`）、設定或拿掉 `CLAUDE_PROJECT_DIR`（`awf watch --once` 會執行那個專案 profile 的通知指令）會擋。看不到的：`awf checklist check <檔>` 不帶 `--write` 照舊放行，而它會把檔裡每一項的驗證指令交給 shell 執行（內容不在指令列上，和「先寫成腳本檔再執行」相同）；`awf hook guard-shell`／`guard-paths` 是公開的入口，自己餵一份輸入就能讓它轉呼叫另一個 repo 的 `.claude/hooks/guard-*`（等於執行那個 repo 裡的腳本，和「先寫成腳本檔再執行」相同）；在沒有 `CLAUDE_PROJECT_DIR` 的環境裡先 `cd` 到別的目錄再跑 `awf`，工具認到的專案根就是那個目錄。
+- **`~/.claude/projects/`**（Claude Code 的記憶與對話紀錄）：模版角色的 Write／Edit 與 shell 寫入會擋，讀不擋。看不到的同上面幾類（變數組出來的路徑、直譯器裡算出來的路徑）。
+- **進對話的文字**：SessionStart 的摘要與提問時帶的位置清單，每一欄都清過（一行、去掉控制字元、反引號、角括號、截短），寫得像指示的整筆不放。這是關鍵字與句式的比對，不是理解：換一種說法、換一種語言就可能通過。所以這兩個 hook 的輸出一律包在資料標籤裡，主 session 應該把它當資料；決策只列筆數與位置，不列文字。
+
 這些不是待修的個別漏洞，而是「在使用者電腦上檢查指令文字」這種做法的極限：同一台機器上有 shell 權限的程序，總找得到 hook 沒看過的寫法。所以：
 
 - hook 只當輔助，用來擋下 agent 的誤操作與明顯的越權，不拿來當唯一的防線。

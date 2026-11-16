@@ -951,6 +951,8 @@ impl Call {
                 return Some(Deny::WriteFlag(format!("{sub} …{g}")));
             }
         }
+        // checklist check 不帶 --write 照舊放行（既有的用法；它執行的是檔裡寫的驗證指令，和 agent 自己執行那些指令相同，
+        // hook 看不到內容：列在 SECURITY.md 的已知限制）。--write 會改寫那個檔，擋
         if matches!(sub, "deliverables" | "checklist") {
             if let Some(f) = self.write_flag() {
                 return Some(Deny::WriteFlag(format!("{sub} {} {f}", self.first()).replace("  ", " ")));
@@ -1118,6 +1120,7 @@ mod tests {
         assert_eq!(d("awf script --selftest"), None);
         assert_eq!(d("awf checklist check x.md --write"), Some(Deny::WriteFlag("checklist check --write".into())));
         assert_eq!(d("awf checklist check x.md --id A"), None);
+        assert_eq!(d("awf checklist status x.md"), None);
         assert_eq!(d("awf deliverables status --write"), Some(Deny::WriteFlag("deliverables status --write".into())));
         assert_eq!(d("awf deliverables affected --base main --json"), None);
         assert_eq!(d("awf check-rules --git . --output=/tmp/x"), Some(Deny::WriteFlag("check-rules …--output".into())));
