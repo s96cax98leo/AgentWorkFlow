@@ -157,5 +157,23 @@ export default [
         return e
       },
     },
+  {
+    // 知識圖：design 的資料包多一節「要改的檔現在連著的需求與測試」，spec-author 與 skeptic 的派工單都指到那一節
+    name: '知識圖：args.kg＝true → 寫設計與檢查設計的派工單都指到資料包的〈要改的檔現在連著的需求與測試〉',
+    args: { kg: true, pack: '/tmp/run/design/pack.md' },
+    expect: (r) => {
+      const want = /知識圖：\/tmp\/run\/design\/pack\.md 的〈知識圖：要改的檔現在連著的需求與測試〉/
+      const need = ['design', ...r.labels.filter((l) => l.startsWith('analyze:'))]
+      return [
+        ...(r.labels.some((l) => l.startsWith('analyze:')) ? [] : ['沒有派出一致性檢查']),
+        ...need.filter((l) => !want.test(r.prompts[l] || '')).map((l) => `${l} 的派工單沒有指到資料包的那一節`),
+      ]
+    },
+  },
+  {
+    name: '知識圖：沒帶 kg → 派工單不提那一節',
+    args: { pack: '/tmp/run/design/pack.md' },
+    expect: (r) => Object.entries(r.prompts).filter(([, p]) => /要改的檔現在連著的需求與測試/.test(p)).map(([l]) => `${l} 的派工單不該提知識圖的那一節`),
+  },
   ...kgScenarios(),
 ]

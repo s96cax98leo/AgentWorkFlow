@@ -581,6 +581,7 @@ const reusable = (k) => {
 
 // ── 工具先定位（B8）：awf pack 用 awf locate 先找好的行段放在 args.located（{角度: {locations, enough}}）。
 // enough＝true（文件角度命中夠）：不派定位 agent，直接分析；否則照派定位 agent，把工具找到的當起點、輪數上限減半。
+// source＝'kg'：這個角度是知識圖判定夠用的（awf pack 在有圖、程式角度命中夠時標的），回傳的 located_by 寫 kg。
 // 格式不對的項目丟掉；args 是主 session 給的，這裡不當成結論，只當成「要讀哪裡」的建議 ──
 const LOC_MIN = 3
 const LOCATED = A.located && typeof A.located === 'object' && !Array.isArray(A.located) ? A.located : {}
@@ -589,7 +590,7 @@ const toolLocated = (k) => {
   const ok = (x && Array.isArray(x.locations) ? x.locations : []).filter((l) => l && typeof l === 'object' && typeof l.path === 'string' && l.path &&
     !/^([\\/]|[A-Za-z]:)/.test(l.path) && !l.path.split(/[\\/]/).includes('..') && Number.isInteger(l.start) && Number.isInteger(l.end) && l.start >= 1 && l.end >= l.start)
     .map((l) => ({ path: l.path, start: l.start, end: l.end, why: String(l.why || '工具定位').slice(0, 200) }))
-  return { locs: ok, enough: !!(x && x.enough === true) && ok.length >= LOC_MIN }
+  return { locs: ok, enough: !!(x && x.enough === true) && ok.length >= LOC_MIN, kg: !!(x && x.source === 'kg') }
 }
 const skipLocate = (k) => twoStage(k) && toolLocated(k).enough
 
@@ -638,17 +639,17 @@ const researchAngle = async (k) => {
   const ru = reusable(k)
   if (ru) { reused.push(k); log(`調研角度 ${k}：來源沒變，沿用上次的結論，不派工`); return ru.envelope }
   let located = ''
-  const tl = twoStage(k) ? toolLocated(k) : { locs: [], enough: false }
+  const tl = twoStage(k) ? toolLocated(k) : { locs: [], enough: false, kg: false }
   if (twoStage(k) && tl.enough) {
     // 工具定位就夠：不派定位 agent
     const locs = tl.locs.slice(0, LOC_MAX)
     locations[k] = locs
-    locatedBy[k] = 'tool'
-    log(`調研角度 ${k}：工具已定位 ${locs.length} 段，不派定位 agent`)
-    located = `\n\n## 定位結果（工具依需求的用詞找到的；只讀這些行段）\n${locs.map(fmtLoc).join('\n')}`
+    locatedBy[k] = tl.kg ? 'kg' : 'tool'
+    log(`調研角度 ${k}：${tl.kg ? '知識圖' : '工具'}已定位 ${locs.length} 段，不派定位 agent`)
+    located = `\n\n## 定位結果（${tl.kg ? '知識圖查到、和工具定位互相印證的' : '工具依需求的用詞找到的'}；只讀這些行段）\n${locs.map(fmtLoc).join('\n')}`
   } else if (twoStage(k)) {
     const seeds = tl.locs.slice(0, LOC_MAX)
-    locatedBy[k] = seeds.length ? 'tool+agent' : 'agent'
+    locatedBy[k] = seeds.length ? (tl.kg ? 'kg+agent' : 'tool+agent') : 'agent'
     const loc = await awfAgent(
       `${CTX}${RECIPE_NOTE}\n\n## 派工單（定位：${k}；兩段式調研的第一段）\n要回答的問題：${angleAsk(k)}\n` +
       `你只負責找出「哪個檔的哪幾行」值得讀，不下結論、不寫分析。\n` +
@@ -671,7 +672,7 @@ const researchAngle = async (k) => {
   return awfAgent(
     `${CTX}${RECIPE_NOTE}\n\n## 派工單（調研角度：${k}${twoStage(k) ? '；第二段：分析' : ''}）\n${angleAsk(k)}\n` +
     (twoStage(k)
-      ? `只讀下面定位好的行段（Read 一律帶 offset／limit）；確實不夠時才用 awf kb query 或 Grep 補找，最多再補 ${locatedBy[k] === 'tool' ? 6 : 4} 段，補了什麼寫進紀錄。\n`
+      ? `只讀下面定位好的行段（Read 一律帶 offset／limit）；確實不夠時才用 awf kb query 或 Grep 補找，最多再補 ${locatedBy[k] === 'tool' || locatedBy[k] === 'kg' ? 6 : 4} 段，補了什麼寫進紀錄。\n`
       : `這個角度不查本機檔案：只用上面寫的指令查，不讀 repo 的程式與文件。\n`) +
     `上限：最多 15 輪工具呼叫；連續 3 次查詢沒有新發現就收斂、交件。結論邊做邊寫進執行紀錄檔（不要等到最後一次寫），每個主張附出處（路徑:行號或指令）。\n` +
     `payload 用 findings，lens=${k}；artifacts 列出執行紀錄檔。${located}`,

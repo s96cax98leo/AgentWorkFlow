@@ -292,6 +292,48 @@ const V04 = [
     ],
   },
   {
+    // 知識圖判定程式角度夠用（awf pack 標 enough＝true、source＝kg）：不派 locate:code-contracts，回傳的 located_by 寫 kg
+    name: '知識圖：程式角度由圖判定夠用（source=kg）→ 不派 locate:code-contracts，located_by 寫 kg，粗估少一個',
+    profile: MP,
+    args: { recipe: 'feature', kg: true, located: {
+      'code-contracts': { enough: true, source: 'kg', locations: [{ path: 'src/billing/export.ts', start: 10, end: 48, why: '符號 exportInvoice' }, { path: 'src/billing/format.ts', start: 1, end: 30, why: '符號 formatRow' }, { path: 'src/lib/money.ts', start: 5, end: 22, why: '符號 toCents' }] },
+    } },
+    fakes: { 'research:code-contracts': (base, prompt) => { if (!/知識圖查到、和工具定位互相印證的/.test(prompt) || !/src\/billing\/export\.ts:10-48/.test(prompt) || !/最多再補 6 段/.test(prompt)) throw new Error('分析沒有收到知識圖定位的行段'); return base } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:code-contracts') ? ['圖判定夠用了還派 locate:code-contracts'] : []),
+      ...(r.labels.includes('research:code-contracts') ? [] : ['沒有派 research:code-contracts']),
+      ...(r.labels.includes('locate:specs-adr') ? [] : ['其他角度要照派定位 agent']),
+      ...(r.out && r.out.located_by && r.out.located_by['code-contracts'] === 'kg' && r.out.located_by['specs-adr'] === 'agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+      ...(r.out && r.out.locations && (r.out.locations['code-contracts'] || []).length === 3 ? [] : ['圖定位的行段要進 locations']),
+      ...(r.labels.length === 8 && r.out && r.out.estimated_agents && r.out.estimated_agents.plan === 8 ? [] : [`圖判定夠用時 plan 段派 8 個（少一個定位）：實際 ${r.labels.length}、粗估 ${JSON.stringify(r.out && r.out.estimated_agents && r.out.estimated_agents.plan)}`]),
+      ...(r.out && r.out.halted !== true ? [] : ['不該 halted']),
+    ],
+  },
+  {
+    // 對照組：同樣的行段但沒有標夠用（沒有圖時 awf pack 對程式角度只給種子）→ 照派定位 agent，派工數多一個
+    name: '知識圖：沒有圖時同樣的行段只是種子（enough=false）→ 照派 locate:code-contracts，located_by 是 tool+agent',
+    profile: MP,
+    args: { recipe: 'feature', located: {
+      'code-contracts': { enough: false, locations: [{ path: 'src/billing/export.ts', start: 10, end: 48, why: '工具定位：命中 export' }, { path: 'src/billing/format.ts', start: 1, end: 30, why: 'x' }, { path: 'src/lib/money.ts', start: 5, end: 22, why: 'x' }] },
+    } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:code-contracts') ? [] : ['沒有標夠用的程式角度要照派定位 agent']),
+      ...(r.labels.length === 9 && r.out && r.out.estimated_agents && r.out.estimated_agents.plan === 9 ? [] : [`沒有圖時 plan 段派 9 個：實際 ${r.labels.length}、粗估 ${JSON.stringify(r.out && r.out.estimated_agents && r.out.estimated_agents.plan)}`]),
+      ...(r.out && r.out.located_by && r.out.located_by['code-contracts'] === 'tool+agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+    ],
+  },
+  {
+    name: '知識圖：標了 source=kg 但合格的行段不到 3 段 → 不算夠用，照派定位 agent（located_by 是 kg+agent）',
+    profile: MP,
+    args: { recipe: 'feature', kg: true, located: {
+      'code-contracts': { enough: true, source: 'kg', locations: [{ path: 'src/billing/export.ts', start: 10, end: 48, why: 'x' }, { path: '/abs/format.ts', start: 1, end: 30, why: 'x' }, { path: '../money.ts', start: 5, end: 22, why: 'x' }] },
+    } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:code-contracts') ? [] : ['不到 3 段要照派定位 agent']),
+      ...(r.out && r.out.located_by && r.out.located_by['code-contracts'] === 'kg+agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+    ],
+  },
+  {
     name: '派工數上限：到上限就 halted，不靜默截斷',
     profile: { ...RP, limits: { max_agents: 3 } }, args: { recipe: 'feature' },
     expect: (r) => [

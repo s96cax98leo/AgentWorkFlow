@@ -450,8 +450,14 @@ const DELIV_SECTIONS = (Array.isArray((A.deliverables || {}).design_sections) ? 
 const DELIV_NOTE = DELIV_SECTIONS.length
   ? `\n交付文件：這個專案要交下列文件，design.md 要有對應的小節（標題照抄）；這次的改動和某一節無關時，那一節寫「這次沒有變動」，不要省略也不要編內容：${DELIV_SECTIONS.map((d) => `${d.title} →〈${d.sections.join('〉〈')}〉`).join('；')}。`
   : ''
+// 知識圖（awf pack 在有圖時把 args.kg 設成 true）：design 的資料包多一節「要改的檔現在連著的需求與測試」，交給寫設計的人與檢查設計的人對照。
+// 只是指到資料包的那一節；沒有圖時派工單逐字不變
+const KG_PACK = typeof A.pack === 'string' && A.pack ? A.pack : `${A.run_dir}/design/pack.md`
+const KG_NOTE = A.kg === true
+  ? `\n知識圖：${KG_PACK} 的〈知識圖：要改的檔現在連著的需求與測試〉列了這次要改的檔現在連著哪些既有需求與測試（有這一節才適用）。寫設計與檢查設計時都要對照它：會改到的既有需求與測試，在 spec／plan 交代怎麼處理，沒交代算問題。`
+  : ''
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：${A.run_dir}\nintent.md 已由使用者核准，不得修改。\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
-  (A.authorization ? `\n授權補充：${A.authorization}` : '') + DELIV_NOTE
+  (A.authorization ? `\n授權補充：${A.authorization}` : '') + DELIV_NOTE + KG_NOTE
 
 const TEST_NOTE = ((MP.stages || {}).build || {}).test_first === false ? '這個 profile 不要求測試先行：test 子任務會在實作完成後才做，code 子任務不要依賴 test 子任務。' : ''
 const SUBTASK_RULES = `每個子任務獨佔 owns 的檔案（不重疊），寫 depends_on 與可機械判定的 acceptance；有 spec.md 時每個子任務標 spec_refs（對應的 spec 小節，寫「spec.md#標題」，標題照抄、不能重名），實作的人只讀那幾節；某個子任務完成前一定會紅的檢查（例如等它換掉的截圖）寫在那個子任務的 expected_red，整合時不會為它停下；kind=test 的子任務擁有測試目錄（例如 e2e/tests 與各服務 tests/）；偏寬淺、沒有相依的子任務會由多個 agent 平行實作，能並行就並行，數量最小化。${TEST_NOTE}`

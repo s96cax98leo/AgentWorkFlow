@@ -218,7 +218,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 - **原則**：有圖（`awf kg build` 建的）而且能開才用；沒有圖、開不了、查不到時，`pack.md`、`pack-args.json`、交付文件的狀態和沒有這個功能時逐字相同（`pack_parity`、`deliverables_parity` 不動）。流程不替使用者建圖。
 - **讀圖的共用函式**：`crates/awf-core/src/kg/flow.rs`（`open_root`、`plan_facts`、`file_links`、`callers_and_deps`、`doc_sections`、`section_links`、`requirement_rows`；條數上限是那裡的常數）。
-- **資料包**：`pack/graph.rs`。plan、design 的一節接在 `pack.md` 最後，build 接在每份子任務資料包最後；plan 的 `located.code-contracts` 在 `PlanFacts::code_enough` 與「和工具定位有重疊」都成立時標成夠用。deliver 走 `deliverables::pack_args_with`（`deliverables/kgflow.rs` 的 `extend_affected`：只會多列）。`--no-kg` 關閉。新內容都寫在 `pack.md`，沒有加範本要讀的新鍵。
+- **資料包**：`pack/graph.rs`。plan、design 的一節接在 `pack.md` 最後，build 接在每份子任務資料包最後；plan 的 `located.code-contracts` 在 `PlanFacts::code_enough` 與「和工具定位有重疊」都成立時標成夠用。deliver 走 `deliverables::pack_args_with`（`deliverables/kgflow.rs` 的 `extend_affected`：只會多列）。`--no-kg` 關閉。新內容都寫在 `pack.md`；範本要讀的新鍵只有一個布林 `kg`（圖開得起來才寫）。
+- **派工單**：八支 sdlc 範本的 `awfInit` 帶 `kg: A.kg === true`，challenge 片段的 `awfPrefix` 才多一行查圖的指示（只讀資料包列的行段、`awf kg locate`、`awf kg impact`）；`sdlc-plan` 的 `toolLocated` 認 `source: "kg"`（回傳的 `located_by` 寫 `kg`）；`sdlc-design` 的 `KG_NOTE` 指到資料包的那一節。沒有 `kg` 時派工單逐字不變。情境：`scenarios/_helpers.mjs` 的 `kgScenarios` 與 `sdlc-plan.mjs`／`sdlc-design.mjs` 的「知識圖」情境。
 - **規格層的 id**：需求來源是 openspec 時，子任務的 `spec_refs` 可以寫穩定 id（`pack::SpecIds`，變更的差異優先於現行規格）；找不到的才進 `spec_ref_errors`。
 - **別的 repo**：profile 的 `knowledge.repos`、`spec_root`、`timeout`（`kg::layout`、`build.rs` 的 `repos_of`／`scan_repo`）；語意規則在 `schema::methodology_errors`，但建圖時再驗一次（不合規則的整筆略過並說明）。
 - **交付文件**：`deliverables/kgflow.rs`。`Links`（小節連到的需求、情境、符號、程式檔的指紋，記在 `deliverables.state.json` 的 `links`；`linked_state` 只把 fresh 改成 stale 或 unstamped）、`project_matrix`（`awf deliverables matrix --project`，只讀、沒有圖回非零）。指紋存在圖的 `fps` 表（`store::put_fp`）。
