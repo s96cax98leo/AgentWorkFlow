@@ -28,6 +28,7 @@
           "properties": {
             "artifacts": {"type": "array", "items": {"type": "string"}},
             "requirement_style": {"type": "string", "minLength": 1, "description": "需求／驗收條件的寫法"},
+            "criteria_id_pattern": {"type": "string", "minLength": 1, "maxLength": 200, "description": "選填：驗收條件編號的樣式（Python re 的寫法；整個符合的字串就是編號，不能符合空字串）。拆工檢查用它對照 spec 與子任務；沒寫用內建的「AC-…」。編不過會報錯，不會當成沒設定"},
             "guidance": {"type": "string"},
             "system_design": {
               "type": ["object", "null"],
@@ -238,6 +239,23 @@
           "properties": {
             "command": {"description": "指令：字串或參數陣列（不經 shell）", "type": ["string", "array"], "minLength": 1, "minItems": 1, "items": {"type": "string", "minLength": 1}},
             "events": {"type": "array", "description": "只送這些事件類型；省略＝全部", "items": {"enum": ["run_state", "stage_started", "stage_saved", "waiting_gate", "stage_approved", "record_written", "agent_started", "agent_progress", "workflow_finished", "workflow_stalled", "watch_note"]}}
+          }
+        }
+      }
+    },
+    "constraints_format": {
+      "type": "object",
+      "description": "選填：限制對照的用語。輸出語言不是中文時，讓 awf save-run 認得 agent 寫的判定詞。內建的「符合／偏離／不適用」永遠認得（只會多認）；設定的詞不能把內建的詞改成別的意思",
+      "additionalProperties": false,
+      "properties": {
+        "heading": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "對照表那一節的名字（沒寫用「限制對照」）；只用在訊息裡，工具認的是表格列不是節名"},
+        "verdicts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ok": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "另外也算「符合」的詞"},
+            "deviation": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "另外也算「偏離」的詞（有偏離就不能政策核准）"},
+            "na": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "另外也算「不適用」的詞"}
           }
         }
       }

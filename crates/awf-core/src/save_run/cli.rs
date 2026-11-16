@@ -2,7 +2,7 @@
 //! 每一支都照 save_run.py 的 `main` 逐行移植：檢查的順序、寫檔的時機、印到 stdout／stderr 的文字都一樣。
 
 use super::archive::{next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
-use super::checks::{constraint_issues, intent_errors, plan_check_for};
+use super::checks::{constraint_issues, intent_errors, plan_check_for_with};
 use super::decisions::{decision_errors, record_decisions, split_answer};
 use super::links::{decision_links, link_gaps, links_setting, stage_links, write_links, LEDGER};
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
@@ -483,7 +483,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             } else {
                 st.insert("constraint_checks".into(), Value::Array(c_checks));
             }
-            plan_check_for(ctx, run, stage, result, &data)?
+            plan_check_for_with(ctx, run, stage, result, &data, &cprof)?
         };
         let st = st_mut(&mut data, stage)?;
         if pc.is_empty() {
@@ -677,7 +677,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             let crepo = if truthy(target) { Some(py::pp(&s(target))) } else { None };
             errs.extend(constraint_issues(ctx, run, stage, &cprof, crepo.as_deref(), true)?.0.into_iter().map(|e| format!("限制文件：{e}")));
             let result = ctx.load_json(&f)?;
-            errs.extend(plan_check_for(ctx, run, stage, &result, &data)?.into_iter().map(|e| format!("拆工檢查：{e}")));
+            errs.extend(plan_check_for_with(ctx, run, stage, &result, &data, &cprof)?.into_iter().map(|e| format!("拆工檢查：{e}")));
             if cprof.is_object() {
                 // 規格檢查與連結檢查都重算，不採信 run.json 記的結果
                 let sc = open_spec(ctx, run, &data, &cprof);

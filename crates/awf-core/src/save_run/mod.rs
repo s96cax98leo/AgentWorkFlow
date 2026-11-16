@@ -36,7 +36,10 @@ mod trace;
 
 pub use crate::kb::PyErr;
 pub use archive::{archive_text, clip, next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
-pub use checks::{ac_ids, constraint_file, constraint_issues, constraint_rows, intent_errors, intent_file_errors, intent_paths, plan_check_for, plan_check_issues, result_subtasks, CONSTRAINT_CHECK_TIMEOUT, CONSTRAINT_VERDICTS};
+pub use checks::{
+    ac_ids, constraint_file, constraint_format, constraint_format_errors, constraint_issues, constraint_rows, constraint_rows_with, criteria_pattern, intent_errors, intent_file_errors, intent_paths, plan_check_for,
+    plan_check_for_with, plan_check_issues, plan_check_issues_with, result_subtasks, ConstraintFormat, CONSTRAINT_CHECK_TIMEOUT, CONSTRAINT_VERDICTS, CRITERIA_PATTERN_MAX,
+};
 pub use cli::{approve, run, stage, stage_unreadable, USAGE};
 pub use decisions::{decision_errors, record_decisions, split_answer};
 pub use links::{

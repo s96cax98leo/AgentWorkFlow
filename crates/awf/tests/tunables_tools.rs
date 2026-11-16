@@ -273,6 +273,146 @@ fn t2_bad_gates_setting_is_an_error() {
     }
 }
 
+// ------------------------------------------------------------------ T5：限制對照的判定詞
+
+fn stage_list(root: &Path, stage: &str, key: &str) -> Vec<String> {
+    run_json(root)["stages"][stage][key].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// design 存檔；`record` 是那一段執行紀錄的內容。
+fn save_design_with_record(root: &Path, record: &str) -> Out {
+    let r = traced(root, "design", design_of(json!([task(&["AC-1 下載"])])));
+    write(&root.join(RUN).join("design/walk.md"), record);
+    sr(root, &["stage", RUN, "design"], Some(&r.to_string()))
+}
+
+fn constraint_profile(extra: Value) -> Value {
+    let mut p = builtin_profile(json!({"constraints": [{"id": "c1", "file": "docs/c.md", "stages": ["design"], "trace": "table"}]}));
+    for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+        p[k] = v;
+    }
+    p
+}
+
+fn t5_project(tag: &str, profile: &Value) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("proj");
+    mk(&root, profile);
+    write(&root.join("docs/c.md"), "# 限制\n");
+    plan(&root);
+    must(approve(&root, "plan", "human"), "approve plan");
+    (t, root)
+}
+
+const EN_OK: &str = "# record\n\n## Constraint check\n\n| id | verdict | note |\n|---|---|---|\n| c1 | compliant | fine |\n";
+const EN_DEV: &str = "# record\n\n| id | verdict | note |\n|---|---|---|\n| c1 | deviation | differs |\n";
+const ZH_OK: &str = "# 紀錄\n\n## 限制對照\n\n| 限制 | 判定 | 說明 |\n|---|---|---|\n| c1 | 符合 | 沒問題 |\n";
+const ZH_DEV: &str = "# 紀錄\n\n| 限制 | 判定 | 說明 |\n|---|---|---|\n| c1 | 偏離 | 不一樣 |\n";
+
+fn en_format() -> Value {
+    json!({"constraints_format": {"heading": "Constraint check", "verdicts": {"ok": "compliant", "deviation": "deviation", "na": "n/a"}}})
+}
+
+/// 沒設定：只認中文的判定詞，英文寫的對照列算沒有對照（和原本一樣）。
+#[test]
+fn t5_default_only_knows_builtin_verdicts() {
+    let (_t, root) = t5_project("t5-default", &constraint_profile(json!({})));
+    must(save_design_with_record(&root, ZH_OK), "stage design");
+    assert!(stage_list(&root, "design", "constraint_issues").is_empty());
+    must(save_design_with_record(&root, EN_OK), "stage design");
+    assert_eq!(stage_list(&root, "design", "constraint_issues"), ["限制 [c1] 要逐條對照，這一段的執行紀錄卻沒有它的〈限制對照〉列"]);
+    must(save_design_with_record(&root, ZH_DEV), "stage design");
+    assert_eq!(stage_list(&root, "design", "constraint_issues"), ["限制 [c1] 有偏離（walk.md），要由人決定"]);
+}
+
+/// 有設定：設定的詞認得，設定的「偏離」一樣擋；內建的中文詞照舊認得、照舊擋。
+#[test]
+fn t5_configured_verdicts_are_recognized_and_deviation_still_blocks() {
+    let (_t, root) = t5_project("t5-set", &constraint_profile(en_format()));
+    must(save_design_with_record(&root, EN_OK), "stage design");
+    assert!(stage_list(&root, "design", "constraint_issues").is_empty(), "設定的「符合」要認得");
+    must(save_design_with_record(&root, EN_DEV), "stage design");
+    assert_eq!(stage_list(&root, "design", "constraint_issues"), ["限制 [c1] 有偏離（walk.md），要由人決定"]);
+    let o = approve(&root, "design", "policy");
+    assert!(o.code == 1 && o.all().contains("限制文件：限制 [c1] 有偏離"), "有偏離不能政策核准：{}", o.all());
+    must(save_design_with_record(&root, ZH_DEV), "stage design");
+    assert_eq!(stage_list(&root, "design", "constraint_issues"), ["限制 [c1] 有偏離（walk.md），要由人決定"], "內建的「偏離」照舊擋");
+    must(save_design_with_record(&root, ZH_OK), "stage design");
+    assert!(stage_list(&root, "design", "constraint_issues").is_empty(), "內建的「符合」照舊認得");
+    must(save_design_with_record(&root, "# record\n"), "stage design");
+    assert_eq!(stage_list(&root, "design", "constraint_issues"), ["限制 [c1] 要逐條對照，這一段的執行紀錄卻沒有它的〈Constraint check〉列"], "訊息用設定的節名");
+}
+
+/// 寫壞的設定（把內建的詞改成別的意思、三個詞相同、含表格線）：profile 判不合規則，不會因此少擋。
+#[test]
+fn t5_bad_format_is_an_error_and_never_loosens() {
+    for bad in [json!({"verdicts": {"ok": "偏離"}}), json!({"verdicts": {"deviation": "符合"}}), json!({"verdicts": {"ok": "x", "deviation": "x"}}), json!({"verdicts": {"ok": "a|b"}}), json!({"verdicts": {"fine": "ok"}})] {
+        let (_t, root) = t5_project("t5-bad", &constraint_profile(json!({})));
+        set_profile(&root, &constraint_profile(json!({"constraints_format": bad})));
+        let o = save_design_with_record(&root, ZH_DEV);
+        assert!(o.code == 1 && o.all().contains("constraints_format"), "{bad}：要報 profile 不合規則：{}", o.all());
+        assert_eq!(run_json(&root)["stages"]["design"]["status"], "invalid");
+    }
+}
+
+// ------------------------------------------------------------------ T7：驗收條件編號的樣式
+
+fn t7_project(tag: &str, profile: &Value, spec: &str) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("proj");
+    mk(&root, profile);
+    write(&root.join("repo/.worktrees/refund/specs/refund/spec.md"), spec);
+    plan(&root);
+    must(approve(&root, "plan", "human"), "approve plan");
+    (t, root)
+}
+
+fn pattern_profile(pat: &str) -> Value {
+    let d = read_json(&scaffold_teams().join("methodologies/default.json"));
+    let mut design = d["stages"]["design"].clone();
+    design["criteria_id_pattern"] = json!(pat);
+    builtin_profile(json!({"stages": {"design": design}}))
+}
+
+const ISSUE_SPEC: &str = "# spec\n- ISSUE-12：匯出按鈕下載 CSV\n- ISSUE-13：檔名帶日期\n- AC-9 這一條用內建樣式才看得到\n";
+
+/// 沒設定：只認「AC-…」。spec 用別的編號時兩邊對不起來，工具不比（和原本一樣）。
+#[test]
+fn t7_default_pattern_is_ac() {
+    let (_t, root) = t7_project("t7-default", &builtin_profile(json!({})), ISSUE_SPEC);
+    must(save(&root, "design", design_of(json!([task(&["ISSUE-12 下載"])]))), "stage design");
+    assert!(stage_list(&root, "design", "plan_check").is_empty(), "子任務沒用 AC- 編號：不比");
+    must(save(&root, "design", design_of(json!([task(&["AC-1 下載"])]))), "stage design");
+    assert_eq!(stage_list(&root, "design", "plan_check"), ["spec 有 1 條驗收條件沒有任何子任務對應：AC-9", "子任務引用了 spec 沒有的驗收條件：AC-1"]);
+}
+
+/// 有設定：照樣式認編號，spec 有而沒有子任務對應的、子任務引用而 spec 沒有的都抓得到。
+#[test]
+fn t7_custom_pattern_finds_orphans_and_ghosts() {
+    let (_t, root) = t7_project("t7-set", &pattern_profile(r"\bISSUE-\d+\b"), ISSUE_SPEC);
+    must(save(&root, "design", design_of(json!([task(&["ISSUE-12 下載", "ISSUE-99 不存在"])]))), "stage design");
+    assert_eq!(stage_list(&root, "design", "plan_check"), ["spec 有 1 條驗收條件沒有任何子任務對應：ISSUE-13", "子任務引用了 spec 沒有的驗收條件：ISSUE-99"]);
+    let o = approve(&root, "design", "policy");
+    assert!(o.code == 1 && o.all().contains("拆工檢查：spec 有 1 條"), "政策核准重算、照樣擋：{}", o.all());
+    must(save(&root, "design", design_of(json!([task(&["ISSUE-12 下載", "ISSUE-13 檔名"])]))), "stage design");
+    assert!(stage_list(&root, "design", "plan_check").is_empty());
+}
+
+/// 寫壞的樣式（編不過、會符合空字串、不是字串）：回錯誤，不是當成沒設定。
+#[test]
+fn t7_bad_pattern_is_an_error() {
+    for (bad, want) in [(json!("ISSUE-(\\d+"), "樣式編不過"), (json!("\\d*"), "不能符合空字串"), (json!(12), "要是字串"), (json!("[\\S]"), "不支援的寫法")] {
+        let (_t, root) = t7_project("t7-bad", &builtin_profile(json!({})), ISSUE_SPEC);
+        let d = read_json(&scaffold_teams().join("methodologies/default.json"));
+        let mut design = d["stages"]["design"].clone();
+        design["criteria_id_pattern"] = bad.clone();
+        set_profile(&root, &builtin_profile(json!({"stages": {"design": design}})));
+        let o = save(&root, "design", design_of(json!([task(&["ISSUE-12 下載"])])));
+        assert!(o.code == 1 && o.all().contains("stages.design.criteria_id_pattern") && o.all().contains(want), "{bad}：要報錯（{want}）：{}", o.all());
+        assert_eq!(run_json(&root)["stages"]["design"]["status"], "invalid");
+    }
+}
+
 #[allow(dead_code)]
 fn unused_helpers(p: &Path) -> String {
     let _ = awf_env(&[], p, None, &[]);

@@ -880,6 +880,14 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             },
         }
     }
+    // 限制對照的用語（constraints_format）、驗收條件編號的樣式（stages.design.criteria_id_pattern）：
+    // 閘門端照它比對，寫壞了要報錯，不能默默退回預設
+    if let Some(cf) = get(doc, "constraints_format").filter(|v| !v.is_null()) {
+        errs.extend(crate::save_run::constraint_format_errors(cf));
+    }
+    if let Err(e) = crate::save_run::criteria_pattern(doc) {
+        errs.push(e);
+    }
     // 另外加的閘門（gates.extra）：寫錯不能默默當成沒加（使用者會以為那一段有人把關）
     if let Some(g) = get(doc, "gates").filter(|g| !g.is_null()) {
         match g.as_object() {
