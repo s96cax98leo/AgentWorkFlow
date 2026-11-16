@@ -22,6 +22,10 @@ pub const SUPPORTED_KEYWORDS: &[&str] = &[
     "$schema", "$id", "title", "description", "examples", "default", "format", "$comment",
 ];
 
+/// 一個事件類型的角度數與前後步驟數上限的預設值（profile 的 `limits.event` 可調；和 event.js 的預設一致）。
+pub const EVENT_MAX_ANGLES: i64 = 8;
+pub const EVENT_MAX_STEPS: i64 = 3;
+
 /// 不能拿來當自訂事件名的字：不是 event.js 的事件、SDLC 的段、工具自己的目錄名。
 pub const EVENT_RESERVED: &[&str] = &[
     "sdlc", "brief", "pr-review", "post-merge", "merge", "debate", "run", "plan", "design", "build", "sync", "test", "deliver", "archive", "logs",
@@ -509,6 +513,21 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             errs.push(format!("conventions.commit.check_regex 不是合法的正規式：{e}"));
         }
     }
+    // rebase 前備份 ref 的樣式（conventions.sync.backup_ref）：規則和 awf sync-branch 用的同一個函式
+    if let Some(p) = get(doc, "conventions").and_then(|c| get(c, "sync")).and_then(|s| get(s, "backup_ref")).and_then(Value::as_str) {
+        if !crate::sync_branch::backup_ref_ok(p) {
+            errs.push(format!("conventions.sync.backup_ref 要在 refs/backup/ 底下，<branch> 與 <date> 各出現一次，其餘只能是英數與 . _ - /（收到 {p}）"));
+        }
+    }
+    // 清單不能有重複的項目（schema 的檢查器沒有 uniqueItems）
+    let record_sections: Vec<Option<&Value>> = items(get(doc, "stages").and_then(|s| get(s, "deliver")).and_then(|d| get(d, "record_sections"))).iter().map(Some).collect();
+    for n in dup_strings(&record_sections) {
+        errs.push(format!("stages.deliver.record_sections 的「{n}」重複"));
+    }
+    let code_tools: Vec<Option<&Value>> = items(get(doc, "knowledge").and_then(|k| get(k, "code_tools"))).iter().map(Some).collect();
+    for n in dup_strings(&code_tools) {
+        errs.push(format!("knowledge.code_tools 的「{n}」重複"));
+    }
     // 知識圖另外收的 repo（knowledge.repos）：id 不重複；
     // sources 是相對那個 repo 的 glob（不能是絕對路徑或含 ..），不能指名機敏檔；spec_root 要在專案裡
     if let Some(know) = get(doc, "knowledge").filter(|k| k.is_object()) {
@@ -538,9 +557,27 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
     }
     // 自訂事件類型（event.js）：名字不能和別的流程或 SDLC 的段撞名；data 的 from 要指得到東西；回傳的鍵不能蓋掉固定欄位
     let name_re = regex::Regex::new(r"^[a-z][a-z0-9-]{0,31}\n?$").expect("固定的正規式");
+    // 角度與前後步驟的上限：limits.event（沒寫或不合法用預設 8 與 3；和 event.js 的 MAX_ANGLES、MAX_STEPS 同一個算法）。
+    // schema 的 maxItems 是可調範圍的上限（16、6），預設的上限由這裡擋
+    let ev_limit = |k: &str, lo: i64, hi: i64, d: i64| -> usize {
+        let v = get(doc, "limits").and_then(|l| get(l, "event")).and_then(|e| get(e, k));
+        let n = v.and_then(|v| v.as_i64().or_else(|| v.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)));
+        n.filter(|n| (lo..=hi).contains(n)).unwrap_or(d) as usize
+    };
+    let (max_angles, max_steps) = (ev_limit("max_angles", 1, 16, EVENT_MAX_ANGLES), ev_limit("max_steps", 0, 6, EVENT_MAX_STEPS));
     if let Some(events) = obj(get(doc, "events")) {
         for (name, ev) in events {
             if !ev.is_object() { continue; }
+            let n_angles = items(get(ev, "gather").and_then(|g| get(g, "angles"))).len();
+            if n_angles > max_angles {
+                errs.push(format!("events[{name}].gather.angles 有 {n_angles} 個，超過上限 {max_angles}（limits.event.max_angles；沒寫用 {EVENT_MAX_ANGLES}，最多 16）"));
+            }
+            for k in ["before", "after"] {
+                let n_steps = items(get(ev, k)).len();
+                if n_steps > max_steps {
+                    errs.push(format!("events[{name}].{k} 有 {n_steps} 步，超過上限 {max_steps}（limits.event.max_steps；沒寫用 {EVENT_MAX_STEPS}，最多 6）"));
+                }
+            }
             if !name_re.is_match(name) {
                 errs.push(format!("events 的事件名「{name}」要是小寫英數與連字號（32 字以內）"));
             }

@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extScenario, ENV, kgScenarios } from './_helpers.mjs'
+import { extScenario, ENV, kgScenarios, tuneScenarios } from './_helpers.mjs'
 
 const SD_PROFILE = { stages: { design: { system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設'], feature_scope: 'x', system_scope: 'x' } } } }
 
@@ -512,5 +512,35 @@ export default [
       ...(/低於 0\.7 時/.test(r.prompts.triage || '') ? [] : ['不合法的值要退回 0.7']),
     ],
   },
+  {
+    // 查詢量與調研上限（profile 的 limits.dispatch、limits.research）：派工單上的數字跟著設定；有種子時減半（無條件進位）
+    name: '可設定：limits.dispatch.triage_queries 與 limits.research → triage、定位、分析的派工單照設定寫',
+    profile: { ...RP, limits: { dispatch: { triage_queries: 5 }, research: { locate_rounds: 9, locate_queries: 20, max_segments: 16, segment_lines: 200, context_lines: 30, stall: 5, analysis_rounds: 25, extra_segments: 3 } } },
+    args: { located: { 'code-contracts': { enough: false, locations: [{ path: 'src/export.py', start: 151, end: 190, why: '工具定位：命中 export' }] } } },
+    fakes: FEATURE_TRIAGE,
+    expect: (r) => [
+      ...(/最多 5 次查詢，不整檔讀/.test(r.prompts.triage || '') ? [] : ['triage 的查詢數沒有跟著設定']),
+      ...(/前後各 30 行以內/.test(r.prompts['locate:specs-adr'] || '') && /最多 9 輪、20 次查詢（[^）]*），連續 5 次查詢沒有新的相關行段就停。最多回報 16 段，每段不超過 200 行/.test(r.prompts['locate:specs-adr'] || '') ? [] : ['定位（沒有種子）的上限沒有跟著設定']),
+      ...(/最多 5 輪、10 次查詢（[^）]*），連續 3 次查詢沒有新的相關行段就停。最多回報 16 段（含上面確認相關的），每段不超過 200 行/.test(r.prompts['locate:code-contracts'] || '') ? [] : ['定位（有種子）要減半、無條件進位']),
+      ...(/最多再補 3 段/.test(r.prompts['research:specs-adr'] || '') && /最多 25 輪工具呼叫；連續 5 次查詢沒有新發現/.test(r.prompts['research:specs-adr'] || '') ? [] : ['分析的上限沒有跟著設定']),
+    ],
+  },
+  {
+    name: '可設定：limits.research 的行段直接由工具給時，補段數是 1.5 倍（無條件進位）',
+    profile: { ...RP, limits: { research: { extra_segments: 3 } } },
+    args: { recipe: 'feature', located: { 'specs-adr': { enough: true, locations: [{ path: 'docs/a.md', start: 1, end: 9, why: 'x' }, { path: 'docs/b.md', start: 1, end: 9, why: 'x' }, { path: 'docs/c.md', start: 1, end: 9, why: 'x' }] } } },
+    expect: (r) => (/最多再補 5 段/.test(r.prompts['research:specs-adr'] || '') && /最多再補 3 段/.test(r.prompts['research:code-contracts'] || '') ? [] : ['工具直接給行段時補段數應為 5，定位 agent 找的應為 3']),
+  },
+  {
+    name: '可設定：limits.dispatch、limits.research 不合法（超出範圍、不是整數）時照預設',
+    profile: { ...RP, limits: { dispatch: { triage_queries: 0 }, research: { locate_rounds: 99, locate_queries: '12', max_segments: 2, segment_lines: 5, context_lines: 0, stall: 2.5, analysis_rounds: 1, extra_segments: -1 } } },
+    fakes: FEATURE_TRIAGE,
+    expect: (r) => [
+      ...(/最多 8 次查詢，不整檔讀/.test(r.prompts.triage || '') ? [] : ['triage 的查詢數要退回 8']),
+      ...(/前後各 20 行以內/.test(r.prompts['locate:specs-adr'] || '') && /最多 6 輪、12 次查詢（[^）]*），連續 3 次查詢沒有新的相關行段就停。最多回報 12 段，每段不超過 120 行/.test(r.prompts['locate:specs-adr'] || '') ? [] : ['定位的上限要退回預設']),
+      ...(/最多再補 4 段/.test(r.prompts['research:specs-adr'] || '') && /最多 15 輪工具呼叫；連續 3 次查詢沒有新發現/.test(r.prompts['research:specs-adr'] || '') ? [] : ['分析的上限要退回預設']),
+    ],
+  },
+  ...tuneScenarios({ fakes: FEATURE_TRIAGE }),
   ...kgScenarios({ fakes: FEATURE_TRIAGE }),
 ]

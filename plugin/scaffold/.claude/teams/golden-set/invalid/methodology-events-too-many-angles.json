@@ -170,5 +170,7 @@
         }
       }
     }
-  }
+  },
+  "semantic": true,
+  "expect": "max_angles"
 }

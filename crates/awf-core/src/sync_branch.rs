@@ -216,6 +216,79 @@ struct Conventions {
     transit_naming: String,
 }
 
+/// rebase 前備份 ref 的內建樣式：`<branch>` 是分支名（`/` 換成 `-`），`<date>` 是 `--date` 的 YYYYMMDD。
+pub const DEFAULT_BACKUP_REF: &str = "refs/backup/<branch>-<date>";
+
+/// 備份 ref 的樣式（profile 的 `conventions.sync.backup_ref`）合不合規則：一定在 `refs/backup/` 底下（不會寫到分支或 tag），
+/// `<branch>` 與 `<date>` 各出現一次（同一個分支不同天的備份不會撞名），其餘只能是英數與 `. _ - /`，而且是合法的 ref 名。
+pub fn backup_ref_ok(p: &str) -> bool {
+    if !p.starts_with("refs/backup/") || p.chars().count() > 200 || p.matches("<branch>").count() != 1 || p.matches("<date>").count() != 1 {
+        return false;
+    }
+    let rest = p.replace("<branch>", "b").replace("<date>", "d");
+    rest.chars().all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
+        && !rest.contains("..")
+        && !rest.contains("//")
+        && !rest.ends_with('/')
+        && !rest.ends_with('.')
+        && !rest.split('/').any(|seg| seg.starts_with('.') || seg.ends_with(".lock"))
+}
+
+/// 這次 rebase 要用的備份 ref 樣式：profile 有寫而且合規則才採用；沒有 profile、讀不懂、沒寫、不合規則一律用內建的（不因此停下）。
+fn backup_pattern(repo: &str, methodology: Option<&str>) -> String {
+    let path = methodology.map(pyutil::path_str).unwrap_or_else(|| pyutil::join(repo, ".claude/teams/methodology.json"));
+    let custom = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|prof| {
+        prof.get("conventions").and_then(|c| c.get("sync")).and_then(|s| s.get("backup_ref")).and_then(Value::as_str).filter(|p| backup_ref_ok(p)).map(str::to_string)
+    });
+    custom.unwrap_or_else(|| DEFAULT_BACKUP_REF.to_string())
+}
+
+#[cfg(test)]
+mod backup_ref_tests {
+    use super::*;
+
+    #[test]
+    fn pattern_rules() {
+        for ok in [DEFAULT_BACKUP_REF, "refs/backup/<date>/<branch>", "refs/backup/awf/<branch>.<date>", "refs/backup/acme_<branch>-<date>-pre"] {
+            assert!(backup_ref_ok(ok), "{ok} 應該合規則");
+        }
+        // 不在 refs/backup/ 底下、少了或多了佔位符、不合法的 ref 名：一律不採用
+        for bad in [
+            "refs/heads/<branch>-<date>", "refs/tags/<branch>-<date>", "backup/<branch>-<date>", "refs/backup/<branch>", "refs/backup/<date>",
+            "refs/backup/<branch>-<branch>-<date>", "refs/backup/<branch>-<date>-<date>", "refs/backup/../heads/<branch>-<date>", "refs/backup//<branch>-<date>",
+            "refs/backup/<branch>-<date>/", "refs/backup/<branch>-<date>.", "refs/backup/<branch>-<date>.lock", "refs/backup/.x/<branch>-<date>",
+            "refs/backup/<branch> <date>", "refs/backup/<branch>-<date>~1", "refs/backup/<branch>-<date>:x", "refs/backup/<other>-<branch>-<date>", "",
+        ] {
+            assert!(!backup_ref_ok(bad), "{bad} 不該合規則");
+        }
+        assert!(!backup_ref_ok(&format!("refs/backup/<branch>-<date>{}", "x".repeat(200))));
+    }
+
+    #[test]
+    fn pattern_from_profile_falls_back_to_default() {
+        let dir = std::env::temp_dir().join(format!("awf-backup-ref-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".claude/teams")).expect("暫存目錄");
+        let repo = dir.to_string_lossy().to_string();
+        let prof = dir.join(".claude/teams/methodology.json");
+        // 沒有 profile
+        assert_eq!(backup_pattern(&repo, None), DEFAULT_BACKUP_REF);
+        let cases = [
+            (json!({"conventions": {"sync": {"backup_ref": "refs/backup/<date>/<branch>"}}}).to_string(), "refs/backup/<date>/<branch>"),
+            (json!({"conventions": {"sync": {"backup_ref": "refs/heads/<branch>-<date>"}}}).to_string(), DEFAULT_BACKUP_REF),
+            (json!({"conventions": {"sync": {"backup_ref": 7}}}).to_string(), DEFAULT_BACKUP_REF),
+            (json!({"conventions": {"sync": {}}}).to_string(), DEFAULT_BACKUP_REF),
+            (json!([1, 2]).to_string(), DEFAULT_BACKUP_REF),
+            ("不是 JSON".to_string(), DEFAULT_BACKUP_REF),
+        ];
+        for (text, want) in &cases {
+            std::fs::write(&prof, text).expect("寫 profile");
+            assert_eq!(backup_pattern(&repo, None), *want, "{text}");
+            assert_eq!(backup_pattern("/不存在的 repo", Some(&prof.to_string_lossy())), *want, "--methodology：{text}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 fn sync_conventions(repo: &str, methodology: Option<&str>) -> R<Conventions> {
     let path = methodology.map(pyutil::path_str).unwrap_or_else(|| pyutil::join(repo, ".claude/teams/methodology.json"));
     let prof = load_json(&path, "methodology")?;
@@ -360,7 +433,7 @@ fn cmd_apply(ctx: &Ctx, a: &Parsed, rec: &mut Rec) -> R<i32> {
         let Some(date) = a.truthy("--date").filter(|d| date_re().is_match(d)) else {
             return Err(Halt("rebase 要 --date YYYYMMDD（備份 ref 用）".into()));
         };
-        let backup = format!("refs/backup/{}-{date}", branch.replace('/', "-"));
+        let backup = backup_pattern(&git.repo, a.truthy("--methodology")).replace("<branch>", &branch.replace('/', "-")).replace("<date>", date);
         let r = git.run(&["update-ref", &backup, &head_ref, ""])?; // 舊值給空字串＝不存在才寫
         if r.code != 0 { return Err(Halt(format!("備份 ref {backup} 寫不進去（可能已存在）：{}", tail(strip(&r.stderr), 200)))); }
         rec.insert("backup_ref".into(), json!(backup));

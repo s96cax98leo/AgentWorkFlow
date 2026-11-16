@@ -494,7 +494,7 @@
    "kind": "invalid",
    "file": "golden-set/invalid/methodology-events-too-many-angles.json",
    "errors": [
-    "$.events.incident.gather.angles：9 項，超過上限 8（其餘寫進檔案）"
+    "events[incident].gather.angles 有 9 個，超過上限 8（limits.event.max_angles；沒寫用 8，最多 16）"
    ],
    "unsupported": []
   },

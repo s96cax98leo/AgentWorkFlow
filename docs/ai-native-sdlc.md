@@ -113,7 +113,7 @@ build 完、test 前跑一次；merge 段因 PR 落後 base 或有衝突回傳 `
 | 情況 | auto 選的策略 | 做法 |
 |---|---|---|
 | 已跟上 base | none | 不動 |
-| 沒推送過、沒衝突 | rebase | 先留 `refs/backup/<分支>-<日期>`，再 rebase 到 base；歷史線性，不需要 force push |
+| 沒推送過、沒衝突 | rebase | 先留 `refs/backup/<分支>-<日期>`（樣式可用 profile 的 `conventions.sync.backup_ref` 改，只能在 `refs/backup/` 底下），再 rebase 到 base；歷史線性，不需要 force push |
 | 已推送過、沒衝突 | merge | 把 base `merge --no-ff` 進分支；已推送的分支 rebase 要 force push，hook 一律擋 |
 | 有衝突（`git merge-tree` 預測） | transit | 從 base 開中轉分支（預設 `merge/<短名>-into-<base>-<YYYYMMDD>`），把分支 merge 進來，在中轉分支上解衝突並分類；`check-transit` 擋殘留衝突標記與「解衝突時順便改了別的檔」；之後用 `awf publish --supersedes <原 PR>` 開 PR 取代原 PR，由 steward 照常走 merge gate |
 

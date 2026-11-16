@@ -1,5 +1,5 @@
 // event-brief.js 的乾跑情境：依賴程式子任務的非程式子任務要等 SDLC、缺件（規則 26）。
-import { ENV } from './_helpers.mjs'
+import { ENV, tuneScenarios } from './_helpers.mjs'
 
 const ST = (id, kind, depends_on = []) => ({ id, title: `子任務 ${id}`, kind, owns: [], depends_on, acceptance: ['a'] })
 const PLAN = (subtasks) => ENV({ epic: 'sample', subtasks })
@@ -39,4 +39,16 @@ export default [
     fakes: { plan: PLAN([ST('r1', 'research', ['nope'])]) },
     expect: (r) => (r.out.halted && /nope/.test(r.out.halt_reason) ? [] : ['未知相依應 halted']),
   },
+  {
+    // 執行紀錄的節（profile 的 stages.deliver.record_sections）：簡報沒有指定格式時用它
+    name: '可設定：stages.deliver.record_sections → writer 的預設格式照設定的節',
+    profile: (p) => ({ stages: { ...(p.stages || {}), deliver: { ...((p.stages || {}).deliver || {}), record_sections: ['產出', '驗證', '後續工作'] } } }),
+    expect: (r) => (/沒有就用：產出、驗證、後續工作）。/.test(r.prompts.write || '') ? [] : ['writer 的派工單沒有照設定的節']),
+  },
+  {
+    name: '可設定：record_sections 不合法時照預設六節',
+    profile: (p) => ({ stages: { ...(p.stages || {}), deliver: { ...((p.stages || {}).deliver || {}), record_sections: [] } } }),
+    expect: (r) => (/沒有就用：產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作）。/.test(r.prompts.write || '') ? [] : ['不合法的設定要退回預設六節']),
+  },
+  ...tuneScenarios(),
 ]

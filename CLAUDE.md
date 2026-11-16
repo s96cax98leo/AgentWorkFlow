@@ -350,6 +350,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改 watcher**：`awf watch --selftest`；事件類型或欄位改了，`schemas/progress-event.schema.json`、`methodology.schema.json` 的 `progress.notify.events`、`docs/監控與整合.md` 的事件表要一起改；送給外部指令的欄位只能加進 `NOTIFY_FIELDS`（不放需求內容、摘要、路徑）；任何失敗都只警告。
 - **改派工單或派工數**：跑 `cargo xtask check-budget`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。
 - **新增會寫紀錄的唯讀角色**：加進 `config.rs` 的 `RECORD_ONLY_ROLES` 與 `check_agents.rs` 的對應檢查，hook 測試補該擋（寫 repo、run.json、merge-audit）與該放（寫 runs_dir 的 `.md`）。
+- **新增可調的值（profile）**：預設值＝原本寫死的值，沒寫或不合法一律退回預設（範本用 challenge 片段的 `awfInt`；前綴裡的字走 `awfTune`、執行紀錄的節走 `awfRecordSections`）；放寬閘門或確定性核對的方向不開放（例：`limits.envelope` 只能調小、`review.min_confidence` 只能調低、`conventions.sync.backup_ref` 只能在 `refs/backup/` 底下，規則在 `sync_branch::backup_ref_ok`）。要一起改：`methodology.schema.json`（上下限）、`schema::methodology_errors`（schema 表達不了的，例如 `limits.event` 對 `events` 的角度數）、golden 正反例、對應的情境（開、不合法退回預設）、`crates/xtask/src/js/kernel.cjs`（片段的函式）、`docs/自訂與擴充.md` 的欄位表。改完用乾跑報告確認「沒設定時每張派工單逐字相同」。
 - **新增 guard.config 欄位**：`guard.config.json.tmpl` 的 `_說明`、`config.rs` 的預設值、`docs/自動合併信任模型.md` 或 `docs/自訂與擴充.md` 一起改；`awf init --upgrade` 會把新鍵補進既有專案。
 - **版本（VERSION）**：發佈前遞增 `plugin/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json`（`metadata.version` 與 `plugins[].version`）。init 寫的 `.claude/teams/VERSION` 取自 plugin.json，三處一致由 `crates/awf/tests/smoke_init.rs` 檢查。
 - **CHANGELOG**：每次發佈在 `CHANGELOG.md` 補一節，破壞性變更（角色改名、command 刪除、hook 語意）與升級步驟要寫清楚。
