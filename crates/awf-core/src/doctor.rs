@@ -477,8 +477,14 @@ fn check_ci(env: &Env) -> Part {
 }
 
 /// 2. 知識庫沒建：`<knowledge.dir>/kb.sqlite` 不存在。
+/// 只在「用得到」時提示：profile 有 `knowledge`，或專案有可以索引的內容（`docs/`、`openspec/`）。
+/// 兩個都沒有的專案（沒設定知識庫、也沒有文件）提示了也沒事可做，不列。
 fn check_kb(env: &Env) -> Part {
     let prof = profile_of(env);
+    let configured = prof.as_ref().and_then(|p| p.get("knowledge")).is_some_and(Value::is_object);
+    if !configured && !KB_CONTENT_DIRS.iter().any(|d| is_dir(&pyish::pjoin(&env.project, d))) {
+        return Ok(Vec::new());
+    }
     let dir = text_at(prof.as_ref(), &["knowledge", "dir"]);
     let dir = if dir.is_empty() { crate::kb::DEFAULT_DIR } else { dir };
     let full = if pyish::is_abs(dir) { dir.to_string() } else { pyish::pjoin(&env.project, dir) };
@@ -492,6 +498,9 @@ fn check_kb(env: &Env) -> Part {
         "在專案根目錄跑 awf kb build（之後文件有改再跑一次，只會重建改過的）；要索引哪些檔在 methodology.json 的 knowledge.sources 設定",
     )])
 }
+
+/// 專案有這些目錄就算「有可以索引的內容」（知識庫沒建的提示用）。
+const KB_CONTENT_DIRS: &[&str] = &["docs", "openspec"];
 
 /// 生效的需求來源：guard.config.json 的 `requirements` 有設 path／command 時以它為準，否則看 profile 的。回（source, path）。
 fn requirements_of(env: &Env) -> (String, String) {
@@ -911,6 +920,22 @@ fn selftest_in(root: &Path) -> i32 {
     let r = doctor();
     let kb = find(&r, "kb");
     check("體檢：知識庫沒建 → 說明，修法是 awf kb build", kb.level == INFO && kb.fix.contains("awf kb build"), format!("{r:?}"));
+    // 用不到就不提示：profile 沒有 knowledge、專案也沒有 docs/、openspec/
+    let no_knowledge = |m: &mut Value| {
+        if let Some(o) = m.as_object_mut() {
+            o.shift_remove("knowledge");
+        }
+    };
+    set_prof(&no_knowledge);
+    let r = doctor();
+    check("體檢：profile 沒有 knowledge、專案也沒有 docs/ 與 openspec/ → 不提示知識庫", !ids(&r, None).contains(&"kb".to_string()), format!("{r:?}"));
+    for dir in KB_CONTENT_DIRS {
+        let _ = std::fs::create_dir_all(root.join("proj").join(dir));
+        let r = doctor();
+        check(&format!("體檢：profile 沒有 knowledge 但專案有 {dir}/ → 提示知識庫沒建"), find(&r, "kb").fix.contains("awf kb build"), format!("{r:?}"));
+        let _ = std::fs::remove_dir_all(root.join("proj").join(dir));
+    }
+    set_prof(&|_| {});
     w("proj/_tpm/kb/kb.sqlite", "x");
     let r = doctor();
     check("體檢：都沒事時五項都不列", !ids(&r, None).iter().any(|i| health.contains(&i.as_str())), format!("{r:?}"));
