@@ -8,6 +8,7 @@
   "additionalProperties": false,
   "properties": {
     "v": {"const": 1},
+    "schema_version": {"type": "integer", "minimum": 1, "description": "格式版本。只加欄位或事件類型時不變；欄位改名、移除或換意思才遞增"},
     "seq": {"type": "integer", "minimum": 1, "description": "這個 run 的事件序號，從 1 連續遞增"},
     "at": {"type": "string", "minLength": 1, "description": "watcher 看到這件事的時間（UTC，ISO 8601）；不是事情發生的精確時間"},
     "type": {"enum": ["run_state", "stage_started", "stage_saved", "waiting_gate", "stage_approved", "record_written", "agent_started", "agent_progress", "workflow_finished", "workflow_stalled", "watch_note"]},

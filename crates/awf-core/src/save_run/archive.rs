@@ -302,7 +302,12 @@ pub fn write_archive(ctx: &Ctx, run: &str, data: &Value) -> String {
 /// 給外部程式讀的狀態快照（`schemas/run-status.schema.json`）。只整理 run.json 與各段結果的 trace，不做任何判定。
 pub fn status_snapshot(ctx: &Ctx, run: &str, data: &Value) -> R<Value> {
     let mut stages: Vec<Value> = Vec::new();
-    for (name, st) in stage_items(data)? {
+    let count_of = |v: &Value| v.as_array().map_or(0, Vec::len);
+    // 先讀 stages（run.json 形狀不對時的錯誤照舊由它報），再看 recipe 的段表
+    let items = stage_items(data)?;
+    let recipe_stages: Option<Vec<Value>> =
+        if has_recipe(data)? { get(get(data, "recipe")?, "resolved")?.get("stages").and_then(Value::as_array).cloned() } else { None };
+    for (name, st) in items {
         let (mut agents, mut missing) = (0usize, 0usize);
         if let Ok(v) = ctx.load_json(&pj(run, &format!("{name}.json"))) {
             if let Some(Value::Array(trace)) = v.as_object().and_then(|o| o.get("trace")) {
@@ -320,6 +325,14 @@ pub fn status_snapshot(ctx: &Ctx, run: &str, data: &Value) -> R<Value> {
         row.insert("agents".into(), json!(agents));
         row.insert("agents_missing".into(), json!(missing));
         row.insert("missing_records".into(), json!(py::len_or(get(st, "missing_records")?)?));
+        // recipe 跳過的段：run.json 標 skipped，或 recipe 的段表裡沒有它
+        let off_recipe = match &recipe_stages {
+            Some(want) => super::SDLC.contains(&name.as_str()) && !want.iter().any(|w| w.as_str() == Some(name.as_str())),
+            None => false,
+        };
+        row.insert("skipped".into(), json!(get(st, "status")?.as_str() == Some("skipped") || off_recipe));
+        row.insert("spec_issues".into(), json!(count_of(get(st, "spec_issues")?)));
+        row.insert("link_gaps".into(), json!(count_of(get(st, "link_gaps")?)));
         stages.push(Value::Object(row));
     }
     let abandoned = get(data, "abandoned")?;
@@ -355,6 +368,7 @@ pub fn status_snapshot(ctx: &Ctx, run: &str, data: &Value) -> R<Value> {
     let or_null = |v: &Value| if truthy(v) { v.clone() } else { Value::Null };
     let mut out = Map::new();
     out.insert("v".into(), json!(1));
+    out.insert("schema_version".into(), json!(super::STATUS_SCHEMA_VERSION));
     out.insert("run".into(), json!(pname(run)));
     out.insert("event".into(), json!(s_or(get(data, "event")?, "")));
     out.insert("target".into(), json!(s_or(get(data, "target")?, "")));

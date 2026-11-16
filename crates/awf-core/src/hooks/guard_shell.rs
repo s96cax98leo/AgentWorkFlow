@@ -59,7 +59,7 @@ re!(SHELL_WRITE, concat!(
     r"|set-content|add-content|out-file|new-item|remove-item|clear-content|copy-item|move-item|rename-item"), "i");
 re!(STATE_FRAGMENT, r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config|methodology\W{0,16}\.json", "i");
 re!(WRITE_API, r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.write\b|write_text|write_bytes|>>?|\bFile\.(?:write|open)|out-file|set-content|add-content", "i");
-re!(CONTEXT_FRAGMENT, r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\bdecisions\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md|結案摘要\W{0,16}\.md|[/\\]archive[/\\]", "i");
+re!(CONTEXT_FRAGMENT, r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\b(?:decisions|links)\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md|結案摘要\W{0,16}\.md|[/\\]archive[/\\]", "i");
 re!(RUN_INDEX_FRAGMENT, r"執行紀錄索引");
 re!(NULL_REDIR, r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", "i");
 re!(HARMLESS, r"[\d&]?>>?\s*/dev/null\b|[\d&]?>>?\s*\$null\b|\d?>&\d", "i");

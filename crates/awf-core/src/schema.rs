@@ -646,6 +646,38 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             Err(e) => errs.push(format!("requirements.id_pattern 不是合法的正規式：{e}")),
         }
     }
+    if rget("source").and_then(Value::as_str) == Some("openspec") {
+        // 規格根目錄可以在另一個 repo（絕對路徑），但不能用 .. 繞出去；變更名稱是 changes/ 底下的一個目錄名
+        if let Some(p) = rget("path").and_then(Value::as_str).filter(|p| !p.is_empty()) {
+            if let Err(e) = crate::spec::check_root_arg(p) { errs.push(e.replace("--root", "requirements.path")); }
+        }
+        if let Some(c) = rget("change").and_then(Value::as_str) {
+            if let Err(e) = crate::spec::check_change_name(c.trim()) { errs.push(format!("requirements.change：{e}")); }
+        }
+    }
+    if let Some(map) = rget("section_map") {
+        match map.as_object() {
+            None => errs.push("requirements.section_map 要是物件（必要節 → proposal 的節名清單）".into()),
+            Some(o) => for (k, v) in o {
+                let names: Option<Vec<&str>> = v.as_array().map(|a| a.iter().filter_map(Value::as_str).collect());
+                let ok = !k.trim().is_empty() && names.as_ref().is_some_and(|n| !n.is_empty() && n.len() == v.as_array().map_or(0, Vec::len) && n.iter().all(|x| !x.trim().is_empty()));
+                if !ok { errs.push(format!("requirements.section_map.{k} 要是非空的節名清單")); }
+                for n in names.iter().flatten().filter(|n| n.starts_with('@') && **n != crate::spec::SCENARIOS_TOKEN) {
+                    errs.push(format!("requirements.section_map.{k}：不認得的記號 {n}（只有 {}）", crate::spec::SCENARIOS_TOKEN));
+                }
+            },
+        }
+    }
+    if let Some(l) = get(doc, "links") {
+        // 這裡的 enforce 會擋政策核准：寫錯型別不能默默當成沒開
+        match l.as_object() {
+            None => errs.push("links 要是物件（例如 {\"enforce\": false}）".into()),
+            Some(o) => {
+                if o.get("enforce").is_some_and(|e| !e.is_boolean()) { errs.push("links.enforce 要是 true 或 false".into()); }
+                for k in o.keys().filter(|k| k.as_str() != "enforce") { errs.push(format!("links 不認得的鍵：{k}")); }
+            }
+        }
+    }
     errs.extend(deliverables_errors(get(doc, "deliverables"), "deliverables"));
     // 去客戶化掃描（awf scrub）：路徑要在專案裡、規則要編得過（訊息只說第幾條，不印規則）、when 只能是做得到的時機
     if let Some(scrub) = get(doc, "scrub").filter(|s| !s.is_null()) {

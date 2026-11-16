@@ -4,6 +4,8 @@
 use super::archive::{next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
 use super::checks::{constraint_issues, intent_errors, plan_check_for};
 use super::decisions::{decision_errors, record_decisions, split_answer};
+use super::links::{decision_links, link_gaps, links_setting, stage_links, write_links, LEDGER};
+use super::speccheck::{intent_errors_spec, open_spec, spec_issues};
 use super::policy::{abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, mods, policy_violations, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
 use super::trace::{envelopes, model_errors, process_trace};
@@ -241,6 +243,10 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         None => false,
     };
     let in_sdlc = SDLC.contains(&stage);
+    // 規格層（需求來源是 openspec）與連結（profile 有 links）：沒設定就都是 None，後面完全不做事
+    let (sprof, _) = if in_sdlc && sdlc_run { load_profile(ctx, profile_arg) } else { (Value::Null, String::new()) };
+    let sc = if sprof.is_object() { open_spec(ctx, run, &data, &sprof) } else { None };
+    let links_on = links_setting(&sprof);
     if stage == "plan" && sdlc_run {
         let (profile, perr) = load_profile(ctx, profile_arg);
         if !perr.is_empty() {
@@ -316,7 +322,11 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         }
         let res = recipe::recipe_of_run(&data).map_err(py::from_recipe)?;
         let mode = get_opt(&res, "plan_mode")?.cloned().unwrap_or_else(|| json!("feature"));
-        errs.extend(intent_errors(ctx, result, &profile, &mode)?);
+        match &sc {
+            // 需求來源是 openspec：proposal 就是 intent（節名用對照表對應，必要內容一樣不能少）
+            Some(sc) => errs.extend(intent_errors_spec(ctx, sc, result, &profile, &mode)?),
+            None => errs.extend(intent_errors(ctx, result, &profile, &mode)?),
+        }
         if has_recipe(&data)? {
             let resolved = idx(idx(&data, "recipe")?, "resolved")?.clone();
             rebuild_stages(&mut data, &resolved)?;
@@ -420,6 +430,31 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             }
             st.insert("plan_check".into(), json!(pc));
         }
+        if let Some(sc) = &sc {
+            let si = spec_issues(stage, result, sc)?;
+            let st = st_mut(&mut data, stage)?;
+            if si.is_empty() {
+                st.shift_remove("spec_issues");
+            } else {
+                for m in &si {
+                    line(err, format!("規格檢查：{m}（不能政策核准；人工核准前請先確認）"));
+                }
+                st.insert("spec_issues".into(), json!(si));
+            }
+        }
+        if let Some(enforce) = links_on {
+            let gaps = link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()));
+            let st = st_mut(&mut data, stage)?;
+            if gaps.is_empty() {
+                st.shift_remove("link_gaps");
+            } else {
+                let tail = if enforce { "不能政策核准；人工核准前請先確認" } else { "links.enforce 沒開，只提醒" };
+                for m in &gaps {
+                    line(err, format!("連結檢查：{m}（{tail}）"));
+                }
+                st.insert("link_gaps".into(), json!(gaps));
+            }
+        }
     }
     let with_recipe = has_recipe(&data)?;
     {
@@ -451,6 +486,13 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         }
     }
     dump(ctx, run, &data)?;
+    if links_on.is_some() && in_sdlc {
+        // 連結帳本是輔助：寫不了只警告（閘門的連結檢查自己從各段結果重算，不讀帳本）
+        let links = stage_links(ctx, run, stage, result, sc.as_ref().and_then(|r| r.as_ref().ok()));
+        if let Err(e) = write_links(ctx, run, stage, &links, true) {
+            warns.push(format!("連結帳本 {LEDGER} 寫不了（{}：{}）；這一段的結果已存", e.class, e.msg));
+        }
+    }
     if stage == "plan" && errs.is_empty() && result.is_object() {
         // 記下這次調研讀過的來源檔（sha1），下次重跑時來源沒變的角度可以沿用；記不了只警告（I9）
         match pack::record_reuse(&ctx.abs(run), target_abs.as_deref(), result, &requirement, &ctx.pack_root) {
@@ -497,7 +539,22 @@ fn decide_cmd(ctx: &Ctx, run: &str, argv: &[String], out: &mut String, err: &mut
         Err(e) => return Err(e),
     }
     line(out, format!("已記 1 筆決定（{}；範圍 {scope}）", pack::DECISIONS));
+    note_decision_links(ctx, run, "decide", 1, opt(argv, "--profile", ""), err);
     Ok(0)
+}
+
+/// 決策 → 需求的連結（profile 有 links 才記）。輔助：任何失敗只警告。
+fn note_decision_links(ctx: &Ctx, run: &str, stage: &str, count: usize, profile_arg: &str, err: &mut String) {
+    let (prof, _) = load_profile(ctx, profile_arg);
+    if links_setting(&prof).is_none() {
+        return;
+    }
+    let Ok(data) = load(ctx, run) else { return };
+    let sc = open_spec(ctx, run, &data, &prof);
+    let links = decision_links(ctx, run, stage, count, sc.as_ref().and_then(|r| r.as_ref().ok()));
+    if let Err(e) = write_links(ctx, run, stage, &links, false) {
+        line(err, format!("警告：連結帳本 {LEDGER} 寫不了（{}：{}）；決定已記錄", e.class, e.msg));
+    }
 }
 
 /// 核准一段（`argv` 是完整的命令列：`approve <run> <stage> --by … --at … [--note …] [--profile …] [--answer …]…`）。
@@ -557,6 +614,16 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             errs.extend(constraint_issues(ctx, run, stage, &cprof, crepo.as_deref(), true)?.0.into_iter().map(|e| format!("限制文件：{e}")));
             let result = ctx.load_json(&f)?;
             errs.extend(plan_check_for(ctx, run, stage, &result, &data)?.into_iter().map(|e| format!("拆工檢查：{e}")));
+            if cprof.is_object() {
+                // 規格檢查與連結檢查都重算，不採信 run.json 記的結果
+                let sc = open_spec(ctx, run, &data, &cprof);
+                if let Some(sc) = &sc {
+                    errs.extend(spec_issues(stage, &result, sc)?.into_iter().map(|e| format!("規格檢查：{e}")));
+                }
+                if links_setting(&cprof) == Some(true) {
+                    errs.extend(link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok())).into_iter().map(|e| format!("連結檢查：{e}")));
+                }
+            }
         }
         if HUMAN_ONLY.contains(&stage) && !errs.iter().any(|e| e.contains("一律由人核准")) {
             errs.push(format!("{stage} 段一律由人核准，不能政策核准"));
@@ -586,7 +653,10 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     if !answers.is_empty() {
         // 決策記憶是輔助：寫不出來不影響核准
         match record_decisions(ctx, run, &answers, by, at, a_scope, a_exp, stage, err) {
-            Ok(n) => line(out, format!("已記 {n} 筆決定（{}；範圍 {a_scope}）", pack::DECISIONS)),
+            Ok(n) => {
+                line(out, format!("已記 {n} 筆決定（{}；範圍 {a_scope}）", pack::DECISIONS));
+                note_decision_links(ctx, run, &format!("approve:{stage}"), n, profile_arg, err);
+            }
             Err(e) if is_os(&e) => line(err, format!("警告：決定沒記成（{}）；核准已記錄", e.msg)),
             Err(e) => return Err(e),
         }
@@ -604,6 +674,12 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     let v = get(st, "plan_check")?;
     if truthy(v) {
         line(err, format!("警告：{stage} 的拆工檢查有 {} 項問題（人工核准照記，但請先確認）：{}", py::len(v)?, joined_head(v, 5)?));
+    }
+    for (key, text) in [("spec_issues", "的規格檢查有 {n} 項問題"), ("link_gaps", "有 {n} 條連結不齊")] {
+        let v = get(st, key)?;
+        if truthy(v) {
+            line(err, format!("警告：{stage} {}（人工核准照記，但請先確認）：{}", text.replace("{n}", &py::len(v)?.to_string()), joined_head(v, 5)?));
+        }
     }
     Ok(0)
 }
@@ -837,6 +913,14 @@ fn status_cmd(ctx: &Ctx, run: &str, argv: &[String], data: &Value, out: &mut Str
             if truthy(v) {
                 line(out, format!("         警告：{}（不能政策核准）：{}", text.replace("{n}", &py::len(v)?.to_string()), joined_head(v, 3)?));
             }
+        }
+        let v = get(st, "spec_issues")?;
+        if truthy(v) {
+            line(out, format!("         警告：規格檢查 {} 項（不能政策核准）：{}", py::len(v)?, joined_head(v, 3)?));
+        }
+        let v = get(st, "link_gaps")?;
+        if truthy(v) {
+            line(out, format!("         警告：連結不齊 {} 項（links.enforce 開啟時不能政策核准）：{}", py::len(v)?, joined_head(v, 3)?));
         }
     }
     let fr = get(data, "followup_run")?;

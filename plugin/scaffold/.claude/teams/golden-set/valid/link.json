@@ -1,0 +1,20 @@
+{
+  "schema": "link",
+  "data": {
+    "schema_version": 1,
+    "op": "add",
+    "kind": "ac_spec",
+    "from": {
+      "type": "ac",
+      "id": "orders/申請退款#七天內"
+    },
+    "to": {
+      "type": "spec",
+      "id": "orders/申請退款"
+    },
+    "run": "20261114-sdlc-refund",
+    "stage": "design",
+    "source": "design.json:subtasks[t1].spec_refs",
+    "strength": "strong"
+  }
+}

@@ -41,7 +41,7 @@ const BUILTIN_STAGES: &[&str] = &[
     "brief", "meeting", "demo-check", "decision", "post-merge", "upstream", "pr-review", "reqs-change", "run",
 ];
 pub const PACK_STATE: &[&str] = &["reuse", "pack-args"];
-pub const SHARED_CONTEXT_NAMES: &[&str] = &["context.md", "pack.md", "decisions.jsonl", "決策記憶.md", "結案摘要.md"];
+pub const SHARED_CONTEXT_NAMES: &[&str] = &["context.md", "pack.md", "decisions.jsonl", "決策記憶.md", "結案摘要.md", "links.jsonl"];
 
 pub static GIT_GLOBAL_OPTS: Re = Re::new(
     r#"\bgit\s+(?:(?:-C|-c)\s+(?:"[^"]*"|'[^']*'|\S+)\s+|--(?:git-dir|work-tree|namespace)=\S+\s+|--no-pager\s+|--bare\s+)+"#, "");

@@ -137,7 +137,7 @@ pub fn highlights(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str
                    "stages": py::get(&or_obj(py::get(r, "resolved")?), "stages")?, "reasons": or_else(py::get(r, "reasons")?, json!([]))}),
         );
     }
-    for k in ["missing_records", "ghostwritten_records", "constraint_issues", "plan_check"] {
+    for k in ["missing_records", "ghostwritten_records", "constraint_issues", "plan_check", "spec_issues", "link_gaps"] {
         let v = py::get(&st, k)?;
         if py::truthy(v) {
             h.insert(k.to_string(), v.clone());
@@ -589,7 +589,7 @@ pub fn handoff_text(env: &Env, run: &str, run_arg: &str, data: &Value) -> R<Stri
         if py::truthy(py::get(&st, "halted")?) {
             notes.push(format!("halted：{}", f(py::get(&st, "halted")?, 120)));
         }
-        for (k, head, tail) in [("missing_records", "紀錄缺", "份"), ("constraint_issues", "限制文件", "項"), ("plan_check", "拆工檢查", "項")] {
+        for (k, head, tail) in [("missing_records", "紀錄缺", "份"), ("constraint_issues", "限制文件", "項"), ("plan_check", "拆工檢查", "項"), ("spec_issues", "規格檢查", "項"), ("link_gaps", "連結不齊", "條")] {
             let v = py::get(&st, k)?;
             if py::truthy(v) {
                 notes.push(format!("{head} {} {tail}", py::len(v)?));
@@ -716,7 +716,7 @@ pub fn text_of(act: &Value) -> R<String> {
     for q in py::iter_or(py::get(&h, "provisional")?)? {
         lines.push(format!("- [暫定，請確認] {} → 已先照「{}」做", py::s(py::idx(&q, "question")?), py::s(py::idx(&q, "applied")?)));
     }
-    for k in ["missing", "missing_records", "constraint_issues"] {
+    for k in ["missing", "missing_records", "constraint_issues", "spec_issues", "link_gaps"] {
         let v = py::get(&h, k)?;
         if py::truthy(v) {
             lines.push(format!("- {k}：{}", py::s(v)));

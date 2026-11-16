@@ -42,7 +42,7 @@
     "allowed_skipped_checks": []
   },
   "requirements": {
-    "_說明": "merge_gate 的需求來源 adapter：source 是 json（path 指向需求清單）、command（團隊腳本輸出需求清單 JSON）或 spec-md（內建範例，逐行抓 ID）。path、command 都空時改讀開發規範 profile（.claude/teams/methodology.json）的 requirements；兩邊都沒設時 gate 一律 hold。這裡有設時以這裡為準。",
+    "_說明": "merge_gate 的需求來源 adapter：source 是 json（path 指向需求清單）、command（團隊腳本輸出需求清單 JSON）、spec-md（內建範例，逐行抓 ID）或 openspec（規格層：path 是規格根目錄，change 是變更名稱；見 docs/自訂與擴充.md）。path、command 都空時改讀開發規範 profile（.claude/teams/methodology.json）的 requirements；兩邊都沒設時 gate 一律 hold。這裡有設時以這裡為準。",
     "source": "json",
     "path": "",
     "command": "",
