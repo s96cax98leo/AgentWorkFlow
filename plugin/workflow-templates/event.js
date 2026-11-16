@@ -125,12 +125,12 @@ const BUILTIN_EVENTS = {
     returns: { all: 'impact' },
   },
   upstream: {
-    title: '上游（{{UPSTREAM_REPO}}）變動（新 PR、main 前進、CI 失敗）：唯讀分析，開工與收尾記錄上游狀態證明零寫入',
+    title: '上游（{{UPSTREAM_REPO}}）變動（新 PR、{{BASE_BRANCH}} 前進、CI 失敗）：唯讀分析，開工與收尾記錄上游狀態證明零寫入',
     args: ['what', 'repo'],
     context: '事件：{what}\n我方 fork：{repo}\nrun 目錄：{run_dir}\n全程唯讀：不對上游做任何寫入，不切換 fork 主工作目錄的分支（用 git fetch 到唯讀 ref、git merge-tree 預測）。',
     payload: 'findings',
     // tpm-researcher 上游模式不寫檔：分析與快照只交信封，由 tpm-writer 落檔（快照前後對照要由同一份落檔證明零寫入）
-    before: [{ name: 'before', label: 'snapshot:before', halt: 'baseline', keep: 'envelope', heading: '派工單（上游模式）', ask: '記錄上游狀態（before）：main 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。不寫檔，全部放在信封：每項一則 finding（severity=info，location 寫查詢指令）。payload 用 findings（lens=upstream）。' }],
+    before: [{ name: 'before', label: 'snapshot:before', halt: 'baseline', keep: 'envelope', heading: '派工單（上游模式）', ask: '記錄上游狀態（before）：{{BASE_BRANCH}} 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。不寫檔，全部放在信封：每項一則 finding（severity=info，location 寫查詢指令）。payload 用 findings（lens=upstream）。' }],
     gather: {
       label: 'analyze', heading: '派工單（上游模式：{key}）', body: '{ask}\n不寫檔，筆記全部放在信封（findings 的 claim、location、recommendation）。payload 用 findings（lens={key}）。',
       angles: [
@@ -141,7 +141,7 @@ const BUILTIN_EVENTS = {
       ],
     },
     challenge: { ask: '逐則反駁（重跑唯讀指令查證），不確定判 refuted=true。每則都要判，target_id 照抄發現的 id（含角度前綴，例如 conflict:f1）：' },
-    after: [{ name: 'after', label: 'snapshot:after', halt: 'write', keep: 'envelope', heading: '派工單（上游模式）', ask: '記錄上游狀態（after）：main 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。不寫檔，全部放在信封：每項一則 finding（severity=info，location 寫查詢指令）。payload 用 findings（lens=upstream）。' }],
+    after: [{ name: 'after', label: 'snapshot:after', halt: 'write', keep: 'envelope', heading: '派工單（上游模式）', ask: '記錄上游狀態（after）：{{BASE_BRANCH}} 的 head SHA、開著的 PR 數與我方 PR 的 head SHA 與 updated_at、分支數。不寫檔，全部放在信封：每項一則 finding（severity=info，location 寫查詢指令）。payload 用 findings（lens=upstream）。' }],
     write: {
       ask: '分析 agent 沒有寫檔權限，由你落檔：\n' +
         '1. 寫上游狀態 {run_dir}/upstream-before.md 與 {run_dir}/upstream-after.md，並在報告附兩者對照（證明零寫入；對不上就在報告最前面標出）。\n' +

@@ -513,9 +513,11 @@ const commitFor = (kind, epic) => {
 }
 
 const A = args || {}
-for (const k of ['repo', 'epic', 'requirement', 'base', 'run_dir']) {
+for (const k of ['repo', 'epic', 'requirement', 'run_dir']) {
   if (!A[k]) throw new Error(`缺 args.${k}（由 tpm-team skill 傳入）`)
 }
+// 沒帶 base：用專案的主線分支（守門設定的 base_remote／base_branch；和其他各段一致）
+if (!A.base) A.base = '{{BASE_REMOTE}}/{{BASE_BRANCH}}'
 awfInit({ run_dir: A.run_dir, stage: 'plan', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, 'plan'), kg: A.kg === true, tune: awfTune(MP) })
 // 派工數上限（I8）：profile 的 limits.max_agents，沒設用 40（plan 段正常不超過 15）
 const MAX_AGENTS = Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40
@@ -656,7 +658,7 @@ const ANGLES = {
       baseline: '找出效能熱點的程式路徑與既有的量測方式（benchmark、profiling 指令），能量就量出基線數值。',
       revert: '讀 revert-proposal.md 列出的合併 commit，確認 git revert 的範圍、會撤掉的改動與衝突預測（git log、git show）。',
     } },
-  upstream: { locate: false, ask: '唯讀查上游 {{UPSTREAM_REPO}}：最近合進 main、還開著的 PR 是否碰到同一塊（gh pr list／gh api，不做任何寫入），評估衝突風險。' },
+  upstream: { locate: false, ask: '唯讀查上游 {{UPSTREAM_REPO}}：最近合進 {{BASE_BRANCH}}、還開著的 PR 是否碰到同一塊（gh pr list／gh api，不做任何寫入），評估衝突風險。' },
 }
 // 角度的定義可以由 profile 的 research_angles 改寫或新增（{ "<key>": { "ask", "modes": { "<plan_mode>": "…" }, "locate": true|false } }）：
 // 同名的角度換掉 ask；modes 逐個 plan_mode 蓋過內建的（沒寫到的 plan_mode 照內建）；locate 有寫布林值才採用。

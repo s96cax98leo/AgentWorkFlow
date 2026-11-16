@@ -424,6 +424,7 @@ init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`
 | `{{NOTIFY_HOW}}` | 需要人決策時怎麼通知（寫進 rules.md 規則 11 的一句話；留空＝在對話中提問即可）。進度事件送到外部指令是另一件事，設 profile 的 `progress.notify` | 推播到手機（PushNotification） |
 | `{{BRANCH_PREFIX}}`、`{{ALLOWED_BRANCH_PREFIXES}}` | 開發分支前綴、允許的新分支前綴 | `feature/`；`feature/,bugfix/,hotfix/,release/,merge/` |
 | `{{PROTECTED_BRANCHES}}` | 受保護分支（`guard.config.json` 的 `protected_branches`；不能直接 push，合併走 PR），逗號分隔；留空＝`main,master` | `main,master` |
+| `{{BASE_BRANCH}}`、`{{BASE_REMOTE}}` | 主線分支與它所在的 remote（`guard.config.json` 的 `base_branch`、`base_remote`）：沒帶 `base` 時各段的比對基準是 `<remote>/<分支>`，PR 的目標分支是主線分支。它和受保護分支是兩件事 | `main`、`origin` |
 | `{{RUNS_DIR}}`、`{{BRIEFS_DIR}}` | run 目錄、簡報目錄 | `_tpm/runs`、`_tpm/briefs` |
 | `{{DOCS_DIRS}}` | tpm-writer 可以寫的文件目錄（和 run 目錄、簡報目錄一起寫成 `guard.config.json` 的 `writer_dirs`），逗號分隔；只收工作區裡的相對路徑 | `docs` |
 | `{{ATTRIBUTION_LINE}}` | commit 結尾的署名行 | `Assisted-by: Claude` |
@@ -431,7 +432,7 @@ init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`
 | `{{AGENT_NS}}` | 呼叫 agent 時的命名空間前綴 | `agent-workflow:` |
 | `{{METHODOLOGY}}` | 開發規範 profile：內建名稱或自己的 JSON 路徑 | `default` |
 
-互動模式下，`PROTECTED_BRANCHES` 與 `DOCS_DIRS` 在訪談的守門主題一起問（不在佔位符那一輪重複問）；之後要改用 `awf init --reconfigure guard`。
+互動模式下，`PROTECTED_BRANCHES`、`DOCS_DIRS`、`BASE_BRANCH` 在訪談的守門主題一起問（不在佔位符那一輪重複問；`BASE_REMOTE` 不問，要改就寫在 `workflow.config` 或答案檔的 `guard.base_remote`）；之後要改用 `awf init --reconfigure guard`。`awf init --detect` 會從遠端 `origin` 的預設分支看主線分支，不是 `main` 就建議 `guard.base_branch`。
 
 另有 `AWF_HOOK_CMD`、`AWF_HOOK_SHELL` 兩個佔位符，是 `--hooks project` 的啟動指令與 shell，由 init 自動計算，不用填。
 

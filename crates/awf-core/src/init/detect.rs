@@ -355,7 +355,7 @@ pub fn detect(root: &Path, windows: bool) -> Vec<Topic> {
             t.suggest.insert("branch_prefix".into(), json!(p));
         }
         if let Some(d) = &default_branch {
-            t.detected.push(finding("default_branch", json!(d), "遠端 origin 的預設分支（目前只供參考：主線分支名還不能設定，派工時用 base 參數帶）"));
+            t.detected.push(finding("default_branch", json!(d), "遠端 origin 的預設分支（主線分支在守門主題設定：guard 的 base_branch）"));
         }
         for f in [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "REVIEW.md"] {
             if exists(root, f) {
@@ -484,6 +484,10 @@ pub fn detect(root: &Path, windows: bool) -> Vec<Topic> {
             let mut list: Vec<&str> = GUARD_PROTECTED.to_vec();
             list.push(d);
             sug.insert("protected_branches".to_string(), json!(list));
+        }
+        if let Some(d) = default_branch.as_deref().filter(|d| *d != crate::layout::DEFAULT_BASE_BRANCH && crate::layout::branch_ok(d)) {
+            t.detected.push(finding("base_branch", json!(d), "遠端 origin 的預設分支不是 main：建議 base_branch 設成它（沒帶 base 時的比對基準與 PR 的目標分支）"));
+            sug.insert("base_branch".to_string(), json!(d));
         }
         let dirs: Vec<&str> = ["tests/acceptance", "e2e", "tests/e2e", "test/acceptance", "test/e2e", "acceptance"].into_iter().filter(|d| is_dir(root, d)).collect();
         if !dirs.is_empty() {

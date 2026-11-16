@@ -175,7 +175,7 @@ pub fn pack_args_with(stage: &str, run: &str, root: &str, repo: Option<&str>, da
     let mut owned: Vec<String> = paths.map(<[String]>::to_vec).unwrap_or_default();
     if let (None, "deliver", Some(repo)) = (paths, stage, repo) {
         let base = get(obj_or_null(get(data, "args")), "base");
-        owned = changed_paths(repo, &if truthy(base) { str_of(base) } else { "origin/main".to_string() });
+        owned = changed_paths(repo, &if truthy(base) { str_of(base) } else { crate::layout::for_project(root).base_ref() });
     }
     let res = affected(root, run, &owned, false, false);
     let list = |k: &str| pyfmt::items(res.get(k)).to_vec();
@@ -1070,7 +1070,7 @@ pub fn run(root: &str, argv: &[String], out: &mut String) -> i32 {
                         let base = get(obj_or_null(get(&data, "args")), "base");
                         let mut b = opt(rest, "--base");
                         if b.is_empty() {
-                            b = if truthy(base) { str_of(base) } else { "origin/main".to_string() };
+                            b = if truthy(base) { str_of(base) } else { crate::layout::for_project(root).base_ref() };
                         }
                         changed_paths(&repo, &b)
                     }

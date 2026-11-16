@@ -981,7 +981,7 @@ fn e_reconfigure_one_topic_only_asks_and_changes_that_topic() {
     assert_eq!(json_of(&meth), par);
 
     // 4. 守門設定：受保護分支多一個；不能清空
-    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "main, master, release\n\n\ny\n");
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "main, master, release\n\n\n\ny\n");
     assert_eq!(r.code, 0, "{}{}", r.out, r.err);
     let g = json_of(&guard);
     assert_eq!(g["protected_branches"], serde_json::json!(["main", "master", "release"]));

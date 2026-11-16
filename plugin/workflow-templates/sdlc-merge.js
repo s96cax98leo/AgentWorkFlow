@@ -525,7 +525,7 @@ const PR = String(A.pr || A.target || '').match(/(\d+)\s*$/)
 if (!PR) throw new Error('缺 args.pr（PR 編號）')
 const N = PR[1]
 const GH = A.gh_repo || '{{FORK_REPO}}'
-const BASE = A.base || 'origin/main'
+const BASE = A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'
 const FOLLOWUP_DIR = `${A.run_dir}/followups`
 // 合併角色與凍結檔跟 guard.config.json 的 auto_merge.merger_role、auto_merge.freeze_file（hook 與 awf merge-gate 讀的同一份設定）。
 // 範本讀不到 guard.config：設定檔有寫、而且和預設不同時，由 awf next 放進 args.merger_role／args.freeze_file；沒帶或格式不對就是預設值。
@@ -669,7 +669,7 @@ return {
   next: !exec
     ? `先確認 PR #${N} 的實際狀態（gh pr view ${N} --repo ${GH} --json state,isDraft,reviewDecision）與 merge-audit.jsonl，再決定重跑 sdlc-merge 或交人`
     : merged
-    ? '已合併。之後跑 event-post-merge 監看 main 的 CI。'
+    ? '已合併。之後跑 event-post-merge 監看 {{BASE_BRANCH}} 的 CI。'
     : queued
     ? `已進 merge queue，還沒合進去。不要重派合併；之後用 gh pr view ${N} --repo ${GH} --json state 確認，合進去後再跑 event-post-merge。`
     : `未合併，PR 已退回並轉回 draft。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走需求變動事件（event 的 reqs-change 類型）；實作要補的回到 SDLC 對應段落（通常是 ${R.stages.filter((x) => ['build', 'test', 'deliver'].includes(x)).map((x) => `sdlc-${x}`).join(' → ')}；之前走過中轉分支的，這幾段都帶 branch=中轉分支），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,

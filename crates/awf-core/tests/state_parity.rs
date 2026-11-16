@@ -382,6 +382,12 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
                 let got = st.norm_json(&call(&st.env(step), name, &st.abs_json(&step["args"])));
                 let mut diff = Vec::new();
                 if !same(&step["result"], &got) {
+                    // 重錄：函式呼叫的回傳也寫到輸出檔（一行一筆：第幾步、result）
+                    if let Ok(path) = std::env::var("AWF_STATE_RECORD") {
+                        use std::io::Write;
+                        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).unwrap_or_else(|e| panic!("開不了 {path}：{e}"));
+                        writeln!(f, "{}", json!({"i": i, "result": got})).unwrap_or_else(|e| panic!("寫不了 {path}：{e}"));
+                    }
                     diff.push(format!("回傳\n    要：{}\n    得：{got}", step["result"]));
                 }
                 if let Some(d) = files_diff(&step["files"], &st.changed(&before, &mut kept)) {

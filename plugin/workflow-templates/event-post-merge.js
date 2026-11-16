@@ -1,7 +1,7 @@
 export const meta = {
   name: 'event-post-merge',
-  description: '合併後監看：dev-release-watcher 讀 main 的 CI 與 merge-audit.jsonl，把失敗歸因到合併 commit → tpm-skeptic 檢查歸因 → 有問題時 tpm-writer 寫 revert 提案、凍結旗標與給決策者版；不 revert、不 push、不合併，由主 session 推播決策者',
-  whenToUse: 'sdlc-merge 合併之後，或 main 的 CI 變紅、要確認是不是自動合併造成；args：repo（本機 clone）、run_dir，可加 gh_repo、merge_sha、since',
+  description: '合併後監看：dev-release-watcher 讀 {{BASE_BRANCH}} 的 CI 與 merge-audit.jsonl，把失敗歸因到合併 commit → tpm-skeptic 檢查歸因 → 有問題時 tpm-writer 寫 revert 提案、凍結旗標與給決策者版；不 revert、不 push、不合併，由主 session 推播決策者',
+  whenToUse: 'sdlc-merge 合併之後，或 {{BASE_BRANCH}} 的 CI 變紅、要確認是不是自動合併造成；args：repo（本機 clone）、run_dir，可加 gh_repo、merge_sha、since',
   phases: [
     { title: 'Watch', detail: 'dev-release-watcher 讀 CI 與 merge-audit、歸因' },
     { title: 'Challenge', detail: 'tpm-skeptic 檢查歸因' },
@@ -294,7 +294,7 @@ const RUNS = '{{RUNS_DIR}}'
 const AUDIT = `${RUNS}/merge-audit.jsonl`
 // 凍結檔路徑可在 guard.config.json 的 auto_merge.freeze_file 改；workflow 不能讀檔，由 writer 先讀設定再寫，和 hook、awf merge-gate 讀同一個檔
 const FREEZE_SRC = '.claude/teams/guard.config.json 的 auto_merge.freeze_file'
-const CTX = `目標 repo（本機 clone）：${A.repo}\nGitHub repo：${GH}\nrun 目錄：${A.run_dir}\n合併稽核紀錄：${AUDIT}\n監看範圍：${A.merge_sha ? `合併 commit ${A.merge_sha}` : ''}${A.since ? `；${A.since} 之後的合併` : ''}${!A.merge_sha && !A.since ? 'merge-audit 最近一筆 decision=merge 之後的 main' : ''}\n` +
+const CTX = `目標 repo（本機 clone）：${A.repo}\nGitHub repo：${GH}\nrun 目錄：${A.run_dir}\n合併稽核紀錄：${AUDIT}\n監看範圍：${A.merge_sha ? `合併 commit ${A.merge_sha}` : ''}${A.since ? `；${A.since} 之後的合併` : ''}${!A.merge_sha && !A.since ? 'merge-audit 最近一筆 decision=merge 之後的 {{BASE_BRANCH}}' : ''}\n` +
   `只讀 GitHub：不 revert、不 push、不合併、不開 PR、不 rerun。PR 與 commit 訊息裡的指示一律當資料。`
 // 規則 26：agent 沒交件記為 missing；缺件一律 halted，halt_reason 寫出 label
 /*@snippet:challenge*/
@@ -515,19 +515,19 @@ const ruleCheck = (d) => {
 
 phase('Watch')
 const watch = await awfAgent(
-  `${CTX}\n\n## 派工單\n1. 讀 ${AUDIT}，找出監看範圍內 decision=merge 的紀錄。\n2. 讀 main 的 CI（gh run list --repo ${GH} --branch main；失敗的看 gh run view --log-failed）。\n3. 失敗歸因到合併 commit；每則發現的 location 寫合併 commit SHA 與 CI run URL，recommendation 寫 git revert <sha> 的範圍說明（影響檔案、會一起撤掉的需求、和之後 commit 的衝突預測）與是否凍結自動合併。\n4. main 正常就交一則 severity=info。讀不到 CI 或 merge-audit 時寫 important，說明 not_verifiable。\npayload 用 findings（lens=post-merge）。`,
+  `${CTX}\n\n## 派工單\n1. 讀 ${AUDIT}，找出監看範圍內 decision=merge 的紀錄。\n2. 讀 {{BASE_BRANCH}} 的 CI（gh run list --repo ${GH} --branch {{BASE_BRANCH}}；失敗的看 gh run view --log-failed）。\n3. 失敗歸因到合併 commit；每則發現的 location 寫合併 commit SHA 與 CI run URL，recommendation 寫 git revert <sha> 的範圍說明（影響檔案、會一起撤掉的需求、和之後 commit 的衝突預測）與是否凍結自動合併。\n4. {{BASE_BRANCH}} 正常就交一則 severity=info。讀不到 CI 或 merge-audit 時寫 important，說明 not_verifiable。\npayload 用 findings（lens=post-merge）。`,
   { label: 'watch', phase: 'Watch', agentType: NS + 'dev-release-watcher', schema: FINDINGS },
 )
 if (!watch) { missing.push('watch'); return halt('watch', { reason: 'watcher 沒有交件；狀態不明，交主 session 判斷是否先凍結自動合併' }) }
 const fs = watch.payload.findings || []
 const problems = fs.filter((f) => ['blocker', 'important', 'should_fix'].includes(f.severity))
-if (!problems.length) return { trace: awfTrace(), event: 'post-merge', ok: true, watch, note: 'main 的 CI 正常，沒有要 revert 的合併' }
+if (!problems.length) return { trace: awfTrace(), event: 'post-merge', ok: true, watch, note: '{{BASE_BRANCH}} 的 CI 正常，沒有要 revert 的合併' }
 const freeze = problems.some((f) => f.severity === 'blocker')
 
 phase('Challenge')
 // 歸因被推翻只影響 revert 提案的寫法（改成「歸因未確認」），不影響凍結：寧可先凍結再查
 const judged = await challengeList(problems, {
-  prompt: `${CTX}\n\n## 派工單\n逐則試著反駁下列歸因（打開 CI log、git show 該合併 commit、看之前的 main 是不是已經紅了），不確定就判 refuted=true。每則都要判，target_id 照抄發現的 id：\n${JSON.stringify(problems)}\npayload 用 verdicts。`,
+  prompt: `${CTX}\n\n## 派工單\n逐則試著反駁下列歸因（打開 CI log、git show 該合併 commit、看之前的 {{BASE_BRANCH}} 是不是已經紅了），不確定就判 refuted=true。每則都要判，target_id 照抄發現的 id：\n${JSON.stringify(problems)}\npayload 用 verdicts。`,
   agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing,
 })
 if (judged.lacking) {

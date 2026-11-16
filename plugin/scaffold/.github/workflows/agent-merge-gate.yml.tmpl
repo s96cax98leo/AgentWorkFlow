@@ -13,13 +13,13 @@
 # - 結果用「gate App」的身分寫成 check run（名稱 agent-merge-gate/decision），ruleset 的 required check 綁定這個 App 當來源，
 #   任何其他身分（包括有 write 權限的人或 agent）設的同名 status 都不算數。
 #
-# 目標 repo 的 ruleset（Settings → Rules → Rulesets，套用到 main）必須設定：
+# 目標 repo 的 ruleset（Settings → Rules → Rulesets，套用到主線分支 {{BASE_BRANCH}}）必須設定：
 #   1. Require status checks to pass：加入 agent-merge-gate/decision，來源（source）選 gate App，不要選 any source。
 #      勾 Require branches to be up to date；有用 merge queue 時也在 merge_group 重跑（本檔已觸發）。
 #      merge_group 時 check run 回報在 queue 的暫存 commit（github.event.merge_group.head_sha），queue 才看得到；
 #      gate 判定仍綁 PR head（--head-sha），steward 的對照與驗證證據都是對 PR head 做的。
 #   2. Do not allow bypassing the above settings（bypass list 留空，admin 也不能繞過）。
-#   3. Restrict updates：只有 merger App（以及人）能更新 main；禁止 force push、禁止刪除。
+#   3. Restrict updates：只有 merger App（以及人）能更新 {{BASE_BRANCH}}；禁止 force push、禁止刪除。
 #   4. Require a pull request before merging：
 #      - 自動合併通道（fork 的最低風險等級）required approvals 設 0，由本 check 把關；
 #      - Dismiss stale approvals、Require approval of the most recent push 照開；

@@ -6,6 +6,13 @@ const ON_BRANCH = (sync) => (base, prompt) => SYNC_APPLY({ ...sync, head_branch:
 
 export default [
     {
+      // 主線分支（W14）：沒帶 base 時用專案的設定（守門設定的 base_remote／base_branch；預設 origin/main）。有設定的專案由 layout_e2e 測試核對實際的值
+      name: '主線分支：沒帶 base → 派工單與工具指令用專案設定的 <remote>/<分支>',
+      args: { base: undefined },
+      fakes: { plan: SYNC_PLAN({ strategy: 'none', behind: 0, conflicts: [] }) },
+      expect: (r) => (/--base [A-Za-z0-9._-]+\/[A-Za-z0-9._\/-]+/.test(r.prompts.plan || '') && /基準 [A-Za-z0-9._-]+\/[A-Za-z0-9._\/-]+）/.test(r.prompts.plan || '') && !/undefined/.test(r.prompts.plan || '') ? [] : [`沒帶 base 時要用專案的主線分支：${String(r.prompts.plan).slice(0, 300)}`]),
+    },
+    {
       name: '已跟上',
       fakes: { plan: SYNC_PLAN({ strategy: 'none', behind: 0, conflicts: [] }) },
       expect: (r) => (r.out && r.out.strategy === 'none' && !r.out.halted && !r.labels.some((l) => l.startsWith('apply')) && r.out.plan_agent && r.out.plan_agent.status === 'done' ? [] : [`已跟上不該執行：${JSON.stringify(r.out && { strategy: r.out.strategy, halted: r.out.halted })}`]),

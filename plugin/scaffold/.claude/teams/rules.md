@@ -58,13 +58,13 @@
 
 > init 後由專案填寫。每一項都寫「是什麼、出處、誰核准」。沒有的項目寫「無」，不要留空。
 
-- **目標 repo**：〈例：`{{REPOS_DIR}}/<repo>`，主線分支 `main`，上游 {{UPSTREAM_REPO}}，我方 fork {{FORK_REPO}}〉
+- **目標 repo**：〈例：`{{REPOS_DIR}}/<repo>`，主線分支 `{{BASE_BRANCH}}`，上游 {{UPSTREAM_REPO}}，我方 fork {{FORK_REPO}}〉
 - **禁區**：〈例：{{FORBIDDEN_REPOS}}；只能讀、不得寫入的目錄或 repo，與原因〉
 - **需求來源**：〈例：簡報目錄 {{BRIEFS_DIR}}、User Story 來源、需求快照位置；一律唯讀〉
 - **backlog 位置**：〈例：`_tpm/tasks/backlog.md`，格式 `id:{{TASK_ID_PREFIX}}0001`；對應 guard.config.json 的 `backlog_file`〉
 - **審查規則**：〈例：目標 repo 的 REVIEW.md 分級、必審的 lens；PR 大小上限、code style、commit 格式寫在 `.claude/teams/methodology.json` 的 conventions，不在這裡重寫（預設 profile：修改既有檔 300 行或 15 檔）〉
 - **設計系統 skill**：〈例：`{{DESIGN_SYSTEM_NAME}}`（由 design-system-template 建立的 skill 名稱）；有畫面改動時 dev-design-reviewer 預載〉
-- **verify 指令**：〈例：`just verify --base origin/main`，或 `pnpm test && pytest`；integrator 合併後與 implementer commit 前都跑〉
+- **verify 指令**：〈例：`just verify --base {{BASE_REMOTE}}/{{BASE_BRANCH}}`，或 `pnpm test && pytest`；integrator 合併後與 implementer commit 前都跑〉
 - **demo 環境**：〈例：compose 專案名（指令一律帶 `-p`）、測試用獨立 TMPDIR 與 `LC_ALL=en_US.UTF-8`〉
 - **其他專案特定約定**：〈例：既有定案不推翻的事項、只能由使用者自己執行的指令〉
 

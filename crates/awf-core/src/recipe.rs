@@ -1188,7 +1188,9 @@ fn check_diff(teams: &Path, argv: &[String], git: &dyn Fn(&[String]) -> Result<G
         },
         v => v.to_string(),
     };
-    let base = opt(argv, "--base", "origin/main");
+    // 沒帶 --base：守門設定（teams 目錄的 guard.config.json）的 base_remote／base_branch，沒設定就是 origin/main
+    let base_default = crate::layout::Layout::of(&crate::layout::read_guard(&teams.join("guard.config.json").to_string_lossy())).base_ref();
+    let base = opt(argv, "--base", &base_default);
     // 值會直接交給 git：- 開頭的會被當成 git 的選項
     if base.starts_with('-') || repo.starts_with('-') {
         errs.push_str("--base 與 --repo 不能以 - 開頭（fail-closed）\n");

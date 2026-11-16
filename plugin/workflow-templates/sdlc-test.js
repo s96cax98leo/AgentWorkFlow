@@ -521,7 +521,7 @@ const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
 // sdlc-sync 走中轉分支後 head 換成中轉分支，用 args.branch 帶進來
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const SPEC = `${EPIC_DIR}/specs/${A.epic}`
-const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，比對基準 ${A.base || 'origin/main'}）\nrun 目錄：${A.run_dir}\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
+const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，比對基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}）\nrun 目錄：${A.run_dir}\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 // 驗證沒過時最多修正幾輪：profile 的 limits.rounds.test_fix（0–5；沒寫或不合法用 2）。跑滿仍然交人
 const ROUNDS = (MP.limits || {}).rounds || {}
@@ -541,8 +541,8 @@ const CRIT_SRC = HAS_DESIGN ? `${SPEC}/spec.md 的驗收條件` : `${SPEC}/inten
 // recipe.test.modes：verify 之外加跑的驗證
 const MODE_NOTES = {
   regression: `加跑受影響舊驗收條件的回歸（intent 的既有驗收條件異動節列的條目，以及改動碰到的既有功能），每條列成一則 criteria，id 以「regression:」開頭。`,
-  equivalence: `驗行為等價：characterization test 前後一致（改動前的基準 ${A.base || 'origin/main'} 與目前 HEAD 跑同一組 characterization test，輸出要相同），不一致的每處列成 fail。`,
-  benchmark: `依 intent 的量測基線做前後對照：基準 ${A.base || 'origin/main'} 與目前 HEAD 用同一個量測方法、同一個環境各跑一次，報告前後數字與差異；沒達到 intent 的目標值就判 fail，量測方法或基線不清楚就判 not_verifiable。`,
+  equivalence: `驗行為等價：characterization test 前後一致（改動前的基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'} 與目前 HEAD 跑同一組 characterization test，輸出要相同），不一致的每處列成 fail。`,
+  benchmark: `依 intent 的量測基線做前後對照：基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'} 與目前 HEAD 用同一個量測方法、同一個環境各跑一次，報告前後數字與差異；沒達到 intent 的目標值就判 fail，量測方法或基線不清楚就判 not_verifiable。`,
 }
 // 模式的說明可以由 profile 的 test_modes 改寫或新增（{ "<key>": { "note": "…" } }）。verify 是基本的逐條驗收，沒有另外的說明。
 // recipe 指到內建與 profile 都沒有的模式一律 halted（不能默默少跑一種驗證）
@@ -563,8 +563,8 @@ const verifyShard = (sh, round, again) => awfAgent(
   (again ? '上一次各分片驗到的 HEAD 不一樣（驗證途中分支多了 commit），這次全部重驗：開工先記下 HEAD，驗完再確認 HEAD 沒變。\n' : '') +
   `在 ${EPIC_DIR} 的目前 HEAD 驗證 ${sh.spec} 的驗收條件（條目 id 照原文，不要改名）。${HOW}${MODES_TEXT}\n${RUN_BRIEF}\n` +
   (sh.owns
-    ? `反作弊檢查只看這個子計劃範圍內的 diff（git diff ${A.base || 'origin/main'}...HEAD -- ${sh.owns.join(' ')}）。\n`
-    : `這是整合分片：驗證跨子計劃的整合驗收條件，反作弊檢查看整條 diff（git diff ${A.base || 'origin/main'}...HEAD）。\n`) +
+    ? `反作弊檢查只看這個子計劃範圍內的 diff（git diff ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}...HEAD -- ${sh.owns.join(' ')}）。\n`
+    : `這是整合分片：驗證跨子計劃的整合驗收條件，反作弊檢查看整條 diff（git diff ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}...HEAD）。\n`) +
   `報告寫到 ${sh.report}（只寫這個檔）。payload 用 criteria，commit 填驗證當下的 HEAD。`,
   { label: `verify:${sh.id}#${round}${again ? 'r' : ''}`, phase: 'Verify', agentType: NS + 'dev-verifier', schema: CRITERIA },
 )
@@ -658,8 +658,8 @@ const DO_UI = want(R.test.design_review, A.has_ui)
 const DO_SEC = want(R.test.security_review, A.has_security)
 const reviewLabels = [...(DO_UI ? ['design-review'] : []), ...(DO_SEC ? ['security-review'] : []), ...EXT.map((e) => `ext:${e.name}`)]
 if (DO_UI) jobs.push(() => awfAgent(`${CTX}\n\n## 派工單\n設計審查 ${BRANCH} 的畫面改動，寫 ${SPEC}/design-review.md 與 ${SPEC}/evidence/。payload 用 findings（lens=design）。`, { label: 'design-review', phase: 'Verify', agentType: NS + 'dev-design-reviewer', schema: FINDINGS }))
-if (DO_SEC) jobs.push(() => awfAgent(`${CTX}\n\n## 派工單\n安全審查 ${BRANCH}（git diff ${A.base || 'origin/main'}...HEAD），寫 ${SPEC}/security-review.md。payload 用 findings（lens=security）。`, { label: 'security-review', phase: 'Verify', agentType: NS + 'dev-security-reviewer', schema: FINDINGS }))
-EXT.forEach((e) => jobs.push(extJob(e, `${CTX}\n驗證對象：${EPIC_DIR} 的目前 HEAD（git diff ${A.base || 'origin/main'}...HEAD），${HAS_DESIGN ? `spec 在 ${SPEC}/` : `驗收條件在 ${SPEC}/intent.md`}。`, 'Verify')))
+if (DO_SEC) jobs.push(() => awfAgent(`${CTX}\n\n## 派工單\n安全審查 ${BRANCH}（git diff ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}...HEAD），寫 ${SPEC}/security-review.md。payload 用 findings（lens=security）。`, { label: 'security-review', phase: 'Verify', agentType: NS + 'dev-security-reviewer', schema: FINDINGS }))
+EXT.forEach((e) => jobs.push(extJob(e, `${CTX}\n驗證對象：${EPIC_DIR} 的目前 HEAD（git diff ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}...HEAD），${HAS_DESIGN ? `spec 在 ${SPEC}/` : `驗收條件在 ${SPEC}/intent.md`}。`, 'Verify')))
 const [first, ...reviews] = await parallel(jobs)
 
 const fixes = []
@@ -711,7 +711,7 @@ async function fixParallel(round, groups) {
   const ir = await awfAgent(
     `${CTX}\n\n## 派工單（整合修正第 ${round} 輪）\n依序把這些分支 git merge --no-ff 進 ${BRANCH}（在 ${EPIC_DIR} 操作）：\n` +
     ok.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
-    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些修正的 worktree 與分支。\n${RUN_BRIEF}\npayload 用 build-result（task_id=fix${round}、branch=${BRANCH}）。`,
+    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}；沒有就用該 repo 的對等指令），全綠後移除這些修正的 worktree 與分支。\n${RUN_BRIEF}\npayload 用 build-result（task_id=fix${round}、branch=${BRANCH}）。`,
     { label: `integrate:fix#${round}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
   fixes.push(ir)

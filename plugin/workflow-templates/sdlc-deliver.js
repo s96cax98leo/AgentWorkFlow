@@ -317,7 +317,7 @@ const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
 // sdlc-sync 走中轉分支後 head 換成中轉分支，用 args.branch 帶進來
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
-const BASE = A.base || 'origin/main'
+const BASE = A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，基準 ${BASE}）\nrun 目錄：${A.run_dir}\n只留建議：不 approve、不 merge、不 comment、不 push。\nrecipe：${RECIPE.summary}\n${METH_NOTE}${STAGE.guidance ? `\nprofile 的 deliver 指引：${STAGE.guidance}` : ''}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 

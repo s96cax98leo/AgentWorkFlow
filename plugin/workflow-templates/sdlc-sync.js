@@ -516,7 +516,7 @@ const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>
 const DATE = A.date || ((String(A.run_dir).match(/(20\d{6})/) || [])[1])
 if (!DATE) throw new Error('缺 args.date（YYYYMMDD），run_dir 名稱裡也找不到日期')
 const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
-const BASE = A.base || 'origin/main'
+const BASE = A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const TOOL = 'awf sync-branch'
 // rebase 前的備份 ref：profile 的 conventions.sync.backup_ref（一定在 refs/backup/ 底下、<branch> 與 <date> 各出現一次；規則和 awf sync-branch 相同）。

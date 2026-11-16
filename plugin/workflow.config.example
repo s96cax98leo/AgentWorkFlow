@@ -48,6 +48,12 @@ ALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/
 # 受保護分支（agent 與主 session 都不能直接 push，合併走 PR），逗號分隔；留空＝main、master。預設：main,master
 PROTECTED_BRANCHES=main,master
 
+# 主線分支（沒帶 base 時各段的比對基準、PR 的目標分支；只寫分支名，不含 remote）。寫進 guard.config.json 的 base_branch，範本與工具都讀它。它不會因此受保護：要擋直接 push 請同時列進 PROTECTED_BRANCHES。預設：main
+BASE_BRANCH=main
+
+# 主線所在的 remote（比對基準是 <remote>/<主線分支>，awf sync-branch 預設 fetch 它）。寫進 guard.config.json 的 base_remote；推送一律推 fork，和這個值無關。預設：origin
+BASE_REMOTE=origin
+
 # run 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs
 RUNS_DIR=_tpm/runs
 

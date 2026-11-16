@@ -1,4 +1,4 @@
-//! 確定性分支同步工具：讓 epic／功能分支跟上 base（預設 origin/main），策略自動判定或固定。
+//! 確定性分支同步工具：讓 epic／功能分支跟上 base（預設 origin/main；專案可以用守門設定的 base_branch、base_remote 改），策略自動判定或固定。
 //! 原本是 0.x 的 Python 工具 `sync_branch.py`；判定、exit code、輸出的 JSON 照 0.x 的 Python 版。
 //!
 //! 策略（methodology.json 的 conventions.sync.strategy；沒寫＝auto，--strategy 可覆蓋）：
@@ -211,6 +211,13 @@ fn prefixes(repo: &str, config: Option<&str>) -> R<Vec<String>> {
     Ok(if out.is_empty() { DEFAULT_PREFIXES.iter().map(|p| p.to_string()).collect() } else { out })
 }
 
+/// 沒帶 `--base`、`--remote` 時的預設：守門設定的 `base_branch`、`base_remote`（`--config` 指定的那一份，
+/// 否則 repo 自己的，再否則目前專案的）；都沒有就是 `origin/main`、`origin`。
+fn layout(repo: &str, config: Option<&str>) -> crate::layout::Layout {
+    let path = config.map(pyutil::path_str).unwrap_or_else(|| pyutil::join(repo, ".claude/teams/guard.config.json"));
+    if std::path::Path::new(&path).is_file() { crate::layout::Layout::of(&crate::layout::read_guard(&path)) } else { crate::layout::current() }
+}
+
 struct Conventions {
     strategy: String,
     transit_naming: String,
@@ -366,7 +373,9 @@ fn set(rec: &mut Rec, pairs: Value) {
 
 fn cmd_plan(ctx: &Ctx, a: &Parsed, rec: &mut Rec) -> R<i32> {
     let git = Git { ctx, repo: pyutil::resolve(a.get("--repo").unwrap_or("")) };
-    let (branch, base, remote) = (a.get("--branch").unwrap_or(""), a.get("--base").unwrap_or("origin/main"), a.get("--remote").unwrap_or("origin"));
+    let lay = layout(&git.repo, a.truthy("--config"));
+    let (base_default, remote_default) = (lay.base_ref(), lay.base_remote.clone());
+    let (branch, base, remote) = (a.get("--branch").unwrap_or(""), a.get("--base").unwrap_or(&base_default), a.get("--remote").unwrap_or(&remote_default));
     set(rec, json!({"branch": branch, "base": base, "behind": null, "published": null, "conflicts": [],
         "strategy": null, "requested_strategy": null, "transit_branch": null}));
     let conv = sync_conventions(&git.repo, a.truthy("--methodology"))?;
@@ -416,7 +425,8 @@ fn finish(git: &Git, rec: &mut Rec, code: i32, reason: String) -> R<i32> {
 
 fn cmd_apply(ctx: &Ctx, a: &Parsed, rec: &mut Rec) -> R<i32> {
     let git = Git { ctx, repo: pyutil::resolve(a.get("--repo").unwrap_or("")) };
-    let (branch, base, strategy) = (a.get("--branch").unwrap_or(""), a.get("--base").unwrap_or("origin/main"), a.get("--strategy").unwrap_or(""));
+    let base_default = layout(&git.repo, a.truthy("--config")).base_ref();
+    let (branch, base, strategy) = (a.get("--branch").unwrap_or(""), a.get("--base").unwrap_or(&base_default), a.get("--strategy").unwrap_or(""));
     set(rec, json!({"strategy": strategy, "branch": branch, "base": base, "head_branch": null, "head_sha": null, "conflicts": [], "backup_ref": null}));
     let cur = git.run(&["symbolic-ref", "--quiet", "--short", "HEAD"])?.stdout;
     let cur = strip(&cur);
