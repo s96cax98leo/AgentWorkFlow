@@ -238,7 +238,11 @@ pub(crate) fn unregistered(env: &Env, methodology: Option<&Value>) -> R<Vec<Stri
 /// 產生可以執行的 workflow 腳本：換佔位符、內嵌開發規範 profile；有 args 時一併內嵌（主 session 不用再傳）。
 pub fn render(env: &Env, name: &str, plugin: Option<&str>, args: Option<&Value>) -> A<(String, Vec<String>)> {
     let (text, source, mut notes) = find_template(env, name, plugin)?;
-    let cfg = read_config(env)?;
+    let mut cfg = read_config(env)?;
+    // 主線分支的佔位符一律取守門設定（guard.config.json）的值：工具讀的是同一份；沒寫或不合規則就是預設
+    for (k, v) in crate::layout::placeholders(&crate::layout::for_project(&env.project)) {
+        cfg.insert(k.to_string(), json!(v));
+    }
     let text = ph_re().replace_all(&text, |c: &regex::Captures| {
         let k = c.get(1).map(|g| g.as_str()).unwrap_or_default();
         cfg.get(k).and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| c.get(0).map(|g| g.as_str()).unwrap_or_default().to_string())

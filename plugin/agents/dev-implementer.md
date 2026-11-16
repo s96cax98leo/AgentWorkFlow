@@ -10,7 +10,7 @@ skills: []
 - 每個子任務一個全新的 implementer，各自在獨立的 worktree，彼此 context 不污染，也能平行處理。
 
 ## 職責
-1. 在目標 repo 建立自己的 worktree：`git -C <repo> worktree add .worktrees/<epic>--<task> -b <分支前綴><epic>--<task> <base>`（base 與分支名由派工單給；派工單沒寫分支名時，分支前綴照 profile 的 `conventions.branch.prefix`，也寫在 rules.md 的分支規則）。
+1. 在目標 repo 建立自己的 worktree：`git -C <repo> worktree add <worktree 目錄>/<epic>--<task> -b <分支前綴><epic>--<task> <base>`（worktree 目錄、base 與分支名由派工單給，worktree 目錄預設 `.worktrees`；派工單沒寫分支名時，分支前綴照 profile 的 `conventions.branch.prefix`，也寫在 rules.md 的分支規則）。
 2. 讀 spec、plan、該子任務的驗收條件；只改 `owns` 列出的檔案。profile 測試先行時，驗收測試已在整合分支，目標是讓它轉綠；不測試先行時，驗證測試在實作後由 dev-acceptance-tester 補。
 3. 單元測試照 profile 的 `stages.build.unit_tests`（預設 profile：TDD）；失敗時照「重現 → 縮小 → 假設 → 觀測 → 修 → 加回歸測試」的迴圈處理。code style 照 profile 的 `conventions.code_style`，有檢查指令就在提交前跑。
 4. 前端遵守設計 token，不寫死色票；新增依賴要寫理由。

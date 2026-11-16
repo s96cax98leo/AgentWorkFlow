@@ -67,6 +67,7 @@
     - 輔助輸出的大小與節奏：`knowledge.pack`、`knowledge.locate`、`knowledge.extensions`、`progress.watch`、`limits.run_brief`、`limits.display`。
     - 守門設定：`sdlc-merge` 的合併角色與凍結檔跟 `guard.config.json` 的 `auto_merge.merger_role`、`freeze_file`；合併角色換成別的名字時，模型下限、不重派、代寫紀錄照設定檔認它，自訂腳本不能派它。
   - 三個新的佔位符：`PROTECTED_BRANCHES`（受保護分支，預設 `main,master`）、`DOCS_DIRS`（tpm-writer 可以寫的文件目錄，預設 `docs`）、`NOTIFY_HOW`（需要人決策時怎麼通知）。`awf init --reconfigure <主題>` 可以只重問一個主題。
+  - repo 的長相（放 `guard.config.json`，hook、工具、範本讀同一份；沒寫或不合規則用預設值）：`base_branch`（主線分支，預設 `main`）、`base_remote`（預設 `origin`）、`specs_dir`（預設 `specs`）、`worktrees_dir`（預設 `.worktrees`）、`spec_templates_dir`（預設 `<specs_dir>/_templates`）；對應的佔位符是 `BASE_BRANCH`、`BASE_REMOTE`、`SPECS_DIR`、`WORKTREES_DIR`、`SPEC_TEMPLATES_DIR`。命令列的 `--base`、`--remote` 仍然優先。`sdlc-plan` 沒帶 `base` 時改用設定的主線（原本拒絕執行）。spec 文件的檔名（`spec.md`、`intent.md` 等）沒有開放，理由見 `docs/自訂與擴充.md`。
 - **doctor 體檢**：`models.mode` 是 inherit、知識庫沒建、有 `openspec/` 但需求來源沒設、需求來源在工作區外、最近的 run 沒走 `awf next`、CI 檔與 profile 漂移。
 - **對外介面**：`awf save-run status --json` 與進度事件有 `schema_version`；recipe 跳過的段標 `skipped`。相容承諾寫在 `docs/監控與整合.md`。
 - `awf golden`、`awf tokens`。

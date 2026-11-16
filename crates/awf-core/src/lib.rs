@@ -18,6 +18,7 @@ pub mod hooks;
 pub mod init;
 pub mod kb;
 pub mod kg;
+pub mod layout;
 pub mod locate;
 pub mod merge_gate;
 pub mod pack;

@@ -85,7 +85,7 @@ impl LocateTune {
     }
 
     fn pruned(&self, name: &str) -> bool {
-        PRUNE.contains(&name) || self.prune.iter().any(|p| p == name)
+        PRUNE.contains(&name) || self.prune.iter().any(|p| p == name) || crate::layout::is_worktrees_name(name)
     }
 }
 
@@ -254,7 +254,9 @@ fn wanted(path: &str, angle: &str) -> bool {
     }
     if angle == "specs-adr" {
         let s = format!("/{low}");
-        return is_doc && (s.contains("specs/") || s.contains("docs/") || s.contains("/adr"));
+        // spec 目錄改過名（guard.config.json 的 specs_dir）時，那個目錄底下的文件也算
+        let sd = crate::layout::cached().specs_dir.to_lowercase();
+        return is_doc && (s.contains("specs/") || s.contains("docs/") || s.contains("/adr") || s.contains(&format!("/{sd}/")));
     }
     is_doc
 }

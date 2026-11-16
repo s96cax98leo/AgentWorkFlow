@@ -121,6 +121,10 @@ pub struct Config {
     pub auto_merge: Value,
     pub extension_agents: Value,
     pub acceptance_test_dirs: Vec<String>,
+    /// spec 目錄（`specs_dir`，相對於目標 repo；不合規則用預設 `specs`，見 [`crate::layout`]）。
+    pub specs_dir: String,
+    /// worktree 目錄名（`worktrees_dir`；不合規則用預設 `.worktrees`）。
+    pub worktrees_dir: String,
     /// 專案另外加的機敏檔樣式（`secret_files_extra`，正規式；只能加）。
     pub secret_files_extra: Vec<String>,
     /// 專案另外加的機敏值樣式（`secret_patterns_extra`，正規式；只能加）。
@@ -502,7 +506,10 @@ pub fn load(ws: &str) -> Result<Config, PyErr> {
     if broken.is_empty() {
         broken = extra_bad;
     }
+    let lay = crate::layout::Layout::of(&Value::Object(cfg.clone()));
     let out = Config {
+        specs_dir: lay.specs_dir,
+        worktrees_dir: lay.worktrees_dir,
         runs_dir,
         briefs_dir,
         repos_dir,

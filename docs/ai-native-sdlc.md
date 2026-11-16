@@ -170,6 +170,7 @@ build 完、test 前跑一次；merge 段因 PR 落後 base 或有衝突回傳 `
 - **整合分支**：integrator 在 epic worktree 裡，依相依順序對每條子任務分支做 `git merge --no-ff`。有衝突時開中轉分支處理，並把衝突分類（機械式、需判斷、隱性風險）記在執行紀錄。合完跑該 repo 的本機驗證，全綠才移除子任務的 worktree 與分支。
 - **epic worktree 保留到決策者決定**合併或放棄之後才移除。
 - `.worktrees/` 要加進目標 repo 的 `.gitignore`（或全域 gitignore）。
+- 上面的 `.worktrees` 與 spec 所在的 `specs/` 是預設值：專案可以在 `guard.config.json` 的 `worktrees_dir`、`specs_dir`、`spec_templates_dir` 改（見 `docs/自訂與擴充.md`），範本、工具與 hook 都跟著。
 
 ## 4. 測試先行（預設 profile）
 

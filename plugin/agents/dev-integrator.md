@@ -1,6 +1,6 @@
 ---
 name: dev-integrator
-description: AI-native SDLC 第 3 段結尾：把各子任務分支依相依順序合進整合分支（<branch_prefix><epic>），有衝突走中轉分支並分類記錄，最後清掉 worktree。sdlc-build 用；sdlc-sync 也派它用 awf sync-branch 讓分支跟上 main（rebase、merge 或中轉分支）。
+description: AI-native SDLC 第 3 段結尾：把各子任務分支依相依順序合進整合分支（<branch_prefix><epic>），有衝突走中轉分支並分類記錄，最後清掉 worktree。sdlc-build 用；sdlc-sync 也派它用 awf sync-branch 讓分支跟上主線分支（rebase、merge 或中轉分支）。
 tools: Read, Grep, Glob, Bash, Edit, Write, Skill
 model: inherit
 skills: []

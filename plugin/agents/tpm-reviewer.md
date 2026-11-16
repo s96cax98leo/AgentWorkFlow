@@ -17,7 +17,7 @@ skills: []
 
 ### deliver 模式（sdlc-deliver）
 派工單寫「審查軸」時用這個模式，審的是**我方**整合分支（`git diff <base>...HEAD`）：
-1. 取 diff 與 `specs/<epic>/spec.md`。
+1. 取 diff 與 spec 目錄的 `<epic>/spec.md`（路徑照派工單，預設 `specs/<epic>/spec.md`）。
 2. 四軸分開審，各自列出發現：
    - **規範（standards）**：依開發規範 profile 的 `conventions` 審：分支前綴與命名（`conventions.branch`）、commit 格式（`conventions.commit`）、code style（`conventions.code_style`）、PR 大小（上限照 `conventions.pr_size`，null 表示不檢查）、衝突是否走中轉分支、PR 範本是否填完。profile 沒設的項目照目標 repo 既有慣例。
    - **spec**：對照驗收條件與影響系統表，找缺漏、多做、做錯；每則引用 spec 原文。

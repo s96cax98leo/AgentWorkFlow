@@ -461,6 +461,31 @@ fn check_models(env: &Env) -> Part {
     )])
 }
 
+/// 主線分支（guard.config.json 的 `base_branch`、`base_remote`）：寫了但不合規則，或主線分支不在受保護分支裡。
+/// 兩者是兩件事（設了主線分支不會讓它受保護），所以只提示、不當成問題。
+fn check_base_branch(env: &Env) -> Part {
+    let Some(guard) = guard_of(env) else { return Ok(Vec::new()) };
+    let mut out: Vec<Item> = crate::layout::problems(&guard).into_iter()
+        .map(|(key, why)| item("layout", WARN, format!("guard.config.json 的 {why}"), format!("把 {key} 改成合規則的值，或拿掉這個鍵（用預設值）")))
+        .collect();
+    let base = crate::layout::Layout::of(&guard).base_branch;
+    let protected: Vec<String> = match guard.get("protected_branches") {
+        Some(Value::String(s)) => s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty() && !x.contains("{{")).collect(),
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
+        _ => Vec::new(),
+    };
+    let protected: Vec<String> = if protected.is_empty() { crate::publish::DEFAULT_PROTECTED.iter().map(|s| s.to_string()).collect() } else { protected };
+    if !protected.iter().any(|p| *p == base) {
+        out.push(item(
+            "base-branch",
+            INFO,
+            format!("主線分支 {base}（base_branch）不在受保護分支裡（protected_branches：{}）：agent 與主 session 直接 push {base} 不會被 hook 擋", protected.join("、")),
+            format!("要擋就把 {base} 加進 guard.config.json 的 protected_branches（或跑 awf init --target <這個專案> --reconfigure guard）；刻意不保護就不用理會"),
+        ));
+    }
+    Ok(out)
+}
+
 /// 專案的 CI（profile 的 `ci` 有啟用時）：產生的 workflow 檔還沒產生、被手改、或和 profile 不同。
 fn check_ci(env: &Env) -> Part {
     let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
@@ -626,10 +651,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 11] = [
+    let parts: [&dyn Fn() -> Part; 12] = [
         &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
         &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
-        &|| check_ci(env),
+        &|| check_ci(env), &|| check_base_branch(env),
     ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查
@@ -987,6 +1012,17 @@ fn selftest_in(root: &Path) -> i32 {
         format!("{r:?}"),
     );
     check("體檢：五項都不會是問題，exit code 不受影響", !r.iter().any(|i| i.level == ERR), format!("{r:?}"));
+    check("主線分支：沒設定（main）而且受保護 → 不列", !ids(&r, None).iter().any(|i| i == "base-branch" || i == "layout"), format!("{r:?}"));
+    w("proj/.claude/teams/guard.config.json", &json!({"runs_dir": "_tpm/runs", "base_branch": "develop", "protected_branches": "main,master"}).to_string());
+    let r = doctor();
+    let bb = find(&r, "base-branch");
+    check("主線分支：develop 不在 protected_branches → 提示，修法提到 protected_branches", bb.level == INFO && bb.msg.contains("develop") && bb.fix.contains("protected_branches"), format!("{r:?}"));
+    w("proj/.claude/teams/guard.config.json", &json!({"runs_dir": "_tpm/runs", "base_branch": "develop", "protected_branches": ["main", "develop"]}).to_string());
+    check("主線分支：已經列進 protected_branches → 不列", !ids(&doctor(), None).contains(&"base-branch".to_string()), String::new());
+    w("proj/.claude/teams/guard.config.json", &json!({"runs_dir": "_tpm/runs", "base_branch": "bad name", "base_remote": 3}).to_string());
+    let r = doctor();
+    check("主線分支：寫了不合規則的值 → 注意（工具改用預設值），不是問題", r.iter().filter(|i| i.id == "layout" && i.level == WARN).count() == 2 && !ids(&r, None).contains(&"base-branch".to_string()), format!("{r:?}"));
+    w("proj/.claude/teams/guard.config.json", &guard_ok.to_string());
     w("proj/.claude/teams/guard.config.json", "{壞掉");
     w("proj/.claude/teams/methodology.json", "[1, 2]");
     let r = doctor();

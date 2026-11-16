@@ -379,6 +379,39 @@ fn collect_values(con: &mut Console, site: &Site, config: Option<&Shown>, defaul
     if let Some(bad) = vals.get("DOCS_DIRS").unwrap_or_default().split(',').map(pyutil::strip).filter(|d| !d.is_empty()).find(|d| !interview::writer_dir_ok(d)) {
         return die(format!("DOCS_DIRS 要是工作區裡的相對路徑（逗號分隔），不能是絕對路徑、含 ..，也不能在 .claude、.github、.git 底下（收到 {}）", pyfmt::repr_str(bad)));
     }
+    // 主線分支與 remote：會寫進派工單、交給 git，也會內嵌進 workflow 腳本，只收單純的名字（留空＝預設）
+    for (k, ok, rule) in [("BASE_BRANCH", crate::layout::branch_ok as fn(&str) -> bool, "分支名只收英數與 . _ / -，不含 remote"), ("BASE_REMOTE", crate::layout::remote_ok, "remote 名只收英數與 . _ -")] {
+        let v = pyutil::strip(vals.get(k).unwrap_or_default()).to_string();
+        if !v.is_empty() && !ok(&v) {
+            return die(format!("{k} 不合規則（{rule}；收到 {}）", pyfmt::repr_str(&v)));
+        }
+    }
+    // spec 目錄、worktree 目錄、範本目錄：相對於目標 repo；留空＝預設。範本目錄沒另外指定（還是預設值）時跟著 spec 目錄
+    {
+        use crate::layout::{dir_norm, dir_ok, worktrees_ok, DEFAULT_SPECS_DIR, DEFAULT_WORKTREES_DIR, DIR_RULE};
+        let get = |vals: &Kv, k: &str| dir_norm(vals.get(k).unwrap_or_default());
+        for (k, ok, rule, default) in [("SPECS_DIR", dir_ok as fn(&str) -> bool, DIR_RULE, DEFAULT_SPECS_DIR),
+            ("WORKTREES_DIR", worktrees_ok, "目標 repo 底下的一層目錄名，只收英數與 . _ -，不能是 .claude、.github、.git", DEFAULT_WORKTREES_DIR)] {
+            if vals.get(k).is_none() {
+                continue; // 舊的 workflow.config.example 沒有這個鍵：不補，範本與工具照預設
+            }
+            let v = get(&vals, k);
+            if !v.is_empty() && !ok(&v) {
+                return die(format!("{k} 不合規則（{rule}；收到 {}）", pyfmt::repr_str(&v)));
+            }
+            vals.set(k, if v.is_empty() { default } else { &v });
+        }
+        if vals.get("SPEC_TEMPLATES_DIR").is_some() {
+            let specs = get(&vals, "SPECS_DIR");
+            let specs = if specs.is_empty() { DEFAULT_SPECS_DIR.to_string() } else { specs };
+            let v = get(&vals, "SPEC_TEMPLATES_DIR");
+            if !v.is_empty() && !dir_ok(&v) {
+                return die(format!("SPEC_TEMPLATES_DIR 不合規則（{DIR_RULE}；收到 {}）", pyfmt::repr_str(&v)));
+            }
+            let follow = v.is_empty() || (v == format!("{DEFAULT_SPECS_DIR}/_templates") && specs != DEFAULT_SPECS_DIR);
+            vals.set("SPEC_TEMPLATES_DIR", &if follow { format!("{specs}/_templates") } else { v });
+        }
+    }
     Ok(vals)
 }
 
@@ -1233,6 +1266,31 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
             }
         }
     }
+    // spec 目錄改了、範本目錄原本是跟著它的（<舊 spec 目錄>/_templates）：一起跟上
+    if guard_changed && gchanges.iter().any(|c| c.0.first().map(String::as_str) == Some("specs_dir")) {
+        let old = guard_cur.as_ref().map(|g| crate::layout::Layout::of(&Value::Object(g.clone())));
+        let new_specs = crate::layout::Layout::of(&Value::Object(guard_next.clone())).specs_dir;
+        if old.is_some_and(|o| o.spec_templates_dir == format!("{}/_templates", o.specs_dir) && o.specs_dir != new_specs) {
+            let follow = format!("{new_specs}/_templates");
+            if guard_next.get("spec_templates_dir").and_then(Value::as_str).is_some_and(|v| v != follow) {
+                guard_next.insert("spec_templates_dir".to_string(), Value::String(follow.clone()));
+                lines.push(format!("  - guard.config.json：spec_templates_dir 跟著改成 {follow}"));
+                if vals_new.get("SPEC_TEMPLATES_DIR").is_some() {
+                    vals_new.set("SPEC_TEMPLATES_DIR", &follow);
+                }
+            }
+        }
+    }
+    // 主線分支改了：紀錄檔的同名佔位符一起跟上（之後 --force 重寫 guard.config.json 才不會改回去）
+    let mut record_notes: Vec<String> = Vec::new();
+    for (gk, pk) in crate::layout::RECORD_KEYS {
+        if let Some(v) = guard_next.get(*gk).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+            if guard_changed && vals_new.get(pk).is_some_and(|old| old != v) && gchanges.iter().any(|c| c.0.first().map(String::as_str) == Some(*gk)) {
+                vals_new.set(pk, v);
+                record_notes.push(format!("{pk}={v}"));
+            }
+        }
+    }
     let meth_changed = next != cur;
     if meth_changed {
         let errs = profile::check_methodology(site, &next)?;
@@ -1266,13 +1324,18 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
     if guard_changed {
         writer::write_text(&guard_path, &format!("{}\n", crate::recipe::dumps(&Value::Object(guard_next), Some(2))))?;
     }
-    if prefix_changed && record_path.is_file() {
+    if (prefix_changed || !record_notes.is_empty()) && record_path.is_file() {
         let mut text = String::from("# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\n");
         for (k, v) in vals_new.iter().filter(|(k, _)| !writer::COMPUTED.contains(k)) {
             text.push_str(&format!("{k}={v}\n"));
         }
         writer::write_text(&record_path, &text)?;
-        con.say(&format!("分支前綴改成 {bp_new}：{RECORD_FILE} 已更新；rules.md 等模版檔裡的前綴要跑 awf init --target <專案> --upgrade 才會換。"));
+        if prefix_changed {
+            con.say(&format!("分支前綴改成 {bp_new}：{RECORD_FILE} 已更新；rules.md 等模版檔裡的前綴要跑 awf init --target <專案> --upgrade 才會換。"));
+        }
+        if !record_notes.is_empty() {
+            con.say(&format!("{RECORD_FILE} 已更新：{}（workflow 腳本下一次 awf next 產生時就用新值）。", record_notes.join("、")));
+        }
     }
     if !dropped.is_empty() {
         con.say(&format!("注意：這次的答案拿掉了這些守門設定，guard.config.json 沒有改回預設（不知道你原本的值），要改請自己改：{}", dropped.join("、")));

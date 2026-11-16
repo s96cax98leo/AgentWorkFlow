@@ -606,4 +606,10 @@ export default [
   ...roleScenarios('plan.challenge', 'tpm-skeptic', /^challenge:intent$/, { profile: RP, args: { recipe: 'feature' } }),
   ...tuneScenarios({ fakes: FEATURE_TRIAGE }),
   ...kgScenarios({ fakes: FEATURE_TRIAGE }),
+  {
+    // 主線分支（W14）：沒帶 base 不再拒絕執行，用專案的設定（守門設定的 base_remote／base_branch；預設 origin/main），和其他各段一致
+    name: '主線分支：沒帶 base → 每張派工單用專案設定的 <remote>/<分支>',
+    args: { base: undefined }, fakes: FEATURE_TRIAGE,
+    expect: (r) => { const ps = Object.entries(r.prompts); return [...(ps.length ? [] : ['沒有派出任何 agent']), ...ps.filter(([, p]) => !/，從 [A-Za-z0-9._-]+\/[A-Za-z0-9._\/-]+ 開）/.test(p) || /從 undefined 開/.test(p)).map(([l]) => `${l} 的派工單沒有主線分支`)] },
+  },
 ]

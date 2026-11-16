@@ -550,8 +550,8 @@ awfInit({ run_dir: A.run_dir, stage: 'build', lang: '{{OUTPUT_LANGUAGE}}', rules
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40) + 4 * (Array.isArray(A.subtasks) ? A.subtasks.length : 0)
 awfKernelInit({ profile: METHODOLOGY, stage: 'build', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
 const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>，執行紀錄附它印出的完整 log 路徑。'
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
-const SPEC = `${EPIC_DIR}/specs/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
+const SPEC = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 // 整合分支：sdlc-sync 走過中轉分支後 epic worktree 停在中轉分支，merge 退回 build 時要用 args.branch 帶進來，
 // 子任務分支從它開、integrator 合回它；否則會合回舊的 epic 分支、弄丟中轉分支解好的衝突
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
@@ -561,7 +561,7 @@ const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRA
 const ROUNDS = (MP.limits || {}).rounds || {}
 const MAX_RETRY = (Number.isInteger(ROUNDS.build_retry) && ROUNDS.build_retry >= 0 && ROUNDS.build_retry <= 5) ? ROUNDS.build_retry : 2
 // 修正迴圈只跑受影響的測試（profile 的 stages.build.affected_tests_only，預設關）：只影響第 2 次以後的派工單；test 段照舊全跑
-const AFFECTED_ONLY = STAGE.affected_tests_only === true ? `修正時先用 awf kg impact --diff ${A.base || 'origin/main'} 算受影響的測試、只跑那些（算不出來就照常全跑；test 段仍會全跑）。\n` : ''
+const AFFECTED_ONLY = STAGE.affected_tests_only === true ? `修正時先用 awf kg impact --diff ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'} 算受影響的測試、只跑那些（算不出來就照常全跑；test 段仍會全跑）。\n` : ''
 
 const all = A.subtasks
 const ids = new Set(all.map((s) => s.id))
@@ -641,7 +641,7 @@ const TASK_PACKS = (A.task_packs && typeof A.task_packs === 'object' && !Array.i
 const taskPack = (s) => { const p = TASK_PACKS[s.id]; return (typeof p === 'string' && p.replace(/\\/g, '/').endsWith(`/build/${s.id}/pack.md`) && !p.split(/[\\/]/).includes('..')) ? p : '' }
 const taskBrief = (s) => `子任務 ${s.id}「${s.title}」\n擁有（只能改）：${(s.owns || []).join('、')}\n完成條件：${(s.acceptance || []).join('；')}\nStory：${(s.story_ids || []).join('、') || '見 spec'}${taskConstraints(s)}` +
   (taskPack(s) ? `\n子任務資料包（開工先讀這份；spec 與限制文件只讀它列的行段，不夠再找）：${taskPack(s)}` : '')
-const wtFor = (s) => `${A.repo}/.worktrees/${A.epic}--${s.id}`
+const wtFor = (s) => `${A.repo}/{{WORKTREES_DIR}}/${A.epic}--${s.id}`
 // 子任務分支的命名：profile 的 conventions.branch.patterns.task（沒寫或不合法用 <prefix><epic>--<task>）；worktree 目錄名不變
 const brFor = (s) => awfBranch(MP, 'task', { prefix: '{{BRANCH_PREFIX}}', epic: A.epic, task: s.id })
 
@@ -651,7 +651,7 @@ function runTask(s, role, phaseName, extra) {
     for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
       res = await awfAgent(
         `${CTX}\n\n## 派工單（${phaseName}，第 ${attempt} 次）\n${taskBrief(s)}\n` +
-        `在自己的 worktree 做：git -C "${A.repo}" worktree add .worktrees/${A.epic}--${s.id} -b ${brFor(s)} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
+        `在自己的 worktree 做：git -C "${A.repo}" worktree add {{WORKTREES_DIR}}/${A.epic}--${s.id} -b ${brFor(s)} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
         (attempt > 1 ? AFFECTED_ONLY : '') +
         (attempt > 1 && res ? `上一次的結果（請修正）：${JSON.stringify({ status: res.status, summary: res.summary, open_questions: res.open_questions })}\n` : '') +
         `${RUN_BRIEF}\npayload 用 build-result（task_id=${s.id}、branch=${brFor(s)}、worktree=${wtFor(s)}）。`,
@@ -676,7 +676,7 @@ async function integrate(batch, label) {
   return awfAgent(
     `${CTX}\n\n## 派工單（整合：${label}）\n依序把這些分支 git ${awfIntegrate(MP)} 進 ${BRANCH}（在 ${EPIC_DIR} 操作，先確認目前分支是 ${BRANCH}）：\n` +
     batch.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
-    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || 'origin/main'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\n${reds.length ? `下列檢查預期要等後面的子任務才會綠，現在紅了不算失敗、不要為它回 needs_decision（在執行紀錄列出實際紅了哪幾項）；其他的紅照常回報：\n${reds.join('\n')}\n` : ''}${RUN_BRIEF}\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
+    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}；沒有就用該 repo 的對等指令），全綠後移除這些子任務的 worktree 與分支。\n${reds.length ? `下列檢查預期要等後面的子任務才會綠，現在紅了不算失敗、不要為它回 needs_decision（在執行紀錄列出實際紅了哪幾項）；其他的紅照常回報：\n${reds.join('\n')}\n` : ''}${RUN_BRIEF}\npayload 用 build-result（task_id=${label}、branch=${BRANCH}）。`,
     { label: `integrate:${label}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
 }

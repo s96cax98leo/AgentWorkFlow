@@ -714,6 +714,14 @@ pub fn publish(env: &Env, a: &Args) -> Result<(i32, Value), String> {
     };
     let proj = project_dir(env, some(&a.project_dir)).map_err(|e| crash(e.into()))?;
     let cfg = load_config(&proj).map_err(|e| crash(e.into()))?;
+    // 沒帶 --base：PR 的目標分支用守門設定的 base_branch（預設 main）。推送的 remote 是 fork，和 base_remote 無關
+    let with_base;
+    let a = if a.base.is_empty() {
+        with_base = Args { base: crate::layout::for_project(&proj).base_branch, ..a.clone() };
+        &with_base
+    } else {
+        a
+    };
     let repo = env.ctx.resolve(&a.repo_dir).map_err(|e| crash(e.into()))?;
     let run_dir = match some(&a.run) {
         Some(r) => Some(env.ctx.resolve(r).map_err(|e| crash(e.into()))?),
@@ -784,7 +792,8 @@ pub fn parse_args(argv: &[String]) -> Result<Args, Option<String>> {
         branch: text("--branch").unwrap_or_default(),
         run: text("--run"),
         stage: text("--stage").unwrap_or_else(|| MIN_STAGE.to_string()),
-        base: text("--base").unwrap_or_else(|| "main".to_string()),
+        // 沒給＝空字串：`publish` 讀到專案之後換成守門設定的 base_branch（沒設定就是 main）
+        base: text("--base").unwrap_or_default(),
         remote: text("--remote").unwrap_or_else(|| "origin".to_string()),
         title: text("--title"),
         body_file: text("--body-file"),

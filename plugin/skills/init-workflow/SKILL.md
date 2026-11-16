@@ -35,7 +35,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 - 目錄：`REPOS_DIR`、`RUNS_DIR`（預設 `_tpm/runs`）、`BRIEFS_DIR`（預設 `_tpm/briefs`）
 - repo：`UPSTREAM_REPO`（唯讀）、`FORK_REPO`（推送目標）、`FORBIDDEN_REPOS`（絕對不能碰）
 - 流程：`TASK_ID_PREFIX`、`TASK_AUTHORITY`、`DECISION_OWNER`、`STAKEHOLDER`、`NOTIFY_HOW`（需要人決策時怎麼通知，寫進 rules.md 的一句話；預設是推播到手機，使用者沒有這個習慣就照他說的寫，留空＝在對話中提問即可）
-- 守門：`PROTECTED_BRANCHES`（受保護分支，預設 `main,master`）、`DOCS_DIRS`（tpm-writer 可以寫的文件目錄，預設 `docs`；只收工作區裡的相對路徑）。這兩個和第 4 步的 `guard` 主題是同一件事：在這裡寫了，第 4 步就不用再寫進答案檔
+- 守門：`PROTECTED_BRANCHES`（受保護分支，預設 `main,master`）、`DOCS_DIRS`（tpm-writer 可以寫的文件目錄，預設 `docs`；只收工作區裡的相對路徑）。`BASE_BRANCH`、`BASE_REMOTE`（主線分支與它所在的 remote，預設 `main`、`origin`；`awf init --detect` 的守門主題會列出遠端的預設分支，不是 `main` 就照它設，並問要不要一起列進 `PROTECTED_BRANCHES`）。`SPECS_DIR`、`WORKTREES_DIR`、`SPEC_TEMPLATES_DIR`（目標 repo 裡的 spec 目錄、worktree 目錄、文件範本目錄，預設 `specs`、`.worktrees`、`specs/_templates`；專案已經把 spec 放在別處，例如 `docs/specs/`，`--detect` 會列出來，照它設；答案檔的寫法是 `guard.specs_dir`、`guard.worktrees_dir`、`guard.spec_templates_dir`）。這幾個和第 4 步的 `guard` 主題是同一件事：在這裡寫了，第 4 步就不用再寫進答案檔（答案檔的寫法是 `guard.base_branch`、`guard.base_remote`）
 - 輸出：`OUTPUT_LANGUAGE`（預設繁體中文）、`ATTRIBUTION_LINE`（預設 `Assisted-by: Claude`）
 - 設計系統：`DESIGN_SYSTEM_NAME`（沒有就留空）
 

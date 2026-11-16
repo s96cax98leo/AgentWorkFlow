@@ -5,7 +5,7 @@ export const meta = {
   phases: [
     { title: 'Outline', detail: 'dev-spec-author 預估規模，決定要不要拆子計劃（plan-outline）' },
     { title: 'Design', detail: '不拆：dev-spec-author 寫 design、spec、plan、progress 並拆子任務' },
-    { title: 'SubPlan', detail: '拆：每個子計劃一個 dev-spec-author 平行規劃（specs/<epic>/sub/<id>/）' },
+    { title: 'SubPlan', detail: '拆：每個子計劃一個 dev-spec-author 平行規劃（{{SPECS_DIR}}/<epic>/sub/<id>/）' },
     { title: 'Consolidate', detail: '拆：dev-spec-author 彙整子計劃、核對介面與檔案所有權、寫總覽並 commit' },
     { title: 'Analyze', detail: 'tpm-skeptic 平行檢查一致性' },
   ],
@@ -552,8 +552,8 @@ awfInit({ run_dir: A.run_dir, stage: 'design', lang: '{{OUTPUT_LANGUAGE}}', rule
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40) + 3 * (Number.isInteger((MP.parallelism || {}).max_sub_plans) ? MP.parallelism.max_sub_plans : 4)
 awfKernelInit({ profile: METHODOLOGY, stage: 'design', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
 const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>，執行紀錄附它印出的完整 log 路徑。'
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
-const SPEC = `${EPIC_DIR}/specs/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
+const SPEC = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 // 交付文件（awf deliverables；資料包工具放進 args.deliverables）：專案要交的文件需要 design.md 先留哪些小節。沒有交付設定時 args 沒有這個鍵
 const dStr = (v, n) => typeof v === 'string' ? v.replace(/[\r\n`]+/g, ' ').trim().slice(0, n) : ''
 const DELIV_SECTIONS = (Array.isArray((A.deliverables || {}).design_sections) ? A.deliverables.design_sections : []).slice(0, 12)
@@ -692,7 +692,7 @@ if (!SUBS.length) {
   else log('大綱沒有回傳結果，改由一個 dev-spec-author 規劃')
   phase('Design')
   design = await awfAgent(
-    `${CTX}\n\n## 派工單（SDLC 第 2 段 Design）\n依 ${SPEC}/intent.md 與 ${EPIC_DIR}/specs/_templates/：\n` +
+    `${CTX}\n\n## 派工單（SDLC 第 2 段 Design）\n依 ${SPEC}/intent.md 與 ${EPIC_DIR}/{{SPEC_TEMPLATES_DIR}}/：\n` +
     DOC_RULES(SPEC) + DELTA_RULE + PR_RULE +
     `- 拆子任務（payload subtasks）：${SUBTASK_RULES}\n- ${COMMIT}\n` +
     `契約不夠用就以 needs_decision 回報，不自己設計新端點。`,
@@ -707,7 +707,7 @@ if (!SUBS.length) {
   const subBrief = (s) => `子計劃 ${s.id}「${s.title}」\n範圍：${s.scope}\n可擁有的檔案或目錄：${s.owns.join('、')}\n依賴的子計劃：${(s.depends_on || []).join('、') || '無'}\n介面：${(s.interfaces || []).join('；') || '無'}\nStory：${(s.story_ids || []).join('、') || '見 intent'}`
   subDesigns = await parallel(SUBS.map((s) => () => awfAgent(
     `${CTX}\n\n## 派工單（子計劃規劃：${s.id}）\n${subBrief(s)}\n\n` +
-    `完整大綱：${SPEC}/outline.md（其他子計劃同時由別的 agent 規劃，你只負責這一個）。依 ${SPEC}/intent.md 與 ${EPIC_DIR}/specs/_templates/：\n` +
+    `完整大綱：${SPEC}/outline.md（其他子計劃同時由別的 agent 規劃，你只負責這一個）。依 ${SPEC}/intent.md 與 ${EPIC_DIR}/{{SPEC_TEMPLATES_DIR}}/：\n` +
     DOC_RULES(`${SPEC}/sub/${s.id}`) + DELTA_RULE +
     `- 只寫 ${SPEC}/sub/${s.id}/ 底下的檔案；不 commit（多個 agent 共用同一個 worktree，由彙整步驟統一 commit）。\n` +
     `- 拆子任務（payload subtasks）：${SUBTASK_RULES}子任務 id 一律以「${s.id}-」開頭，sub_plan=${s.id}，owns 只能在本子計劃的範圍內。依賴其他子計劃時，depends_on 寫「@<子計劃 id>」（例如 @${(s.depends_on || [])[0] || 'api'}），彙整時會展開成該子計劃的子任務。\n` +

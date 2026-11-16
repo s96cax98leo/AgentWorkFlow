@@ -543,17 +543,19 @@ const commitFor = (kind, epic) => {
 }
 
 const A = args || {}
-for (const k of ['repo', 'epic', 'requirement', 'base', 'run_dir']) {
+for (const k of ['repo', 'epic', 'requirement', 'run_dir']) {
   if (!A[k]) throw new Error(`缺 args.${k}（由 tpm-team skill 傳入）`)
 }
+// 沒帶 base：用專案的主線分支（守門設定的 base_remote／base_branch；和其他各段一致）
+if (!A.base) A.base = '{{BASE_REMOTE}}/{{BASE_BRANCH}}'
 awfInit({ run_dir: A.run_dir, stage: 'plan', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, 'plan'), kg: A.kg === true, tune: awfTune(MP) })
 // 派工數上限（I8）：profile 的 limits.max_agents，沒設用 40（plan 段正常不超過 15）
 const MAX_AGENTS = Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40
 awfKernelInit({ profile: METHODOLOGY, stage: 'plan', modifiers: [], max_agents: MAX_AGENTS })
 const FORBIDDEN = '{{FORBIDDEN_REPOS}}'.split(',').map((s) => s.trim()).filter((s) => s && !/\{\{/.test(s))
 for (const f of FORBIDDEN) if (A.repo.includes(f)) throw new Error(`${f} 是禁止路徑（唯讀），不能當開發目標`)
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
-const SPEC_DIR = `${EPIC_DIR}/specs/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
+const SPEC_DIR = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 const PACK = typeof A.pack === 'string' && A.pack ? A.pack : ''
 const CTX = `目標 repo：${A.repo}\nepic：${A.epic}（worktree：${EPIC_DIR}，分支 {{BRANCH_PREFIX}}${A.epic}，從 ${A.base} 開）\nrun 目錄：${A.run_dir}\n需求：${A.requirement}\n${METH_NOTE}` +
   (PACK ? `\n資料包：${PACK}（工具整理好的需求、知識庫命中的行段、過去 run 的結論；先讀它）` : '') +
@@ -677,7 +679,7 @@ const modeRefute = (typeof USER_REFUTE === 'string' && USER_REFUTE.trim() && USE
 const ANGLES = {
   requirement: { ask: '找出需求的原文與出處（簡報、User Story、需求快照、會議紀錄），逐字引用驗收條件、數值、錯誤碼，標出模糊或互相矛盾的地方。',
     modes: { changelog: '找出要升級的套件與目標版本，讀它的 changelog／release notes，逐條列出破壞性變更與棄用項目（附連結或檔案路徑）。' } },
-  'specs-adr': { ask: '在目標 repo 找相關的既有 specs/<epic>/、docs/adr/、docs/plan/，列出必須遵守的既有決策與可能衝突的地方。',
+  'specs-adr': { ask: '在目標 repo 找相關的既有 {{SPECS_DIR}}/<epic>/、docs/adr/、docs/plan/，列出必須遵守的既有決策與可能衝突的地方。',
     modes: { impact: '在目標 repo 找受這次變更影響的既有 specs 與驗收條件，逐條列出（路徑:行號），標出可能要改、留、刪的。' } },
   'code-contracts': { ask: '在目標 repo 找會受影響的服務、目錄、contracts/ 端點與事件，畫出影響範圍；列出既有可重用的元件與函式（路徑:行號）。',
     modes: {
@@ -686,7 +688,7 @@ const ANGLES = {
       baseline: '找出效能熱點的程式路徑與既有的量測方式（benchmark、profiling 指令），能量就量出基線數值。',
       revert: '讀 revert-proposal.md 列出的合併 commit，確認 git revert 的範圍、會撤掉的改動與衝突預測（git log、git show）。',
     } },
-  upstream: { locate: false, ask: '唯讀查上游 {{UPSTREAM_REPO}}：最近合進 main、還開著的 PR 是否碰到同一塊（gh pr list／gh api，不做任何寫入），評估衝突風險。' },
+  upstream: { locate: false, ask: '唯讀查上游 {{UPSTREAM_REPO}}：最近合進 {{BASE_BRANCH}}、還開著的 PR 是否碰到同一塊（gh pr list／gh api，不做任何寫入），評估衝突風險。' },
 }
 // 角度的定義可以由 profile 的 research_angles 改寫或新增（{ "<key>": { "ask", "modes": { "<plan_mode>": "…" }, "locate": true|false } }）：
 // 同名的角度換掉 ask；modes 逐個 plan_mode 蓋過內建的（沒寫到的 plan_mode 照內建）；locate 有寫布林值才採用。
@@ -839,8 +841,8 @@ const SKIPPED_NOTE = angles.skipped.length ? `\n這次沒做的調研角度（tr
 phase('Intent')
 const intent = await awfAgent(
   `${CTX}${RECIPE_NOTE}\n\n## 派工單（SDLC 第 1 段 Plan，plan_mode=${MODE}）\n` +
-  `1. 若 ${EPIC_DIR} 不存在：git -C "${A.repo}" worktree add .worktrees/${A.epic} -b {{BRANCH_PREFIX}}${A.epic} ${A.base}；已存在就沿用（不要重建、不要切換主工作目錄的分支）。\n` +
-  `2. 照 ${EPIC_DIR}/specs/_templates/intent.md（沒有範本就用這個格式：${STAGE.template || '問題、期望結果、受影響的使用者與系統、限制、待解問題'}）寫 ${SPEC_DIR}/intent.md` +
+  `1. 若 ${EPIC_DIR} 不存在：git -C "${A.repo}" worktree add {{WORKTREES_DIR}}/${A.epic} -b {{BRANCH_PREFIX}}${A.epic} ${A.base}；已存在就沿用（不要重建、不要切換主工作目錄的分支）。\n` +
+  `2. 照 ${EPIC_DIR}/{{SPEC_TEMPLATES_DIR}}/intent.md（沒有範本就用這個格式：${STAGE.template || '問題、期望結果、受影響的使用者與系統、限制、待解問題'}）寫 ${SPEC_DIR}/intent.md` +
   `${(STAGE.artifacts || []).filter((a) => a !== 'intent.md').length ? `，另寫 ${(STAGE.artifacts || []).filter((a) => a !== 'intent.md').join('、')}` : ''}。\n` +
   `   必要節（每節一個標題，標題要逐字含節名，節下要有內容；awf save-run stage plan 會檢查）：${SECTIONS.join('、')}。\n` +
   `   驗收條件要寫成可驗證：每條附驗證指令或可觀察的結果，不能只寫「正常運作」「體驗良好」。\n` +

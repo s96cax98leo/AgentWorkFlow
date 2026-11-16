@@ -131,9 +131,32 @@ impl Guard {
         Ok(None)
     }
 
+    /// spec 目錄與 worktree 目錄是不是都用預設（走原本寫死的樣式）。
+    fn default_spec_dirs(&self) -> bool {
+        self.cfg.specs_dir == crate::layout::DEFAULT_SPECS_DIR && self.cfg.worktrees_dir == crate::layout::DEFAULT_WORKTREES_DIR
+    }
+
+    /// `(<worktree 目錄>/<名>/)?<spec 目錄>/<epic>/<檔>.md` 的樣式（相對於 repo）。目錄改了名就只認新的，不是兩個都認。
+    fn spec_doc_tail(&self) -> String {
+        format!(r"(?:{}/[^/]+/)?{}/[^/]+/[^/]+\.md$", regex::escape(&self.cfg.worktrees_dir), regex::escape(&self.cfg.specs_dir))
+    }
+
     fn spec_doc_match(&self, rel: &str) -> bool {
         let repo = if self.repos.is_empty() { String::new() } else { format!("{}[^/]+/", regex::escape(&self.repos)) };
-        Re::dynamic(format!(r"^{repo}(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$"), "").is_match(rel)
+        Re::dynamic(format!("^{repo}{}", self.spec_doc_tail()), "").is_match(rel)
+    }
+
+    /// linked repo 裡的 spec 文件（相對於那個 repo）。
+    fn linked_spec_doc(&self, lrel: &str) -> bool {
+        if self.default_spec_dirs() {
+            return LINKED_SPEC_DOC.is_match(lrel);
+        }
+        Re::dynamic(format!("^{}", self.spec_doc_tail()), "").is_match(lrel)
+    }
+
+    /// 訊息裡印的 spec 目錄。
+    fn specs_label(&self) -> &str {
+        &self.cfg.specs_dir
     }
 
     /// Edit／Write／NotebookEdit 的寫入範圍；Read／Grep 只看機敏檔（讀取預算由呼叫端接著做）。
@@ -269,9 +292,9 @@ impl Guard {
                 && self.writes_freeze(data)?;
             let ok = is_freeze
                 || rel.as_deref().is_some_and(|r| cfg.writer_dirs.iter().any(|d| r.starts_with(d.as_str())) || self.spec_doc_match(r))
-                || lrel.as_deref().is_some_and(|l| LINKED_SPEC_DOC.is_match(l));
+                || lrel.as_deref().is_some_and(|l| self.linked_spec_doc(l));
             if !ok {
-                return Err(self.block(&format!("tpm-writer 只能寫 {} 與 repo 的 specs/<epic>/*.md（{}）", cfg.writer_dirs.join("、"), shown(&rel))));
+                return Err(self.block(&format!("tpm-writer 只能寫 {} 與 repo 的 {}/<epic>/*.md（{}）", cfg.writer_dirs.join("、"), self.specs_label(), shown(&rel))));
             }
         } else if role.starts_with("tpm-") {
             if !(rel.as_deref().is_some_and(|r| !runs.is_empty() && r.starts_with(runs))) {
@@ -295,7 +318,7 @@ impl Guard {
             let in_runs = !linked && !runs.is_empty() && r.starts_with(runs);
             if let Some((pat, src)) = review_report(&role) {
                 if !in_runs && !pat.is_match(&pname) && !(role != "dev-verifier" && format!("/{r}").contains("/evidence/")) {
-                    let extra = if role != "dev-verifier" { "與 specs/<epic>/evidence/" } else { "" };
+                    let extra = if role != "dev-verifier" { format!("與 {}/<epic>/evidence/", self.specs_label()) } else { String::new() };
                     return Err(self.block(&format!("{agent} 是唯讀審查角色，只能寫自己的報告（{src}）{extra}及 {runs}，不能改產品程式或測試（{r}）")));
                 }
             }
