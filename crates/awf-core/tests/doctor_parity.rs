@@ -42,6 +42,9 @@ fn replay_matches_python() {
         }
     }
 
+    // AWF_RECORD=1：照劇本重跑，把每一步 checks 的實際結果寫回基準（行為確實該變的時候用；差異要逐項看過）
+    let record = std::env::var("AWF_RECORD").as_deref() == Ok("1");
+    let mut recorded = base.clone();
     for (n, st) in base["steps"].as_array().expect("steps").iter().enumerate() {
         let path = tmp.join(s(&st["path"]));
         match s(&st["op"]) {
@@ -70,6 +73,14 @@ fn replay_matches_python() {
                 let items = doctor::run_checks(&env, &plugin_dir, &|name| tools.contains(&name));
                 let note = s(&st["note"]);
                 let got: Value = serde_json::from_str(&norm(&items_json(&items).to_string())).expect("項目");
+                if record {
+                    let slot = &mut recorded["steps"][n];
+                    slot["items"] = got.clone();
+                    slot["text"] = json!(norm(&doctor::text_of(&items)));
+                    slot["json"] = json!(norm(&doctor::json_of(&items)));
+                    slot["code"] = json!(i64::from(items.iter().any(|i| i.level == doctor::ERR)));
+                    continue;
+                }
                 if got != st["items"] {
                     bad.push(format!("第 {n} 步（{note}）項目不同：\n  Rust：{got}\n  基準：{}", st["items"]));
                     continue;
@@ -101,6 +112,16 @@ fn replay_matches_python() {
         }
     }
     let _ = std::fs::remove_dir_all(&tmp);
+    if record {
+        // 基準檔的縮排是一格：把兩格縮排的輸出每行開頭的空白減半（字串裡的換行都跳脫過，不會在行首）
+        let text: String = serde_json::to_string_pretty(&recorded).expect("JSON").lines()
+            .map(|l| {
+                let n = l.len() - l.trim_start_matches(' ').len();
+                format!("{}{}", " ".repeat(n / 2), &l[n..])
+            })
+            .collect::<Vec<_>>().join("\n");
+        std::fs::write(src.join("tests/parity/doctor.expected.json"), format!("{text}\n")).expect("寫回基準");
+    }
     assert!(n_checks >= 70 && n_fn >= 25, "基準的步數變少了：checks {n_checks}、fn {n_fn}");
     assert!(bad.is_empty(), "{} 處不同：\n{}", bad.len(), bad.join("\n"));
 }

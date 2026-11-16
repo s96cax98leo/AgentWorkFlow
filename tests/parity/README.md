@@ -21,7 +21,7 @@
 | `state.expected.json` | 狀態機：1,019 步劇本（468 個指令、75 個函式呼叫；每種動作、每段與事件類型、續跑、政策核准、非標準結果、覆寫檔），12 支腳本的雜湊；不同的 8 項列在 `state_parity.rs` 的 `STRICTER` 與 `KNOWN` | `state_parity` |
 | `publish.expected.json` | 推送工具：110 個指令、325 個函式探測、73 個 git 步驟（只用暫存 bare repo 與假 `gh`）；較嚴的 7 項列在 `publish_parity.rs` 的 `STRICTER` | `publish_parity` |
 | `watch.expected.json` | watcher：83 次 tick（11 種事件都走到）、512 個函式探測、27 個指令；較嚴的 4 項列在 `watch_parity.rs` 的 `STRICTER` | `watch_parity` |
-| `doctor.expected.json` | 安裝檢查：70 次檢查（項目、文字版、JSON 版、結束碼）與 25 個函式探測；0.x 才有的 `python`、`hooks-compile` 兩項在錄的時候就濾掉 | `doctor_parity` |
+| `doctor.expected.json` | 安裝檢查：70 次檢查（項目、文字版、JSON 版、結束碼）與 25 個函式探測；0.x 才有的 `python`、`hooks-compile` 兩項在錄的時候就濾掉；1.0 加的體檢五項（只提示）重錄過 | `doctor_parity` |
 
 hook 的案例不在這裡：在 `tests/hooks/`（`cases.jsonl`、`fixtures.json`，格式見那裡的 `README.md`），由 `crates/awf/tests/hooks_cases.rs` 重放。
 
@@ -38,6 +38,7 @@ hook 的案例不在這裡：在 `tests/hooks/`（`cases.jsonl`、`fixtures.json
 | 基準 | 更新方式 |
 |---|---|
 | `init.expected.json` | `AWF_RECORD=1 cargo test -p awf-core --test init_parity`：照劇本重跑並把結果寫回。新增或改寫案例時直接改劇本的 `steps`（結果欄位留空）再重錄。重錄前後的差異要逐項看過 |
+| `doctor.expected.json` | `AWF_RECORD=1 cargo test -p awf-core --test doctor_parity`：照劇本重跑，把每一步檢查的項目、文字版、JSON 版、結束碼寫回。差異要逐項看過 |
 | hook 案例（`tests/hooks/cases.jsonl`） | `AWF_HOOKS_RECORD=<輸出檔> cargo test -p awf --test hooks_cases`：把這次實際的結果照同樣的格式寫到輸出檔，確認後把要改的那幾行抄回 `cases.jsonl` |
 | `plugin/legacy-tools.json`（0.x 工具檔的指紋，不在這個目錄） | `AWF_GEN_LEGACY=1 cargo test -p awf-core --test init_v1 legacy_tools_json`，或 `cargo xtask gen-legacy --write` |
 | 其他 | 沒有重錄的指令：行為確實該變時手動改對應案例的預期值（測試失敗時會印出案例名稱與實際結果），並在 commit 說明 |
