@@ -60,7 +60,7 @@ re!(SHELL_WRITE, concat!(
     r"|set-content|add-content|out-file|new-item|remove-item|clear-content|copy-item|move-item|rename-item"), "i");
 re!(STATE_FRAGMENT, r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config|methodology\W{0,16}\.json", "i");
 re!(WRITE_API, r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.write\b|write_text|write_bytes|>>?|\bFile\.(?:write|open)|out-file|set-content|add-content", "i");
-re!(CONTEXT_FRAGMENT, r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\b(?:decisions|links)\W{0,16}\.jsonl\b|決策記憶\W{0,16}\.md|結案摘要\W{0,16}\.md|[/\\]archive[/\\]", "i");
+re!(CONTEXT_FRAGMENT, r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\b(?:decisions|links)\W{0,16}\.jsonl\b|\bprogram\W{0,16}\.json\b|決策記憶\W{0,16}\.md|結案摘要\W{0,16}\.md|[/\\]archive[/\\]", "i");
 re!(RUN_INDEX_FRAGMENT, r"執行紀錄索引");
 re!(KG_TARGET, r"(?:^|[^\w.-])graph\.db(?![\w])|(?:^|[/\\\s'\x22=])vault[/\\](?:notes|能力|需求|決策|模組|hot\.md|index\.md)", "i");
 

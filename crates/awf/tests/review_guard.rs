@@ -204,3 +204,36 @@ fn hook_finds_the_project_root_like_the_gates() {
     assert_eq!(shell(&e, "Bash", MAIN, "gh pr merge 3 --repo acme-fork/app --squash").status.code(), Some(ALLOW));
     assert_eq!(shell(&e, "Bash", MAIN, "ls").status.code(), Some(ALLOW));
 }
+
+// ───────── 審查第 1 則：program.json 由人維護，team agent 寫不到 ─────────
+
+const PROGRAM_JSON: &[Case] = &[
+    ("echo '{}' > _tpm/runs/program.json", DEV, BLOCK, Sh::Bash),
+    ("echo '{}' > _tpm/runs/program.json", RES, BLOCK, Sh::Bash),
+    ("cat > _tpm/runs/program.json <<'E'\n{}\nE", RES, BLOCK, Sh::Bash),
+    ("cd _tpm/runs && echo x > program.json", DEV, BLOCK, Sh::Bash),
+    ("cp /tmp/p.json _tpm/runs/program.json", DEV, BLOCK, Sh::Bash),
+    ("python3 -c \"open('_tpm/runs/program.json','w').write('{}')\"", DEV, BLOCK, Sh::Bash),
+    ("Set-Content _tpm/runs/program.json '{}'", DEV, BLOCK, Sh::Ps),
+    ("'{}' | Out-File _tpm\\runs\\program.json", RES, BLOCK, Sh::Ps),
+    ("cat _tpm/runs/program.json", DEV, ALLOW, Sh::Bash),
+    ("Get-Content _tpm/runs/program.json", DEV, ALLOW, Sh::Ps),
+    ("awf program status", RES, ALLOW, Sh::Both),
+    ("echo '{}' > _tpm/runs/program.json", MAIN, ALLOW, Sh::Bash),
+    ("Set-Content _tpm/runs/program.json '{}'", MAIN, ALLOW, Sh::Ps),
+];
+
+#[test]
+fn program_json_is_not_writable_by_team_agents() {
+    check("program", PROGRAM_JSON);
+    check_paths("program-paths", &[
+        ("@WS@/_tpm/runs/program.json", DEV, BLOCK),
+        ("@WS@/_tpm/runs/program.json", RES, BLOCK),
+        ("@WS@/_tpm/runs/program.json", "agent-workflow:tpm-writer", BLOCK),
+        ("@WS@/_tpm/runs/PROGRAM.json", RES, BLOCK),
+        // 該放：調研紀錄照常；主 session 照常；runs_dir 以外同名的檔不管
+        ("@WS@/_tpm/runs/r/plan/research-code.md", RES, ALLOW),
+        ("@WS@/_tpm/runs/program.json", MAIN, ALLOW),
+        ("@WS@/src/program.json", DEV, ALLOW),
+    ]);
+}
