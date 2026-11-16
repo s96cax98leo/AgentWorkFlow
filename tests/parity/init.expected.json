@@ -1335,18 +1335,18 @@
      "stderr": "",
      "files": {
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-brief.js": "-:6544185e271ca234",
-      "proj/.claude/workflows/event-post-merge.js": "-:1416858c11c9b5fb",
-      "proj/.claude/workflows/event-pr-review.js": "-:4664dd8d47ab2d43",
-      "proj/.claude/workflows/event.js": "-:5b9301e16a30a6b5",
-      "proj/.claude/workflows/sdlc-build.js": "-:a8706952b276dd05",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:d92dab26b087a6e2",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:a3f4bd199f3414c2",
-      "proj/.claude/workflows/sdlc-design.js": "-:744311d70e8bab1d",
-      "proj/.claude/workflows/sdlc-merge.js": "-:4cbac9855f470d00",
-      "proj/.claude/workflows/sdlc-plan.js": "-:e1efd01b3a945fb8",
-      "proj/.claude/workflows/sdlc-sync.js": "-:7913311d3ed72123",
-      "proj/.claude/workflows/sdlc-test.js": "-:25186c6cf9b5e09a"
+      "proj/.claude/workflows/event-brief.js": "-:232abe20870bd41a",
+      "proj/.claude/workflows/event-post-merge.js": "-:5e1f1a9f3db9b1d0",
+      "proj/.claude/workflows/event-pr-review.js": "-:bdc7e80e9d7204a7",
+      "proj/.claude/workflows/event.js": "-:ed147381b68b6214",
+      "proj/.claude/workflows/sdlc-build.js": "-:b6ca99ea0e01b044",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:2edbdde0ee3bda2d",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:b3bf40c0a35af811",
+      "proj/.claude/workflows/sdlc-design.js": "-:f26f036ae6c2a636",
+      "proj/.claude/workflows/sdlc-merge.js": "-:260f28e86f2a979c",
+      "proj/.claude/workflows/sdlc-plan.js": "-:68a216eb4eb0a429",
+      "proj/.claude/workflows/sdlc-sync.js": "-:2458a2e7cbba00bb",
+      "proj/.claude/workflows/sdlc-test.js": "-:365d0a6de368e7b0"
      },
      "as_base": [
       327,
@@ -1372,7 +1372,7 @@
      "stdout": "== 升級 agent-workflow：9.9.9 → 9.9.9 ==\n佔位符的值：@TMP@/proj/.claude/teams/workflow.config\n開發規範 profile：保留 methodology.json，和內建 default 比對沒有缺少的欄位\n更新 305 個模版檔到 @TMP@/proj\n保留使用者設定（模版部分更新）3 個：\n  - .claude/teams/guard.config.json：你的值全部保留；沒有新欄位\n  - .claude/teams/rules.md：「專案規則」段之後保留，前面更新成新版\n  - CLAUDE.md：「專案特定」段之後保留，前面更新成新版\n保留 14 個使用者的檔案，沒有改動（--force／--upgrade 也不覆蓋；要整份換成模版版本加 --overwrite-user-files）：\n  - .claude/settings.json\n  - .claude/workflows/event-brief.js\n  - .claude/workflows/event-post-merge.js\n  - .claude/workflows/event-pr-review.js\n  - .claude/workflows/event.js\n  - .claude/workflows/sdlc-build.js\n  - .claude/workflows/sdlc-deliver.js\n  - .claude/workflows/sdlc-design-revise.js\n  - .claude/workflows/sdlc-design.js\n  - .claude/workflows/sdlc-merge.js\n  - .claude/workflows/sdlc-plan.js\n  - .claude/workflows/sdlc-sync.js\n  - .claude/workflows/sdlc-test.js\n  - .claude/teams/methodology.json\n已更新：12 支 workflow（開發規範 profile：default），改了 0 支\n\n升級完成：9.9.9 → 9.9.9。用 git diff 檢查變更；驗證指令見下面第 5 步。\n記得也更新 plugin（agents、skills、hooks、awf 執行檔）：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins。\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/workflows/sdlc-plan.js": "-:daeb035fe553dac9"
+      "proj/.claude/workflows/sdlc-plan.js": "-:a1431e17555a3cb2"
      },
      "as_base": [
       0,
@@ -1428,7 +1428,7 @@
      "stdout": "== 設定對照表（設定｜偵測到｜你的回答｜會寫成） ==\n  開發規範 profile｜—｜（沒回答，用預設）｜methodology.json：name = default\n  測試先行｜—｜（沒回答，用預設）｜methodology.json：stages.build.test_first = true\n  commit 格式｜—｜（沒回答，用預設）｜methodology.json：conventions.commit.format = \"Conventional Commits：<type>(<scope>): <摘要>，sco…\n  分支前綴｜—｜（沒回答，用預設）｜methodology.json：conventions.branch.prefix = feature/\n  跟上主線的策略｜—｜（沒回答，用預設）｜methodology.json：conventions.sync.strategy = auto\n  PR 大小上限｜—｜（沒回答，用預設）｜methodology.json：conventions.pr_size = {\"max_lines\": 300, \"max_files\": 15, \"scope\": \"只…\n  文件格式｜—｜（沒回答，用預設）｜methodology.json：conventions.doc_format.format = Markdown\n  需求來源｜—｜（沒回答，用預設）｜methodology.json：requirements.source = json\n  模型分級｜—｜（沒回答，用預設）｜methodology.json：models.mode = auto\n  平行與拆分｜—｜（沒回答，用預設）｜methodology.json：parallelism = {\"split_threshold\": 8, \"max_sub_plans\": 4, \"sha…\n  知識庫與知識圖｜—｜（沒回答，用預設）｜methodology.json：knowledge = {\"sources\": [\"README.md\", \"CLAUDE.md\", \"docs/**…\n  交付文件｜—｜（沒回答，用預設）｜methodology.json：deliverables.enabled = false\n  自動合併｜—｜（沒回答，用預設）｜guard.config.json：auto_merge.enabled = false\n  主 session 的 git／GitHub 限制｜—｜（沒回答，用預設）｜guard.config.json：main_session_git_rules、main_session_github_rules = true\n  hook 註冊方式｜—｜（沒回答，用預設）｜hooks 由 plugin 註冊\n開發規範 profile：default（.claude/teams/methodology.json）\n這次的答案存在 .claude/teams/init-answers.json；之後要改設定：awf init --target <專案> --reconfigure（只改有變的設定）。\n寫入 322 個模版檔到 @TMP@/proj\n已更新：12 支 workflow（開發規範 profile：default），改了 12 支\nworkflow 覆寫檔 12 支放在 .claude/workflows/（結尾有 awf-override 標記；awf 會用它們取代 plugin 的範本，plugin 更新後要自己對照更新。不需要改 workflow 的話可以整個刪掉）。\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/workflows/sdlc-plan.js": "-:e1efd01b3a945fb8"
+      "proj/.claude/workflows/sdlc-plan.js": "-:68a216eb4eb0a429"
      },
      "as_base": [
       0,
@@ -1476,18 +1476,18 @@
        "{\n  \"files\": {\n    \"awf-linux-x64\": \"333a7401fadeb913ca37052a5f399c0c5b7afc551f679f6973b82bd9797b2fe3\"\n  },\n  \"source\": \"test\"\n}\n"
       ],
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-brief.js": "-:6544185e271ca234",
-      "proj/.claude/workflows/event-post-merge.js": "-:1416858c11c9b5fb",
-      "proj/.claude/workflows/event-pr-review.js": "-:4664dd8d47ab2d43",
-      "proj/.claude/workflows/event.js": "-:5b9301e16a30a6b5",
-      "proj/.claude/workflows/sdlc-build.js": "-:a8706952b276dd05",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:d92dab26b087a6e2",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:a3f4bd199f3414c2",
-      "proj/.claude/workflows/sdlc-design.js": "-:744311d70e8bab1d",
-      "proj/.claude/workflows/sdlc-merge.js": "-:4cbac9855f470d00",
-      "proj/.claude/workflows/sdlc-plan.js": "-:e1efd01b3a945fb8",
-      "proj/.claude/workflows/sdlc-sync.js": "-:7913311d3ed72123",
-      "proj/.claude/workflows/sdlc-test.js": "-:25186c6cf9b5e09a",
+      "proj/.claude/workflows/event-brief.js": "-:232abe20870bd41a",
+      "proj/.claude/workflows/event-post-merge.js": "-:5e1f1a9f3db9b1d0",
+      "proj/.claude/workflows/event-pr-review.js": "-:bdc7e80e9d7204a7",
+      "proj/.claude/workflows/event.js": "-:ed147381b68b6214",
+      "proj/.claude/workflows/sdlc-build.js": "-:b6ca99ea0e01b044",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:2edbdde0ee3bda2d",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:b3bf40c0a35af811",
+      "proj/.claude/workflows/sdlc-design.js": "-:f26f036ae6c2a636",
+      "proj/.claude/workflows/sdlc-merge.js": "-:260f28e86f2a979c",
+      "proj/.claude/workflows/sdlc-plan.js": "-:68a216eb4eb0a429",
+      "proj/.claude/workflows/sdlc-sync.js": "-:2458a2e7cbba00bb",
+      "proj/.claude/workflows/sdlc-test.js": "-:365d0a6de368e7b0",
       "proj/.github/": "d",
       "proj/.github/workflows/": "d",
       "proj/.github/workflows/agent-merge-gate.yml": "-:7496687f7109998d",
@@ -3619,21 +3619,21 @@
        "{\n  \"files\": {\n    \"awf-linux-x64\": \"333a7401fadeb913ca37052a5f399c0c5b7afc551f679f6973b82bd9797b2fe3\"\n  },\n  \"source\": \"test\"\n}\n"
       ],
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-brief.js": "-:6544185e271ca234",
-      "proj/.claude/workflows/event-post-merge.js": "-:1416858c11c9b5fb",
-      "proj/.claude/workflows/event-pr-review.js": "-:4664dd8d47ab2d43",
-      "proj/.claude/workflows/event.js": "-:5b9301e16a30a6b5",
-      "proj/.claude/workflows/sdlc-build.js": "-:a8706952b276dd05",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:d92dab26b087a6e2",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:a3f4bd199f3414c2",
-      "proj/.claude/workflows/sdlc-design.js": "-:744311d70e8bab1d",
-      "proj/.claude/workflows/sdlc-merge.js": "-:4cbac9855f470d00",
+      "proj/.claude/workflows/event-brief.js": "-:232abe20870bd41a",
+      "proj/.claude/workflows/event-post-merge.js": "-:5e1f1a9f3db9b1d0",
+      "proj/.claude/workflows/event-pr-review.js": "-:bdc7e80e9d7204a7",
+      "proj/.claude/workflows/event.js": "-:ed147381b68b6214",
+      "proj/.claude/workflows/sdlc-build.js": "-:b6ca99ea0e01b044",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:2edbdde0ee3bda2d",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:b3bf40c0a35af811",
+      "proj/.claude/workflows/sdlc-design.js": "-:f26f036ae6c2a636",
+      "proj/.claude/workflows/sdlc-merge.js": "-:260f28e86f2a979c",
       "proj/.claude/workflows/sdlc-plan.js": [
        "-:05b3fc912213250d",
        "// 使用者自己的同名 workflow\nexport const meta = { name: 'sdlc-plan' }\n"
       ],
-      "proj/.claude/workflows/sdlc-sync.js": "-:7913311d3ed72123",
-      "proj/.claude/workflows/sdlc-test.js": "-:25186c6cf9b5e09a",
+      "proj/.claude/workflows/sdlc-sync.js": "-:2458a2e7cbba00bb",
+      "proj/.claude/workflows/sdlc-test.js": "-:365d0a6de368e7b0",
       "proj/.github/": "d",
       "proj/.github/workflows/": "d",
       "proj/.github/workflows/agent-merge-gate.yml": [
@@ -3795,21 +3795,21 @@
        "{\n  \"files\": {\n    \"awf-linux-x64\": \"333a7401fadeb913ca37052a5f399c0c5b7afc551f679f6973b82bd9797b2fe3\"\n  },\n  \"source\": \"test\"\n}\n"
       ],
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-brief.js": "-:6544185e271ca234",
-      "proj/.claude/workflows/event-post-merge.js": "-:1416858c11c9b5fb",
-      "proj/.claude/workflows/event-pr-review.js": "-:4664dd8d47ab2d43",
-      "proj/.claude/workflows/event.js": "-:5b9301e16a30a6b5",
-      "proj/.claude/workflows/sdlc-build.js": "-:a8706952b276dd05",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:d92dab26b087a6e2",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:a3f4bd199f3414c2",
-      "proj/.claude/workflows/sdlc-design.js": "-:744311d70e8bab1d",
-      "proj/.claude/workflows/sdlc-merge.js": "-:4cbac9855f470d00",
+      "proj/.claude/workflows/event-brief.js": "-:232abe20870bd41a",
+      "proj/.claude/workflows/event-post-merge.js": "-:5e1f1a9f3db9b1d0",
+      "proj/.claude/workflows/event-pr-review.js": "-:bdc7e80e9d7204a7",
+      "proj/.claude/workflows/event.js": "-:ed147381b68b6214",
+      "proj/.claude/workflows/sdlc-build.js": "-:b6ca99ea0e01b044",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:2edbdde0ee3bda2d",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:b3bf40c0a35af811",
+      "proj/.claude/workflows/sdlc-design.js": "-:f26f036ae6c2a636",
+      "proj/.claude/workflows/sdlc-merge.js": "-:260f28e86f2a979c",
       "proj/.claude/workflows/sdlc-plan.js": [
        "-:05b3fc912213250d",
        "// 使用者自己的同名 workflow\nexport const meta = { name: 'sdlc-plan' }\n"
       ],
-      "proj/.claude/workflows/sdlc-sync.js": "-:7913311d3ed72123",
-      "proj/.claude/workflows/sdlc-test.js": "-:25186c6cf9b5e09a",
+      "proj/.claude/workflows/sdlc-sync.js": "-:2458a2e7cbba00bb",
+      "proj/.claude/workflows/sdlc-test.js": "-:365d0a6de368e7b0",
       "proj/.github/": "d",
       "proj/.github/workflows/": "d",
       "proj/.github/workflows/agent-merge-gate.yml": "-:7496687f7109998d",
@@ -3873,18 +3873,18 @@
        "{\n  \"main_session_push_merge\": true,\n  \"methodology\": \"lightweight\"\n}\n"
       ],
       "proj/.claude/teams/methodology.json": "-:c6222ec7c5a39351",
-      "proj/.claude/workflows/event-brief.js": "-:caa3e1ee766e9243",
-      "proj/.claude/workflows/event-post-merge.js": "-:fcf8b4e646e45734",
-      "proj/.claude/workflows/event-pr-review.js": "-:fc2513a45cd26c59",
-      "proj/.claude/workflows/event.js": "-:733c67b3dadff617",
-      "proj/.claude/workflows/sdlc-build.js": "-:64862cc808eba379",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:e93d3f0561998aa6",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:d50bbeeeb394fcba",
-      "proj/.claude/workflows/sdlc-design.js": "-:4df29f4d2dd4a5b8",
-      "proj/.claude/workflows/sdlc-merge.js": "-:efe1bddd17094e34",
-      "proj/.claude/workflows/sdlc-plan.js": "-:66d051e47123666d",
-      "proj/.claude/workflows/sdlc-sync.js": "-:f2e5e45b5de20c9a",
-      "proj/.claude/workflows/sdlc-test.js": "-:0b6dd085d79689df",
+      "proj/.claude/workflows/event-brief.js": "-:dec01e5fcea6545a",
+      "proj/.claude/workflows/event-post-merge.js": "-:379b6fc21395ac4e",
+      "proj/.claude/workflows/event-pr-review.js": "-:80e2a44fa1a2c550",
+      "proj/.claude/workflows/event.js": "-:6dfe5a4586729bcc",
+      "proj/.claude/workflows/sdlc-build.js": "-:e47fa58405b4e7cb",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:4fa21bac73871aff",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:37730743662fe263",
+      "proj/.claude/workflows/sdlc-design.js": "-:da7aa22e9c014ded",
+      "proj/.claude/workflows/sdlc-merge.js": "-:b6d0baee834d9094",
+      "proj/.claude/workflows/sdlc-plan.js": "-:01cdb85f3c241bdf",
+      "proj/.claude/workflows/sdlc-sync.js": "-:85fb3f9c51b766dd",
+      "proj/.claude/workflows/sdlc-test.js": "-:a84acc6188710a9f",
       "proj/.mcp.json": [
        "-:e39dd737aa95231d",
        "{\n  \"mcpServers\": {\n    \"code-graph\": {\n      \"command\": \"<程式碼圖譜 MCP 的啟動指令，例如 npx>\",\n      \"args\": [\"-y\", \"<程式碼圖譜 MCP 套件名>\", \"--repo\", \"repos\"],\n      \"env\": {}\n    },\n    \"browser\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@playwright/mcp@latest\"],\n      \"env\": {}\n    }\n  }\n}\n"
@@ -5787,7 +5787,7 @@
        "# 0.x 的工具，改過\n"
       ],
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-reqs-change.js": "-:d8c3a7fadd6f9777",
+      "proj/.claude/workflows/event-reqs-change.js": "-:52790c087535c444",
       "proj/.claude/workflows/my-own.js": [
        "-:312b38b2531c0680",
        "export const meta = { name: 'my-own', description: '使用者自己的' }\n"
@@ -6051,7 +6051,7 @@
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=other:\nMETHODOLOGY=default\n"
       ],
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-reqs-change.js": "-:a672fb984fa4c3b2"
+      "proj/.claude/workflows/event-reqs-change.js": "-:5157d4b94cbcf786"
      },
      "as_base": [
       2,
@@ -6728,18 +6728,18 @@
      "stderr": "",
      "files": {
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-brief.js": "-:6544185e271ca234",
-      "proj/.claude/workflows/event-post-merge.js": "-:1416858c11c9b5fb",
-      "proj/.claude/workflows/event-pr-review.js": "-:4664dd8d47ab2d43",
-      "proj/.claude/workflows/event.js": "-:5b9301e16a30a6b5",
-      "proj/.claude/workflows/sdlc-build.js": "-:a8706952b276dd05",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:d92dab26b087a6e2",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:a3f4bd199f3414c2",
-      "proj/.claude/workflows/sdlc-design.js": "-:744311d70e8bab1d",
-      "proj/.claude/workflows/sdlc-merge.js": "-:4cbac9855f470d00",
-      "proj/.claude/workflows/sdlc-plan.js": "-:e1efd01b3a945fb8",
-      "proj/.claude/workflows/sdlc-sync.js": "-:7913311d3ed72123",
-      "proj/.claude/workflows/sdlc-test.js": "-:25186c6cf9b5e09a"
+      "proj/.claude/workflows/event-brief.js": "-:232abe20870bd41a",
+      "proj/.claude/workflows/event-post-merge.js": "-:5e1f1a9f3db9b1d0",
+      "proj/.claude/workflows/event-pr-review.js": "-:bdc7e80e9d7204a7",
+      "proj/.claude/workflows/event.js": "-:ed147381b68b6214",
+      "proj/.claude/workflows/sdlc-build.js": "-:b6ca99ea0e01b044",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:2edbdde0ee3bda2d",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:b3bf40c0a35af811",
+      "proj/.claude/workflows/sdlc-design.js": "-:f26f036ae6c2a636",
+      "proj/.claude/workflows/sdlc-merge.js": "-:260f28e86f2a979c",
+      "proj/.claude/workflows/sdlc-plan.js": "-:68a216eb4eb0a429",
+      "proj/.claude/workflows/sdlc-sync.js": "-:2458a2e7cbba00bb",
+      "proj/.claude/workflows/sdlc-test.js": "-:365d0a6de368e7b0"
      },
      "as_base": [
       327,
@@ -6824,18 +6824,18 @@
      "stderr": "",
      "files": {
       "proj/.claude/teams/guard.config.json": "-:47e7f8159e397dcc",
-      "proj/.claude/workflows/event-brief.js": "-:df52bec666d2e4c7",
-      "proj/.claude/workflows/event-post-merge.js": "-:afc6132af465cae6",
-      "proj/.claude/workflows/event-pr-review.js": "-:28ebda2556f93a74",
-      "proj/.claude/workflows/event.js": "-:33d24ac31687440b",
-      "proj/.claude/workflows/sdlc-build.js": "-:249323df22192174",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:32bf701644e3d852",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:32413729f3d93fb2",
-      "proj/.claude/workflows/sdlc-design.js": "-:484d9c84eeab20c4",
-      "proj/.claude/workflows/sdlc-merge.js": "-:70c1506d870e7785",
-      "proj/.claude/workflows/sdlc-plan.js": "-:6ed508be83f4f5b0",
-      "proj/.claude/workflows/sdlc-sync.js": "-:cd078c07f36f3862",
-      "proj/.claude/workflows/sdlc-test.js": "-:517d7653820b95a6"
+      "proj/.claude/workflows/event-brief.js": "-:3835b2923275af15",
+      "proj/.claude/workflows/event-post-merge.js": "-:563ca8e8716228fe",
+      "proj/.claude/workflows/event-pr-review.js": "-:88e55a15f71e890b",
+      "proj/.claude/workflows/event.js": "-:121045a5577dc6c4",
+      "proj/.claude/workflows/sdlc-build.js": "-:e6025f8ef5599e8e",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:46b5c3e179afabd9",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:3d0c2f6f9b570fb2",
+      "proj/.claude/workflows/sdlc-design.js": "-:a2d28d8936a9f332",
+      "proj/.claude/workflows/sdlc-merge.js": "-:906667334b49cb1e",
+      "proj/.claude/workflows/sdlc-plan.js": "-:28324a3536e7ff78",
+      "proj/.claude/workflows/sdlc-sync.js": "-:4eb2858313b267a3",
+      "proj/.claude/workflows/sdlc-test.js": "-:1d42b689a42176b4"
      },
      "as_base": [
       0,
@@ -7061,7 +7061,7 @@
      "stderr": "",
      "files": {
       "proj/.claude/workflows/": "d",
-      "proj/.claude/workflows/event-meeting.js": "-:094886f604f4eb1b",
+      "proj/.claude/workflows/event-meeting.js": "-:452662326b09dd95",
       "proj/.claude/workflows/sdlc-plan.js": [
        "-:46e88e34830ffbac",
        "// agent-workflow 的舊副本\n"
