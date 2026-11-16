@@ -1,4 +1,4 @@
-//! 禁用清單（`tests/scrub_terms*.txt`）與文件檢查用的正規式方言：把它改寫成 Rust（`fancy_regex`）讀起來意思相同的寫法。
+//! 去客戶化掃描的規則（專案的 `scrub.terms`／規則檔、模版 repo 的 `tests/scrub_terms*.txt`）與文件檢查用的正規式方言：把它改寫成 Rust（`fancy_regex`）讀起來意思相同的寫法。
 //!
 //! 這些清單從 0.x 沿用下來，當時由 Python 的 `re` 解讀；使用者自己的 `scrub_terms.local.txt` 也是照那套語法寫的，
 //! 所以語法維持不變（下面說的「Python」指的就是這套語法），repo 裡不需要 Python。
@@ -23,7 +23,7 @@
 //! Rust 編不過的寫法（`(?a)`、`\N{…}` 等）與上面拒絕的寫法一律回錯誤，由呼叫端明確報錯，不會默默略過。
 //! 反過來，Python 不接受而 Rust 接受的寫法（`(?<名>…)`、`\x{41}` 等）這裡不全擋：0.x 的 Python 版遇到會直接當掉。
 
-use awf_core::kb::pyish::WS_CLASS;
+use crate::kb::pyish::WS_CLASS;
 
 const W: &str = r"\p{L}\p{N}_";
 

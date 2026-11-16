@@ -145,6 +145,7 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `awf checklist` | 可驗證的 checklist：以驗證指令的實際結果打勾 |
 | `check_workflows.mjs` | 乾跑所有 workflow，包括子計劃、分片驗證、平行修正、缺件等情境（在 plugin 的 `workflow-templates/`，情境在它旁邊的 `scenarios/<workflow>.mjs`；用 `--project` 指定專案） |
 | `awf check-agents` | 檢查 `tpm-*`／`dev-*` agent 的格式 |
+| `awf scrub [路徑…]` | 去客戶化掃描：用專案自己訂的規則掃檔案內容與路徑名。預設不啟用，在 `methodology.json` 的 `scrub` 設定；命中只印路徑、行號與規則編號 |
 | `awf pack <段> --run <run_dir>` | 每段開跑前備資料包（`pack.md`）與要併進 args 的 `pack-args.json`；plan 段另算可沿用的調研角度；build 段另寫每個子任務的資料包（`build/<子任務 id>/pack.md`）；每份資料包帶上相關的既有決定（`decisions.jsonl`）。只由主 session 執行 |
 | `awf locate --repo <repo> --requirement <需求>` | 工具先定位：用需求的用詞對程式與文件做排序，找出要讀的行段。由 `awf pack plan` 呼叫，結果放進 `pack-args.json` 的 `located`；文件角度命中夠就不派定位 agent |
 | `awf kb build｜query｜lint` | 知識層：把文件索引成「哪個檔的哪幾行」，agent 先查再只讀那幾行 |

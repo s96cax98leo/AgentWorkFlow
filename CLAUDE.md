@@ -82,6 +82,7 @@ awf script --selftest                                       # 自訂腳本的靜
 awf checklist --selftest、awf spec --selftest、awf run-brief --selftest、awf tokens --selftest   # 其餘有 selftest 的子指令
 awf golden [--dir <golden-set 目錄>] [--verbose]                 # 專案的 golden-set（schema 正反例）
 awf tokens check [--all] <檔案或目錄>…、awf tokens verify [tokens.css] [正本檔]   # 設計系統 skill 的色碼掃描與 tokens 核對
+awf scrub [路徑…] [--json]、awf scrub --selftest                 # 專案自己訂的去客戶化掃描（profile 的 scrub；預設不啟用）
 ```
 
 在 repo 內也可以直接驗，例如 `awf build --check`（處理 `plugin/workflow-templates/`），路徑會依檔案位置推算。範本帶佔位符，不能直接乾跑；乾跑由 `cargo xtask check-all` 的最後一步與 `crates/awf/tests/smoke_init.rs` 在 init 過的暫存專案裡做（`awf render --all` 後 `check_workflows.mjs --project <專案> --wf-dir <目錄>`）。

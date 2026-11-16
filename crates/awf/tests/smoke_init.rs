@@ -51,9 +51,10 @@ const REQUIRED: [&str; 10] = [
     ".claude/teams/deliverables/catalog.json",
 ];
 /// 有 `--selftest` 的子指令（0.x 是「tools/ 裡有 --selftest 的 .py」）。`state` 另外處理，見檔頭。
-const SELFTESTS: [&str; 16] = [
+const SELFTESTS: [&str; 17] = [
     "checklist", "cost", "deliverables", "doctor", "kb", "locate", "merge-gate", "pack", "publish", "recipe", "run-brief", "save-run", "script",
     "spec", "sync-branch", "watch",
+    "scrub",
 ];
 /// 0.6.0 的 merge commit（`plugin/legacy-tools.json` 的 `revs` 也是它）。
 const REV_06: &str = "f98ae6ae4ffface0cf09a97273ef8473dd4de828";

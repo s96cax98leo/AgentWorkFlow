@@ -15,7 +15,7 @@ pub mod dist;
 pub mod gen_legacy;
 pub mod golden;
 pub mod launchers;
-pub mod termre;
+pub use awf_core::termre;
 pub mod scrub;
 pub mod source_hash;
 pub mod tempproj;

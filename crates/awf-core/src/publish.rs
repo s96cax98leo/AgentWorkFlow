@@ -6,6 +6,7 @@
 //! 1. 目標只能是 guard.config.json 的 fork_repo；remote 的 push URL 必須指向 fork，指向上游或禁止的 repo 一律拒絕。
 //! 2. 分支名要符合 allowed_branch_prefixes，不能是 protected_branches 或 PR 的 base。不 force push。
 //! 3. 推送前掃 diff 新增的行（常見金鑰樣式、私鑰區塊、機敏檔名、`--secrets-file` 列的值）。命中只報檔名與樣式名稱，不印值。
+//!    專案的 profile 啟用了去客戶化掃描、而且 `scrub.when` 含 `publish` 時，接著掃這次要推的檔（`scrub_gate`）；命中或掃不了都不推。預設不啟用。
 //!    diff 用 `merge_gate::parse_diff` 解析；diff 解析不了一律拒絕。
 //! 4. 依政策判定能不能推（和 save_run 共用同一套判定）：run 已取消、閘門鏈不完整、recipe 不能推送、政策核准的段重算後有違規，都拒絕。
 //! 5. diff 形狀和 recipe 要相符（`recipe::diff_shortfalls`）。
@@ -32,7 +33,7 @@ use crate::merge_gate::parse_diff;
 use crate::pyfmt::{self, repr_str};
 use crate::save_run::py::{self, contains, get, get_opt, idx, truthy};
 use crate::save_run::{self, Ctx, PyErr};
-use crate::{recipe, schema};
+use crate::{recipe, schema, scrub};
 use serde_json::{json, Map, Value};
 use std::process::Command;
 
@@ -525,6 +526,52 @@ fn temp_body(text: &str) -> Result<String, PyErr> {
     Err(PyErr::other("FileExistsError", "[Errno 17] No usable temporary file name found"))
 }
 
+/// 推送前的去客戶化掃描：專案 profile 的 `scrub` 已啟用、而且 `when` 含 `publish` 才跑（見 [`crate::scrub`]）。
+/// 掃的是「要推的那個分支」裡、這次 diff 涉及的檔（內容取自分支的 commit，不是工作目錄）與它們的路徑名。
+/// 沒啟用回 `Ok(None)`，不讀規則、不多跑任何 git 指令。命中、或掃描本身出錯（設定讀不懂、規則編不過、讀不到檔）都拒絕推送：
+/// 這是使用者要求的閘，只會更嚴。通過回一句給稽核紀錄的說明。訊息只有路徑、行號與規則編號，沒有命中的字串與規則。
+fn scrub_gate(env: &Env, repo: &str, branch: &str, names: &[String]) -> R<Option<String>> {
+    let ctx = &env.ctx;
+    let broken = |e: String| Stop::Refused(format!("去客戶化掃描跑不了（{e}），沒有推送"));
+    let cfg = match scrub::load_config(std::path::Path::new(&ctx.abs(&ctx.profile))) {
+        Ok(Some(c)) if c.runs_on("publish") => c,
+        Ok(_) => return Ok(None),
+        Err(e) => return Err(broken(e)),
+    };
+    let root = ctx.abs(&ctx.project_root());
+    let rules = scrub::load_rules(&cfg, std::path::Path::new(&root)).map_err(broken)?;
+    let scope = scrub::Scope::new(&cfg).map_err(broken)?;
+    // 推的就是專案自己這個 repo 時，規則檔與 profile 不掃內容（每條規則都會命中自己）
+    let real = |p: &str| std::path::Path::new(p).canonicalize().ok();
+    let skip = if real(repo).is_some() && real(repo) == real(&root) { scrub::self_files(&cfg, &rules) } else { Default::default() };
+    let mut read = |rel: &str| -> Result<Option<Vec<u8>>, String> {
+        if skip.contains(rel) {
+            return Ok(None);
+        }
+        let spec = format!("refs/heads/{branch}:{rel}");
+        let stop = |s: Stop| match s {
+            Stop::Refused(m) | Stop::Crash(m) => m,
+        };
+        let blob = git(env, repo, &["cat-file", "blob", &spec]).map_err(stop)?;
+        if blob.code == 0 {
+            return Ok(Some(blob.stdout.into_bytes()));
+        }
+        // 不是檔案內容的項目（submodule）沒有東西可掃；其他讀不到的情況不能當成沒事
+        let kind = git(env, repo, &["cat-file", "-t", &spec]).map_err(stop)?;
+        if kind.code == 0 && strip(&kind.stdout) == "commit" {
+            return Ok(None);
+        }
+        Err(format!("讀不到分支上的 {rel}"))
+    };
+    let rep = scrub::scan_files(&rules.rules, &scope, names, &mut read).map_err(broken)?;
+    let notes: String = rules.notes.iter().map(|n| format!("；注意：{n}")).collect();
+    if !rep.hits.is_empty() {
+        let shown: Vec<String> = rep.hits.iter().take(10).map(|h| scrub::hit_label(&rules.rules, h)).collect();
+        return refused(format!("去客戶化掃描命中（{} 處）：{}{notes}", rep.hits.len(), shown.join("、")));
+    }
+    Ok(Some(format!("去客戶化掃描通過（{} 個檔、{} 條規則）{notes}", rep.files, rules.rules.len())))
+}
+
 /// 檢查、推送、開 PR。成功時稽核紀錄的 decision 與 exit code 已經寫進 `rec`；回傳 exit code。
 fn steps(env: &Env, a: &Args, cfg: &Config, repo: &str, run_dir: Option<&str>, rec: &mut Map<String, Value>) -> R<i32> {
     let ctx = &env.ctx;
@@ -565,6 +612,10 @@ fn steps(env: &Env, a: &Args, cfg: &Config, repo: &str, run_dir: Option<&str>, r
     let hits = scan_secrets(&d.stdout, &literals, &names).map_err(Stop::Crash)?;
     if !hits.is_empty() {
         return refused(format!("diff 疑似含機敏值（{} 處）：{}", hits.len(), hits.iter().take(10).cloned().collect::<Vec<_>>().join("、")));
+    }
+    // 使用者設定的去客戶化掃描（profile 的 scrub.when 含 publish 才跑；沒啟用時這裡什麼都不做，輸出和以前逐字相同）
+    if let Some(note) = scrub_gate(env, repo, &a.branch, &names)? {
+        reason(rec, note);
     }
     let policy = check_policy(ctx, run_dir, &a.stage)?;
     reason(rec, policy);

@@ -29,6 +29,7 @@ pub const SUBCOMMANDS: &[&str] = &[
     "build", "start", "next", "done", "approve", "render", "handoff", "state", "watch", "statusline", "doctor", "spec", "init",
     "check-agents", "run-brief", "check-envelope", "check-rules", "hook",
     "golden", "tokens",
+    "scrub",
 ];
 const STATE_VERBS: &[&str] = &["start", "next", "done", "approve", "render", "handoff"];
 const HELP: &[&str] = &["-h", "--help"];
@@ -402,6 +403,8 @@ impl Call {
             | "run-brief" | "check-envelope" | "check-rules" => None,
             // 兩支都只讀檔（golden：跑 golden-set；tokens：check／verify 掃色碼與比對正本），沒有會寫檔的子指令或選項
             "golden" | "tokens" => None,
+            // 去客戶化掃描：只讀檔、只印路徑與規則編號，沒有會寫檔的選項
+            "scrub" => None,
             other => Some(Deny::Unknown(other.to_string())),
         }
     }
@@ -450,6 +453,7 @@ mod tests {
             "awf hook guard-shell", "awf spec status", "awf spec ids --json", "awf state --selftest", "awf merge-gate --selftest",
             "which awf", "command -v awf", "AWF_BIN=target/debug/awf awf kb query x", "make awf build", "awf run-brief --log x.log -- npm test",
             "awf golden", "awf golden --dir .claude/teams/golden-set --verbose", "awf tokens check src", "awf tokens verify", "awf tokens --selftest",
+            "awf scrub", "awf scrub docs --json", "awf scrub --selftest",
         ] {
             assert!(!denied(c), "應該放：{c}（{:?}）", calls(c));
         }

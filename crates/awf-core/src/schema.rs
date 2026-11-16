@@ -647,6 +647,10 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
         }
     }
     errs.extend(deliverables_errors(get(doc, "deliverables"), "deliverables"));
+    // 去客戶化掃描（awf scrub）：路徑要在專案裡、規則要編得過（訊息只說第幾條，不印規則）、when 只能是做得到的時機
+    if let Some(scrub) = get(doc, "scrub").filter(|s| !s.is_null()) {
+        errs.extend(crate::scrub::config_errors(scrub));
+    }
     errs
 }
 

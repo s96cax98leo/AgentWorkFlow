@@ -205,6 +205,12 @@ const RULES: &[Case] = &[
     ("awf tokens check --all --ref .claude/skills/acme-ds/references src", REV, ALLOW, Sh::Both),
     ("awf tokens verify", DEV, ALLOW, Sh::Both),
     ("awf tokens --selftest", DEV, ALLOW, Sh::Both),
+    // scrub：只讀的掃描，team agent 可以跑；接在後面的寫入指令照擋
+    ("awf scrub", DEV, ALLOW, Sh::Both),
+    ("awf scrub docs src --json", REV, ALLOW, Sh::Both),
+    ("awf scrub --selftest", DEV, ALLOW, Sh::Both),
+    ("awf scrub; awf publish push --branch feature/x", DEV, BLOCK, Sh::Both),
+    ("awf scrub docs; awf save-run approve r", REV, BLOCK, Sh::Both),
     ("awf watch --once", DEV, ALLOW, Sh::Both),
     ("awf watch _tpm/runs/r --once", DEV, ALLOW, Sh::Both),
     ("awf statusline", DEV, ALLOW, Sh::Both),

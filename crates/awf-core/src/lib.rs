@@ -26,10 +26,12 @@ pub mod run_brief;
 pub mod save_run;
 pub mod schema;
 pub mod script;
+pub mod scrub;
 pub mod spec;
 pub mod state;
 pub mod sync_branch;
 pub mod template;
+pub mod termre;
 pub mod tokens;
 
 /// 版本（workspace 的版本）。
