@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -109,5 +109,40 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(k.awfPrefix().startsWith(plain) && /awf kg locate "<文字>"/.test(k.awfPrefix().slice(plain.length)) && /awf kg impact <檔>/.test(k.awfPrefix()) && /_runs\/r1\/plan\/pack\.md 列了行段/.test(k.awfPrefix()), 'kg=true 時前綴要在最後多一行查圖的指示')
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', tune: k.awfTune({ knowledge: { code_tools: ['ast-grep'] }, limits: { envelope: { summary_chars: 200, evidence_items: 6 } } }) })
   need(/程式碼有 ast-grep 就先用。/.test(k.awfPrefix()) && /summary 不超過 200 字、evidence 最多 6 則/.test(k.awfPrefix()) && !/graft/.test(k.awfPrefix()), 'tune 的值沒有寫進前綴')
+  // 名稱表、短字、分支樣式、換角色（1.0）：沒寫或不合法一律是原本的值
+  const D = k.awfDefs({ ok: { ask: '問法' }, 'Bad Name': { ask: 'x' }, n1: 'x', n2: { ask: 7 }, n3: { ask: '  ' }, n4: { ask: 'x'.repeat(2001) }, n5: ['x'], __proto__: { ask: 'x' } }, 'ask')
+  need(Object.keys(D).join(',') === 'ok' && Object.getPrototypeOf(D) === null, `awfDefs 只該收合法的項目：${Object.keys(D).join(',')}`)
+  need(Object.keys(k.awfDefs(null, 'ask')).length === 0 && Object.keys(k.awfDefs(['x'], 'ask')).length === 0 && Object.keys(k.awfDefs('x', 'ask')).length === 0, 'awfDefs 對不是物件的表要回空')
+  need(Object.keys(k.awfDefs(Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`k${i}`, { ask: 'x' }])), 'ask')).length === 24 && Object.keys(k.awfDefs({ a: { ask: 'x' }, b: { ask: 'x' }, c: { ask: 'x' } }, 'ask', 2)).length === 2, 'awfDefs 的個數上限不對')
+  need(k.awfLine('§2', 40, '§1') === '§2' && k.awfLine(' §2', 40, '§1') === '§1' && k.awfLine('a\nb', 40, '§1') === '§1' && k.awfLine('a`b', 40, '§1') === '§1' && k.awfLine('', 40, '§1') === '§1' && k.awfLine(7, 40, '§1') === '§1' && k.awfLine('x'.repeat(41), 40, '§1') === '§1', 'awfLine 的判斷不對')
+  const bp = (kind, v) => k.awfBranchPattern({ conventions: { branch: { patterns: { [kind]: v } } } }, kind)
+  const TD = '<prefix><epic>--<task>'; const FD = '<prefix><epic>--fix<round>-<group>'
+  need(k.awfBranchPattern(null, 'task') === TD && k.awfBranchPattern({}, 'fix') === FD && k.awfBranchPattern({ conventions: { branch: { patterns: ['x'] } } }, 'task') === TD, '分支樣式沒寫時要用內建的')
+  need(bp('task', '<prefix><epic>.task-<task>') === '<prefix><epic>.task-<task>' && bp('fix', '<prefix><epic>_r<round>_<group>') === '<prefix><epic>_r<round>_<group>', '合法的分支樣式沒有被採用')
+  for (const bad of ['<prefix><epic>/<task>', '<prefix><epic><task>', '<epic>--<task>', 'x<prefix><epic>--<task>', '<prefix><epic>--task', '<prefix><epic>--<task>-<task>', '<prefix><epic>--<task>..x', '<prefix><epic>--<task>.', '<prefix><epic>--<task>.lock', '<prefix><epic>--<task> x', '<prefix><epic>--<task>-<round>', '<prefix><epic>--<task>~1', '<prefix><epic>-' + 'x'.repeat(120) + '<task>', 7]) need(bp('task', bad) === TD, `不合法的 task 樣式要退回內建：${bad}`)
+  for (const bad of ['<prefix><epic>--fix<round>', '<prefix><epic>--<group>', '<prefix><epic>--<round><group>', '<prefix><epic>/fix<round>-<group>']) need(bp('fix', bad) === FD, `不合法的 fix 樣式要退回內建：${bad}`)
+  need(k.awfBranch(null, 'task', { prefix: 'agent/', epic: 'demo-1', task: 't1' }) === 'agent/demo-1--t1' && k.awfBranch(null, 'fix', { prefix: 'agent/', epic: 'demo-1', round: 2, group: 'api' }) === 'agent/demo-1--fix2-api', '內建樣式展開後要和原本寫死的分支名相同')
+  need(k.awfBranch({ conventions: { branch: { patterns: { fix: '<prefix><epic>.r<round>.<group>' } } } }, 'fix', { prefix: 'agent/', epic: 'demo-1', round: 2, group: 'api' }) === 'agent/demo-1.r2.api', '自訂樣式展開不對')
+  const st = (v, step) => JSON.stringify(k.awfStep({ roles: { [step || 'plan.research']: v } }, 'plan.research', 'agent-workflow:'))
+  const ST0 = JSON.stringify({ agentType: 'agent-workflow:tpm-researcher' })
+  need(JSON.stringify(k.awfStep(null, 'plan.research', 'agent-workflow:')) === ST0 && JSON.stringify(k.awfStep({ roles: ['x'] }, 'plan.research', 'agent-workflow:')) === ST0, '沒設定 roles 時要是原本的模版角色、不帶 roleAs')
+  need(st('acme-own-agent') === JSON.stringify({ agentType: 'acme-own-agent', roleAs: 'tpm-researcher' }) && st('my-plugin:own.agent_1') === JSON.stringify({ agentType: 'my-plugin:own.agent_1', roleAs: 'tpm-researcher' }), '合法的 roles 沒有被採用')
+  for (const bad of ['agent-workflow:tpm-writer', 'dev-implementer', 'x:dev-merge-steward', 'has space', 'a:b:c', '', 7, 'x\ny', 'x'.repeat(65)]) need(st(bad) === ST0, `不合法的 roles 值要照原本的角色：${JSON.stringify(bad)}`)
+  need(st('acme-own-agent', 'plan.locate') === ST0, '別的步驟的設定不該影響這一步')
+  let threw = false; try { k.awfStep({}, 'merge.analyze', 'agent-workflow:') } catch (e) { threw = true }
+  need(threw && !Object.keys(k.awfSwappable()).some((x) => /^(merge|build|test)\./.test(x)), 'merge、build、test 的步驟不開放換角色')
+  // 換上去的 agent 照被換掉的角色套模型分級與下限（roleAs）；模版角色自己帶 roleAs 不影響
+  seen = []
+  k = make(async (p, o) => { seen.push(o); return env('ok') }, () => {})
+  const FP = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'opus' }, defaults: { '*': 'light', 'tpm-skeptic': 'strong' }, floors: {} } }
+  k.awfInit({ run_dir: '_runs/r1', stage: 'design', lang: 'zh-TW' }); k.awfKernelInit({ profile: FP, stage: 'design', modifiers: [], max_agents: 9 })
+  await k.awfAgent('x', { label: 'own', agentType: 'acme-own-agent', roleAs: 'tpm-skeptic' })
+  await k.awfAgent('x', { label: 'tpl', agentType: 'agent-workflow:tpm-skeptic' })
+  await k.awfAgent('x', { label: 'plain', agentType: 'acme-own-agent' })
+  await k.awfAgent('x', { label: 'spoof', agentType: 'agent-workflow:tpm-skeptic', roleAs: 'tpm-writer' })
+  const tr = Object.fromEntries(k.awfTrace().map((t) => [t.label, t]))
+  need(tr.own.tier === tr.tpl.tier && tr.own.model === tr.tpl.model && tr.own.role_as === 'tpm-skeptic', `換上去的 agent 要和被換掉的角色同一級：${JSON.stringify([tr.own, tr.tpl])}`)
+  need(tr.plain.role_as === undefined && tr.tpl.role_as === undefined, '沒有換角色的派工不該記 role_as')
+  need(tr.spoof.tier === tr.tpl.tier && tr.spoof.model === tr.tpl.model, '模版角色帶 roleAs 不能改變它自己的模型分級')
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })

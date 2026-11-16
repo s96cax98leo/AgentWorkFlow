@@ -48,6 +48,62 @@ function awfRecordSections(profile, dflt) {
   const ok = Array.isArray(v) && v.length >= 1 && v.length <= 12 && v.every((x) => typeof x === 'string' && x.trim() === x && x.length >= 1 && x.length <= 40 && !/[\r\n`]/.test(x)) && new Set(v).size === v.length
   return ok ? v.join('、') : dflt
 }
+// 名稱表（profile 的 lenses.design／design_revise／deliver、test_modes、research_angles：使用者自己定義或改寫 lens、審查軸、驗證模式、調研角度）。
+// awfDefs(table, field[, max])：回合法的項目（沒有原型的物件，鍵＝名稱）。鍵是小寫英數與連字號（40 字以內），值是物件，
+// field 是 1–2000 字的字串；最多收 max 個（預設 24）。不合法的項目略過：內建有同名的照內建，沒有的等於沒定義
+// （recipe 指到沒定義的名稱時由範本 halted，不默默略過）。
+function awfDefs(table, field, max) {
+  const out = Object.create(null)
+  if (!table || typeof table !== 'object' || Array.isArray(table)) return out
+  let n = 0
+  for (const k of Object.keys(table)) {
+    if (n >= (max || 24)) break
+    const v = table[k]
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(k) || !v || typeof v !== 'object' || Array.isArray(v)) continue
+    if (typeof v[field] !== 'string' || !v[field].trim() || v[field].length > 2000) continue
+    out[k] = v; n++
+  }
+  return out
+}
+// profile 裡的一行短字：1–max 字、前後沒有空白、沒有換行與反引號才採用，否則用 d（預設＝原本寫死的字）
+function awfLine(v, max, d) { return typeof v === 'string' && v.trim() === v && v.length >= 1 && v.length <= max && !/[\r\n`]/.test(v) ? v : d }
+// 分支命名樣式（profile 的 conventions.branch.patterns）：kind＝task（子任務分支）或 fix（test 段平行修正的分支）。
+// 樣式一定以 <prefix><epic> 開頭（前綴照 BRANCH_PREFIX，守門的 allowed_branch_prefixes 才對得上），後面先接一個 . _ - 再寫其餘
+// （不能接 /：<prefix><epic> 這個分支已經存在，git 不允許它底下再開分支）；task 要有 <task>，fix 要有 <round> 與 <group>，
+// 各出現一次、彼此不相鄰；其餘只能是英數與 . _ -，不能有 ..、不能以 . 或 .lock 結尾。沒寫或不合法用內建樣式。
+function awfBranchPattern(profile, kind) {
+  const dflt = { task: '<prefix><epic>--<task>', fix: '<prefix><epic>--fix<round>-<group>' }[kind]
+  const need = { task: ['<task>'], fix: ['<round>', '<group>'] }[kind]
+  const pats = (((profile || {}).conventions || {}).branch || {}).patterns
+  const v = pats && typeof pats === 'object' && !Array.isArray(pats) ? pats[kind] : undefined
+  const head = '<prefix><epic>'
+  if (!dflt || typeof v !== 'string' || v.length > 120 || !v.startsWith(head)) return dflt
+  const rest = v.slice(head.length)
+  const toks = rest.match(/<[^>]*>/g) || []
+  const lit = rest.replace(/<[^>]*>/g, '\u0000')
+  const ok = /^[._-]/.test(rest) && toks.length === need.length && need.every((t) => toks.includes(t)) &&
+    /^[A-Za-z0-9._\u0000-]+$/.test(lit) && !lit.includes('\u0000\u0000') && !rest.includes('..') && !/(\.|\.lock)$/.test(rest)
+  return ok ? v : dflt
+}
+// vars：{ prefix, epic, task } 或 { prefix, epic, round, group }
+function awfBranch(profile, kind, vars) { return awfBranchPattern(profile, kind).replace(/<([a-z]+)>/g, (m, k) => String((vars || {})[k])) }
+// 把某一步換成使用者自己的 agent（profile 的 roles：{ "<段>.<步驟>": "<agent_type>" }）。
+// 只開放唯讀類的步驟（下表；值是那一步原本的模版角色）。merge 段（信任邊界）、build 段（檔案所有權）、test 段的驗證與審查
+// （閘門依角色名核對 dev-verifier、dev-design-reviewer、dev-security-reviewer 有沒有交件）不開放。
+// 換上去的 agent 要登記在 guard.config.json 的 extension_agents（awf 產生腳本時核對，沒登記就拒絕），不能是模版角色。
+function awfSwappable() {
+  return { 'plan.locate': 'tpm-researcher', 'plan.research': 'tpm-researcher', 'plan.challenge': 'tpm-skeptic', 'design.analyze': 'tpm-skeptic', 'design.recheck': 'tpm-skeptic', 'deliver.review': 'tpm-reviewer', 'deliver.verify': 'tpm-skeptic' }
+}
+// awfStep(profile, step, ns)：回這一步的 { agentType[, roleAs] }，展開進派工的 opts。沒設定或值不合法＝原本的模版角色。
+// roleAs＝被換掉的模版角色：執行核心照它套模型分級與下限（換了 agent，下限不會因此消失）。
+function awfStep(profile, step, ns) {
+  const role = awfSwappable()[step]
+  if (!role) throw new Error(`awfStep：${step} 不是可以換角色的步驟`)
+  const t = (profile || {}).roles
+  const v = t && typeof t === 'object' && !Array.isArray(t) && Object.prototype.hasOwnProperty.call(t, step) ? t[step] : undefined
+  const ok = typeof v === 'string' && /^([A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v) && !/^(tpm|dev)-/.test(v.split(':').pop())
+  return ok ? { agentType: v, roleAs: role } : { agentType: String(ns || '') + role }
+}
 function awfState() { return awfState.s || (awfState.s = { cfg: null, trace: [] }) }
 function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; s.dispatch = null; return s.cfg }
 function awfTrace() { return awfState().trace.map((t) => ({ ...t })) }
@@ -366,7 +422,10 @@ function awfSetModelPlan(list) {
 // 建議的來源依序：AI 的 model_plan（鍵是 planKey 或角色名）、workflow 給的 tier（例如定位用 light）。下限一律由 resolveModel 守。
 function awfModelFor(o) {
   const k = awfKernel()
-  const role = awfRole(o.agentType)
+  // roleAs：這一步被換成使用者自己的 agent（profile 的 roles）時，被換掉的模版角色。模型分級與下限照它算（換 agent 不會讓下限消失）
+  // 只有派的不是模版角色時才採用 roleAs（模版角色一律照自己的角色名算，不能用 roleAs 換成下限較低的角色）
+  const self = awfRole(o.agentType)
+  const role = !/^(tpm|dev)-/.test(self) && typeof o.roleAs === 'string' && o.roleAs ? awfRole(o.roleAs) : self
   // 使用者自己的 agent（擴充 agent，不是 tpm-／dev- 模版角色）不指定模型：尊重它 frontmatter 自己的設定
   if (!/^(tpm|dev)-/.test(role)) return { mode: 'inherit', tier: '', model: '', floor: '', reason: '使用者自己的 agent：不指定模型' }
   const own = (key) => (Object.prototype.hasOwnProperty.call(k.plan, key) ? k.plan[key] : undefined)
@@ -380,7 +439,8 @@ function awfCapped() { return [...awfKernel().capped] }
 function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ ...x })) }
 
 // 派一個 agent。opts 同 tryAgent，另可帶 tier（workflow 建議的等級）、planKey（對 model_plan 的鍵，預設角色名）、stage、
-// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
+// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）、
+// roleAs（這一步換成使用者自己的 agent 時，被換掉的模版角色；challenge 片段的 awfStep 會給，trace 記成 role_as）。回傳交件或 null（缺件）。
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   // 先把 opts 複製成普通物件：agentType 等欄位只讀一次（getter 不能第一次回白名單裡的角色、第二次回別的）
@@ -406,7 +466,8 @@ async function awfAgent(prompt, opts) {
   const key = o.planKey || awfRole(o.agentType)
   const note = (x) => { k.used[key] = { key, role: awfRole(o.agentType), tier: x.tier, model: x.model || 'inherit', reason: x.reason } }
   note(m)
-  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...meta })
+  const swap = typeof o.roleAs === 'string' && o.roleAs && !/^(tpm|dev)-/.test(awfRole(o.agentType)) ? { role_as: awfRole(o.roleAs) } : {}
+  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...swap, ...meta })
   const first = await run(m, { attempt: 1 })
   if (valid(first)) return first
   // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷
@@ -578,7 +639,9 @@ const MODE_REFUTE = {
   revert: '回退範圍是否對得上 revert-proposal.md、恢復條件是否可判定。',
 }
 const modeHow = (PLAN_MODES[MODE] && PLAN_MODES[MODE].guidance) || MODE_HOW[MODE] || MODE_HOW.feature
-const modeRefute = MODE_REFUTE[MODE] || MODE_REFUTE.feature
+// 反駁重點可以由 profile 的 plan_modes.<mode>.refute 改寫（1–2000 字；沒寫或不合法用內建的）
+const USER_REFUTE = PLAN_MODES[MODE] && PLAN_MODES[MODE].refute
+const modeRefute = (typeof USER_REFUTE === 'string' && USER_REFUTE.trim() && USER_REFUTE.length <= 2000) ? USER_REFUTE : (MODE_REFUTE[MODE] || MODE_REFUTE.feature)
 
 // ── 調研角度：依 recipe.research_angles 從角度表挑；mode 專屬的 ask 優先。locate=false 的角度不查檔案（例如查上游 PR），不分兩段 ──
 const ANGLES = {
@@ -595,8 +658,20 @@ const ANGLES = {
     } },
   upstream: { locate: false, ask: '唯讀查上游 {{UPSTREAM_REPO}}：最近合進 main、還開著的 PR 是否碰到同一塊（gh pr list／gh api，不做任何寫入），評估衝突風險。' },
 }
-const angleAsk = (k) => { const a = ANGLES[k]; return a ? ((a.modes || {})[MODE] || a.ask) : `依角度「${k}」調研需求與目標 repo 的現況，結論附出處（路徑:行號或指令）。` }
-const twoStage = (k) => !(ANGLES[k] && ANGLES[k].locate === false)
+// 角度的定義可以由 profile 的 research_angles 改寫或新增（{ "<key>": { "ask", "modes": { "<plan_mode>": "…" }, "locate": true|false } }）：
+// 同名的角度換掉 ask；modes 逐個 plan_mode 蓋過內建的（沒寫到的 plan_mode 照內建）；locate 有寫布林值才採用。
+// recipe 指到沒有定義的角度時，照舊用下面那句通用問法
+const USER_ANGLES = awfDefs(MP.research_angles, 'ask')
+const ownOf = (o, k) => (o && typeof o === 'object' && !Array.isArray(o) && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined)
+const angleDef = (k) => {
+  const b = ownOf(ANGLES, k) || null
+  const u = USER_ANGLES[k]
+  if (!u) return b
+  const um = Object.fromEntries(Object.entries(u.modes && typeof u.modes === 'object' && !Array.isArray(u.modes) ? u.modes : {}).filter(([, t]) => typeof t === 'string' && t.trim() && t.length <= 2000))
+  return { ask: u.ask, modes: { ...((b || {}).modes || {}), ...um }, locate: typeof u.locate === 'boolean' ? u.locate : !(b && b.locate === false) }
+}
+const angleAsk = (k) => { const a = angleDef(k); return a ? (ownOf(a.modes, MODE) || a.ask) : `依角度「${k}」調研需求與目標 repo 的現況，結論附出處（路徑:行號或指令）。` }
+const twoStage = (k) => { const a = angleDef(k); return !(a && a.locate === false) }
 // 角度數由 triage 決定（A5）：triage 的 angles 只能從 recipe 自己的角度裡挑；modifier 帶進來的角度不能省；沒挑或挑不到就全做
 const BASE_ANGLES = resolveRecipe(METHODOLOGY, recipe.name, [], size).research_angles || []
 const ALL_ANGLES = recipe.research_angles || []
@@ -694,7 +769,7 @@ const researchAngle = async (k) => {
           `上限：最多 ${half(R_ROUNDS)} 輪、${half(R_QUERIES)} 次查詢（每一輪都會重讀整個 context，所以彼此獨立的查詢要在同一輪一起發出），連續 ${half(R_STALL)} 次查詢沒有新的相關行段就停。最多回報 ${LOC_MAX} 段（含上面確認相關的），每段不超過 ${R_SEG_LINES} 行，依相關度排序。\n`
         : `上限：最多 ${R_ROUNDS} 輪、${R_QUERIES} 次查詢（每一輪都會重讀整個 context，所以彼此獨立的查詢要在同一輪一起發出），連續 ${R_STALL} 次查詢沒有新的相關行段就停。最多回報 ${LOC_MAX} 段，每段不超過 ${R_SEG_LINES} 行，依相關度排序。\n`) +
       `payload 用 locations（angle=${k}）：path 寫相對 ${A.repo} 的路徑；找不到資料的部分與疑問寫進 gaps，open_questions 留空（定位段不下判斷）。`,
-      { label: `locate:${k}`, phase: 'Locate', agentType: NS + 'tpm-researcher', schema: LOCATIONS, planKey: 'locate', tier: 'light' },
+      { label: `locate:${k}`, phase: 'Locate', ...awfStep(MP, 'plan.locate', NS), schema: LOCATIONS, planKey: 'locate', tier: 'light' },
     )
     // 定位缺件：這個角度沒有行段可讀，不派分析（否則分析會回到整檔亂讀），整個角度列缺件
     if (!loc || !loc.payload) return null
@@ -711,7 +786,7 @@ const researchAngle = async (k) => {
       : `這個角度不查本機檔案：只用上面寫的指令查，不讀 repo 的程式與文件。\n`) +
     `上限：最多 ${R_ANALYSIS} 輪工具呼叫；連續 ${R_STALL} 次查詢沒有新發現就收斂、交件。結論邊做邊寫進執行紀錄檔（不要等到最後一次寫），每個主張附出處（路徑:行號或指令）。\n` +
     `payload 用 findings，lens=${k}；artifacts 列出執行紀錄檔。${located}`,
-    { label: `research:${k}`, phase: 'Research', agentType: NS + 'tpm-researcher', schema: FINDINGS },
+    { label: `research:${k}`, phase: 'Research', ...awfStep(MP, 'plan.research', NS), schema: FINDINGS },
   )
 }
 // 各角度的定位與分析交錯進行，phase 由每次派工的 opts.phase 標示（Locate／Research）
@@ -755,7 +830,7 @@ const challenge = await awfAgent(
   `另外每一份 intent 都要檢查：必要節（${SECTIONS.join('、')}）有沒有齊、節下有沒有內容；驗收條件是否可驗證（每條要有驗證指令或可觀察的結果，不可驗證的判 refuted）；有沒有忽略調研發現的衝突。` +
   `${SD ? `另依系統設計方法（${SD.source}）的第 1 步檢查 SA：用例、限制、假設與量級有沒有寫齊，每個數字有沒有出處或標成假設（沒標的判 refuted）。` : ''}逐點判定（target_id 用 intent 的節名），不確定就判 refuted=true。` +
   `要查證 intent 的出處時只讀它引用的那幾行（帶 offset／limit），不重做調研。\n調研結果：\n${got.map(brief).join('\n')}${missing.length ? `\n缺件的調研角度：${missing.join('、')}（intent 若把這些角度的事實當成已確認，判 refuted）` : ''}`,
-  { label: 'challenge:intent', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
+  { label: 'challenge:intent', phase: 'Challenge', ...awfStep(MP, 'plan.challenge', NS), schema: VERDICTS },
 )
 // 反駁類缺件＝結果 hold（規則 26），不能當成「沒有被推翻」
 if (!challenge) return halt('反駁類 agent 缺件：challenge:intent 沒有交件，intent 沒經過挑錯，停下交人', { intent })

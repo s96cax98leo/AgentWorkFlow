@@ -614,6 +614,150 @@ fn outside(s: &str) -> bool {
     n.starts_with('/') || regex::Regex::new(r"^[A-Za-z]:").expect("固定的正規式").is_match(&n) || n.split('/').any(|p| p == "..")
 }
 
+/// design lens、deliver 審查軸、測試模式的內建名稱（範本 sdlc-design.js、sdlc-deliver.js、sdlc-test.js 的內建定義；要和它們一致）。
+pub const BUILTIN_DESIGN_LENSES: &[&str] = &["coverage", "plan", "system-design", "delta", "rollback", "compat"];
+pub const BUILTIN_TEST_MODES: &[&str] = &["verify", "regression", "equivalence", "benchmark"];
+/// profile 的 `roles` 可以換的步驟（challenge 片段的 `awfSwappable` 同一張表）。
+pub const SWAPPABLE_STEPS: &[&str] = &["plan.locate", "plan.research", "plan.challenge", "design.analyze", "design.recheck", "deliver.review", "deliver.verify"];
+
+/// 分支命名樣式（`conventions.branch.patterns`）合不合規則；和 challenge 片段的 `awfBranchPattern` 同一套判斷。
+pub fn branch_pattern_ok(kind: &str, v: &str) -> bool {
+    let need: &[&str] = match kind {
+        "task" => &["<task>"],
+        "fix" => &["<round>", "<group>"],
+        _ => return false,
+    };
+    let Some(rest) = v.strip_prefix("<prefix><epic>") else { return false };
+    if v.encode_utf16().count() > 120 || !rest.starts_with(['.', '_', '-']) {
+        return false;
+    }
+    let tok = regex::Regex::new(r"<[^>]*>").expect("固定的正規式");
+    let toks: Vec<&str> = tok.find_iter(rest).map(|m| m.as_str()).collect();
+    let lit = tok.replace_all(rest, "\u{0}");
+    toks.len() == need.len()
+        && need.iter().all(|t| toks.contains(t))
+        && lit.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '\u{0}'))
+        && !lit.contains("\u{0}\u{0}")
+        && !rest.contains("..")
+        && !rest.ends_with('.')
+        && !rest.ends_with(".lock")
+}
+
+/// 名稱表（lenses、test_modes、research_angles）、roles、分支樣式、repo_docs、briefs 的語意規則。
+/// recipes／modifiers 指到的 lens、審查軸、測試模式要是內建的或 profile 自己定義的：指到沒有定義的名稱時範本會停下交人，
+/// 這裡在讀 profile 的時候就先說（只會更嚴）。
+/// `refs`：要不要查「recipe 與 modifier 指到的名稱有沒有定義」。這一項原本由 schema 的 enum 擋（只有 `check_doc` 這條路會跑 schema），
+/// 改成名稱表之後由這裡接手，所以只在 `check_doc` 那條路查；只跑語意規則的呼叫端（存檔、核准）行為不變，
+/// 指到沒定義的名稱由 workflow 開工前 halted。
+fn name_table_errors(doc: &Value, refs: bool) -> Vec<String> {
+    let mut errs: Vec<String> = Vec::new();
+    let name_re = regex::Regex::new(r"^[a-z][a-z0-9-]{0,39}$").expect("固定的正規式");
+    // 一張表裡合法的定義（和 challenge 片段的 awfDefs 同一套：名稱樣式、值是物件、field 是 1–2000 字的非空白字串）
+    let defined = |v: Option<&Value>, what: &str, field: &str, errs: &mut Vec<String>| -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        match v {
+            None | Some(Value::Null) => {}
+            Some(Value::Object(o)) => {
+                for (k, d) in o {
+                    if !name_re.is_match(k) {
+                        errs.push(format!("{what} 的名稱「{k}」要是小寫英數與連字號（英文字母開頭、40 字以內）"));
+                        continue;
+                    }
+                    match get(d, field).and_then(Value::as_str) {
+                        Some(t) if d.is_object() && !t.trim().is_empty() && t.encode_utf16().count() <= 2000 => { out.insert(k.clone()); }
+                        _ => errs.push(format!("{what}.{k} 要是物件，{field} 是 1–2000 字的字串")),
+                    }
+                }
+            }
+            Some(other) => errs.push(format!("{what} 要是物件（名稱 → 定義；收到 {}）", type_name(other))),
+        }
+        out
+    };
+    let lenses = get(doc, "lenses").filter(|l| !l.is_null());
+    if let Some(l) = lenses.filter(|l| !l.is_object()) {
+        errs.push(format!("lenses 要是物件（收到 {}）", type_name(l)));
+    }
+    let lens_of = |k: &str| lenses.filter(|l| l.is_object()).and_then(|l| get(l, k));
+    let design = defined(lens_of("design"), "lenses.design", "ask", &mut errs);
+    defined(lens_of("design_revise"), "lenses.design_revise", "ask", &mut errs);
+    let deliver = defined(lens_of("deliver"), "lenses.deliver", "ask", &mut errs);
+    let modes = defined(get(doc, "test_modes"), "test_modes", "note", &mut errs);
+    defined(get(doc, "research_angles"), "research_angles", "ask", &mut errs);
+    if modes.contains("verify") {
+        errs.push("test_modes 不能定義 verify（它是基本的逐條驗收，沒有另外的說明）".into());
+    }
+    for table in ["recipes", "modifiers"] {
+        if !refs { break; }
+        let Some(entries) = obj(get(doc, table)) else { continue };
+        for (name, r) in entries {
+            if !r.is_object() { continue; }
+            let names = |v: Option<&Value>| -> Vec<String> { items(v).iter().filter_map(Value::as_str).map(str::to_string).collect() };
+            for k in names(get(r, "design_lenses")) {
+                if !BUILTIN_DESIGN_LENSES.contains(&k.as_str()) && !design.contains(&k) {
+                    errs.push(format!("{table}.{name}.design_lenses 的「{k}」沒有定義（內建：{}；自己的 lens 寫在 lenses.design）", BUILTIN_DESIGN_LENSES.join("、")));
+                }
+            }
+            for k in names(get(r, "deliver_axes")) {
+                if !crate::recipe::ALL_AXES.contains(&k.as_str()) && !deliver.contains(&k) {
+                    errs.push(format!("{table}.{name}.deliver_axes 的「{k}」沒有定義（內建：{}；自己的審查軸寫在 lenses.deliver）", crate::recipe::ALL_AXES.join("、")));
+                }
+            }
+            for k in names(get(r, "test").and_then(|t| get(t, "modes"))) {
+                if !BUILTIN_TEST_MODES.contains(&k.as_str()) && !modes.contains(&k) {
+                    errs.push(format!("{table}.{name}.test.modes 的「{k}」沒有定義（內建：{}；自己的模式寫在 test_modes）", BUILTIN_TEST_MODES.join("、")));
+                }
+            }
+        }
+    }
+    // roles：只能換表列的步驟，換上去的不能是模版角色（要不要登記在 guard.config 的 extension_agents 由 awf 產生腳本時核對）
+    match get(doc, "roles") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(o)) => {
+            let agent_re = regex::Regex::new(r"^([A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$").expect("固定的正規式");
+            for (step, v) in o {
+                if !SWAPPABLE_STEPS.contains(&step.as_str()) {
+                    errs.push(format!("roles 的「{step}」不是可以換角色的步驟（只開放：{}；merge 段、build 段、test 段的驗證與審查不開放）", SWAPPABLE_STEPS.join("、")));
+                    continue;
+                }
+                match v.as_str() {
+                    Some(a) if agent_re.is_match(a) => {
+                        let role = a.rsplit(':').next().unwrap_or_default();
+                        if role.starts_with("tpm-") || role.starts_with("dev-") {
+                            errs.push(format!("roles.{step} 不能換成模版角色（{a}）：只能換成自己的 agent，並登記在 guard.config.json 的 extension_agents"));
+                        }
+                    }
+                    _ => errs.push(format!("roles.{step} 要是完整的 agent_type（英數與 . _ -，可帶「<plugin>:」）")),
+                }
+            }
+        }
+        Some(other) => errs.push(format!("roles 要是物件（「段.步驟」→ agent_type；收到 {}）", type_name(other))),
+    }
+    let conv = get(doc, "conventions").filter(|c| c.is_object());
+    if let Some(p) = conv.and_then(|c| get(c, "branch")).and_then(|b| get(b, "patterns")).and_then(Value::as_object) {
+        for (kind, v) in p {
+            if let Some(t) = v.as_str() {
+                if matches!(kind.as_str(), "task" | "fix") && !branch_pattern_ok(kind, t) {
+                    errs.push(format!("conventions.branch.patterns.{kind} 不合規則：要以 <prefix><epic> 開頭、接一個 . _ - 再寫其餘，{}，其餘只能是英數與 . _ -，不能有 ..、不能以 . 或 .lock 結尾（收到 {t}）",
+                        if kind == "task" { "<task> 出現一次" } else { "<round> 與 <group> 各出現一次而且不相鄰" }));
+                }
+            }
+        }
+    }
+    if let Some(d) = conv.and_then(|c| get(c, "repo_docs")).and_then(Value::as_object) {
+        for (k, v) in d {
+            if let Some(t) = v.as_str().filter(|t| outside(t) || t.contains(['\n', '\r', '`'])) {
+                errs.push(format!("conventions.repo_docs.{k} 要是相對目標 repo 的路徑，不能是絕對路徑或含 ..（收到 {}）", t.replace(['\n', '\r'], " ")));
+            }
+        }
+    }
+    if let Some(t) = get(doc, "briefs").and_then(|b| get(b, "record_pattern")).and_then(Value::as_str) {
+        if t.contains(['/', '\\']) || t == "." || t == ".." {
+            errs.push(format!("briefs.record_pattern 只能是檔名樣式，不能有 / 或 \\（收到 {t}）"));
+        }
+    }
+    errs
+}
+
 fn dup_strings(vals: &[Option<&Value>]) -> BTreeSet<String> {
     let strs: Vec<&str> = vals.iter().filter_map(|v| v.and_then(Value::as_str)).collect();
     strs.iter().filter(|x| strs.iter().filter(|y| y == x).count() > 1).map(|s| s.to_string()).collect()
@@ -846,6 +990,7 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             }
         }
     }
+    errs.extend(name_table_errors(doc, !typed));
     let req = get(doc, "requirements").filter(|r| r.is_object());
     let rget = |k: &str| req.and_then(|r| get(r, k));
     if rget("source").and_then(Value::as_str) == Some("command") {

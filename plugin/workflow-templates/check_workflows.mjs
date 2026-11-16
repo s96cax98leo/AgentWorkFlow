@@ -83,7 +83,9 @@ function checkSchema(s, path, errs) {
 // fake 給 'THROW' 或會 throw 的函式時，agent() 會 throw（模擬 agent 失敗）
 async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   const errs = []
-  const extAgents = new Set(((embedded(src) || {}).extensions || []).map((e) => e.agent))
+  // 使用者自己的 agent：profile 的 extensions（加進某一段）與 roles（換掉某一步）
+  const prof = embedded(src) || {}
+  const extAgents = new Set([...(prof.extensions || []).map((e) => e.agent), ...Object.values(prof.roles && typeof prof.roles === 'object' ? prof.roles : {})])
   let agents = 0
   const visited = []
   const labels = []

@@ -217,7 +217,10 @@ function awfSetModelPlan(list) {
 // 建議的來源依序：AI 的 model_plan（鍵是 planKey 或角色名）、workflow 給的 tier（例如定位用 light）。下限一律由 resolveModel 守。
 function awfModelFor(o) {
   const k = awfKernel()
-  const role = awfRole(o.agentType)
+  // roleAs：這一步被換成使用者自己的 agent（profile 的 roles）時，被換掉的模版角色。模型分級與下限照它算（換 agent 不會讓下限消失）
+  // 只有派的不是模版角色時才採用 roleAs（模版角色一律照自己的角色名算，不能用 roleAs 換成下限較低的角色）
+  const self = awfRole(o.agentType)
+  const role = !/^(tpm|dev)-/.test(self) && typeof o.roleAs === 'string' && o.roleAs ? awfRole(o.roleAs) : self
   // 使用者自己的 agent（擴充 agent，不是 tpm-／dev- 模版角色）不指定模型：尊重它 frontmatter 自己的設定
   if (!/^(tpm|dev)-/.test(role)) return { mode: 'inherit', tier: '', model: '', floor: '', reason: '使用者自己的 agent：不指定模型' }
   const own = (key) => (Object.prototype.hasOwnProperty.call(k.plan, key) ? k.plan[key] : undefined)
@@ -231,7 +234,8 @@ function awfCapped() { return [...awfKernel().capped] }
 function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ ...x })) }
 
 // 派一個 agent。opts 同 tryAgent，另可帶 tier（workflow 建議的等級）、planKey（對 model_plan 的鍵，預設角色名）、stage、
-// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
+// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）、
+// roleAs（這一步換成使用者自己的 agent 時，被換掉的模版角色；challenge 片段的 awfStep 會給，trace 記成 role_as）。回傳交件或 null（缺件）。
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   // 先把 opts 複製成普通物件：agentType 等欄位只讀一次（getter 不能第一次回白名單裡的角色、第二次回別的）
@@ -257,7 +261,8 @@ async function awfAgent(prompt, opts) {
   const key = o.planKey || awfRole(o.agentType)
   const note = (x) => { k.used[key] = { key, role: awfRole(o.agentType), tier: x.tier, model: x.model || 'inherit', reason: x.reason } }
   note(m)
-  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...meta })
+  const swap = typeof o.roleAs === 'string' && o.roleAs && !/^(tpm|dev)-/.test(awfRole(o.agentType)) ? { role_as: awfRole(o.roleAs) } : {}
+  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...swap, ...meta })
   const first = await run(m, { attempt: 1 })
   if (valid(first)) return first
   // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷
@@ -277,6 +282,8 @@ async function awfAgent(prompt, opts) {
 }
 /*@end*/
 awfInit({ run_dir: A.run_dir, stage: 'pr-review', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', tune: awfTune(MP) })
+// 目標 repo 的審查規範在哪：profile 的 conventions.repo_docs.review（相對路徑、不含 ..；沒寫或不合法用 REVIEW.md）
+const REVIEW_DOC = (() => { const t = awfLine(((MP.conventions || {}).repo_docs || {}).review, 200, ''); return t && !/^([\\/]|[A-Za-z]:)/.test(t) && !t.split(/[\\/]/).includes('..') ? t : 'REVIEW.md' })()
 // 執行核心：模型分級、失敗升級、派工數上限（I8）。上限＝profile 的 limits.max_agents（沒設用 40）；PR 審查正常不超過 15
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40)
 awfKernelInit({ profile: METHODOLOGY, stage: 'pr-review', modifiers: [], max_agents: MAX_AGENTS })
@@ -321,6 +328,62 @@ function awfRecordSections(profile, dflt) {
   const v = ((((profile || {}).stages || {}).deliver) || {}).record_sections
   const ok = Array.isArray(v) && v.length >= 1 && v.length <= 12 && v.every((x) => typeof x === 'string' && x.trim() === x && x.length >= 1 && x.length <= 40 && !/[\r\n`]/.test(x)) && new Set(v).size === v.length
   return ok ? v.join('、') : dflt
+}
+// 名稱表（profile 的 lenses.design／design_revise／deliver、test_modes、research_angles：使用者自己定義或改寫 lens、審查軸、驗證模式、調研角度）。
+// awfDefs(table, field[, max])：回合法的項目（沒有原型的物件，鍵＝名稱）。鍵是小寫英數與連字號（40 字以內），值是物件，
+// field 是 1–2000 字的字串；最多收 max 個（預設 24）。不合法的項目略過：內建有同名的照內建，沒有的等於沒定義
+// （recipe 指到沒定義的名稱時由範本 halted，不默默略過）。
+function awfDefs(table, field, max) {
+  const out = Object.create(null)
+  if (!table || typeof table !== 'object' || Array.isArray(table)) return out
+  let n = 0
+  for (const k of Object.keys(table)) {
+    if (n >= (max || 24)) break
+    const v = table[k]
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(k) || !v || typeof v !== 'object' || Array.isArray(v)) continue
+    if (typeof v[field] !== 'string' || !v[field].trim() || v[field].length > 2000) continue
+    out[k] = v; n++
+  }
+  return out
+}
+// profile 裡的一行短字：1–max 字、前後沒有空白、沒有換行與反引號才採用，否則用 d（預設＝原本寫死的字）
+function awfLine(v, max, d) { return typeof v === 'string' && v.trim() === v && v.length >= 1 && v.length <= max && !/[\r\n`]/.test(v) ? v : d }
+// 分支命名樣式（profile 的 conventions.branch.patterns）：kind＝task（子任務分支）或 fix（test 段平行修正的分支）。
+// 樣式一定以 <prefix><epic> 開頭（前綴照 BRANCH_PREFIX，守門的 allowed_branch_prefixes 才對得上），後面先接一個 . _ - 再寫其餘
+// （不能接 /：<prefix><epic> 這個分支已經存在，git 不允許它底下再開分支）；task 要有 <task>，fix 要有 <round> 與 <group>，
+// 各出現一次、彼此不相鄰；其餘只能是英數與 . _ -，不能有 ..、不能以 . 或 .lock 結尾。沒寫或不合法用內建樣式。
+function awfBranchPattern(profile, kind) {
+  const dflt = { task: '<prefix><epic>--<task>', fix: '<prefix><epic>--fix<round>-<group>' }[kind]
+  const need = { task: ['<task>'], fix: ['<round>', '<group>'] }[kind]
+  const pats = (((profile || {}).conventions || {}).branch || {}).patterns
+  const v = pats && typeof pats === 'object' && !Array.isArray(pats) ? pats[kind] : undefined
+  const head = '<prefix><epic>'
+  if (!dflt || typeof v !== 'string' || v.length > 120 || !v.startsWith(head)) return dflt
+  const rest = v.slice(head.length)
+  const toks = rest.match(/<[^>]*>/g) || []
+  const lit = rest.replace(/<[^>]*>/g, '\u0000')
+  const ok = /^[._-]/.test(rest) && toks.length === need.length && need.every((t) => toks.includes(t)) &&
+    /^[A-Za-z0-9._\u0000-]+$/.test(lit) && !lit.includes('\u0000\u0000') && !rest.includes('..') && !/(\.|\.lock)$/.test(rest)
+  return ok ? v : dflt
+}
+// vars：{ prefix, epic, task } 或 { prefix, epic, round, group }
+function awfBranch(profile, kind, vars) { return awfBranchPattern(profile, kind).replace(/<([a-z]+)>/g, (m, k) => String((vars || {})[k])) }
+// 把某一步換成使用者自己的 agent（profile 的 roles：{ "<段>.<步驟>": "<agent_type>" }）。
+// 只開放唯讀類的步驟（下表；值是那一步原本的模版角色）。merge 段（信任邊界）、build 段（檔案所有權）、test 段的驗證與審查
+// （閘門依角色名核對 dev-verifier、dev-design-reviewer、dev-security-reviewer 有沒有交件）不開放。
+// 換上去的 agent 要登記在 guard.config.json 的 extension_agents（awf 產生腳本時核對，沒登記就拒絕），不能是模版角色。
+function awfSwappable() {
+  return { 'plan.locate': 'tpm-researcher', 'plan.research': 'tpm-researcher', 'plan.challenge': 'tpm-skeptic', 'design.analyze': 'tpm-skeptic', 'design.recheck': 'tpm-skeptic', 'deliver.review': 'tpm-reviewer', 'deliver.verify': 'tpm-skeptic' }
+}
+// awfStep(profile, step, ns)：回這一步的 { agentType[, roleAs] }，展開進派工的 opts。沒設定或值不合法＝原本的模版角色。
+// roleAs＝被換掉的模版角色：執行核心照它套模型分級與下限（換了 agent，下限不會因此消失）。
+function awfStep(profile, step, ns) {
+  const role = awfSwappable()[step]
+  if (!role) throw new Error(`awfStep：${step} 不是可以換角色的步驟`)
+  const t = (profile || {}).roles
+  const v = t && typeof t === 'object' && !Array.isArray(t) && Object.prototype.hasOwnProperty.call(t, step) ? t[step] : undefined
+  const ok = typeof v === 'string' && /^([A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v) && !/^(tpm|dev)-/.test(v.split(':').pop())
+  return ok ? { agentType: v, roleAs: role } : { agentType: String(ns || '') + role }
 }
 function awfState() { return awfState.s || (awfState.s = { cfg: null, trace: [] }) }
 function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; s.dispatch = null; return s.cfg }
@@ -459,11 +522,11 @@ function takeFindings(r, label, o = {}) {
 }
 
 // 派一個 skeptic 反駁一批發現；fs 是空的就不派。回 Promise<{ kept, dropped, missing }>，missing 是缺件的 label（沒缺件為 null）。
-// o：{ prompt, label, phase='Verify', agentType, schema, unansweredKept（見 judgeVerdicts）, keepOnMissing }
+// o：{ prompt, label, phase='Verify', agentType, schema, unansweredKept（見 judgeVerdicts）, keepOnMissing, roleAs（見 challenge 片段的 awfStep） }
 // keepOnMissing＝true：反駁缺件時發現全部留在 kept（不能當成被推翻）；否則 kept 為空。兩種都要由呼叫端依 missing 停下。
 function verifyFindings(fs, o) {
   if (!fs.length) return Promise.resolve({ kept: [], dropped: [], missing: null })
-  return awfDispatch(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema })
+  return awfDispatch(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema, ...(o.roleAs ? { roleAs: o.roleAs } : {}) })
     .then((v) => {
       if (!v || !v.payload) return { kept: o.keepOnMissing ? fs : [], dropped: [], missing: o.label }
       const j = judgeVerdicts(fs, v, { unansweredKept: o.unansweredKept })
@@ -489,7 +552,7 @@ const missing = []
 const halt = (stage, extra = {}) => haltMissing({ event: 'pr-review' }, stage, missing, { ...extra, trace: awfTrace() })
 
 phase('Review')
-const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 REVIEW.md 分級，每則附 file:line 與 0–1 信心，只列 ≥${MIN_CONF}。payload 用 findings（lens=${lens}）。`,
+const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 ${REVIEW_DOC} 分級，每則附 file:line 與 0–1 信心，只列 ≥${MIN_CONF}。payload 用 findings（lens=${lens}）。`,
   { label: `review:${lens}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS })))
 // 各 lens 的發現 id 各自編號，加 lens 前綴（<lens>:<id>），skeptic 的 target_id 才不會撞號
 const batches = []

@@ -258,8 +258,11 @@ pub fn load_methodology(teams_dir: &Path) -> Result<Option<Value>, String> {
 pub fn unregistered_extensions(methodology: Option<&Value>, teams_dir: &Path) -> Result<Vec<String>, String> {
     let exts: Vec<&Value> = methodology.and_then(|m| m.get("extensions")).and_then(Value::as_array)
         .map(|a| a.iter().filter(|e| e.is_object()).collect()).unwrap_or_default();
+    // roles（把某一步換成自己的 agent）的值一樣要登記：（步驟, agent）
+    let swapped: Vec<(&String, &str)> = methodology.and_then(|m| m.get("roles")).and_then(Value::as_object)
+        .map(|r| r.iter().filter_map(|(k, v)| v.as_str().filter(|a| !a.is_empty()).map(|a| (k, a))).collect()).unwrap_or_default();
     let guard = teams_dir.join("guard.config.json");
-    if exts.is_empty() || !guard.is_file() {
+    if (exts.is_empty() && swapped.is_empty()) || !guard.is_file() {
         return Ok(Vec::new());
     }
     let text = read_text(&guard)?;
@@ -281,6 +284,11 @@ pub fn unregistered_extensions(methodology: Option<&Value>, teams_dir: &Path) ->
         };
         if !known {
             out.push(format!("{}（{}）", pyfmt::str_opt(e.get("name")), pyfmt::str_opt(agent)));
+        }
+    }
+    for (step, agent) in swapped {
+        if !matches!(&registered, Some(Value::Object(o)) if o.contains_key(agent)) {
+            out.push(format!("roles.{step}（{agent}）"));
         }
     }
     Ok(out)

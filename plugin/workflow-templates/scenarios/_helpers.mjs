@@ -113,3 +113,36 @@ export const tuneScenarios = (x = {}) => {
       (r) => all(r, DEFAULTS, '的前綴應該退回預設')),
   ]
 }
+// recipes 的 feature 換掉幾個欄位（情境要讓 recipe 選用自訂的 lens、審查軸、測試模式、調研角度時用）；內嵌的 profile 沒有 recipes 時補一個完整流程的 feature
+export const withFeature = (p, patch) => ({ recipes: { ...((p || {}).recipes || {}), feature: { description: '新功能', stages: RECIPE_STAGES.feature, plan_mode: 'feature', ...(((p || {}).recipes || {}).feature || {}), ...patch } } })
+// 換角色（1.0）：profile 的 roles 把某一步換成使用者自己的 agent。開：那一步（label 符合 labelRe 的派工）派自己的 agent、trace 記 role_as（被換掉的模版角色），其他步驟不受影響；
+// 不合法（換成模版角色、格式不對、不開放的步驟）：照原本的角色。x：{ args, fakes, profile }
+export const roleScenarios = (step, role, labelRe, x = {}) => {
+  const basep = (p) => (typeof x.profile === 'function' ? x.profile(p) : (x.profile || {}))
+  const hits = (r) => r.calls.filter((c) => labelRe.test(c.label))
+  return [
+    {
+      name: `換角色：roles 的 ${step} → 這一步派使用者自己的 agent，trace 記 role_as=${role}`, args: x.args || {}, fakes: x.fakes || {}, virtualAgents: ['acme-own-agent'],
+      profile: (p) => ({ ...basep(p), roles: { [step]: 'acme-own-agent' } }),
+      expect: (r) => {
+        const tr = (((r.out || {}).trace) || []).filter((t) => labelRe.test(t.label))
+        return [
+          ...(hits(r).length ? [] : [`沒有派出 ${step} 這一步：${r.labels.join(',')}`]),
+          ...hits(r).filter((c) => c.agentType !== 'acme-own-agent').map((c) => `${c.label} 應該派 acme-own-agent，實際 ${c.agentType}`),
+          ...r.calls.filter((c) => !labelRe.test(c.label) && c.agentType === 'acme-own-agent').map((c) => `${c.label} 不是 ${step}，不該被換掉`),
+          ...tr.filter((t) => t.role_as !== role).map((t) => `${t.label} 的 trace 應該記 role_as=${role}：${JSON.stringify(t.role_as)}`),
+        ]
+      },
+    },
+    {
+      name: `換角色：${step} 換成模版角色、或寫了不開放的步驟 → 照原本的 ${role}`, args: x.args || {}, fakes: x.fakes || {},
+      profile: (p) => ({ ...basep(p), roles: { [step]: 'agent-workflow:tpm-writer', 'merge.analyze': 'acme-own-agent', 'build.implement': 'acme-own-agent', 'test.verify': 'acme-own-agent' } }),
+      expect: (r) => [
+        ...(hits(r).length ? [] : [`沒有派出 ${step} 這一步：${r.labels.join(',')}`]),
+        ...hits(r).filter((c) => !c.agentType.endsWith(role)).map((c) => `${c.label} 應該照原本的 ${role}，實際 ${c.agentType}`),
+        ...r.calls.filter((c) => c.agentType === 'acme-own-agent').map((c) => `${c.label} 不該派 acme-own-agent`),
+        ...((((r.out || {}).trace) || []).filter((t) => t.role_as).map((t) => `${t.label} 不該有 role_as`)),
+      ],
+    },
+  ]
+}

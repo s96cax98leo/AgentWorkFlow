@@ -47,6 +47,62 @@ function awfRecordSections(profile, dflt) {
   const ok = Array.isArray(v) && v.length >= 1 && v.length <= 12 && v.every((x) => typeof x === 'string' && x.trim() === x && x.length >= 1 && x.length <= 40 && !/[\r\n`]/.test(x)) && new Set(v).size === v.length
   return ok ? v.join('、') : dflt
 }
+// 名稱表（profile 的 lenses.design／design_revise／deliver、test_modes、research_angles：使用者自己定義或改寫 lens、審查軸、驗證模式、調研角度）。
+// awfDefs(table, field[, max])：回合法的項目（沒有原型的物件，鍵＝名稱）。鍵是小寫英數與連字號（40 字以內），值是物件，
+// field 是 1–2000 字的字串；最多收 max 個（預設 24）。不合法的項目略過：內建有同名的照內建，沒有的等於沒定義
+// （recipe 指到沒定義的名稱時由範本 halted，不默默略過）。
+function awfDefs(table, field, max) {
+  const out = Object.create(null)
+  if (!table || typeof table !== 'object' || Array.isArray(table)) return out
+  let n = 0
+  for (const k of Object.keys(table)) {
+    if (n >= (max || 24)) break
+    const v = table[k]
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(k) || !v || typeof v !== 'object' || Array.isArray(v)) continue
+    if (typeof v[field] !== 'string' || !v[field].trim() || v[field].length > 2000) continue
+    out[k] = v; n++
+  }
+  return out
+}
+// profile 裡的一行短字：1–max 字、前後沒有空白、沒有換行與反引號才採用，否則用 d（預設＝原本寫死的字）
+function awfLine(v, max, d) { return typeof v === 'string' && v.trim() === v && v.length >= 1 && v.length <= max && !/[\r\n`]/.test(v) ? v : d }
+// 分支命名樣式（profile 的 conventions.branch.patterns）：kind＝task（子任務分支）或 fix（test 段平行修正的分支）。
+// 樣式一定以 <prefix><epic> 開頭（前綴照 BRANCH_PREFIX，守門的 allowed_branch_prefixes 才對得上），後面先接一個 . _ - 再寫其餘
+// （不能接 /：<prefix><epic> 這個分支已經存在，git 不允許它底下再開分支）；task 要有 <task>，fix 要有 <round> 與 <group>，
+// 各出現一次、彼此不相鄰；其餘只能是英數與 . _ -，不能有 ..、不能以 . 或 .lock 結尾。沒寫或不合法用內建樣式。
+function awfBranchPattern(profile, kind) {
+  const dflt = { task: '<prefix><epic>--<task>', fix: '<prefix><epic>--fix<round>-<group>' }[kind]
+  const need = { task: ['<task>'], fix: ['<round>', '<group>'] }[kind]
+  const pats = (((profile || {}).conventions || {}).branch || {}).patterns
+  const v = pats && typeof pats === 'object' && !Array.isArray(pats) ? pats[kind] : undefined
+  const head = '<prefix><epic>'
+  if (!dflt || typeof v !== 'string' || v.length > 120 || !v.startsWith(head)) return dflt
+  const rest = v.slice(head.length)
+  const toks = rest.match(/<[^>]*>/g) || []
+  const lit = rest.replace(/<[^>]*>/g, '\u0000')
+  const ok = /^[._-]/.test(rest) && toks.length === need.length && need.every((t) => toks.includes(t)) &&
+    /^[A-Za-z0-9._\u0000-]+$/.test(lit) && !lit.includes('\u0000\u0000') && !rest.includes('..') && !/(\.|\.lock)$/.test(rest)
+  return ok ? v : dflt
+}
+// vars：{ prefix, epic, task } 或 { prefix, epic, round, group }
+function awfBranch(profile, kind, vars) { return awfBranchPattern(profile, kind).replace(/<([a-z]+)>/g, (m, k) => String((vars || {})[k])) }
+// 把某一步換成使用者自己的 agent（profile 的 roles：{ "<段>.<步驟>": "<agent_type>" }）。
+// 只開放唯讀類的步驟（下表；值是那一步原本的模版角色）。merge 段（信任邊界）、build 段（檔案所有權）、test 段的驗證與審查
+// （閘門依角色名核對 dev-verifier、dev-design-reviewer、dev-security-reviewer 有沒有交件）不開放。
+// 換上去的 agent 要登記在 guard.config.json 的 extension_agents（awf 產生腳本時核對，沒登記就拒絕），不能是模版角色。
+function awfSwappable() {
+  return { 'plan.locate': 'tpm-researcher', 'plan.research': 'tpm-researcher', 'plan.challenge': 'tpm-skeptic', 'design.analyze': 'tpm-skeptic', 'design.recheck': 'tpm-skeptic', 'deliver.review': 'tpm-reviewer', 'deliver.verify': 'tpm-skeptic' }
+}
+// awfStep(profile, step, ns)：回這一步的 { agentType[, roleAs] }，展開進派工的 opts。沒設定或值不合法＝原本的模版角色。
+// roleAs＝被換掉的模版角色：執行核心照它套模型分級與下限（換了 agent，下限不會因此消失）。
+function awfStep(profile, step, ns) {
+  const role = awfSwappable()[step]
+  if (!role) throw new Error(`awfStep：${step} 不是可以換角色的步驟`)
+  const t = (profile || {}).roles
+  const v = t && typeof t === 'object' && !Array.isArray(t) && Object.prototype.hasOwnProperty.call(t, step) ? t[step] : undefined
+  const ok = typeof v === 'string' && /^([A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v) && !/^(tpm|dev)-/.test(v.split(':').pop())
+  return ok ? { agentType: v, roleAs: role } : { agentType: String(ns || '') + role }
+}
 function awfState() { return awfState.s || (awfState.s = { cfg: null, trace: [] }) }
 function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; s.dispatch = null; return s.cfg }
 function awfTrace() { return awfState().trace.map((t) => ({ ...t })) }
@@ -395,7 +451,10 @@ function awfSetModelPlan(list) {
 // 建議的來源依序：AI 的 model_plan（鍵是 planKey 或角色名）、workflow 給的 tier（例如定位用 light）。下限一律由 resolveModel 守。
 function awfModelFor(o) {
   const k = awfKernel()
-  const role = awfRole(o.agentType)
+  // roleAs：這一步被換成使用者自己的 agent（profile 的 roles）時，被換掉的模版角色。模型分級與下限照它算（換 agent 不會讓下限消失）
+  // 只有派的不是模版角色時才採用 roleAs（模版角色一律照自己的角色名算，不能用 roleAs 換成下限較低的角色）
+  const self = awfRole(o.agentType)
+  const role = !/^(tpm|dev)-/.test(self) && typeof o.roleAs === 'string' && o.roleAs ? awfRole(o.roleAs) : self
   // 使用者自己的 agent（擴充 agent，不是 tpm-／dev- 模版角色）不指定模型：尊重它 frontmatter 自己的設定
   if (!/^(tpm|dev)-/.test(role)) return { mode: 'inherit', tier: '', model: '', floor: '', reason: '使用者自己的 agent：不指定模型' }
   const own = (key) => (Object.prototype.hasOwnProperty.call(k.plan, key) ? k.plan[key] : undefined)
@@ -409,7 +468,8 @@ function awfCapped() { return [...awfKernel().capped] }
 function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ ...x })) }
 
 // 派一個 agent。opts 同 tryAgent，另可帶 tier（workflow 建議的等級）、planKey（對 model_plan 的鍵，預設角色名）、stage、
-// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
+// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）、
+// roleAs（這一步換成使用者自己的 agent 時，被換掉的模版角色；challenge 片段的 awfStep 會給，trace 記成 role_as）。回傳交件或 null（缺件）。
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   // 先把 opts 複製成普通物件：agentType 等欄位只讀一次（getter 不能第一次回白名單裡的角色、第二次回別的）
@@ -435,7 +495,8 @@ async function awfAgent(prompt, opts) {
   const key = o.planKey || awfRole(o.agentType)
   const note = (x) => { k.used[key] = { key, role: awfRole(o.agentType), tier: x.tier, model: x.model || 'inherit', reason: x.reason } }
   note(m)
-  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...meta })
+  const swap = typeof o.roleAs === 'string' && o.roleAs && !/^(tpm|dev)-/.test(awfRole(o.agentType)) ? { role_as: awfRole(o.roleAs) } : {}
+  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...swap, ...meta })
   const first = await run(m, { attempt: 1 })
   if (valid(first)) return first
   // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷
@@ -466,6 +527,13 @@ const N = PR[1]
 const GH = A.gh_repo || '{{FORK_REPO}}'
 const BASE = A.base || 'origin/main'
 const FOLLOWUP_DIR = `${A.run_dir}/followups`
+// 合併角色與凍結檔跟 guard.config.json 的 auto_merge.merger_role、auto_merge.freeze_file（hook 與 awf merge-gate 讀的同一份設定）。
+// 範本讀不到 guard.config：設定檔有寫、而且和預設不同時，由 awf next 放進 args.merger_role／args.freeze_file；沒帶或格式不對就是預設值。
+// 換了合併角色也一樣不自動重派（retry: false），模型下限照 dev-merge-steward 算；merge 段的 skeptic 固定不開放替換
+const MERGER = typeof A.merger_role === 'string' && /^([A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(A.merger_role) ? A.merger_role : NS + 'dev-merge-steward'
+const MERGER_NAME = MERGER.split(':').pop()
+const MERGER_OPTS = { agentType: MERGER, retry: false, ...(MERGER_NAME === 'dev-merge-steward' ? {} : { roleAs: 'dev-merge-steward' }) }
+const FREEZE_FILE = awfLine(A.freeze_file, 300, '{{RUNS_DIR}}/auto-merge.freeze.json')
 const EVIDENCE = A.evidence || `${A.run_dir}/test.json 的 verifier 信封（取出 .verifier 存到暫存目錄再給 --evidence）`
 const FINDINGS = [].concat(A.findings || [`${A.run_dir}/deliver.json 的 findings（保留下來的審查發現）`]).join('、')
 // 審查／驗證當下的 head：awf merge-gate 有 --findings 卻沒有 --reviewed-sha 一律 hold。主 session 可用 args.reviewed_sha 直接給；
@@ -488,7 +556,7 @@ const REQ_NOTE = HAS_DESIGN
 if (R.errors.length) return { stage: 'merge', halted: true, halt_reason: `recipe 解析有錯：${R.errors.join('；')}`, missing: [], merged: false, queued: false, recipe: RECIPE, next: '修正 args.recipe／modifiers 後重跑 sdlc-merge', trace: awfTrace() }
 const analysis = await awfAgent(
   `${CTX}\n\n## 派工單（分析模式）\n${REQ_NOTE}\n1. 取得需求清單，逐條對照驗證證據、測試與程式位置，判 match／mismatch／missing。\n2. 讀 git diff ${BASE}...<head>，列出對不到任何需求的改動（out_of_scope）。\n3. 每條不一致、缺證據與範圍外改動都寫一則 followups（新需求：requirement_id、expected、actual、adjustment）。\n4. head_sha 填 gh pr view ${N} --repo ${GH} --json headRefOid 的值。gate_reasons 先填空陣列。\n5. 讀 gh pr view ${N} --repo ${GH} --json mergeable,mergeStateStatus：mergeStateStatus 是 BEHIND（落後 base，而 base 要求先跟上）或 DIRTY、mergeable 是 CONFLICTING（有衝突）時，needs_sync 填 true、decision 填 hold，另寫一則 followups（requirement_id=sync，adjustment 寫「跑 sdlc-sync 跟上 base 後重跑 sdlc-test」）。你不同步分支。\n只分析，不執行任何 gh 寫入（review、ready、merge、comment）。payload 用 merge-decision。`,
-  { label: 'analyze', phase: 'Analyze', agentType: NS + 'dev-merge-steward', schema: DECISION },
+  { label: 'analyze', phase: 'Analyze', ...MERGER_OPTS, schema: DECISION },
 )
 // 缺件不是「沒有發現」（rules.md 規則 26）：比對、反駁、執行缺件一律 halted，不合併也不退回
 if (!analysis) return { stage: 'merge', halted: true, halt_reason: 'analyze 缺件：steward 分析沒有交件；不合併、不退回，交主 session 判斷', missing: ['analyze'], merged: false, queued: false, recipe: RECIPE, next: null, trace: awfTrace() }
@@ -507,7 +575,7 @@ const targets = [
   ...(dec.out_of_scope.length ? [] : [{ id: 'out_of_scope', claim: `git diff ${BASE}...${dec.head_sha} 沒有對不到需求的改動` }]),
 ]
 const challenge = targets.length ? await awfAgent(
-  `${CTX}\n\n## 派工單（合併模式）\nhead SHA：${dec.head_sha}。逐則試著找出 dev-merge-steward 漏掉的不一致（打開證據、重跑能重跑的唯讀指令、讀 diff）。\nrefuted=true 代表「其實不一致、缺證據，或有範圍外改動」；不確定就判 refuted=true（hold）。\n只處理下列 target，不得推翻 steward 判的 mismatch／missing 或審查的 blocker／important：\n${JSON.stringify(targets)}\npayload 用 verdicts，target_id 照抄 id。`,
+  `${CTX}\n\n## 派工單（合併模式）\nhead SHA：${dec.head_sha}。逐則試著找出 ${MERGER_NAME} 漏掉的不一致（打開證據、重跑能重跑的唯讀指令、讀 diff）。\nrefuted=true 代表「其實不一致、缺證據，或有範圍外改動」；不確定就判 refuted=true（hold）。\n只處理下列 target，不得推翻 steward 判的 mismatch／missing 或審查的 blocker／important：\n${JSON.stringify(targets)}\npayload 用 verdicts，target_id 照抄 id。`,
   { label: 'challenge', phase: 'Challenge', agentType: NS + 'tpm-skeptic', schema: VERDICTS },
 ) : null
 // skeptic 沒交件＝沒有經過挑戰：halted 交人，不據此退回 PR（缺件不是「判出不一致」，也不是「沒被推翻」）
@@ -551,8 +619,8 @@ phase('Execute')
 const exec = await awfAgent(
   inconsistent
     ? `${CTX}\n\n## 派工單（執行模式：退回）\n對照或挑戰判出不一致，這個 PR 不合併。\n1. 確認 head 仍是 ${dec.head_sha}。\n2. ${COMMENT('下面這份最終 merge-decision')}\n3. 用同一份 merge-decision 跑 gate 留下紀錄：${GATE}。不論 gate 判什麼都不合併。\n4. 退回 PR：${RETURN}。\n最終 merge-decision（decision 以 gate 與本派工單較嚴者為準，gate_reasons 照抄 gate 輸出）：\n${JSON.stringify(finalDecision)}\npayload 用 merge-decision。`
-    : `${CTX}\n\n## 派工單（執行模式：合併）\n對照與挑戰都判一致。\n1. 確認 head 仍是 ${dec.head_sha}。變了的話：guard.config.json 的 auto_merge.carry_verdict_on_rebase 不是 true 就停下判 hold，不做任何 gh 寫入；是 true 就照樣往下，由 gate 用 patch-id 判斷能不能沿用（之後的 --head-sha、--match-head-commit 都用目前 head）。{{RUNS_DIR}}/auto-merge.freeze.json 存在且 frozen=true（自動合併已凍結）時也一樣停下。\n2. ${COMMENT('下面這份 merge-decision')}\n3. 跑 gate：${GATE}。\n4. exit 0：gh pr merge ${N} --repo ${GH} --squash --match-head-commit <目前 head>（合併方式依 guard.config.json 的 auto_merge.merge_method，預設 squash；目標 repo 用 CI 的 agent-merge-gate 當 required check 時，要等它對這個 head 轉綠才合併得進去）。合併指令回報成功不代表已合進去（merge queue 可能只是排隊）：接著跑 gh pr view ${N} --repo ${GH} --json state,mergedAt,mergeCommit 讀回，state=MERGED 填 merge_state=merged，還在排隊填 queued，其他填 not_merged。\n5. exit 1 或 3：不合併，改為退回 PR：${RETURN}；followups 照抄 gate 輸出的 followups，merge_state 填 not_merged。\nmerge-decision：\n${JSON.stringify(dec)}\npayload 用 merge-decision，gate_reasons 照抄 gate 輸出。`,
-  { label: inconsistent ? 'execute:return' : 'execute:merge', phase: 'Execute', agentType: NS + 'dev-merge-steward', schema: DECISION },
+    : `${CTX}\n\n## 派工單（執行模式：合併）\n對照與挑戰都判一致。\n1. 確認 head 仍是 ${dec.head_sha}。變了的話：guard.config.json 的 auto_merge.carry_verdict_on_rebase 不是 true 就停下判 hold，不做任何 gh 寫入；是 true 就照樣往下，由 gate 用 patch-id 判斷能不能沿用（之後的 --head-sha、--match-head-commit 都用目前 head）。${FREEZE_FILE} 存在且 frozen=true（自動合併已凍結）時也一樣停下。\n2. ${COMMENT('下面這份 merge-decision')}\n3. 跑 gate：${GATE}。\n4. exit 0：gh pr merge ${N} --repo ${GH} --squash --match-head-commit <目前 head>（合併方式依 guard.config.json 的 auto_merge.merge_method，預設 squash；目標 repo 用 CI 的 agent-merge-gate 當 required check 時，要等它對這個 head 轉綠才合併得進去）。合併指令回報成功不代表已合進去（merge queue 可能只是排隊）：接著跑 gh pr view ${N} --repo ${GH} --json state,mergedAt,mergeCommit 讀回，state=MERGED 填 merge_state=merged，還在排隊填 queued，其他填 not_merged。\n5. exit 1 或 3：不合併，改為退回 PR：${RETURN}；followups 照抄 gate 輸出的 followups，merge_state 填 not_merged。\nmerge-decision：\n${JSON.stringify(dec)}\npayload 用 merge-decision，gate_reasons 照抄 gate 輸出。`,
+  { label: inconsistent ? 'execute:return' : 'execute:merge', phase: 'Execute', ...MERGER_OPTS, schema: DECISION },
 )
 const result = exec ? exec.payload : { ...finalDecision, decision: 'hold', gate_reasons: ['steward 執行模式沒有交件；PR 狀態未知，先查 PR 狀態與 merge-audit.jsonl'] }
 // 只信讀回的狀態：gh pr merge 回報成功時，merge queue 可能只是排隊

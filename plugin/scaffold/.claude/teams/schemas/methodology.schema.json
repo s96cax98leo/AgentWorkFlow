@@ -438,11 +438,11 @@
             "enum": ["feature", "diagnose", "impact", "invariants", "changelog", "baseline", "research", "revert"],
             "description": "plan 段的做法：feature 一般需求、diagnose 除錯（重現、根因）、impact 需求變更（既有驗收條件改留刪）、invariants 重構（不能改變的行為）、changelog 依賴升級、baseline 效能基線、research 調研、revert 回退"
           },
-          "research_angles": {"type": "array", "items": {"type": "string"}, "description": "plan 段平行調研的角度（sdlc-plan 的角度清單）"},
+          "research_angles": {"type": "array", "items": {"type": "string"}, "description": "plan 段平行調研的角度（requirement、specs-adr、code-contracts、upstream，或 profile 的 research_angles 自己定義的）"},
           "design_lenses": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "design 段 skeptic 的檢查 lens（coverage、plan、system-design、delta、rollback、compat）"
+            "description": "design 段 skeptic 的檢查 lens（coverage、plan、system-design、delta、rollback、compat，或 profile 的 lenses.design 自己定義的）"
           },
           "test": {
             "type": "object",
@@ -452,12 +452,12 @@
               "security_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "安全審查：never、auto 依 has_security、always"},
               "modes": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["verify", "regression", "equivalence", "benchmark"]},
-                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）"
+                "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
+                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）；也可以是 profile 的 test_modes 自己定義的"
               }
             }
           },
-          "deliver_axes": {"type": "array", "items": {"type": "string", "enum": ["standards", "spec", "bugs", "history"]}, "description": "deliver 段的審查軸"},
+          "deliver_axes": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "deliver 段的審查軸（standards、spec、bugs、history，或 profile 的 lenses.deliver 自己定義的）"},
           "build_kinds": {
             "type": "array",
             "items": {"type": "string", "enum": ["code", "test", "doc"]},
@@ -487,7 +487,7 @@
           "add_stages": {"type": "array", "items": {"type": "string", "enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}},
           "research_angles": {"type": "array", "items": {"type": "string"}},
           "design_lenses": {"type": "array", "items": {"type": "string"}},
-          "deliver_axes": {"type": "array", "items": {"type": "string", "enum": ["standards", "spec", "bugs", "history"]}},
+          "deliver_axes": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}},
           "model_floors": {"type": "object", "description": "疊上這個 modifier 時各角色的最低模型等級（只會往上）", "additionalProperties": {"type": "string", "enum": ["light", "standard", "strong"]}},
           "test": {
             "type": "object",
@@ -497,13 +497,68 @@
               "security_review": {"type": "string", "enum": ["never", "auto", "always"], "description": "安全審查：never、auto 依 has_security、always"},
               "modes": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["verify", "regression", "equivalence", "benchmark"]},
-                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）"
+                "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
+                "description": "verify＝逐條驗收；regression＝加跑受影響舊驗收條件；equivalence＝驗行為等價（refactor）；benchmark＝前後量測（perf）；也可以是 profile 的 test_modes 自己定義的"
               }
             }
           },
           "split": {"type": "boolean"}
         }
+      }
+    },
+    "lenses": {
+      "type": "object",
+      "description": "選填：design 的檢查 lens、design 修訂輪的複查 lens、deliver 的審查軸怎麼問（定義）。選哪些仍由 recipes／modifiers 決定；這裡寫的同名項目換掉內建的問法，新名稱可以讓 recipes 選用。名稱是小寫英數與連字號（40 字以內）。recipe 指到內建與這裡都沒有的名稱時，該段停下交人",
+      "additionalProperties": false,
+      "properties": {
+        "design": {"type": "object", "description": "sdlc-design 的 lens（內建 coverage、plan、system-design、delta、rollback、compat）", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這個 lens 要檢查什麼（問法）"}}}},
+        "design_revise": {"type": "object", "description": "sdlc-design-revise 的複查 lens（內建 resolved、regression，profile 有系統設計方法時加 system-design）。新名稱一律加派，最多採用 8 個", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這個 lens 要複查什麼（問法）"}}}},
+        "deliver": {"type": "object", "description": "sdlc-deliver 的審查軸（內建 standards、spec、bugs、history）；新的軸排在內建四軸後面", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這一軸要審什麼（問法）"}}}}
+      }
+    },
+    "test_modes": {
+      "type": "object",
+      "description": "選填：test 段驗證模式的說明（內建 regression、equivalence、benchmark；verify 是基本的逐條驗收，不能改）。同名的換掉內建說明，新名稱可以讓 recipes 的 test.modes 選用",
+      "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["note"], "properties": {"note": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這個模式要多做什麼驗證、結果怎麼列"}}}
+    },
+    "research_angles": {
+      "type": "object",
+      "description": "選填：plan 段調研角度的定義（內建 requirement、specs-adr、code-contracts、upstream）。同名的換掉 ask；modes 逐個 plan_mode 蓋過內建的；新名稱可以讓 recipes 的 research_angles 選用。工具先定位（awf locate）只認內建角度，自訂角度一律由定位 agent 找",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ask"],
+        "properties": {
+          "ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這個角度要回答的問題（寫清楚去哪裡找、要列出什麼）"},
+          "modes": {"type": "object", "description": "各 plan_mode 專屬的問法（鍵是 plan_mode）", "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 2000}},
+          "locate": {"type": "boolean", "description": "false＝這個角度不查本機檔案（例如查上游 PR），不分定位與分析兩段。沒寫＝照內建（新角度是 true）"}
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "description": "選填：把某一步換成使用者自己的 agent（鍵是「段.步驟」，值是完整 agent_type）。只開放唯讀類的步驟；merge 段、build 段、test 段的驗證與審查不開放。換上去的 agent 要先登記在 guard.config.json 的 extension_agents（對應到被換掉的那個模版角色；沒登記時 awf 拒絕產生腳本），不能是 tpm-／dev- 模版角色。模型分級與下限照被換掉的角色算",
+      "additionalProperties": false,
+      "properties": {
+        "plan.locate": {"type": "string", "minLength": 1, "description": "plan 的定位（原本是 tpm-researcher）"},
+        "plan.research": {"type": "string", "minLength": 1, "description": "plan 的調研分析（原本是 tpm-researcher）"},
+        "plan.challenge": {"type": "string", "minLength": 1, "description": "plan 的 intent 反駁（原本是 tpm-skeptic）"},
+        "design.analyze": {"type": "string", "minLength": 1, "description": "design 的一致性檢查（原本是 tpm-skeptic）"},
+        "design.recheck": {"type": "string", "minLength": 1, "description": "design 修訂輪的複查（原本是 tpm-skeptic）"},
+        "deliver.review": {"type": "string", "minLength": 1, "description": "deliver 的各軸審查（原本是 tpm-reviewer）"},
+        "deliver.verify": {"type": "string", "minLength": 1, "description": "deliver 對審查發現的反駁（原本是 tpm-skeptic）"}
+      }
+    },
+    "briefs": {
+      "type": "object",
+      "description": "選填：簡報（event-brief）的格式假設。沒寫或不合法用內建值",
+      "additionalProperties": false,
+      "properties": {
+        "language_section": {"type": "string", "minLength": 1, "maxLength": 40, "description": "簡報的哪一節寫輸出語言（沒寫用 §1）"},
+        "outputs_section": {"type": "string", "minLength": 1, "maxLength": 40, "description": "簡報的哪一節寫產出路徑（沒寫用 §3）"},
+        "acceptance_section": {"type": "string", "minLength": 1, "maxLength": 40, "description": "簡報的哪一節寫驗收標準（沒寫用 §4）"},
+        "record_pattern": {"type": "string", "minLength": 1, "maxLength": 80, "description": "執行紀錄範例檔的檔名樣式，在 BRIEFS_DIR 底下（沒寫用 *_執行紀錄.md）；只能是檔名，不能有 / 或 \\"},
+        "upstream_keywords": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 40}, "description": "子任務標題含這些字（不分大小寫）就用上游模式（沒寫用 上游、upstream、PR、衝突、merge）"}
       }
     },
     "plan_modes": {
@@ -513,7 +568,7 @@
         "type": "object",
         "required": ["sections"],
         "additionalProperties": false,
-        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}}
+        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}, "refute": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "選填：這個 plan_mode 的 intent 交給 skeptic 反駁時的重點（沒寫用內建的）"}}
       }
     },
     "requirements": {
@@ -567,7 +622,16 @@
           "required": ["prefix"],
           "properties": {
             "prefix": {"type": "string", "minLength": 1, "description": "epic 與子任務分支的前綴（同 BRANCH_PREFIX）"},
-            "naming": {"type": "string"}
+            "naming": {"type": "string"},
+            "patterns": {
+              "type": "object",
+              "description": "選填：子任務分支與修正分支的命名樣式（sdlc-build、sdlc-test 照它組分支名；worktree 目錄名不變）。一定以 <prefix><epic> 開頭（前綴照 BRANCH_PREFIX），後面先接一個 . _ - 再寫其餘（不能接 /：<prefix><epic> 分支已經存在，git 不允許它底下再開分支）；其餘只能是英數與 . _ -，不能有連續兩個點、不能以 . 或 .lock 結尾。不合規則時範本用內建樣式",
+              "additionalProperties": false,
+              "properties": {
+                "task": {"type": "string", "maxLength": 120, "pattern": "^<prefix><epic>[._-][A-Za-z0-9._-]*<task>[A-Za-z0-9._-]*$", "description": "子任務分支（沒寫用 <prefix><epic>--<task>）；<task> 是子任務 id，要出現一次"},
+                "fix": {"type": "string", "maxLength": 120, "pattern": "^<prefix><epic>[._-][A-Za-z0-9._-]*(<round>[A-Za-z0-9._-]+<group>|<group>[A-Za-z0-9._-]+<round>)[A-Za-z0-9._-]*$", "description": "test 段平行修正的分支（沒寫用 <prefix><epic>--fix<round>-<group>）；<round> 是第幾輪、<group> 是子計劃 id，各出現一次、中間要隔開"}
+              }
+            }
           }
         },
         "pr_size": {
@@ -585,6 +649,15 @@
           "properties": {
             "format": {"type": "string", "minLength": 1},
             "notes": {"type": "string"}
+          }
+        },
+        "repo_docs": {
+          "type": "object",
+          "description": "選填：目標 repo 的審查規範與 PR 範本放在哪（sdlc-deliver、event-pr-review 的派工單照它寫）。相對目標 repo 的路徑，不能是絕對路徑或含 ..",
+          "additionalProperties": false,
+          "properties": {
+            "review": {"type": "string", "minLength": 1, "maxLength": 200, "description": "審查規範（沒寫用 REVIEW.md）"},
+            "pr_template": {"type": "string", "minLength": 1, "maxLength": 200, "description": "PR 說明的範本（沒寫用 .github/pull_request_template.md）"}
           }
         },
         "sync": {

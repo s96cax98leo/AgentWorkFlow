@@ -1,5 +1,5 @@
 // sdlc-design.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { ENV, SUB_PLANS, extScenario, recipeScenarios, kgScenarios } from './_helpers.mjs'
+import { ENV, SUB_PLANS, extScenario, recipeScenarios, kgScenarios, withFeature, roleScenarios } from './_helpers.mjs'
 
 export default [
     extScenario('ext:db2'),
@@ -175,5 +175,34 @@ export default [
     args: { pack: '/tmp/run/design/pack.md' },
     expect: (r) => Object.entries(r.prompts).filter(([, p]) => /要改的檔現在連著的需求與測試/.test(p)).map(([l]) => `${l} 的派工單不該提知識圖的那一節`),
   },
+  {
+    // lens 的定義（profile 的 lenses.design）：同名的換問法，新名稱讓 recipe 選用
+    name: 'lens 定義：lenses.design 改寫 coverage、新增 data-privacy（recipe 選用）→ 照設定的問法派',
+    profile: (p) => ({ lenses: { design: { coverage: { ask: '示範客戶 ACME 的 coverage 問法：每條驗收條件都對得到需求編號嗎？' }, 'data-privacy': { ask: '設計有沒有交代個資欄位的遮罩與保存期限？' } } }, ...withFeature(p, { design_lenses: ['coverage', 'plan', 'data-privacy'] }) }),
+    expect: (r) => [
+      ...(r.out && r.out.halted ? [`不該 halted：${r.out.halt_reason}`] : []),
+      ...(/示範客戶 ACME 的 coverage 問法/.test(r.prompts['analyze:coverage'] || '') && !/intent 的每個期望結果都有 spec 驗收條件/.test(r.prompts['analyze:coverage'] || '') ? [] : ['coverage 應該換成 profile 的問法']),
+      ...(/個資欄位的遮罩與保存期限/.test(r.prompts['analyze:data-privacy'] || '') ? [] : [`沒有派出自訂的 lens：${r.labels.join(',')}`]),
+      ...(/plan 與子任務：每條驗收條件都有任務與測試/.test(r.prompts['analyze:plan'] || '') ? [] : ['沒改寫的 plan 要照內建的問法']),
+    ],
+  },
+  {
+    name: 'lens 定義不合法（ask 不是字串、名稱不合規則）→ 內建的照內建',
+    profile: (p) => ({ lenses: { design: { coverage: { ask: 123 }, plan: '不是物件', 'Bad Name': { ask: 'x' } } }, ...withFeature(p, { design_lenses: ['coverage', 'plan'] }) }),
+    expect: (r) => [
+      ...(r.out && r.out.halted ? [`不該 halted：${r.out.halt_reason}`] : []),
+      ...(/intent 的每個期望結果都有 spec 驗收條件/.test(r.prompts['analyze:coverage'] || '') && /plan 與子任務：每條驗收條件都有任務與測試/.test(r.prompts['analyze:plan'] || '') ? [] : ['不合法的定義要退回內建的問法']),
+    ],
+  },
+  {
+    // 變嚴：recipe 指到內建與 profile 都沒有定義的 lens，不能默默少查一項
+    name: 'lens 定義：recipe 指到沒有定義的 lens（定義不合法也算沒有）→ halted，不派任何 agent',
+    profile: (p) => ({ lenses: { design: { 'data-privacy': { ask: '' } } }, ...withFeature(p, { design_lenses: ['coverage', 'plan', 'data-privacy'] }) }),
+    expect: (r) => [
+      ...(r.out && r.out.halted && /不認得的 design lens：data-privacy/.test(r.out.halt_reason || '') ? [] : [`要 halted 並說明：${JSON.stringify(r.out && { halted: r.out.halted, why: r.out.halt_reason })}`]),
+      ...(r.calls.length ? [`不該派任何 agent：${r.labels.join(',')}`] : []),
+    ],
+  },
+  ...roleScenarios('design.analyze', 'tpm-skeptic', /^analyze:/),
   ...kgScenarios(),
 ]
