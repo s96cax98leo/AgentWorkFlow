@@ -467,10 +467,13 @@ fn long_chained_command_stays_fast() {
     let tmp = Tmp::new("perf");
     let ws = workspace(&tmp.0);
     let limit_ms: u128 = if cfg!(debug_assertions) { 7000 } else { 2000 };
+    // 除錯版在 CI 的共用機器上要 6～8 秒，會碰到內部期限（那時照設計是擋）。CI 的除錯版改用三分之一的長度，
+    // 完整長度由 CI 另外用發佈版跑這個測試（.github/workflows/ci.yml 的「長指令（發佈版）」）。
+    let kb: usize = if cfg!(debug_assertions) && std::env::var_os("CI").is_some_and(|v| !v.is_empty()) { 42 } else { 127 };
     for (unit, want) in [("ls", ALLOW), ("awf kb query x", ALLOW), ("cat plugin/bin/awf", ALLOW), ("$X kb lint", ALLOW), ("bash -c 'awf kb lint'", ALLOW)] {
-        let n = (127 * 1024) / (unit.len() + 4);
+        let n = (kb * 1024) / (unit.len() + 4);
         let cmd = vec![unit; n].join(" && ");
-        assert!(cmd.len() <= 128 * 1024 && cmd.len() > 120 * 1024);
+        assert!(cmd.len() <= (kb + 1) * 1024 && cmd.len() > (kb - 7) * 1024);
         for (tool, agent) in [("Bash", DEV), ("PowerShell", DEV), ("Bash", REV)] {
             let t0 = Instant::now();
             let r = hook(&ws, tool, agent, &cmd);
@@ -483,7 +486,7 @@ fn long_chained_command_stays_fast() {
     }
     // 上萬個指令替換：超過展開上限，team agent 往嚴走（擋），主 session 照舊；兩邊都不能拖過時限
     for (unit, glue) in [("echo $(awf kb lint)", " && "), ("\"$(awf kb lint)\"", " "), ("$(echo $(echo $(echo $(echo $(date)))))", " ")] {
-        let n = (127 * 1024) / (unit.len() + glue.len());
+        let n = (kb * 1024) / (unit.len() + glue.len());
         let cmd = format!("echo {}", vec![unit; n].join(glue));
         for (agent, want) in [(DEV, BLOCK), (MAIN, ALLOW)] {
             let t0 = Instant::now();
@@ -496,7 +499,7 @@ fn long_chained_command_stays_fast() {
         }
     }
     // 最後一段才是不允許的：也要擋得到
-    let n = (120 * 1024) / 6;
+    let n = ((kb - 7) * 1024) / 6;
     let cmd = format!("{} && awf save-run approve r", vec!["ls"; n].join(" && "));
     let r = hook(&ws, "Bash", DEV, &cmd);
     assert_eq!(r.status.code(), Some(2), "{}", String::from_utf8_lossy(&r.stderr));
