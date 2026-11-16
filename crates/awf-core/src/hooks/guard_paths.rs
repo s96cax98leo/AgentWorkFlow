@@ -233,6 +233,10 @@ impl Guard {
             return Err(self.block(&format!("{agent} 不能寫 {pname}（{runs} 底下的 program.json 是多需求排程的清單，由人維護；awf program next 會照它印出建議的指令。\
 要調整排程就寫進交件的 open_questions）")));
         }
+        if has_role && format!("/{}/", fold(&p.replace('\\', "/")).trim_matches('/')).contains("/.claude/projects/") {
+            return Err(self.block(&format!("{agent} 不能寫 ~/.claude/projects/ 底下的檔（Claude Code 的記憶與對話紀錄：下一個 session 會自動載入，只由人或主 session 寫；可以讀。\
+要留給之後的事寫進交件的 open_questions 或執行紀錄）")));
+        }
         let parent = path::parent(&p);
         if has_role && self.in_scratchpad(&p, data)? {
             // 這個 session 的 scratchpad：模版角色都可以寫（中間產物）。上面的規則已經判過

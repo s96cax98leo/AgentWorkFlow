@@ -106,6 +106,7 @@ re!(MULTI_SLASH, r"(?<![:/])[/\\\\]{2,}");
 re!(TEAMS_REL, r#"(?:^|[\s"'=])\.?[/\\\\]?(?:teams|workflows)(?:[/\\\\]|\s|$)"#);
 re!(CI_TARGET, r#"(?:^|[/\\\s"'=])\.github[/\\]workflows(?:[/\\"']|\s|$)"#, "i");
 re!(CI_REL, r#"(?:^|[\s"'=])\.?[/\\]?workflows(?:[/\\"']|\s|$)"#, "i");
+re!(CLAUDE_PROJECTS_TARGET, r#"(?:^|[/\\\s"'=(:])\.claude[/\\]projects(?:[/\\"')]|\s|$)"#, "i");
 re!(PROJECT_ENV_SET, concat!(
     r#"(?:^|[\s;&|('"])(?:\$env:)?CLAUDE_PROJECT_DIR\s*=(?!=)"#,
     r#"|(?:set-item|si|new-item|ni)\s+(?:-path\s+)?["']?env:CLAUDE_PROJECT_DIR"#,
@@ -127,7 +128,7 @@ pub fn all_patterns() -> Vec<&'static Re> {
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
-         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
+         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &CLAUDE_PROJECTS_TARGET, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
 }
 
@@ -1084,6 +1085,22 @@ impl Guard {
         Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
     }
 
+    /// shell 寫入 `~/.claude/projects/` 底下（Claude Code 的記憶與對話紀錄；下一個 session 會自動載入記憶，等於跨 session 的指示）。
+    /// 讀不擋；判法比照 [`Self::shell_writes_ci`]（盡力而為）。
+    fn shell_writes_claude_projects(&self, seg: &str, cwd: &str) -> R<bool> {
+        let here = self.folded_here(cwd)?;
+        let inside = here.contains("/.claude/projects/");
+        if !inside && !seg.contains("projects") {
+            return Ok(false);
+        }
+        let probe = MULTI_SLASH.replace_all(&norm(seg), "/");
+        if !inside && !CLAUDE_PROJECTS_TARGET.is_match(&probe) {
+            return Ok(false);
+        }
+        let probe = NULL_REDIR.replace_all(&probe, " ");
+        Ok(SHELL_WRITE.is_match(&probe) || RECORD_WRITE_CMD.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    }
+
     /// 作用目錄解析並摺疊後的路徑（前後帶 `/`）。同一個目錄連續問只解析一次。
     fn folded_here(&self, cwd: &str) -> R<String> {
         if let Ok(memo) = self.here_memo.lock() {
@@ -1380,6 +1397,10 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
             if team && self.shell_writes_ci(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（CI 檔決定哪些檢查會跑，只由人或主 session 改，\
 例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）")));
+            }
+            if team && self.shell_writes_claude_projects(seg, d)? {
+                return Err(self.block(&format!("{agent} 不能寫 ~/.claude/projects/ 底下的檔（Claude Code 的記憶與對話紀錄：下一個 session 會自動載入，只由人或主 session 寫；\
+可以讀。要留給之後的事寫進交件的 open_questions 或執行紀錄；讀它的指令不要和寫入寫在同一段）")));
             }
             for (tool_name, sub, tool_re) in [("awf publish", "publish", &PUBLISH_PY), ("awf merge-gate", "merge-gate", &MERGE_GATE_PY)] {
                 let via_awf: Vec<&awf_cli::Call> = awf.iter().filter(|c| c.sub == sub).collect();
