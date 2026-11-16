@@ -1,0 +1,13 @@
+{
+  "schema": "program",
+  "description": "change 帶引號與指令替換",
+  "semantic": true,
+  "data": {
+    "epics": [
+      {
+        "id": "b",
+        "change": "x'$(id)'"
+      }
+    ]
+  }
+}

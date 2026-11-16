@@ -40,6 +40,7 @@ pub mod ps;
 pub mod py;
 pub mod pyjson;
 pub mod re;
+pub mod safe;
 pub mod read_budget;
 pub mod session_start;
 pub mod subst;

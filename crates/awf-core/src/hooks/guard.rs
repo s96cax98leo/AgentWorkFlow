@@ -43,6 +43,9 @@ const BUILTIN_STAGES: &[&str] = &[
 pub const PACK_STATE: &[&str] = &["reuse", "pack-args"];
 pub const SHARED_CONTEXT_NAMES: &[&str] = &["context.md", "pack.md", "decisions.jsonl", "決策記憶.md", "結案摘要.md", "links.jsonl"];
 
+/// 多需求排程的清單（`awf program` 讀的 `<runs_dir>/program.json`）：由人維護，`awf program next` 會照它印出建議的指令。
+pub const PROGRAM_FILE: &str = "program.json";
+
 pub static GIT_GLOBAL_OPTS: Re = Re::new(
     r#"\bgit\s+(?:(?:-C|-c)\s+(?:"[^"]*"|'[^']*'|\S+)\s+|--(?:git-dir|work-tree|namespace)=\S+\s+|--no-pager\s+|--bare\s+)+"#, "");
 pub static SLUG: Re = Re::new(r"^[\w.-]+/[\w.-]+$", "");

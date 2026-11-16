@@ -369,9 +369,38 @@ fn prep(h: &str, ci: bool) -> Prepared<'_> {
     Prepared { text: Cow::Owned(text), map: if changed_len { Some(map) } else { None } }
 }
 
+/// 比對前對齊過的字串（[`prep`] 的結果，見檔頭的 `\w`／`\b` 與 `re.I` 兩條）。樣式比對的其實是這個字串：
+/// 自己拿字串去組樣式、或要預先看「樣式會看到什麼」時用。`ci`＝樣式忽略大小寫。位移可能和原字串不同（`ci` 換掉 U+0130／U+0131 時）。
+pub fn aligned(h: &str, ci: bool) -> Cow<'_, str> {
+    prep(h, ci).text
+}
+
+/// 把一段**字面值**變成可以接進樣式的寫法：先做和被比對字串相同的對齊（[`aligned`]），再跳脫。
+/// 直接 `regex::escape(字面值)` 接進樣式的話，字面值裡有「兩邊分類不同」的字元（結合符號、上標數字…）時，
+/// 被比對的字串會被換成替身、樣式裡的卻沒換，永遠配不到（例如設定檔的 `task_id_prefix` 帶這類字元）。
+pub fn literal(lit: &str, ci: bool) -> String {
+    regex::escape(&aligned(lit, ci))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn literals_are_aligned_like_the_haystack() {
+        // 字面值帶結合符號：照原樣跳脫的樣式配不到（被比對的字串已經換成替身），對齊過的配得到
+        let prefix = "TASK\u{301}-";
+        let raw = Re::dynamic(format!(r"(?<![\w-]){}\d+\b", regex::escape(prefix)), "");
+        let fixed = Re::dynamic(format!(r"(?<![\w-]){}\d+\b", literal(prefix, false)), "");
+        assert!(!raw.is_match("做 TASK\u{301}-12 這張"));
+        assert!(fixed.is_match("做 TASK\u{301}-12 這張") && !fixed.is_match("做 TASK-12 這張"));
+        // 一般的字面值不變；特殊字元照樣跳脫
+        assert_eq!(literal("REQ-", false), regex::escape("REQ-"));
+        assert_eq!(literal("a.b(c)", false), r"a\.b\(c\)");
+        assert_eq!(aligned("abc", true), "abc");
+        assert_eq!(aligned("\u{130}rm", true), "irm");
+        assert_eq!(aligned("\u{130}rm", false), "\u{130}rm");
+    }
 
     #[test]
     fn dotless_i_only_with_ignore_case() {

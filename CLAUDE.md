@@ -234,7 +234,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **結案後重寫 vault**：`save_run/cli.rs` 的 `vault_after`（close、abandon 之後）呼叫 `auto::refresh_vault`；沒有圖時輸出不變。
 - **hook**：`hooks/auto.rs`（`session_context`、`mark_dirty`、`prompt_context`）；`awf hook mark-dirty`（PostToolUse）與 `awf hook prompt-context`（UserPromptSubmit）在 `plugin/hooks/hooks.json` 註冊。永遠 exit 0、注入有字數上限、包在資料標籤裡、不注入 subagent；輸出格式的依據（官方文件網址）寫在模組開頭。
 - **中斷回收**：`auto::recover_interrupted`（`cmd_next` 在 `decide` 之前呼叫）。只收 plan 段的調研，條件見函式說明；寫入走 `pack::record_reuse`，紀錄在 run.json 的 `awf.recovered`。
-- **多需求排程**：`awf program`（`crates/awf-core/src/program.rs`）。唯讀：`status`、`next`；`<runs_dir>/program.json` 的格式在 `schemas/program.schema.json`，語意規則 `program::semantic_errors`（`schema::check_doc` 也會呼叫）。team agent 只能跑 `status`（`hooks/awf_cli.rs`）。
+- **多需求排程**：`awf program`（`crates/awf-core/src/program.rs`）。唯讀：`status`、`next`；`<runs_dir>/program.json` 的格式在 `schemas/program.schema.json`，語意規則 `program::semantic_errors`（`schema::check_doc` 也會呼叫；`run`、`change` 是字元白名單 `program::name_ok`）。`next` 的建議指令每個值加單引號、`--requirement` 是佔位符，title 只當資料列出。team agent 只能跑 `status`（`hooks/awf_cli.rs`），也寫不到 program.json。
 - 測試：`crates/awf/tests/auto_e2e.rs`（假的段結果從開工走到結案、全關與刪掉圖、中斷回收的該收與不該收）、`crates/awf/tests/hooks_auto.rs`（三個 hook 的該注入、不該注入、出錯不注入）、`awf program --selftest`、golden 的 `program*`、`methodology-knowledge-auto*`。說明在 `docs/知識圖.md`〈自動接點〉與 `docs/監控與整合.md`〈多需求排程〉。
 
 ### 平行處理
@@ -284,7 +284,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### Hooks（`plugin/hooks/hooks.json` 註冊，規則在 `crates/awf-core/src/hooks/`）
 
-- **入口**：只有一個，`awf hook <guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context>`。設定一律透過 `crates/awf-core/src/config.rs` 讀 `${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json`，不要寫死路徑。
+- **入口**：只有一個，`awf hook <guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context>`。設定一律透過 `crates/awf-core/src/config.rs` 讀 `${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json`，不要寫死路徑；沒有 `CLAUDE_PROJECT_DIR` 時 `config::workspace()` 和閘門一樣用 `project::locate`（往上找最外層的 `.claude/teams/VERSION`），找不到才用目前目錄。
 - **失敗語意**（`crates/awf-core/src/hooks/mod.rs` 開頭的說明為準）：
   - hook 跑不起來（找不到執行檔、逾時）：plugin 的 `hooks.json` 設 `onFailure: continue`、timeout 10 秒，放行，不鎖死使用者。要更嚴就用 `--hooks project`。
   - 跑得起來但輸入壞掉（空、不是 JSON、缺欄位、shell 指令超過 128KB）：守門類擋（exit 2），交件類放行。128KB 上限是因為 guard 規則耗時隨指令長度約平方成長，拖到逾時就等於放行。
@@ -295,6 +295,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **`guard-paths` 的範圍**：Edit、Write、NotebookEdit、Read、Grep。`guard.config.json` 的 `linked_repos`（工作區以外的我方 repo，`hooks::guard::linked_rel`）讓 dev-* 可以改裡面的檔、tpm-writer 可以寫它的 specs，其餘規則照舊；模版角色可以寫這個 session 的 scratchpad（`hooks::guard::in_scratchpad`：系統暫存目錄底下的 `<session_id>/scratchpad/`）。Read、Grep 讀機敏檔（`.env`、金鑰、憑證）一律擋，主 session 也擋；`acceptance_test_dirs` 裡的檔案 dev-implementer 不能寫。
 - **`knowledge.repos`（1.0）**：profile 的 `knowledge.repos[].path` 底下對模版角色唯讀（`config::profile_bits` 和自訂事件段名同一次讀檔；`hooks::guard::kg_repos`／`kg_repo_hit`、`guard_shell` 的 `shell_writes_kg_repo`）。讀照既有規則（工作區外的 Read／Grep 本來就放行，機敏檔一律擋）；Edit／Write 與 shell 寫入都擋，同時登記在 `linked_repos` 也擋。根目錄、家目錄、專案自己或上層目錄的項目不算；profile 讀不懂當作沒設定。shell 那一條先找目標再比對寫法（寫法的樣式大，先比對會讓每個指令多 30ms 以上）。
 - **CI 檔（1.0）**：模版角色不能寫任何 repo 的 `.github/workflows/`（`guard_paths::ci_workflow_path`、`guard_shell` 的 `shell_writes_ci`／`CI_TARGET`；Edit／Write 與 shell 寫入都擋，讀可以）。CI 檔由人或主 session 改（`awf ci render --write`）。這是事前擋；`awf merge-gate` 對 diff 動到 `.github/` 一律 escalate 是事後的另一層，兩邊不衝突。主 session 與使用者自己的 agent 不受影響。
+- **team agent 寫不到的位置（1.0 第二次審查補的）**：`<runs_dir>/program.json`（`guard::PROGRAM_FILE`）、`~/.claude/projects/` 底下（記憶與對話紀錄；讀可以）、作用目錄在 vault 裡的寫入與 `sqlite3 <graph.db>`、整個目錄搬進 `.github`／`.claude`（`shell_moves_tree`）。同一條指令裡的簡單賦值會展開一次、多跑一次規則（`expand_simple_vars`：只會更嚴，16KB 以內）。`hooks/awf_cli.rs` 放行的唯讀子指令另外過 `flag_deny`：不能帶寫入旗標（`WRITE_FLAGS`）、不能把 git 選項塞進參數（`GIT_INJECT`），`awf script assemble`、`awf checklist check --write` 擋（不帶 `--write` 的 check 照舊放行：它執行檔裡的驗證指令，列在 SECURITY.md 的已知限制）；設定或拿掉 `CLAUDE_PROJECT_DIR` 擋。案例在 `crates/awf/tests/review_guard.rs`。
+- **進對話的文字（`hooks/safe.rs`）**：`text`（一行、去控制字元、反引號、角括號、截短）、`odd`、`plain_run_name`、`instruction_like`（祈使句式、授權宣稱、shell 指令樣式；寧可多濾）、`sh_quote`。`kg::format_answer`、vault 匯出、`awf program` 的 title、SessionStart 摘要與 prompt-context 都用它；hook 路徑過不了的整筆不放，決策只列筆數與位置，run 名稱不符合 `^[A-Za-z0-9._-]{1,64}$` 的列「（名稱略）」。新的會進對話的欄位一律先過這一層。
 - **`guard-shell` 擋什麼**：同時處理 Bash 與 PowerShell 工具。擋推送、寫上游、推受保護分支、越權寫入，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - **steward 合併什麼時候放行**：由 `crates/awf-core/src/hooks/guard_shell.rs` 的 `merge_refusal` 判斷，以下全部成立才放行：
   - `auto_merge` 已啟用。

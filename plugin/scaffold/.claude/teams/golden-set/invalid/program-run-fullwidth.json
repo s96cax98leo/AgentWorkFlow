@@ -1,0 +1,13 @@
+{
+  "schema": "program",
+  "description": "run 用全形符號（｜）冒充：白名單只收中日韓文字，不收全形標點",
+  "semantic": true,
+  "data": {
+    "epics": [
+      {
+        "id": "b",
+        "run": "r｜sh"
+      }
+    ]
+  }
+}

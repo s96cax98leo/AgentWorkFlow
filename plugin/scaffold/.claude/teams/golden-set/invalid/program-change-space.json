@@ -1,0 +1,13 @@
+{
+  "schema": "program",
+  "description": "change 有空白",
+  "semantic": true,
+  "data": {
+    "epics": [
+      {
+        "id": "b",
+        "change": "add export"
+      }
+    ]
+  }
+}

@@ -140,12 +140,18 @@ pub struct AutoMerge {
     pub freeze_file: String,
 }
 
-/// 工作區：`CLAUDE_PROJECT_DIR`，沒有就用目前目錄。
+/// 工作區：`CLAUDE_PROJECT_DIR`；沒有就和閘門用同一套找法（[`crate::project::locate`]：從目前目錄往上找最外層含
+/// `.claude/teams/VERSION` 的目錄），都找不到才用目前目錄（沒套用的專案照舊）。這樣 hook 讀的守門設定與稽核紀錄，
+/// 和 `awf merge-gate`、`awf save-run` 寫的是同一個專案的。有設環境變數時不碰檔案系統（Claude Code 跑 hook 一定會設）。
 pub fn workspace() -> Result<String, PyErr> {
-    match std::env::var_os("CLAUDE_PROJECT_DIR").map(|v| v.to_string_lossy().into_owned()).filter(|v| !v.is_empty()) {
-        Some(v) => Ok(path::pp(&v)),
-        None => path::cwd(),
+    if let Some(v) = std::env::var_os(crate::project::ENV).map(|v| v.to_string_lossy().into_owned()).filter(|v| !v.is_empty()) {
+        return Ok(path::pp(&v));
     }
+    let cwd = path::cwd()?;
+    Ok(match crate::project::locate(None, None, &cwd) {
+        Some(found) => path::pp(&found.root),
+        None => cwd,
+    })
 }
 
 pub fn config_path(ws: &str) -> String {

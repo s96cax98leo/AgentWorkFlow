@@ -1,6 +1,6 @@
 //! guard-paths：Edit／Write／NotebookEdit 的寫入範圍，Read／Grep 的機敏檔。原本是 0.x 的 Python 工具 `guard.py` 的 `check_paths`、`check_read`。
 
-use super::guard::{err, fold, git_toplevel, is_secret_path, norm, str_or_empty, tool_input, Guard, AUDIT_FILES, PACK_STATE, R, SECRET_FILE_OK, SHARED_CONTEXT_NAMES};
+use super::guard::{err, fold, git_toplevel, is_secret_path, norm, str_or_empty, tool_input, Guard, AUDIT_FILES, PACK_STATE, PROGRAM_FILE, R, SECRET_FILE_OK, SHARED_CONTEXT_NAMES};
 use super::path;
 use super::re::Re;
 use crate::config;
@@ -125,6 +125,9 @@ impl Guard {
         if in_runs && format!("/{frel}").contains("/archive/") {
             return Ok(Some("run 目錄的 archive/".into()));
         }
+        if in_runs && fname == PROGRAM_FILE {
+            return Ok(Some(format!("{pname}（多需求排程的清單，由人維護）")));
+        }
         Ok(None)
     }
 
@@ -225,6 +228,14 @@ impl Guard {
         }
         if has_role && in_runs_fold && format!("/{}", frel.replace('\\', "/")).contains("/archive/") {
             return Err(self.block(&format!("{agent} 不能寫 run 目錄的 archive/（結案摘要只由主 session 跑 awf save-run 產生，會收進知識層）")));
+        }
+        if has_role && in_runs_fold && fname == PROGRAM_FILE {
+            return Err(self.block(&format!("{agent} 不能寫 {pname}（{runs} 底下的 program.json 是多需求排程的清單，由人維護；awf program next 會照它印出建議的指令。\
+要調整排程就寫進交件的 open_questions）")));
+        }
+        if has_role && format!("/{}/", fold(&p.replace('\\', "/")).trim_matches('/')).contains("/.claude/projects/") {
+            return Err(self.block(&format!("{agent} 不能寫 ~/.claude/projects/ 底下的檔（Claude Code 的記憶與對話紀錄：下一個 session 會自動載入，只由人或主 session 寫；可以讀。\
+要留給之後的事寫進交件的 open_questions 或執行紀錄）")));
         }
         let parent = path::parent(&p);
         if has_role && self.in_scratchpad(&p, data)? {

@@ -12,8 +12,8 @@
 //! 找不到時：閘門類（merge-gate、save-run 的 stage／approve／escalate、publish）用 [`require`]，報錯、不退回目前目錄；
 //! 輔助類用 [`root_or_cwd`]，維持原本「用目前目錄」的行為。
 //!
-//! hook 那一側（`config::workspace`）是 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄；Claude Code 執行 hook 時一定會設這個變數，
-//! 所以只要 Claude Code 的專案就是最外層有 VERSION 的那個目錄，兩邊是同一個專案根（合併稽核紀錄的寫入與讀取位置因此一致）。
+//! hook 那一側（`config::workspace`）用同一套：`CLAUDE_PROJECT_DIR`（Claude Code 執行 hook 時一定會設），沒有就往上找最外層的記號，
+//! 都找不到才用目前目錄（沒套用的專案不擋主 session）。所以 hook 與閘門讀寫的是同一個專案根的設定與合併稽核紀錄。
 
 use crate::kb::pyish;
 use std::path::Path;

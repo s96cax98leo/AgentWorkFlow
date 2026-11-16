@@ -492,6 +492,25 @@ fn scan_repo(repo: &RepoSrc, lay: &Layout, out: &mut Vec<Src>, skipped: &mut Vec
     Ok(())
 }
 
+/// 符號連結的名字正常、指到的卻是機敏檔或被排除的位置：解開後用實際的路徑再過一次機敏檔與排除規則。
+/// 不是連結（解開後就是自己）回 None。
+fn link_refusal(abs: &str, root: &str, excludes: &[regex::Regex]) -> Option<&'static str> {
+    let Ok(real) = std::fs::canonicalize(abs) else { return Some("讀不到") };
+    let real = kb::to_posix(&real.to_string_lossy());
+    let root_real = std::fs::canonicalize(root).map(|r| kb::to_posix(&r.to_string_lossy())).unwrap_or_else(|_| root.to_string());
+    if !pyish::is_under(&real, &root_real) {
+        return Some("連到專案外");
+    }
+    let rel = kb::to_posix(&pyish::relpath(&real, &root_real));
+    if sensitive(&rel) || rel.split('/').any(|seg| kb::is_sensitive(seg) || matches!(seg.to_lowercase().as_str(), "secrets" | "secret" | ".ssh" | ".aws" | ".gnupg")) {
+        return Some("連到機敏檔");
+    }
+    if excludes.iter().any(|rx| rx.is_match(&rel)) || rel.split('/').any(|seg| kb::PRUNE_DIRS.contains(&seg)) {
+        return Some("連到被排除的位置");
+    }
+    None
+}
+
 fn walk_md(dir: &Path, out: &mut Vec<String>, depth: usize) {
     if depth > 12 {
         return;
@@ -517,7 +536,12 @@ fn collect(lay: &Layout, aux: &mut Aux, skipped: &mut Vec<(String, String)>, clo
     scan_code(lay, &mut out, aux, skipped, clock)?;
     let (docs, skip) = kb::scan(&lay.cfg, kb::MAX_BYTES).map_err(|err| format!("掃文件失敗（{}）", err.msg))?;
     skipped.extend(skip);
+    let excludes: Vec<regex::Regex> = lay.cfg.exclude.iter().filter_map(|p| kb::glob_regex(p)).collect();
     for (rel, abs) in docs {
+        if let Some(why) = link_refusal(&abs, &lay.root, &excludes) {
+            skipped.push((rel, why.into()));
+            continue;
+        }
         out.push(Src { rel, abs, src: "doc", lang: None });
     }
     let mut notes = Vec::new();
