@@ -26,10 +26,11 @@ const LONG: usize = 1500;
 
 /// Python 接受、這裡拒絕的步驟：標籤、原因。要求：這裡的 exit code 不是 0、stdout 沒有「狀態 done」；
 /// `stage` 以外的指令（核准、結案、記決定…）不能改到任何檔，`stage` 只能把該段記成 invalid。
-const STRICTER: [(&str, &str); 8] = [
-    ("nan-result", "workflow 回傳有 NaN／Infinity／1e999：Python 讀得進來、照常存檔；這裡當成讀不懂，不存檔、不改 run.json"),
-    ("huge-int-result", "workflow 回傳有超出 64 位元範圍的整數：Python 照常存檔；這裡當成讀不懂"),
-    ("deep-result", "workflow 回傳巢狀超過 200 層：Python 照常處理（判缺件）；這裡當成讀不懂"),
+const STRICTER: [(&str, &str); 9] = [
+    ("nan-result", "workflow 回傳有 NaN／Infinity／1e999：Python 讀得進來、照常存檔並照內容判定；這裡讀不懂，該段一律標 invalid、清掉舊核准、舊結果檔換成說明（1.0 審查 M3：原本是不存檔、不改 run.json，舊的結果與核准會留著，那不是更嚴）"),
+    ("huge-int-result", "workflow 回傳有超出 64 位元範圍的整數：Python 照常存檔並照內容判定；這裡讀不懂，該段標 invalid、清掉舊核准（同 nan-result）"),
+    ("deep-result", "workflow 回傳巢狀超過 200 層：Python 照常處理（判缺件）；這裡讀不懂，該段標 invalid、清掉舊核准（同 nan-result）"),
+    ("surrogate-result", "workflow 回傳有落單的代理字元跳脫：Python 寫檔時丟 UnicodeEncodeError（結果檔已建立但是空的，run.json 沒動、舊核准留著）；這裡讀的時候就拒絕，該段標 invalid、清掉舊核准（同 nan-result）"),
     ("nan-profile", "--profile 的檔有 NaN：Python 讀得進來、照用；這裡當成讀不懂，plan 判 invalid"),
     ("nan-stage-file", "政策核准時該段的結果檔有 NaN：Python 讀得進來再判違規；這裡當成讀不懂、直接失敗（一樣不核准）"),
     ("nan-run", "run.json 有 NaN：Python 讀得進來、照常執行各指令；這裡當成讀不懂，每個指令都失敗"),
@@ -38,9 +39,8 @@ const STRICTER: [(&str, &str); 8] = [
 ];
 
 /// 兩邊都拒絕、只是文字或例外類別不同的步驟：標籤、原因。要求：兩邊的 exit code 都不是 0，改到的檔相同。
-const KNOWN: [(&str, &str); 1] = [
-    ("surrogate-result", "workflow 回傳有落單的代理字元跳脫：Python 寫檔時丟 UnicodeEncodeError（結果檔已建立但是空的）；這裡讀的時候就拒絕，不建檔"),
-];
+/// （目前沒有：原本的 surrogate-result 在 1.0 審查 M3 之後會把該段標成 invalid，改列 STRICTER。）
+const KNOWN: [(&str, &str); 0] = [];
 
 fn expected() -> Value {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/parity/save_run.expected.json");
@@ -342,6 +342,7 @@ fn replay_script() {
     let (mut bad, mut runs, mut calls, mut exact, mut usage) = (Vec::new(), 0usize, 0usize, 0usize, 0usize);
     let mut differs: BTreeMap<String, usize> = BTreeMap::new();
     let mut unknown_labels: BTreeSet<String> = BTreeSet::new();
+    let mut recorded: Vec<Value> = Vec::new();
     for (i, step) in steps.iter().enumerate() {
         let op = s(&step["op"]);
         let rel = s(&step["path"]);
@@ -449,8 +450,20 @@ fn replay_script() {
                     bad.push(format!("{head}\n    label {l}：{m}\n    {}", why.join("\n    ")));
                 }
             }
-            None => bad.push(format!("{head}\n    {}", why.join("\n    "))),
+            None => {
+                if step.get("usage").is_none() {
+                    // raises 的步驟只比 exit code、例外類別與改到的檔：抄回基準時只換 files
+                    recorded.push(json!({"i": i, "code": code, "stdout": out, "stderr": err, "files": files, "raises": step.get("raises").is_some()}));
+                }
+                bad.push(format!("{head}\n    {}", why.join("\n    ")))
+            }
         }
+    }
+    // 基準確實該變的時候：AWF_SAVE_RUN_RECORD=<輸出檔> 把「和基準不同、沒有列名」的指令這次實際的結果寫出來（一行一筆：
+    // 第幾步、exit code、stdout、stderr、改到的檔），逐筆確認後抄回 tests/parity/save_run.expected.json 對應的那一步。測試照樣失敗。
+    if let Ok(path) = std::env::var("AWF_SAVE_RUN_RECORD") {
+        let text: String = recorded.iter().map(|r| format!("{r}\n")).collect();
+        std::fs::write(&path, text).unwrap_or_else(|e| panic!("寫不了 {path}：{e}"));
     }
     let labelled: usize = differs.values().sum();
     println!("save_run 劇本：{} 步（指令 {runs}、函式 {calls}、其餘是檔案操作）；逐字相同 {exact}（其中用法訊息只比 exit code {usage} 步）、列名的差異 {labelled}：{differs:?}", steps.len());
@@ -514,24 +527,28 @@ fn tamper_errors_agree_with_merge_gate() {
         v
     };
     let strict = json!({"recipes": {"bugfix": {"stages": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}}});
+    // 沒有 recipes 的 profile：用內建節解析（專案沒有 profile 檔時不再退回內建節，見最後一例）
+    let builtin = Some("{}".to_string());
     // （專案的 profile 文字, run.json 的 recipe）
     let cases: Vec<(Option<String>, Value)> = vec![
-        (None, rec("bugfix", json!([]), resolve("bugfix", json!([])))),
-        (None, rec("feature", json!(["ui", "security"]), resolve("feature", json!(["ui", "security"])))),
-        (None, rec("bugfix", json!([]), edit(resolve("bugfix", json!([])), &|r| r["stages"] = json!(["plan", "build", "sync", "deliver", "merge"])))),
-        (None, rec("bugfix", json!([]), edit(resolve("bugfix", json!([])), &|r| r["deliver_axes"] = json!(["bugs"])))),
-        (None, rec("bugfix", json!([]), edit(resolve("bugfix", json!([])), &|r| r["build_kinds"] = json!(["code", "test", "doc", "agent_config", "migration"])))),
-        (None, rec("spike", json!([]), edit(resolve("spike", json!([])), &|r| r["publishable"] = json!(true)))),
-        (None, rec("hotfix", json!([]), edit(resolve("hotfix", json!([])), &|r| r["followup"] = json!(false)))),
-        (None, rec("沒有這個", json!([]), resolve("feature", json!([])))),
-        (None, rec("feature", json!(["zzz"]), resolve("feature", json!([])))),
-        (None, rec("docs", json!([]), resolve("feature", json!([])))),
+        (builtin.clone(), rec("bugfix", json!([]), resolve("bugfix", json!([])))),
+        (builtin.clone(), rec("feature", json!(["ui", "security"]), resolve("feature", json!(["ui", "security"])))),
+        (builtin.clone(), rec("bugfix", json!([]), edit(resolve("bugfix", json!([])), &|r| r["stages"] = json!(["plan", "build", "sync", "deliver", "merge"])))),
+        (builtin.clone(), rec("bugfix", json!([]), edit(resolve("bugfix", json!([])), &|r| r["deliver_axes"] = json!(["bugs"])))),
+        (builtin.clone(), rec("bugfix", json!([]), edit(resolve("bugfix", json!([])), &|r| r["build_kinds"] = json!(["code", "test", "doc", "agent_config", "migration"])))),
+        (builtin.clone(), rec("spike", json!([]), edit(resolve("spike", json!([])), &|r| r["publishable"] = json!(true)))),
+        (builtin.clone(), rec("hotfix", json!([]), edit(resolve("hotfix", json!([])), &|r| r["followup"] = json!(false)))),
+        (builtin.clone(), rec("沒有這個", json!([]), resolve("feature", json!([])))),
+        (builtin.clone(), rec("feature", json!(["zzz"]), resolve("feature", json!([])))),
+        (builtin.clone(), rec("docs", json!([]), resolve("feature", json!([])))),
         (Some("{壞的".to_string()), rec("bugfix", json!([]), resolve("bugfix", json!([])))),
         (Some("[]".to_string()), rec("bugfix", json!([]), resolve("bugfix", json!([])))),
         (Some(json!({"recipes": {"x": {"stages": ["build"]}}}).to_string()), rec("bugfix", json!([]), resolve("bugfix", json!([])))),
         (Some(strict.to_string()), rec("bugfix", json!([]), resolve("bugfix", json!([])))),
+        // run.json 已有 recipe、專案卻沒有 profile 檔：兩邊都不採信（1.0 審查 H1；0.x 這裡退回內建節）
+        (None, rec("bugfix", json!([]), resolve("bugfix", json!([])))),
     ];
-    let mgctx = mg::Ctx { teams: PathBuf::from(teams()), project_dir_env: None, env: Vec::new(), stdin: Some(String::new()) };
+    let mgctx = mg::Ctx { teams: Some(PathBuf::from(teams())), project_dir_env: None, env: Vec::new(), stdin: Some(String::new()) };
     let (mut with_errors, mut clean) = (0, 0);
     for (i, (profile, recipe_v)) in cases.iter().enumerate() {
         let pf = format!("{proj}/.claude/teams/methodology.json");

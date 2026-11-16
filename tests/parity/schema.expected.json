@@ -1135,9 +1135,7 @@
   },
   {
    "text": "```json\n{\"a\": 1}\n```\n```json\n{壞的}\n```",
-   "value": {
-    "a": 1
-   }
+   "value": null
   },
   {
    "text": "{\"status\": \"done\"}",

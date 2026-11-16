@@ -90,7 +90,7 @@ pub struct Env {
 }
 
 impl Env {
-    /// 命令列用：專案根目錄取 `CLAUDE_PROJECT_DIR`（沒有就用目前目錄）。
+    /// 命令列用：專案根目錄照 [`crate::project`] 的解析，找不到就用目前目錄。
     pub fn real() -> Env {
         let ctx = Ctx::from_env();
         let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());

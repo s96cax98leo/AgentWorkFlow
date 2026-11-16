@@ -20,7 +20,8 @@
 //! - 讀進來的 JSON（run.json、各段的結果檔、profile）有 NaN、Infinity、落單的代理字元跳脫、超出 64 位元範圍的整數、
 //!   巢狀超過 200 層時一律當成讀不懂（拒絕）。
 //! - 0.x 的 Python 版丟出沒接住的例外的地方（traceback、exit 1、不寫稽核紀錄），這裡印「awf publish：類別：訊息」、exit 1，同樣不推送。
-//! - 專案根目錄：沒給 `--project-dir` 時用 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄（0.x 的 Python 版是工具檔所在的專案）。
+//! - 專案根目錄：沒給 `--project-dir` 時用 `CLAUDE_PROJECT_DIR`，沒有就從目前目錄往上找最外層的 `.claude/teams/VERSION`
+//!   （[`crate::project`]；0.x 的 Python 版是工具檔所在的專案）。找不到就拒絕，不退回目前目錄。
 //! - `--supersedes` 只收 ASCII 數字、而且要在 64 位元範圍內。
 //! - 用法訊息的指令名是 `awf publish`。
 
@@ -105,7 +106,7 @@ fn refused<T>(msg: impl Into<String>) -> R<T> {
 pub struct Env {
     /// save_run 的環境（schema 所在的 teams 目錄、重算 recipe 用的專案 profile、相對路徑的基準）。
     pub ctx: Ctx,
-    /// 沒給 `--project-dir` 時的專案根目錄（`CLAUDE_PROJECT_DIR`，沒有就用目前目錄）。
+    /// 沒給 `--project-dir` 時的專案根目錄（[`crate::project`] 的解析結果）。
     pub project: String,
     /// git 指令（selftest 換成會記錄 push 的替身）。
     pub git: Vec<String>,
@@ -116,10 +117,17 @@ pub struct Env {
 }
 
 impl Env {
-    /// 命令列用：專案根目錄取 `CLAUDE_PROJECT_DIR`（沒有就用目前目錄）。
+    /// 命令列用（selftest、說明這類不判定的路徑）：專案根目錄照 [`crate::project`] 的解析，找不到就用目前目錄。
     pub fn real() -> Env {
         let ctx = Ctx::from_env();
         Env { project: ctx.pack_root.clone(), ctx, git: vec!["git".into()], gh: vec!["gh".into()], env: Vec::new() }
+    }
+
+    /// 命令列用（推送）：專案根目錄是 `explicit`（`--project-dir`）→ `CLAUDE_PROJECT_DIR` → 從目前目錄往上找最外層的
+    /// `.claude/teams/VERSION`；找不到回錯誤，不退回目前目錄。設定、schema、重算 recipe 用的 profile 都跟著同一個專案根。
+    pub fn for_gate(explicit: Option<&str>) -> Result<Env, String> {
+        let ctx = Ctx::for_gate(explicit)?;
+        Ok(Env { project: ctx.pack_root.clone(), ctx, git: vec!["git".into()], gh: vec!["gh".into()], env: Vec::new() })
     }
 }
 
@@ -800,8 +808,19 @@ pub fn main(args: &[String]) -> i32 {
         Some("--selftest-fake-gh") => return fake_gh(args.get(1..).unwrap_or_default()),
         _ => {}
     }
+    // 真的要推送時一定要找得到專案根（--project-dir 也算）；selftest、說明、用法錯誤不需要
+    let env = match parse_args(args) {
+        Ok(a) if !args.iter().any(|x| x == "--selftest") => match Env::for_gate(some(&a.project_dir)) {
+            Ok(e) => e,
+            Err(m) => {
+                eprintln!("awf publish：{m}，沒有推送");
+                return 1;
+            }
+        },
+        _ => Env::real(),
+    };
     let (mut out, mut errs) = (String::new(), String::new());
-    let code = run(&Env::real(), args, &mut out, &mut errs);
+    let code = run(&env, args, &mut out, &mut errs);
     print!("{out}");
     eprint!("{errs}");
     code

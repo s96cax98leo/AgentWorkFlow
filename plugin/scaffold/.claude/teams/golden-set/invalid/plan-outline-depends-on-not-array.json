@@ -1,0 +1,43 @@
+{
+ "payload": null,
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [],
+  "payload": {
+   "split": true,
+   "sub_plans": [
+    {
+     "id": "a",
+     "title": "a",
+     "owns": [
+      "src/a"
+     ],
+     "depends_on": "b"
+    },
+    {
+     "id": "b",
+     "title": "b",
+     "owns": [
+      "src/b"
+     ],
+     "depends_on": "a"
+    }
+   ]
+  }
+ },
+ "semantic": true,
+ "expect": "depends_on 要是陣列"
+}

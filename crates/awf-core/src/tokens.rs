@@ -578,7 +578,7 @@ pub fn main(argv: &[String]) -> i32 {
         return selftest();
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let project = std::env::var("CLAUDE_PROJECT_DIR").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| cwd.clone());
+    let project = PathBuf::from(crate::project::root_or_cwd(None));
     let (code, out, err) = run_captured(argv, &cwd, &project);
     print!("{out}");
     eprint!("{err}");

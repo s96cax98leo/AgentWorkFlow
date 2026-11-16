@@ -1394,7 +1394,7 @@
    "stdin": "前言\n```json\n{\"壞\": \n```\n中間\n```json\n{\"status\": \"done\", \"summary\": \"示範客戶 ACME 的交件\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}\n```\n結尾\n",
    "rc": 1,
    "out": "",
-   "err": "找不到交件信封：回報最後要有一個 ```json 區塊（格式見 .claude/teams/schemas/envelope.schema.json）\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $：缺欄位 payload\n"
   },
   {
    "op": "envelope",
@@ -1406,7 +1406,7 @@
    "stdin": "前言\n```json\n{\"壞\": \n```\n中間\n```json\n{\"status\": \"done\", \"summary\": \"示範客戶 ACME 的交件\", \"artifacts\": [], \"evidence\": [], \"confidence\": 0.9, \"open_questions\": [], \"derived_work\": []}\n```\n結尾\n",
    "rc": 1,
    "out": "",
-   "err": "找不到交件信封：回報最後要有一個 ```json 區塊（格式見 .claude/teams/schemas/envelope.schema.json）\n"
+   "err": "交件信封不合格（awf check-envelope）：\n- $：缺欄位 payload\n"
   },
   {
    "op": "envelope",

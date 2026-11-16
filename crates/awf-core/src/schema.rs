@@ -99,10 +99,13 @@ impl Schemas {
     }
 
     /// 上層系統發的任務編號長相：task_id_prefix 後接數字；沒設定前綴就不檢查。
-    pub fn task_id_regex(&self) -> Option<Regex> {
+    /// 用 [`crate::hooks::re::Re`]：`\w`、`\b` 對「字」的看法和 0.x 的 Python 版一致（結合符號不算字；
+    /// 直接用 Rust 的引擎時，編號前後緊接結合符號就認不出來）。
+    pub fn task_id_regex(&self) -> Option<crate::hooks::re::Re> {
         let prefix = self.config_str("task_id_prefix");
         if prefix.is_empty() { return None; }
-        Regex::new(&format!(r"(?<![\w-]){}\d+\b", regex::escape(&prefix))).ok()
+        let re = crate::hooks::re::Re::dynamic(format!(r"(?<![\w-]){}\d+\b", regex::escape(&prefix)), "");
+        re.compiles().then_some(re)
     }
 
     pub fn task_authority(&self) -> String {
@@ -176,21 +179,30 @@ impl Schemas {
         let tid = self.task_id_regex();
         for (i, w) in items(get(env, "derived_work")).iter().enumerate() {
             if let (Some(re), Some(s)) = (&tid, w.as_str()) {
-                if re.is_match(s).unwrap_or(false) {
+                if re.is_match(s) {
                     errs.push(format!("derived_work[{i}]：不可自編任務編號（交 {} 編）：{s}", self.task_authority()));
                 }
             }
         }
         let empty = Value::Object(Map::new());
         let payload = get(env, "payload").filter(|p| p.is_object()).unwrap_or(&empty);
-        if let Some(Value::Array(subtasks)) = get(payload, "subtasks") {
-            let subs: Vec<&Value> = subtasks.iter().filter(|s| s.is_object()).collect();
+        if get(payload, "subtasks").is_some_and(|v| !v.is_null()) {
+            let subs: Vec<&Value> = objects_of(get(payload, "subtasks"), "payload.subtasks", &mut errs);
             let id_of = |s: &Value| str_opt(get(s, "id"));
+            // 先看型別：每個子任務的 id、owns、depends_on（型別不對的記錯誤，下面當成沒有那一項繼續檢查）
+            let mut owns_of: Vec<Vec<&Value>> = Vec::new();
+            let mut deps_of: Vec<Vec<&Value>> = Vec::new();
+            for (i, s) in subs.iter().enumerate() {
+                key_field(get(s, "id"), &format!("payload.subtasks[{i}].id"), &mut errs);
+                let who = if get(s, "id").is_some_and(Value::is_string) { format!("子任務 {} 的", id_of(s)) } else { format!("payload.subtasks[{i}] 的") };
+                owns_of.push(strings_of(get(s, "owns"), &format!("{who} owns"), &mut errs));
+                deps_of.push(strings_of(get(s, "depends_on"), &format!("{who} depends_on"), &mut errs));
+            }
             let ids: HashSet<String> = subs.iter().map(|s| repr_opt(get(s, "id"))).collect();
             let mut owner: HashMap<String, (String, String)> = HashMap::new(); // 檔案 → (id 的 repr, id 的顯示字串)
-            for s in &subs {
+            for (n, s) in subs.iter().enumerate() {
                 let me = (repr_opt(get(s, "id")), id_of(s));
-                for f in items(get(s, "owns")) {
+                for f in owns_of[n].iter().copied() {
                     let key = repr(f);
                     if let Some(prev) = owner.get(&key) {
                         if prev.0 != me.0 {
@@ -199,7 +211,7 @@ impl Schemas {
                     }
                     owner.insert(key, me.clone());
                 }
-                for d in items(get(s, "depends_on")) {
+                for d in deps_of[n].iter().copied() {
                     match d.as_str() {
                         Some(ds) if ds.starts_with('@') => {
                             // 子計劃規劃時依賴別的子計劃，彙整時由 sdlc-design 展開成該子計劃的子任務
@@ -223,9 +235,9 @@ impl Schemas {
                 }
             };
             let wave: HashMap<String, i64> = subs.iter().map(|s| (repr_opt(get(s, "id")), wave_of(s))).collect();
-            for s in &subs {
+            for (n, s) in subs.iter().enumerate() {
                 let mine = wave[&repr_opt(get(s, "id"))];
-                for d in items(get(s, "depends_on")) {
+                for d in deps_of[n].iter().copied() {
                     if let Some(ds) = d.as_str() {
                         if let Some(w) = wave.get(&repr(d)) {
                             if *w > mine {
@@ -244,6 +256,58 @@ impl Schemas {
 
 fn repr_opt(v: Option<&Value>) -> String {
     v.map(repr).unwrap_or_else(|| "None".into())
+}
+
+// 語意規則走訪前的型別檢查。0.x 的 Python 版直接走訪值：字串逐字元、物件走鍵、不能當鍵的值丟例外（exit 1）。
+// 這裡不學它「字串逐字元」，而是型別不對就記一條錯誤（指出欄位）並當成空的繼續：不能因為型別不對就什麼都沒檢查到。
+
+/// 清單欄位：沒有或 null 當成沒寫（空的）；陣列回元素；其他型別記一條錯誤，回空的。
+fn list_of<'a>(v: Option<&'a Value>, what: &str, errs: &mut Vec<String>) -> &'a [Value] {
+    match v {
+        None | Some(Value::Null) => &[],
+        Some(Value::Array(a)) => a,
+        Some(other) => {
+            errs.push(format!("{what} 要是陣列（收到 {}）", type_name(other)));
+            &[]
+        }
+    }
+}
+
+/// 物件的清單：同 [`list_of`]，另外每個元素都要是物件（不是的記一條錯誤、跳過）。
+fn objects_of<'a>(v: Option<&'a Value>, what: &str, errs: &mut Vec<String>) -> Vec<&'a Value> {
+    let mut out = Vec::new();
+    for (i, x) in list_of(v, what, errs).iter().enumerate() {
+        if x.is_object() { out.push(x) } else { errs.push(format!("{what}[{i}] 要是物件（收到 {}）", type_name(x))) }
+    }
+    out
+}
+
+/// 字串的清單：同 [`list_of`]，另外每個元素都要是字串（不是的記一條錯誤、跳過）。回傳的仍是原本的值（都是字串）。
+fn strings_of<'a>(v: Option<&'a Value>, what: &str, errs: &mut Vec<String>) -> Vec<&'a Value> {
+    let mut out = Vec::new();
+    for (i, x) in list_of(v, what, errs).iter().enumerate() {
+        if x.is_string() { out.push(x) } else { errs.push(format!("{what}[{i}] 要是字串（收到 {}）", type_name(x))) }
+    }
+    out
+}
+
+/// 拿來當鍵比對的欄位（id、requirement_id）：沒有或 null 照舊（由 schema 的 required 管）；有值就要是字串。
+/// 數字的 `1` 與 `1.0` 在 0.x 是同一個鍵、陣列與物件在 0.x 丟例外，這裡一律記錯誤。
+fn key_field(v: Option<&Value>, what: &str, errs: &mut Vec<String>) {
+    if let Some(x) = v.filter(|x| !x.is_null() && !x.is_string()) {
+        errs.push(format!("{what} 要是字串（收到 {}）", type_name(x)));
+    }
+}
+
+fn type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "布林值",
+        Value::Number(_) => "數字",
+        Value::String(_) => "字串",
+        Value::Array(_) => "陣列",
+        Value::Object(_) => "物件",
+    }
 }
 
 /// 移除 schema 節點上的 $id、title、description，讓內嵌進 workflow 的 schema 精簡。
@@ -389,8 +453,15 @@ pub fn merge_decision_errors(payload: &Value) -> Vec<String> {
     let Some(p) = payload.as_object() else { return vec![] };
     if !(p.contains_key("traceability") && p.contains_key("decision")) { return vec![]; }
     let mut errs = Vec::new();
-    let rows: Vec<&Value> = items(p.get("traceability")).iter().filter(|r| r.is_object()).collect();
-    let followups: Vec<&Value> = items(p.get("followups")).iter().filter(|f| f.is_object()).collect();
+    // 型別先看過：對照表與 followups 要是物件的陣列，requirement_id 要是字串（型別不對的記錯誤，不能當成沒有那幾列）
+    let rows: Vec<&Value> = objects_of(p.get("traceability"), "traceability", &mut errs);
+    let followups: Vec<&Value> = objects_of(p.get("followups"), "followups", &mut errs);
+    for (i, r) in rows.iter().enumerate() {
+        key_field(get(r, "requirement_id"), &format!("traceability[{i}].requirement_id"), &mut errs);
+    }
+    for (i, f) in followups.iter().enumerate() {
+        key_field(get(f, "requirement_id"), &format!("followups[{i}].requirement_id"), &mut errs);
+    }
     let out_of_scope = truthy_opt(p.get("out_of_scope"));
     let is_match = |r: &Value| get(r, "result").and_then(Value::as_str) == Some("match");
     let bad: Vec<Value> = rows.iter().filter(|r| !is_match(r)).map(|r| get(r, "requirement_id").cloned().unwrap_or(Value::Null)).collect();
@@ -441,7 +512,16 @@ pub fn plan_outline_errors(payload: &Value) -> Vec<String> {
     let Some(p) = payload.as_object() else { return vec![] };
     if !(p.contains_key("split") && p.contains_key("sub_plans")) { return vec![]; }
     let mut errs = Vec::new();
-    let subs: Vec<&Value> = items(p.get("sub_plans")).iter().filter(|s| s.is_object()).collect();
+    let subs: Vec<&Value> = objects_of(p.get("sub_plans"), "sub_plans", &mut errs);
+    // 型別先看過：id 要是字串，depends_on、owns 要是字串的陣列（型別不對的記錯誤，下面當成沒有那一項繼續檢查）
+    let mut dep_strs: Vec<Vec<String>> = Vec::new();
+    let mut own_strs: Vec<Vec<String>> = Vec::new();
+    for (i, s) in subs.iter().enumerate() {
+        key_field(get(s, "id"), &format!("sub_plans[{i}].id"), &mut errs);
+        let who = if get(s, "id").is_some_and(Value::is_string) { format!("子計劃 {} 的", str_opt(get(s, "id"))) } else { format!("sub_plans[{i}] 的") };
+        dep_strs.push(strings_of(get(s, "depends_on"), &format!("{who} depends_on"), &mut errs).into_iter().map(str_of).collect());
+        own_strs.push(strings_of(get(s, "owns"), &format!("{who} owns"), &mut errs).into_iter().map(str_of).collect());
+    }
     let split = truthy_opt(p.get("split"));
     if split && subs.len() < 2 { errs.push("split=true 時至少要 2 個子計劃".into()); }
     if !split && !subs.is_empty() { errs.push("split=false 時 sub_plans 要留空".into()); }
@@ -451,10 +531,10 @@ pub fn plan_outline_errors(payload: &Value) -> Vec<String> {
     for i in dup { errs.push(format!("子計劃 id {i} 重複")); }
     let mut order: Vec<String> = Vec::new();
     let mut deps: HashMap<String, Vec<String>> = HashMap::new();
-    for s in &subs {
+    for (n, s) in subs.iter().enumerate() {
         let sid = str_opt(get(s, "id"));
         if !deps.contains_key(&sid) { order.push(sid.clone()); }
-        deps.insert(sid, items(get(s, "depends_on")).iter().map(str_of).collect());
+        deps.insert(sid, dep_strs[n].clone());
     }
     for sid in &order {
         for d in &deps[sid] {
@@ -480,11 +560,10 @@ pub fn plan_outline_errors(payload: &Value) -> Vec<String> {
         for v in left.values_mut() { for k in &ready { v.remove(k); } }
     }
     for (i, a) in subs.iter().enumerate() {
-        for b in &subs[i + 1..] {
-            for pa in items(get(a, "owns")) {
-                for pb in items(get(b, "owns")) {
-                    let (sa, sb) = (str_of(pa), str_of(pb));
-                    if covers(&sa, &sb) || covers(&sb, &sa) {
+        for (j, b) in subs.iter().enumerate().skip(i + 1) {
+            for sa in &own_strs[i] {
+                for sb in &own_strs[j] {
+                    if covers(sa, sb) || covers(sb, sa) {
                         errs.push(format!("子計劃 {} 與 {} 的範圍重疊：{sa}／{sb}", str_opt(get(a, "id")), str_opt(get(b, "id"))));
                     }
                 }
@@ -626,12 +705,22 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             }
         }
     }
-    let cons: Vec<&Value> = items(get(doc, "constraints")).iter().filter(|c| c.is_object()).collect();
+    // 限制文件、recipe、modifier 是閘門會讀的設定（save-run 讀 profile 時只跑這裡的語意規則，沒有再跑一次 schema）：
+    // 型別不對不能當成沒寫，否則限制文件的檢查就默默不做了
+    let cons: Vec<&Value> = objects_of(get(doc, "constraints"), "constraints", &mut errs);
     for n in dup_strings(&cons.iter().map(|c| get(c, "id")).collect::<Vec<_>>()) {
         errs.push(format!("constraints 的 id「{n}」重複"));
     }
-    for c in &cons {
+    for k in ["recipes", "modifiers"] {
+        if let Some(v) = get(doc, k).filter(|v| !v.is_null() && !v.is_object()) {
+            errs.push(format!("{k} 要是物件（收到 {}）", type_name(v)));
+        }
+    }
+    for (i, c) in cons.iter().enumerate() {
         let cid = str_opt(get(c, "id"));
+        let who = if get(c, "id").is_some_and(Value::is_string) { format!("constraints[{cid}]") } else { format!("constraints[{i}]") };
+        strings_of(get(c, "stages"), &format!("{who}.stages"), &mut errs);
+        strings_of(get(c, "paths"), &format!("{who}.paths"), &mut errs);
         if let Some(f) = get(c, "file").and_then(Value::as_str).filter(|f| !f.is_empty()) {
             let norm = f.replace('\\', "/");
             if outside(f) {
@@ -799,12 +888,38 @@ pub fn deliverables_errors(d: Option<&Value>, place: &str) -> Vec<String> {
     errs
 }
 
-/// 從 agent 回報文字取出信封：優先最後一個 ```json 區塊，否則嘗試整段。
+/// 最後一個 ```json 區塊的內容（由短到長的幾種切法）；沒有 json 區塊回 None。
+/// 區塊從最後一個「```json」開始（「```jsonl」「```json5」這類不算），不看內容長什麼樣子：寫壞的（少了右括號、沒收尾、
+/// 不是物件）也算，才不會被當成沒交而退回前一個。收尾是後面的「```」；JSON 的字串裡可能也有「```」，
+/// 所以每一個「```」（以及文字結尾）都是一種可能的收尾，由呼叫端依序試。
+fn last_json_block(text: &str) -> Option<Vec<&str>> {
+    const OPEN: &str = "```json";
+    let mut end = text.len();
+    let start = loop {
+        let i = text[..end].rfind(OPEN)?;
+        let after = i + OPEN.len();
+        if text[after..].chars().next().is_none_or(|c| c.is_whitespace() || c == '{' || c == '[') {
+            break after;
+        }
+        end = i;
+    };
+    let rest = &text[start..];
+    let mut cuts: Vec<&str> = rest.match_indices("```").map(|(i, _)| rest[..i].trim()).collect();
+    cuts.push(rest.trim());
+    Some(cuts)
+}
+
+/// 文字裡有沒有 ```json 區塊（不管解析得了與否）。[`extract_json`] 回 None 時用來分辨「沒有交」與「交了但讀不懂」。
+pub fn has_json_block(text: &str) -> bool {
+    last_json_block(text).is_some()
+}
+
+/// 從 agent 回報文字取出信封：有 ```json 區塊時只看**最後一個**，它解析不了就是沒有信封（回 None）；
+/// 不往前找（前面的區塊可能是被後面更正掉的舊版本，退回去等於採用了 agent 自己已經改掉的結論）。
+/// 沒有 ```json 區塊時試整段。
 pub fn extract_json(text: &str) -> Option<Value> {
-    let re = regex::Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").expect("固定的正規式");
-    let blocks: Vec<&str> = re.captures_iter(text).filter_map(|c| c.get(1).map(|m| m.as_str())).collect();
-    for raw in blocks.iter().rev() {
-        if let Ok(v) = serde_json::from_str::<Value>(raw) { return Some(v); }
+    match last_json_block(text) {
+        Some(cuts) => cuts.iter().find_map(|raw| serde_json::from_str::<Value>(raw).ok()),
+        None => serde_json::from_str(text).ok(),
     }
-    serde_json::from_str(text).ok()
 }

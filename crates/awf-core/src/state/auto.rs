@@ -243,23 +243,30 @@ pub fn last_envelope(path: &str) -> Option<Value> {
                             }
                         }
                         Some("text") => {
-                            if let Some(v) = b.get("text").and_then(Value::as_str).and_then(schema::extract_json).filter(sr::is_envelope) {
-                                last = Some(v);
+                            if let Some(t) = b.get("text").and_then(Value::as_str) {
+                                text_envelope(t, &mut last);
                             }
                         }
                         _ => {}
                     }
                 }
             }
-            Some(Value::String(t)) => {
-                if let Some(v) = schema::extract_json(t).filter(sr::is_envelope) {
-                    last = Some(v);
-                }
-            }
+            Some(Value::String(t)) => text_envelope(t, &mut last),
             _ => {}
         }
     }
     last
+}
+
+/// 一段文字裡的信封：讀得懂就取代前面的；有 json 區塊但最後一個讀不懂，前面收到的也不算數
+/// （agent 之後交的東西讀不懂，不能回頭採用它更早交的那一份）。沒有 json 區塊的文字不影響。
+fn text_envelope(t: &str, last: &mut Option<Value>) {
+    match schema::extract_json(t) {
+        Some(v) if sr::is_envelope(&v) => *last = Some(v),
+        Some(_) => {}
+        None if schema::has_json_block(t) => *last = None,
+        None => {}
+    }
 }
 
 fn mtime(p: &str) -> Option<f64> {

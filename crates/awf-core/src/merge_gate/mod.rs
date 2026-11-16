@@ -175,9 +175,12 @@ pub fn line_kind(line: &str) -> (bool, bool) {
 
 /// 執行環境：測試可以換掉 teams 目錄、環境變數與 stdin。
 pub struct Ctx {
-    /// `.claude/teams`（schema、預設的 guard.config.json 與 methodology.json 都在這裡）。
-    pub teams: PathBuf,
-    /// 環境變數 `CLAUDE_PROJECT_DIR`。
+    /// schema 所在的 `.claude/teams`。`None`（實際執行）＝跟著專案根：`<專案>/.claude/teams`，所以 schema、guard.config.json、
+    /// methodology.json 一定來自同一個專案，和在哪個目錄執行無關。`Some`（測試、selftest）＝固定用這一份；
+    /// 這時沒給專案根就用它往上兩層（0.x 的 Python 版「工具檔所在的專案」）。
+    pub teams: Option<PathBuf>,
+    /// 沒給 `--project-dir` 時的專案根：實際執行時是 [`crate::project::find`] 的結果
+    /// （`CLAUDE_PROJECT_DIR`，沒有就從目前目錄往上找最外層的 `.claude/teams/VERSION`）。
     pub project_dir_env: Option<String>,
     /// 另外加給子程序（git、需求清單指令）的環境變數。
     pub env: Vec<(String, String)>,
@@ -186,9 +189,19 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    /// 實際執行時的環境：teams 目錄是目前目錄的 `.claude/teams`。
+    /// 實際執行時的環境：專案根照全部子指令共用的解析（[`crate::project`]），schema 跟著專案根。
+    /// 找不到專案根時 `project_dir_env` 是 None：沒帶 `--project-dir` 就報錯，不退回目前目錄。
     pub fn real() -> Self {
-        Ctx { teams: PathBuf::from(".claude/teams"), project_dir_env: std::env::var("CLAUDE_PROJECT_DIR").ok(), env: Vec::new(), stdin: None }
+        let found = crate::project::find(None);
+        if let Some(n) = found.as_ref().and_then(|f| f.note.as_ref()) {
+            eprintln!("awf merge-gate：{n}");
+        }
+        Ctx { teams: None, project_dir_env: found.map(|f| f.root), env: Vec::new(), stdin: None }
+    }
+
+    /// 這次判定用的 `.claude/teams`（schema 在它底下）。
+    fn teams_of(&self, proj: &str) -> PathBuf {
+        self.teams.clone().unwrap_or_else(|| PathBuf::from(pyutil::join(proj, ".claude/teams")))
     }
 }
 
@@ -270,15 +283,20 @@ fn int_or(v: &Value, default: i128, what: &str) -> Result<i128, Crash> {
 
 // ------------------------------------------------------------------ 設定與路徑
 
-fn project_dir(ctx: &Ctx, arg: Option<&str>) -> String {
-    if let Some(a) = arg.filter(|a| !a.is_empty()) { return pyutil::resolve(a); }
-    if let Some(e) = ctx.project_dir_env.as_deref().filter(|e| !e.is_empty()) { return pyutil::resolve(e); }
-    pyutil::parent(&pyutil::parent(&pyutil::resolve(&ctx.teams.to_string_lossy())))
+/// 專案根：`--project-dir` → 環境給的（見 [`Ctx::project_dir_env`]）→ 固定的 teams 往上兩層（只有測試與 selftest）。
+/// 都沒有就是錯誤：不拿目前目錄當專案（目前目錄可以是 PR 的 checkout，自帶一份 `.claude/teams`）。
+fn project_dir(ctx: &Ctx, arg: Option<&str>) -> Result<String, Crash> {
+    if let Some(a) = arg.filter(|a| !a.is_empty()) { return Ok(pyutil::resolve(a)); }
+    if let Some(e) = ctx.project_dir_env.as_deref().filter(|e| !e.is_empty()) { return Ok(pyutil::resolve(e)); }
+    match &ctx.teams {
+        Some(t) => Ok(pyutil::parent(&pyutil::parent(&pyutil::resolve(&t.to_string_lossy())))),
+        None => Err(crate::project::not_found_message()),
+    }
 }
 
 fn load_config(ctx: &Ctx, proj: &str) -> Value {
     let p = pyutil::join(proj, ".claude/teams/guard.config.json");
-    let sch = Schemas::new(&ctx.teams);
+    let sch = Schemas::new(ctx.teams_of(proj));
     let path = PathBuf::from(&p);
     Value::Object(sch.config(if path.exists() { Some(path.as_path()) } else { None }))
 }
@@ -436,25 +454,47 @@ fn adapter_command(ctx: &Ctx, command: &Value, proj: &str, env_extra: &[(&str, S
 /// 只是示範怎麼把 markdown 轉成正規化清單，不代表需求必須這樣寫。
 fn adapter_spec_md(path: &str, id_pattern: &Value) -> Result<Vec<Req>, Fail> {
     let text = pyutil::read_text(path).map_err(|e| read_fail(e, |m| format!("讀不到需求文件 {path}：{m}")))?;
+    // 使用者自訂的樣式走 hooks::re：`\w`、`\b`、`\s`、`$` 對照 0.x 的 Python 版（直接用 Rust 的引擎時，
+    // 編號旁邊緊接結合符號的那一行會認不出來，整條需求就從清單消失）。內建樣式的差異已經在 py_word_space 補過，照舊。
+    enum Pat {
+        Builtin(FRegex),
+        Custom(crate::hooks::re::Re),
+    }
     let pat = match id_pattern {
-        v if !truthy(v) => FRegex::new(&py_word_space(&DEFAULT_ID_PATTERN.replace(r"[\s:", "[@S@:")).replace("@S@", r"\s\x1c-\x1f")),
-        Value::String(s) => FRegex::new(s),
+        v if !truthy(v) => Pat::Builtin(
+            FRegex::new(&py_word_space(&DEFAULT_ID_PATTERN.replace(r"[\s:", "[@S@:")).replace("@S@", r"\s\x1c-\x1f"))
+                .map_err(|e| Fail::Crash(crash(&format!("re.error：requirements.id_pattern 寫壞了（{e}）"))))?,
+        ),
+        Value::String(s) => {
+            let re = crate::hooks::re::Re::dynamic(s.clone(), "");
+            if !re.compiles() {
+                return Err(Fail::Crash(crash(&format!("re.error：requirements.id_pattern 寫壞了（{s}）"))));
+            }
+            Pat::Custom(re)
+        }
         other => return Err(Fail::Crash(crash(&format!("TypeError：requirements.id_pattern 要是字串（{}）", pyfmt::repr(other))))),
     };
-    let pat = pat.map_err(|e| Fail::Crash(crash(&format!("re.error：requirements.id_pattern 寫壞了（{e}）"))))?;
     let mut out: Vec<Req> = Vec::new();
     for (n, line) in pyutil::splitlines(&text).into_iter().enumerate() {
-        let caps = match pat.captures(line) {
-            Ok(Some(c)) => c,
-            Ok(None) => continue,
-            Err(e) => return Err(Fail::Crash(crash(&format!("requirements.id_pattern 配對失敗（{e}）")))),
+        // （整個符合的區間, 第一個群組的區間）
+        let spans: (Option<(usize, usize)>, Option<(usize, usize)>) = match &pat {
+            Pat::Builtin(re) => match re.captures(line) {
+                Ok(Some(c)) => (c.get(0).map(|m| (m.start(), m.end())), c.get(1).map(|m| (m.start(), m.end()))),
+                Ok(None) => continue,
+                Err(e) => return Err(Fail::Crash(crash(&format!("requirements.id_pattern 配對失敗（{e}）")))),
+            },
+            Pat::Custom(re) => match re.captures(line) {
+                Some(c) => (c.first().copied().flatten(), c.get(1).copied().flatten()),
+                None => continue,
+            },
         };
-        let (Some(whole), Some(id)) = (caps.get(0), caps.get(1)) else {
+        let (Some(whole), Some(id)) = spans else {
             return Err(Fail::Crash(crash("IndexError：requirements.id_pattern 沒有第一個群組")));
         };
-        if out.iter().any(|x| x.id == id.as_str()) { continue; }
-        let rest = line[whole.end()..].trim_matches(|c| " \t:：|*`-、.)".contains(c));
-        out.push(Req { id: id.as_str().to_string(), text: rest.to_string(), source: format!("{}:{}", pyutil::name(path), n + 1) });
+        let id = &line[id.0..id.1];
+        if out.iter().any(|x| x.id == id) { continue; }
+        let rest = line[whole.1..].trim_matches(|c| " \t:：|*`-、.)".contains(c));
+        out.push(Req { id: id.to_string(), text: rest.to_string(), source: format!("{}:{}", pyutil::name(path), n + 1) });
     }
     if out.is_empty() {
         return Err(Fail::Input(format!("{path} 裡找不到符合 id_pattern 的需求（spec-md 是範例 adapter，需求寫法不同請改用 json 或 command）")));
@@ -1557,9 +1597,11 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
             return Err(Fail::Input(format!("--recipe {p} 的 recipe 還沒鎖定（plan 沒核准）")));
         }
         let meth = pyutil::join(proj, ".claude/teams/methodology.json");
-        let teams = pyutil::resolve(&ctx.teams.to_string_lossy());
-        let profile = if PathBuf::from(&meth).is_file() { Some(meth.as_str()) } else { None };
-        let tamper = recipe_tamper_errors(&teams, &data, profile).map_err(Fail::Crash)?;
+        let teams = pyutil::resolve(&ctx.teams_of(proj).to_string_lossy());
+        // run.json 已經有 recipe（plan 段用專案的 profile 解析、鎖定的）：這時專案的 profile 不見了，
+        // 重算只會退回內建節，profile 定得更嚴的部分就漏掉了，所以不採信（0.x 這裡退回工具旁的 profile 或內建節）
+        if !PathBuf::from(&meth).is_file() { return Err(Fail::Input(crate::save_run::profile_missing(&meth))); }
+        let tamper = recipe_tamper_errors(&teams, &data, Some(meth.as_str())).map_err(Fail::Crash)?;
         if !tamper.is_empty() { return Err(Fail::Input(first(&tamper, 3).join("；"))); }
         inp.recipe = Some(r.clone());
         Ok(())
@@ -1593,7 +1635,7 @@ fn exit_code(decision: &str) -> i32 {
 }
 
 fn cmd_check(ctx: &Ctx, a: &Parsed, out: &mut String) -> Result<i32, Crash> {
-    let proj = project_dir(ctx, a.get("--project-dir"));
+    let proj = project_dir(ctx, a.get("--project-dir"))?;
     let cfg = load_config(ctx, &proj);
     let audit = pyutil::join(&runs_dir(&proj, &cfg, a.get("--runs-dir"))?, "merge-audit.jsonl");
     let (mut inp, errors) = gather(ctx, a, &cfg, &proj)?;
@@ -1606,7 +1648,7 @@ fn cmd_check(ctx: &Ctx, a: &Parsed, out: &mut String) -> Result<i32, Crash> {
             inp.frozen = Some(format!("{ff}：{reason}"));
         }
     }
-    let sch = Schemas::new(&ctx.teams);
+    let sch = Schemas::new(ctx.teams_of(&proj));
     let mut result = evaluate(&sch, &inp, &cfg, &read_audit(&audit)?)?;
     if !errors.is_empty() {
         // 輸入讀不到：一律 hold
@@ -1628,7 +1670,10 @@ fn cmd_check(ctx: &Ctx, a: &Parsed, out: &mut String) -> Result<i32, Crash> {
 pub fn run(ctx: &Ctx, argv: &[String], out: &mut String, errs: &mut String) -> i32 {
     if argv.iter().any(|a| a == "--selftest") {
         let me = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "awf".into());
-        return selftest(ctx, &json!([me, "merge-gate", "--selftest-requirements"]), out);
+        // selftest 在暫存目錄跑，只借用 schema：固定的 teams → 專案的 → 目前目錄的（原本的行為）
+        let teams = ctx.teams.clone().unwrap_or_else(|| ctx.teams_of(ctx.project_dir_env.as_deref().unwrap_or(".")));
+        let fixed = Ctx { teams: Some(teams), project_dir_env: None, env: ctx.env.clone(), stdin: ctx.stdin.clone() };
+        return selftest(&fixed, &json!([me, "merge-gate", "--selftest-requirements"]), out);
     }
     let parsed = pyargs::split_cmd(argv, &["check"]).and_then(|(_, rest, extras)| pyargs::parse(OPTS, rest, extras));
     let a = match parsed {

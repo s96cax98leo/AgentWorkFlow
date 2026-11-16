@@ -57,6 +57,7 @@
 
 - hook 只當輔助，用來擋下 agent 的誤操作與明顯的越權，不拿來當唯一的防線。
 - 合併、核准、推受保護分支能不能成功，由伺服器端決定（下一段的 ruleset、required check、CODEOWNERS、合併身分的權限）。本機的紀錄（`run.json`、`merge-audit.jsonl`）也不是信任來源：merge gate 的 CI 從受保護的 base 分支重新判定，不採信 PR 或本機帶來的結論。
+- 本機的閘門不拿「目前目錄」當專案：專案根是 `--project-dir`、`CLAUDE_PROJECT_DIR`，或從目前目錄往上找到的最外層 `.claude/teams/VERSION`，找不到就報錯。在 PR 的 checkout 裡執行，裡面自帶的 `.claude/teams/`（設定、schema、profile）不會被採用。
 - 發現 hook 該擋而沒擋的**直接寫法**，仍然歡迎照上面的方式回報。
 
 ### hook 跑不起來時放行

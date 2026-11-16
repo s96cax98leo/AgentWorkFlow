@@ -12,7 +12,8 @@
 //! - `selftest`：`awf state --selftest`。
 //!
 //! 和 0.x 的 Python 版的差別（都不放寬判定；對跑測試的 `STRICTER`、`KNOWN` 逐項列名）：
-//! - 專案根目錄取 `CLAUDE_PROJECT_DIR`，沒有就用目前目錄（0.x 的 Python 版從工具檔的位置往上推）。
+//! - 專案根目錄照全部子指令共用的解析（[`crate::project`]：`CLAUDE_PROJECT_DIR` → 從目前目錄往上找最外層的 `.claude/teams/VERSION`；
+//!   0.x 的 Python 版從工具檔的位置往上推）。找不到時 `done`、`approve` 報錯，其他動作用目前目錄。
 //! - 「模版自己」：[`crate::template::find`]（`AWF_TEMPLATE_DIR` → plugin 的環境變數 → 從執行檔往上找到 plugin 目錄）。
 //! - 時間可以用環境變數 `AWF_NOW`（`YYYY-MM-DDTHH:MM:SSZ` 或 epoch 秒數）固定，方便對跑。
 //! - 讀進來的 JSON 有 NaN、Infinity、落單的代理字元跳脫、超出 64 位元範圍的整數時當成讀不懂；巢狀超過 200 層當成沒接住的例外。
@@ -552,7 +553,19 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if !src.is_empty() {
         match load_json(env, &py::pp(src))? {
             Some(v) if !v.is_null() => result = v,
-            _ => return awf_err(format!("{src} 讀不到或不是 JSON")),
+            Some(_) => return awf_err(format!("{src} 讀不到或不是 JSON")),
+            None => {
+                // 檔在、但不是讀得懂的 JSON：和 awf save-run stage 一樣，這一段不能留著舊的結果與舊核准（1.0 審查 M3）。
+                // 檔不存在（路徑打錯）不算，什麼都不改。記進 run.json 的說明不帶路徑
+                let p = py::pp(src);
+                let abs = if pyish::is_abs(&p) { p } else { pyish::pjoin(&env.cwd, &p) };
+                if std::path::Path::new(&abs).is_file() {
+                    let (mut o, mut e) = (String::new(), String::new());
+                    sr::stage_unreadable(&ctx, run, &stage, "--output 的檔不是讀得懂的 JSON", &mut o, &mut e)?;
+                    return awf_err(format!("{src} 不是讀得懂的 JSON：{stage} 段已標成 invalid、舊核准失效；修正檔案後重新 awf done，或重跑這一段"));
+                }
+                return awf_err(format!("{src} 讀不到或不是 JSON"));
+            }
         }
     } else {
         let script_v = py::get(&pend, "script")?;
@@ -823,6 +836,11 @@ pub fn main(args: &[String]) -> i32 {
         Some("watch" | "statusline") if !has(argv, "--selftest") => return crate::watch::main(argv),
         Some("doctor") if !has(argv, "--selftest") => return crate::doctor::main(argv.get(1..).unwrap_or_default()),
         _ => {}
+    }
+    // done、approve 會把結果與核准記進閘門（轉給 save-run）：找不到專案根就不做，不拿目前目錄當專案
+    if matches!(argv.first().map(String::as_str), Some("done" | "approve")) && !has(argv, "--selftest") && crate::project::find(None).is_none() {
+        eprintln!("awf：{}", crate::project::not_found_message());
+        return 1;
     }
     let (code, out, err) = run_captured(argv, &Env::from_env());
     print!("{out}");

@@ -46,6 +46,13 @@ pub fn load_profile(ctx: &Ctx, given: &str) -> (Value, String) {
     (prof, String::new())
 }
 
+/// run.json 已經有 recipe、專案卻沒有 profile 檔時的錯誤訊息（save-run、publish、merge-gate 共用）。
+/// recipe 是 plan 段用專案的 profile 解析、鎖定的；profile 不見了通常代表專案根找錯了（或檔案被刪），
+/// 這時退回內建節重算會把 profile 定得更嚴的部分與限制文件一起漏掉，所以不採信。沒有 recipe 的舊 run 不受影響。
+pub fn profile_missing(path: &str) -> String {
+    format!("run.json 已有 recipe，但找不到專案的開發規範 profile（{path}）：無法重算，不採信（專案根找錯了？在專案根執行、設 CLAUDE_PROJECT_DIR，或用 --profile 指定）")
+}
+
 /// `load_profile_for(run, argv)`：從 argv 取 `--profile`。
 pub fn load_profile_for(ctx: &Ctx, argv: &[String]) -> (Value, String) {
     load_profile(ctx, opt(argv, "--profile", ""))
@@ -248,6 +255,9 @@ pub fn recipe_tamper_errors(ctx: &Ctx, data: &Value, profile: &str) -> R<Vec<Str
         return Ok(Vec::new());
     }
     let rec = idx(data, "recipe")?;
+    if profile.is_empty() && !ctx.is_file(&ctx.profile) {
+        return Ok(vec![profile_missing(&ctx.profile)]);
+    }
     let (prof, perr) = load_profile(ctx, profile);
     if !perr.is_empty() {
         return Ok(vec![perr]);

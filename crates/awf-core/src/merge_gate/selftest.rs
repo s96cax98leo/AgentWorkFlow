@@ -423,7 +423,7 @@ fn body(ctx: &Ctx, gen_cmd: &Value, proj: &str, out: &mut String) -> Result<bool
     s.line(good, &format!("merge-audit.jsonl 欄位齊全（[{}]）", need.iter().map(|k| repr_str(k)).collect::<Vec<_>>().join(", ")));
     // schema 語意規則：宣稱 merge 但有 mismatch
     let bad = decision(&json!([good_rows[0], row("REQ-2", "x", "mismatch")]), Dec::default());
-    let errs = Schemas::new(&ctx.teams).check(&bad, Some("merge-decision"))?;
+    let errs = Schemas::new(ctx.teams.clone().unwrap_or_default()).check(&bad, Some("merge-decision"))?;
     let shown: Vec<Value> = errs.iter().take(1).map(|e| json!(e)).collect();
     s.line(errs.iter().any(|e| e.contains("mismatch")), &format!("schemalib：traceability 宣稱 merge 但有 mismatch 要被擋（{}）", pyfmt::repr(&Value::Array(shown))));
     Ok(s.ok)
