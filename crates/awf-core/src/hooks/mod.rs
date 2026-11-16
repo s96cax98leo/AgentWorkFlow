@@ -259,9 +259,8 @@ fn dispatch(mode: &str) -> i32 {
                 return 0;
             }
         };
-        if let Some(t) = &cfg.type_fault {
-            return unexpected(mode, &PyErr::new("TypeError", t));
-        }
+        // 欄位型別不對（cfg.type_fault）不影響交件檢查：那些欄位已經換成預設值，信封照驗（0.x 也照驗）。
+        // 守門類才把它當成意外錯誤擋下（run_guard）。
         return match envelope::run(&data, &cfg, &ws) {
             Ok(()) => 0,
             Err(Stop::Exit(c)) => c,
