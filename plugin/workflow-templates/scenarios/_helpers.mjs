@@ -83,3 +83,16 @@ export const recipeScenarios = (stage, extra = () => ({})) => Object.keys(RECIPE
     },
   }
 })
+// 知識圖（1.0）：主 session 的參數帶 kg＝true（awf pack 在有圖時寫進 pack-args.json）時，每張派工單的共同前綴多一行查圖的指示；
+// 沒帶、或不是布林 true 時前綴逐字不變。八支 sdlc 情境檔各用一次（開與關）
+export const KG_LINE = /\n- 這個專案有知識圖：\S+\/pack\.md 列了行段（路徑:起訖行）就只讀那些行段；要再找位置用 awf kg locate "<文字>"、看改一個檔會影響誰用 awf kg impact <檔>，不要整個目錄掃。\n/
+export const kgScenarios = (x = {}) => [
+  {
+    name: '知識圖：args.kg＝true → 每張派工單的共同前綴多一行查圖的指示', args: { ...(x.args || {}), kg: true }, fakes: x.fakes || {}, profile: x.profile,
+    expect: (r) => { const ps = Object.entries(r.prompts); return [...(ps.length ? [] : ['沒有派出任何 agent']), ...ps.filter(([, p]) => !KG_LINE.test(p)).map(([l]) => `${l} 的派工單沒有查圖的指示`)] },
+  },
+  {
+    name: '知識圖：kg 不是布林 true（字串）→ 派工單沒有查圖的指示', args: { ...(x.args || {}), kg: 'true' }, fakes: x.fakes || {}, profile: x.profile,
+    expect: (r) => Object.entries(r.prompts).filter(([, p]) => /這個專案有知識圖/.test(p)).map(([l]) => `${l} 的派工單不該有查圖的指示`),
+  },
+]

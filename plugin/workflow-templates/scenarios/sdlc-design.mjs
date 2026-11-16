@@ -1,5 +1,5 @@
 // sdlc-design.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { ENV, SUB_PLANS, extScenario, recipeScenarios } from './_helpers.mjs'
+import { ENV, SUB_PLANS, extScenario, recipeScenarios, kgScenarios } from './_helpers.mjs'
 
 export default [
     extScenario('ext:db2'),
@@ -157,4 +157,5 @@ export default [
         return e
       },
     },
+  ...kgScenarios(),
 ]

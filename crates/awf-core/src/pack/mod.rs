@@ -1427,6 +1427,10 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
     // 知識圖：圖存在而且能開才用；沒有圖時以下每一處都不做事，輸出和沒有這個功能時相同
     let kx = if has(argv, "--no-kg") { None } else { graph::open(root, repo) };
     let mut graph_lines: Vec<String> = Vec::new();
+    if kx.is_some() {
+        // 給 workflow 範本判斷「這個專案有圖」：共同前綴才多一行查圖的指示（沒有圖時沒有這個鍵）
+        out_args.insert("kg".into(), json!(true));
+    }
     if stage == "plan" {
         let reuse = match reuse_candidates(&run, repo, &requirement, &plan_mode, &opts(argv, "--reuse-from"), has(argv, "--keep-research"), root) {
             Ok((reuse, n)) => {

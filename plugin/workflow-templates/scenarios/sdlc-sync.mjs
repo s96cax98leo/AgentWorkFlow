@@ -1,5 +1,5 @@
 // sdlc-sync.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { SYNC_APPLY, SYNC_PLAN, TRANSIT, recipeScenarios } from './_helpers.mjs'
+import { SYNC_APPLY, SYNC_PLAN, TRANSIT, recipeScenarios, kgScenarios } from './_helpers.mjs'
 
 // merge／rebase 留在原分支：head_branch 取派工單的 --branch（分支前綴依 init 設定，不寫死）
 const ON_BRANCH = (sync) => (base, prompt) => SYNC_APPLY({ ...sync, head_branch: (String(prompt).match(/--branch (\S+)/) || [])[1] })(base)
@@ -66,4 +66,5 @@ export default [
       fakes: { plan: SYNC_PLAN({ strategy: 'merge', behind: 2, published: true, conflicts: [] }), 'apply:merge': ON_BRANCH({ strategy: 'merge', conflicts: [], head_sha: 'a'.repeat(40) }) },
       expect: (r) => (/awf run-brief/.test(r.prompts['apply:merge'] || '') ? [] : ['apply 派工單要求 verify 用 awf run-brief']),
     })),
+  ...kgScenarios(),
 ]

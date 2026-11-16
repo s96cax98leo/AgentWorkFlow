@@ -1,5 +1,5 @@
 // sdlc-deliver.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { ENV, extScenario, recipeScenarios } from './_helpers.mjs'
+import { ENV, extScenario, recipeScenarios, kgScenarios } from './_helpers.mjs'
 
 export default [
   {
@@ -142,4 +142,5 @@ export default [
       return hit.length && hit.every(([, v]) => /只列 ≥0\.5 的/.test(v || '')) ? [] : [`審查派工單的門檻沒有跟著設定：${hit.map(([k]) => k).join('、')}`]
     },
   },
+  ...kgScenarios(),
 ]

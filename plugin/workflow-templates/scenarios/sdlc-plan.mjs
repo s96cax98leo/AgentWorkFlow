@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extScenario, ENV } from './_helpers.mjs'
+import { extScenario, ENV, kgScenarios } from './_helpers.mjs'
 
 const SD_PROFILE = { stages: { design: { system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設'], feature_scope: 'x', system_scope: 'x' } } } }
 
@@ -470,4 +470,5 @@ export default [
       ...(/低於 0\.7 時/.test(r.prompts.triage || '') ? [] : ['不合法的值要退回 0.7']),
     ],
   },
+  ...kgScenarios({ fakes: FEATURE_TRIAGE }),
 ]
