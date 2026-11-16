@@ -13,6 +13,7 @@ use super::guard_shell::INTERP;
 use super::ps::{ps_segments, segments, PS_NESTED_SHELLS};
 use super::py::{self, shlex_tokens};
 use super::re::Re;
+use super::subst;
 
 static ENV_ASSIGN: Re = Re::new(r"^[A-Za-z_]\w*=", "");
 /// 內嵌程式碼裡把 awf 當成一個詞（`['awf', 'save-run', …]`、`"…/bin/awf save-run"`）。
@@ -257,30 +258,52 @@ fn calls_at(seg: &str, depth: usize, out: &mut Vec<Call>) {
             }
         }
     }
-    out.append(&mut found);
-
-    let mut head: Vec<&String> = toks.iter().filter(|x| !ENV_ASSIGN.is_match(x)).collect();
-    while !head.is_empty() && has(CMD_WRAPPERS, &cmd_name(head[0])) {
-        head.remove(0);
-        while !head.is_empty() && (head[0].starts_with('-') || is_number(head[0])) {
-            head.remove(0);
+    // 指令替換與 process substitution：內層各自當一段再看一次；另外把內層換成替身再掃一次原字串，
+    // 認得出「路徑中段是指令替換」的執行檔（$(git rev-parse --show-toplevel)/plugin/bin/awf）
+    let mut inner_segs: Vec<String> = Vec::new();
+    if subst::has_subst(seg) {
+        let sc = subst::scan(seg);
+        if !sc.inner.is_empty() {
+            let mut alt = Vec::new();
+            scan_tokens(&shlex_tokens(&sc.flat), &mut alt, 0);
+            for c in alt {
+                if !found.contains(&c) {
+                    found.push(c);
+                }
+            }
+            let mut raw = sc.inner;
+            let mut k = 0;
+            while k < raw.len() && raw.len() <= subst::MAX_INNER {
+                let (cmd, bodies) = subst::split_heredocs(&raw[k]);
+                for b in bodies {
+                    raw.extend(subst::scan(&b).inner);
+                }
+                raw[k] = cmd;
+                k += 1;
+            }
+            if sc.over || raw.len() > subst::MAX_INNER {
+                found.push(Call { sub: String::new(), args: Vec::new(), forwarded: false, direct: false, note: Some(NOTE_DEEP) });
+            } else {
+                for cmd in &raw {
+                    inner_segs.extend(segments(cmd));
+                }
+            }
         }
     }
-    let name = head.first().map(|h| cmd_name(h)).unwrap_or_default();
-    let args: Vec<&String> = head.iter().skip(1).copied().collect();
-    let nested_ps = has(PS_NESTED_SHELLS, &name) || name == "cmd";
-    let mut inner_cmds: Vec<String> = Vec::new();
-    if has(SHELL_NAMES, &name) {
-        if let Some(k) = args.iter().enumerate().position(|(k, t)| is_dash_c(t) && k + 1 < args.len()) {
-            inner_cmds.push(args[k + 1].clone());
+    out.append(&mut found);
+
+    // 段落開頭（去掉環境變數與包裝）是 shell、eval 時的內層指令。兩種去法都看：
+    // 所有長得像賦值的 token 都丟（原本的做法），以及只丟指令前面的（`bash -c 'X=$(awf …)'` 的內層指令本身就是「X=…」開頭）
+    let old_head: Vec<&String> = toks.iter().filter(|x| !ENV_ASSIGN.is_match(x)).collect();
+    let (name, mut inner_cmds) = head_inner(strip_wrappers(old_head));
+    let lead: Vec<&String> = toks.iter().skip_while(|x| ENV_ASSIGN.is_match(x)).collect();
+    for ic in head_inner(strip_wrappers(lead)).1 {
+        if !inner_cmds.contains(&ic) {
+            inner_cmds.push(ic);
         }
-    } else if nested_ps {
-        if let Some(k) = args.iter().enumerate().position(|(k, t)| matches!(py::lower(t).as_str(), "-c" | "-command" | "/c" | "/k") && k + 1 < args.len()) {
-            inner_cmds.push(args[k + 1..].iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "));
-        }
-    } else if matches!(name.as_str(), "eval" | "invoke-expression" | "iex") {
-        inner_cmds.push(args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "));
-    } else if INTERP.is_match(seg) {
+    }
+    let shellish = has(SHELL_NAMES, &name) || has(PS_NESTED_SHELLS, &name) || name == "cmd" || matches!(name.as_str(), "eval" | "invoke-expression" | "iex");
+    if !shellish && INTERP.is_match(seg) {
         // python -c、node -e 這類內嵌程式裡提到 awf：看不到它怎麼呼叫
         let inline = toks.windows(2).any(|w| CODE_FLAG.is_match(&w[0]) && INLINE_AWF.is_match(&w[1]));
         if inline {
@@ -288,17 +311,51 @@ fn calls_at(seg: &str, depth: usize, out: &mut Vec<Call>) {
         }
     }
     if depth >= 4 {
-        if !inner_cmds.is_empty() && inner_cmds.iter().any(|ic| maybe(ic)) {
+        if inner_cmds.iter().map(|(ic, _)| ic).chain(inner_segs.iter()).any(|ic| maybe(ic)) {
             out.push(Call { sub: String::new(), args: Vec::new(), forwarded: false, direct: false, note: Some(NOTE_DEEP) });
         }
         return;
     }
-    for ic in inner_cmds {
+    for s in &inner_segs {
+        calls_at(s, depth + 1, out);
+    }
+    for (ic, nested_ps) in inner_cmds {
         let inner = if nested_ps { ps_segments(&ic) } else { segments(&ic) };
         for s in inner {
             calls_at(&s, depth + 1, out);
         }
     }
+}
+
+/// 去掉開頭的包裝指令（sudo、env、timeout…）和它們的旗標、數字、環境變數設定。
+fn strip_wrappers(mut head: Vec<&String>) -> Vec<&String> {
+    while !head.is_empty() && has(CMD_WRAPPERS, &cmd_name(head[0])) {
+        head.remove(0);
+        while !head.is_empty() && (head[0].starts_with('-') || is_number(head[0]) || ENV_ASSIGN.is_match(head[0])) {
+            head.remove(0);
+        }
+    }
+    head
+}
+
+/// 開頭是 shell（`bash -c`）、PowerShell／cmd（`-Command`、`/c`）、eval 時的內層指令。回（指令名, [(內層指令, 是不是 PowerShell 語法)]）。
+fn head_inner(head: Vec<&String>) -> (String, Vec<(String, bool)>) {
+    let name = head.first().map(|h| cmd_name(h)).unwrap_or_default();
+    let args: Vec<&String> = head.iter().skip(1).copied().collect();
+    let nested_ps = has(PS_NESTED_SHELLS, &name) || name == "cmd";
+    let mut inner: Vec<(String, bool)> = Vec::new();
+    if has(SHELL_NAMES, &name) {
+        if let Some(k) = args.iter().enumerate().position(|(k, t)| is_dash_c(t) && k + 1 < args.len()) {
+            inner.push((args[k + 1].clone(), false));
+        }
+    } else if nested_ps {
+        if let Some(k) = args.iter().enumerate().position(|(k, t)| matches!(py::lower(t).as_str(), "-c" | "-command" | "/c" | "/k") && k + 1 < args.len()) {
+            inner.push((args[k + 1..].iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "), true));
+        }
+    } else if matches!(name.as_str(), "eval" | "invoke-expression" | "iex") {
+        inner.push((args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "), false));
+    }
+    (name, inner)
 }
 
 /// 這一段裡所有的 awf 呼叫（含 `bash -c`、`eval`、`pwsh -Command`、`cmd /c` 的內層）。

@@ -8,6 +8,7 @@ use super::path;
 use super::ps::{self, ps_segments, segments, PS_NESTED_SHELLS};
 use super::py::{self, shlex_tokens};
 use super::re::{group, Re};
+use super::subst;
 use crate::config;
 use crate::pyfmt;
 use serde_json::Value;
@@ -539,9 +540,16 @@ impl Guard {
 
     /// 每一段實際作用的目錄：依序套用 cd／pushd／Set-Location，git 段落再套 -C、--git-dir、--work-tree。
     fn seg_dirs(&self, segs: &[String], cwd: &str) -> R<Vec<String>> {
+        Ok(self.seg_dirs_base(segs, cwd)?.0)
+    }
+
+    /// 同 [`Self::seg_dirs`]，另外回每一段開始前的目錄（只套 cd，不含這一段自己的 git -C）。
+    fn seg_dirs_base(&self, segs: &[String], cwd: &str) -> R<(Vec<String>, Vec<String>)> {
         let mut out = Vec::new();
+        let mut bases = Vec::new();
         let mut d = cwd.to_string();
         for seg in segs {
+            bases.push(d.clone());
             let mut toks = shlex_tokens(seg);
             while !toks.is_empty() && ENV_ASSIGN.is_match(&toks[0]) {
                 toks.remove(0);
@@ -581,7 +589,7 @@ impl Guard {
             }
             out.push(g);
         }
-        Ok(out)
+        Ok((out, bases))
     }
 
     fn git_out(&self, d: &str, args: &[&str]) -> String {
@@ -1116,7 +1124,8 @@ impl Guard {
         } else {
             segments(&cmd)
         };
-        let segs: Vec<String> = segs.iter().map(|s| canon_gh(s)).collect();
+        let mut segs: Vec<String> = segs.iter().map(|s| canon_gh(s)).collect();
+        let outer = segs.len();
         let cfg = &self.cfg;
         let am = &self.am;
         let raw_agent = str_or_empty(data, "agent_type")?;
@@ -1131,9 +1140,31 @@ impl Guard {
             Some(v) if pyfmt::truthy(v) => return err("TypeError", "cwd 不是字串"),
             _ => self.ws.clone(),
         };
-        let dirs = self.seg_dirs(&segs, &cwd)?;
+        let (mut dirs, bases) = self.seg_dirs_base(&segs, &cwd)?;
         let fdir = segs.iter().enumerate().filter(|(_, s)| GIT_WORD.is_match(s)).last().and_then(|(i, _)| dirs.get(i).cloned())
             .or_else(|| dirs.last().cloned()).unwrap_or_else(|| cwd.clone());
+        // 指令替換（$(…)、反引號）與 process substitution（<(…)、>(…)）的內層會另外執行：各自當一段，接在原本的段落後面，
+        // 套同一套規則（比對 token 的規則在切詞後看不到它們）。內層的 cd 不影響外層；PowerShell 的 $(…) 在拆段時已經展開。
+        let mut subst_over = false;
+        if !is_ps {
+            for i in 0..outer {
+                if !subst::has_subst(&segs[i]) {
+                    continue;
+                }
+                let (inner, over) = subst::inner_segments(&segs[i]);
+                subst_over |= over;
+                if segs.len() - outer + inner.len() > subst::MAX_INNER {
+                    subst_over = true;
+                    break;
+                }
+                let inner: Vec<String> = inner.iter().map(|s| canon_gh(s)).collect();
+                dirs.extend(self.seg_dirs(&inner, &bases[i])?);
+                segs.extend(inner);
+            }
+        }
+        if subst_over && team {
+            return Err(self.block(&format!("{agent} 的指令裡指令替換（$(…)、反引號、<(…)）太多或巢狀太深，無法逐一確認內層的指令；請拆成幾條較短的指令")));
+        }
         let (fpaths, fslugs) = self.forbidden_entries();
         let who_main = |a: &str| if a.is_empty() { "主 session".to_string() } else { a.to_string() };
         if (gh_rules || am_on) && is_interp_review(&cmd) {

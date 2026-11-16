@@ -38,6 +38,7 @@ pub mod pyjson;
 pub mod re;
 pub mod read_budget;
 pub mod session_start;
+pub mod subst;
 
 use crate::config::PyErr;
 use guard::{say, Guard, Stop};

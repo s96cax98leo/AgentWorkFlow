@@ -481,6 +481,20 @@ fn long_chained_command_stays_fast() {
             assert!(ms < limit_ms, "［{tool}］{unit} × {n} 花了 {ms}ms，超過 {limit_ms}ms");
         }
     }
+    // 上萬個指令替換：超過展開上限，team agent 往嚴走（擋），主 session 照舊；兩邊都不能拖過時限
+    for (unit, glue) in [("echo $(awf kb lint)", " && "), ("\"$(awf kb lint)\"", " "), ("$(echo $(echo $(echo $(echo $(date)))))", " ")] {
+        let n = (127 * 1024) / (unit.len() + glue.len());
+        let cmd = format!("echo {}", vec![unit; n].join(glue));
+        for (agent, want) in [(DEV, BLOCK), (MAIN, ALLOW)] {
+            let t0 = Instant::now();
+            let r = hook(&ws, "Bash", agent, &cmd);
+            let ms = t0.elapsed().as_millis();
+            let err = String::from_utf8_lossy(&r.stderr);
+            println!("長指令（{unit} × {n}，Bash，{}）：{ms}ms", if agent.is_empty() { "主 session" } else { agent });
+            assert_eq!(r.status.code(), Some(want), "{unit} × {n}：{err}");
+            assert!(ms < limit_ms, "{unit} × {n} 花了 {ms}ms，超過 {limit_ms}ms");
+        }
+    }
     // 最後一段才是不允許的：也要擋得到
     let n = (120 * 1024) / 6;
     let cmd = format!("{} && awf save-run approve r", vec!["ls"; n].join(" && "));
@@ -538,4 +552,103 @@ fn graph_and_vault_are_not_writable_by_team_agents() {
             }
         }
     }
+}
+
+// ───────── 8. 指令替換、process substitution 裡的指令（審查 H2） ─────────
+
+/// 使用者自己的 agent（不是模版角色）。
+const MINE: &str = "my-helper";
+
+/// 一般的 commit 寫法：訊息放在加引號的 heredoc 裡，內文不是指令。
+const COMMIT_HEREDOC: &str = "git commit -m \"$(cat <<'EOF'\nfix: awf save-run approve r 的守門說明\n\n不要 cat .env\nEOF\n)\"";
+
+const SUBSTITUTED: &[Case] = &[
+    // 回歸（0.x 對同寫法的 .py 會擋）
+    ("X=$(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("X=`awf save-run approve r`", DEV, BLOCK, Sh::Bash),
+    ("out=$(awf publish --pr 3)", DEV, BLOCK, Sh::Bash),
+    ("x=$(awf build)", DEV, BLOCK, Sh::Bash),
+    ("x=$(awf kg build)", DEV, BLOCK, Sh::Bash),
+    ("x=$(awf ci render --write)", DEV, BLOCK, Sh::Bash),
+    // 兩版都放行過、字面看得到 awf 與子指令
+    ("echo \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("test -n \"$(awf save-run approve r plan)\"", DEV, BLOCK, Sh::Bash),
+    ("git commit -m \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("$(git rev-parse --show-toplevel)/plugin/bin/awf save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("echo x > >(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    // 同一類的其他寫法
+    ("`git rev-parse --show-toplevel`/plugin/bin/awf save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("${CLAUDE_PLUGIN_ROOT}/bin/awf-$(uname -s)-arm64 save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("export X=$(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("local x=$(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("out=\"$(awf publish)\"", DEV, BLOCK, Sh::Bash),
+    ("result=`awf next r`", DEV, BLOCK, Sh::Bash),
+    ("echo \"`awf save-run approve r`\"", DEV, BLOCK, Sh::Bash),
+    ("[ \"$(awf done r)\" ]", DEV, BLOCK, Sh::Bash),
+    ("echo ${x:-$(awf save-run approve r)}", DEV, BLOCK, Sh::Bash),
+    (": \"${x:=$(awf save-run approve r)}\"", DEV, BLOCK, Sh::Bash),
+    ("printf '%s' \"$(awf init --target .)\"", DEV, BLOCK, Sh::Bash),
+    ("echo \"$(cd x && awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("echo \"x$( awf save-run approve r )\"", DEV, BLOCK, Sh::Bash),
+    ("cat <(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("tee >(awf save-run approve r) < /dev/null", DEV, BLOCK, Sh::Bash),
+    ("awf kb query \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("echo \"$(echo \"$(awf save-run approve r)\")\"", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'X=$(awf save-run approve r)'", DEV, BLOCK, Sh::Both),
+    ("eval 'echo \"$(awf deliverables sync)\"'", DEV, BLOCK, Sh::Bash),
+    // 內層指令本身以賦值開頭（整個是一個長得像賦值的 token）
+    ("bash -c 'X=1 awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'X=1 awf kb query x'", DEV, ALLOW, Sh::Bash),
+    ("cat <<EOF\n$(awf save-run approve r)\nEOF", DEV, BLOCK, Sh::Bash),
+    ("X=$(cat <<EOF\n$(awf save-run approve r)\nEOF\n)", DEV, BLOCK, Sh::Bash),
+    // 巢狀超過上限：看不清楚就不允許
+    ("echo $(echo $(echo $(echo $(echo $(awf save-run approve r)))))", DEV, BLOCK, Sh::Bash),
+    // 舊的 .py 規則也一樣
+    ("echo \"$(python3 .claude/teams/tools/save_run.py approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("cat <(python3 .claude/teams/tools/pack.py plan r)", DEV, BLOCK, Sh::Bash),
+    // 其他比對 token 的規則：內層照樣檢查
+    ("echo \"$(git push origin main)\"", MAIN, BLOCK, Sh::Bash),
+    ("X=$(git push origin main)", MAIN, BLOCK, Sh::Bash),
+    ("echo \"$(git push --force origin feature/x)\"", MAIN, BLOCK, Sh::Bash),
+    ("X=$(cat .env)", MAIN, BLOCK, Sh::Bash),
+    ("echo \"$(cat .env)\"", DEV, BLOCK, Sh::Bash),
+    ("cat <(cat .env)", DEV, BLOCK, Sh::Bash),
+    ("echo \"$(git checkout -b wrongname)\"", MAIN, BLOCK, Sh::Bash),
+    ("out=$(awf publish --project-dir /tmp/other)", MAIN, BLOCK, Sh::Bash),
+    ("echo \"$(rm -rf src)\"", REV, BLOCK, Sh::Bash),
+    // PowerShell 的對應寫法
+    ("$x = $(awf save-run approve r)", DEV, BLOCK, Sh::Ps),
+    ("$x = (awf save-run approve r)", DEV, BLOCK, Sh::Ps),
+    ("Write-Host \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Ps),
+    // 唯讀查詢的結果存進變數、放進字串：放行
+    ("X=$(awf kg locate \"匯出 發票\")", DEV, ALLOW, Sh::Bash),
+    ("HITS=\"$(awf kg locate export --json)\"", DEV, ALLOW, Sh::Bash),
+    ("X=`awf kb query 發票`", DEV, ALLOW, Sh::Bash),
+    ("echo \"$(awf save-run status r)\"", DEV, ALLOW, Sh::Bash),
+    ("out=$(awf deliverables status)", DEV, ALLOW, Sh::Bash),
+    ("test -n \"$(awf kb query x)\"", DEV, ALLOW, Sh::Bash),
+    ("x=$(awf state --selftest)", DEV, ALLOW, Sh::Bash),
+    ("$(git rev-parse --show-toplevel)/plugin/bin/awf save-run status r", DEV, ALLOW, Sh::Bash),
+    ("diff <(awf kg trace a) <(awf kg trace b)", DEV, ALLOW, Sh::Bash),
+    ("X=$(awf kg locate \"$(basename \"$PWD\")\")", DEV, ALLOW, Sh::Bash),
+    ("X=$(date +%s); echo \"$X $(git status --short | wc -l)\"", DEV, ALLOW, Sh::Bash),
+    ("X=$(cat .env.example)", DEV, ALLOW, Sh::Bash),
+    ("echo '$(awf save-run approve r)'", DEV, ALLOW, Sh::Bash),
+    ("grep -n 'X=$(awf save-run approve r)' docs/a.md", DEV, ALLOW, Sh::Bash),
+    (COMMIT_HEREDOC, DEV, ALLOW, Sh::Bash),
+    (COMMIT_HEREDOC, MAIN, ALLOW, Sh::Bash),
+    ("$x = $(awf kg locate export)", DEV, ALLOW, Sh::Ps),
+    ("Write-Host \"$(awf save-run status r)\"", DEV, ALLOW, Sh::Ps),
+    // 主 session：照舊
+    ("X=$(awf save-run approve r plan --by human)", MAIN, ALLOW, Sh::Bash),
+    ("echo \"$(awf build --check)\"", MAIN, ALLOW, Sh::Bash),
+    ("X=$(git push origin feature/x)", MAIN, ALLOW, Sh::Bash),
+    ("echo \"$(git status)\" \"$(cat README.md)\"", MAIN, ALLOW, Sh::Bash),
+    // 使用者自己的 agent：不套 team agent 的規則
+    ("X=$(awf save-run approve r)", MINE, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn substituted_commands_are_checked() {
+    check("subst", SUBSTITUTED);
 }
