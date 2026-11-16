@@ -683,6 +683,10 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
     if let Some(scrub) = get(doc, "scrub").filter(|s| !s.is_null()) {
         errs.extend(crate::scrub::config_errors(scrub));
     }
+    // 專案的 CI（awf ci）：id 與 name 不重複、run 不能是空的或含 GitHub 的運算式、檔名不能撞模版自己的
+    if let Some(ci) = get(doc, "ci").filter(|s| !s.is_null()) {
+        errs.extend(crate::ci::config_errors(ci));
+    }
     errs
 }
 

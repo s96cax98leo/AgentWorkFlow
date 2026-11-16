@@ -30,10 +30,11 @@ use std::time::Instant;
 
 /// 有 `--selftest` 的子指令（實跑確認過；`statusline --selftest` 和 `watch` 是同一支，不重複跑）。
 /// 沒有 selftest 的：init、build、check-agents、check-envelope、check-rules、hook（由 `cargo test` 的對跑基準顧）。
-pub const SELFTESTS: [&str; 20] = [
+pub const SELFTESTS: [&str; 21] = [
     "checklist", "kb", "recipe", "merge-gate", "sync-branch", "publish", "save-run", "deliverables", "locate", "pack", "cost", "script", "state", "watch",
     "doctor", "spec", "run-brief", "tokens",
     "scrub", "kg",
+    "ci",
 ];
 
 enum Outcome {

@@ -461,6 +461,21 @@ fn check_models(env: &Env) -> Part {
     )])
 }
 
+/// 專案的 CI（profile 的 `ci` 有啟用時）：產生的 workflow 檔還沒產生、被手改、或和 profile 不同。
+fn check_ci(env: &Env) -> Part {
+    let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
+    let cfg = match crate::ci::parse_config(&prof) {
+        Ok(Some(c)) if c.enabled => c,
+        // 沒啟用不檢查；設定有錯由 config 那一項（schema 與語意規則）回報
+        _ => return Ok(Vec::new()),
+    };
+    let rel = crate::ci::file_rel(&cfg);
+    Ok(match crate::ci::drift_message(&crate::ci::drift_in(Path::new(&env.project), &cfg), &rel) {
+        Some((msg, fix)) => vec![item("ci", WARN, msg, fix)],
+        None => vec![item("ci", OK, format!("{rel} 和 profile 的 ci 一致"), "")],
+    })
+}
+
 /// 2. 知識庫沒建：`<knowledge.dir>/kb.sqlite` 不存在。
 fn check_kb(env: &Env) -> Part {
     let prof = profile_of(env);
@@ -602,9 +617,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 10] = [
+    let parts: [&dyn Fn() -> Part; 11] = [
         &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
         &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
+        &|| check_ci(env),
     ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查

@@ -82,6 +82,7 @@ awf script --selftest                                       # 自訂腳本的靜
 awf checklist --selftest、awf spec --selftest、awf run-brief --selftest、awf tokens --selftest   # 其餘有 selftest 的子指令
 awf golden [--dir <golden-set 目錄>] [--verbose]                 # 專案的 golden-set（schema 正反例）
 awf tokens check [--all] <檔案或目錄>…、awf tokens verify [tokens.css] [正本檔]   # 設計系統 skill 的色碼掃描與 tokens 核對
+awf ci render [--write]、awf ci check、awf ci --selftest          # 專案的測試／lint CI（profile 的 ci；預設不啟用；--write 只由主 session 跑）
 awf scrub [路徑…] [--json]、awf scrub --selftest                 # 專案自己訂的去客戶化掃描（profile 的 scrub；預設不啟用）
 ```
 

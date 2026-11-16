@@ -508,6 +508,33 @@
         "when": {"type": "array", "items": {"enum": ["publish"]}, "description": "自動跑的時機：publish＝awf publish 推送前掃要推的檔，命中就不推。空的＝只在人手動跑 awf scrub 時掃"}
       },
       "additionalProperties": false
+    },
+    "ci": {
+      "type": "object",
+      "description": "選填：專案的測試／lint CI（awf ci render）。enabled 是 true 才有作用；沒寫＝不產生也不檢查任何 CI 檔。跑哪些指令、哪些必過由專案決定",
+      "properties": {
+        "enabled": {"type": "boolean", "description": "預設 false。開了之後 awf ci render 才會產生 workflow 檔、awf doctor 才檢查漂移"},
+        "provider": {"type": "string", "enum": ["github"], "description": "CI 平台；目前只支援 github（GitHub Actions）"},
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$", "description": "workflow 名稱，也是檔名（.github/workflows/<name>.yml）；預設 project-ci。不能是 agent-merge-gate"},
+        "jobs": {
+          "type": "array",
+          "description": "要跑的檢查，一項一個 job",
+          "items": {
+            "type": "object",
+            "required": ["id", "run"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$", "description": "job 的代號（不能重複）"},
+              "name": {"type": "string", "minLength": 1, "description": "顯示名稱，也是 GitHub 上的 check 名稱（不能重複）；沒寫用 id"},
+              "run": {"type": "string", "minLength": 1, "description": "要跑的指令（可以多行）。不能寫 GitHub Actions 的運算式，也不能引用 secrets"},
+              "required": {"type": "boolean", "description": "true＝必過：awf ci render --write 會把 name 加進 guard.config.json 的 auto_merge.required_checks（merge gate 要求它出現在 checks 裡）。預設 false"}
+            }
+          }
+        },
+        "triggers": {"type": "array", "minItems": 1, "items": {"enum": ["pull_request", "push", "workflow_dispatch"]}, "description": "觸發時機；預設只有 pull_request"},
+        "runs_on": {"description": "runner 標籤（字串，或自架 runner 用的字串陣列）；預設 ubuntu-latest"}
+      },
+      "additionalProperties": false
     }
   }
 }

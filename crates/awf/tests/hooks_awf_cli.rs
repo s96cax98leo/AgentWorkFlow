@@ -237,6 +237,13 @@ const RULES: &[Case] = &[
     ("awf scrub --selftest", DEV, ALLOW, Sh::Both),
     ("awf scrub; awf publish push --branch feature/x", DEV, BLOCK, Sh::Both),
     ("awf scrub docs; awf save-run approve r", REV, BLOCK, Sh::Both),
+    // ci：render（只印）與 check 可以跑；--write 會寫 CI 檔與 guard.config，只由主 session 跑
+    ("awf ci render", DEV, ALLOW, Sh::Both),
+    ("awf ci check --root .", REV, ALLOW, Sh::Both),
+    ("awf ci --selftest", DEV, ALLOW, Sh::Both),
+    ("awf ci render --write", DEV, BLOCK, Sh::Both),
+    ("awf ci render --root . --write", REV, BLOCK, Sh::Both),
+    ("awf ci render; awf ci render --write", DEV, BLOCK, Sh::Both),
     ("awf watch --once", DEV, ALLOW, Sh::Both),
     ("awf watch _tpm/runs/r --once", DEV, ALLOW, Sh::Both),
     ("awf statusline", DEV, ALLOW, Sh::Both),

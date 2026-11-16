@@ -31,6 +31,7 @@ pub const SUBCOMMANDS: &[&str] = &[
     "golden", "tokens",
     "scrub",
     "kg",
+    "ci",
 ];
 /// `awf kg` 的唯讀查詢，以及查詢可以帶的選項（值另外一個參數的、不帶值的）。清單外的選項（`--out`、`--full`…）一律當寫入。
 const KG_QUERIES: &[&str] = &["locate", "trace", "impact", "check", "neighbors"];
@@ -333,6 +334,7 @@ pub enum Deny {
     Build,
     Spec(String),
     Watch,
+    Ci(String),
     Unknown(String),
     Opaque(&'static str),
 }
@@ -379,6 +381,31 @@ impl Call {
                 } else if !has(KG_BARE_FLAGS, a) {
                     return Some(format!("{s} {name}"));
                 }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// `awf ci`：只准 render（不帶 --write）與 check，而且只能帶清單裡的選項。回傳被擋的原因。
+    fn ci_deny(&self) -> Option<String> {
+        let s = self.first();
+        if s == "--selftest" || has(HELP, s) {
+            return None;
+        }
+        if s.is_empty() {
+            return if self.forwarded { Some(NOTE_FORWARD.to_string()) } else { None };
+        }
+        if s != "render" && s != "check" {
+            return Some(s.to_string());
+        }
+        let mut i = 1;
+        while i < self.args.len() {
+            let a = self.args[i].as_str();
+            if a == "--root" || a == "--profile" {
+                i += 1;
+            } else if a.starts_with('-') && !has(HELP, a) {
+                return Some(format!("{s} {}", a.split('=').next().unwrap_or(a)));
             }
             i += 1;
         }
@@ -443,6 +470,8 @@ impl Call {
             "golden" | "tokens" => None,
             // 去客戶化掃描：只讀檔、只印路徑與規則編號，沒有會寫檔的選項
             "scrub" => None,
+            // 專案的 CI：render（只印）與 check 可以跑；--write 會寫 .github/workflows/ 與 guard.config.json，只由主 session 跑
+            "ci" => self.ci_deny().map(Deny::Ci),
             other => Some(Deny::Unknown(other.to_string())),
         }
     }
@@ -510,6 +539,13 @@ mod tests {
         assert_eq!(d("awf kg locate x --out y"), Some(Deny::Kg("locate --out".into())));
         assert_eq!(d("awf kg check --full"), Some(Deny::Kg("check --full".into())));
         for ok in ["awf kg locate 匯出 發票", "awf kg trace billing/export-invoice --json", "awf kg impact --diff main", "awf kg check --run _tpm/runs/r", "awf kg neighbors a#b --depth=3", "awf kg --selftest", "awf kg"] {
+            assert_eq!(d(ok), None, "{ok}");
+        }
+        assert_eq!(d("awf ci render --write"), Some(Deny::Ci("render --write".into())));
+        assert_eq!(d("awf ci render --root . --write"), Some(Deny::Ci("render --write".into())));
+        assert_eq!(d("awf ci render --write=1"), Some(Deny::Ci("render --write".into())));
+        assert_eq!(d("awf ci install"), Some(Deny::Ci("install".into())));
+        for ok in ["awf ci render", "awf ci render --root . --profile p.json", "awf ci check", "awf ci --selftest", "awf ci", "awf ci --help"] {
             assert_eq!(d(ok), None, "{ok}");
         }
         assert_eq!(d("awf save-run close r"), Some(Deny::SaveRun("close".into())));

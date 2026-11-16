@@ -49,6 +49,7 @@ fn usage() -> &'static str {
   golden           跑專案的 golden-set：交件信封與各種 payload 的正例、反例、語意反例
   tokens           設計系統的 token 檢查：掃寫死的色碼（check）、tokens.css 與正本一字不差（verify）
   scrub            去客戶化掃描：用專案自己訂的規則掃檔案內容與路徑名（預設不啟用，在 profile 的 scrub 設定）
+  ci               專案的測試／lint CI：依 profile 的 ci 產生 GitHub Actions 的 workflow 檔（預設不啟用；render 只印，--write 才寫）
 
 安裝：
   init             把模版套用到專案，或升級已套用的專案
@@ -96,6 +97,7 @@ fn main() -> ExitCode {
         Some("check-rules") => ExitCode::from(awf_core::check_rules::main(&args[1..]).clamp(0, 255) as u8),
         Some("golden") => ExitCode::from(awf_core::golden::main(&args[1..]).clamp(0, 255) as u8),
         Some("tokens") => ExitCode::from(awf_core::tokens::main(&args[1..]).clamp(0, 255) as u8),
+        Some("ci") => ExitCode::from(awf_core::ci::main(&args[1..]).clamp(0, 255) as u8),
         Some("scrub") => ExitCode::from(awf_core::scrub::main(&args[1..]).clamp(0, 255) as u8),
         Some("hook") => ExitCode::from(awf_core::hooks::main(&args[1..]).clamp(0, 255) as u8),
         Some(other) => {

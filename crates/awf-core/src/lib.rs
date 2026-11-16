@@ -7,6 +7,7 @@ pub mod build;
 pub mod check_agents;
 pub mod check_envelope;
 pub mod check_rules;
+pub mod ci;
 pub mod checklist;
 pub mod config;
 pub mod cost;
