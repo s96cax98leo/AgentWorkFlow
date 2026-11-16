@@ -885,12 +885,38 @@ pub fn deliverables_errors(d: Option<&Value>, place: &str) -> Vec<String> {
     errs
 }
 
-/// 從 agent 回報文字取出信封：優先最後一個 ```json 區塊，否則嘗試整段。
+/// 最後一個 ```json 區塊的內容（由短到長的幾種切法）；沒有 json 區塊回 None。
+/// 區塊從最後一個「```json」開始（「```jsonl」「```json5」這類不算），不看內容長什麼樣子：寫壞的（少了右括號、沒收尾、
+/// 不是物件）也算，才不會被當成沒交而退回前一個。收尾是後面的「```」；JSON 的字串裡可能也有「```」，
+/// 所以每一個「```」（以及文字結尾）都是一種可能的收尾，由呼叫端依序試。
+fn last_json_block(text: &str) -> Option<Vec<&str>> {
+    const OPEN: &str = "```json";
+    let mut end = text.len();
+    let start = loop {
+        let i = text[..end].rfind(OPEN)?;
+        let after = i + OPEN.len();
+        if text[after..].chars().next().is_none_or(|c| c.is_whitespace() || c == '{' || c == '[') {
+            break after;
+        }
+        end = i;
+    };
+    let rest = &text[start..];
+    let mut cuts: Vec<&str> = rest.match_indices("```").map(|(i, _)| rest[..i].trim()).collect();
+    cuts.push(rest.trim());
+    Some(cuts)
+}
+
+/// 文字裡有沒有 ```json 區塊（不管解析得了與否）。[`extract_json`] 回 None 時用來分辨「沒有交」與「交了但讀不懂」。
+pub fn has_json_block(text: &str) -> bool {
+    last_json_block(text).is_some()
+}
+
+/// 從 agent 回報文字取出信封：有 ```json 區塊時只看**最後一個**，它解析不了就是沒有信封（回 None）；
+/// 不往前找（前面的區塊可能是被後面更正掉的舊版本，退回去等於採用了 agent 自己已經改掉的結論）。
+/// 沒有 ```json 區塊時試整段。
 pub fn extract_json(text: &str) -> Option<Value> {
-    let re = regex::Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").expect("固定的正規式");
-    let blocks: Vec<&str> = re.captures_iter(text).filter_map(|c| c.get(1).map(|m| m.as_str())).collect();
-    for raw in blocks.iter().rev() {
-        if let Ok(v) = serde_json::from_str::<Value>(raw) { return Some(v); }
+    match last_json_block(text) {
+        Some(cuts) => cuts.iter().find_map(|raw| serde_json::from_str::<Value>(raw).ok()),
+        None => serde_json::from_str(text).ok(),
     }
-    serde_json::from_str(text).ok()
 }
