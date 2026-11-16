@@ -127,9 +127,14 @@ pub fn selftest(out: &mut String) -> i32 {
         if let Some(l) = m.get_mut("located").and_then(Value::as_object_mut) {
             l.remove("code-contracts");
         }
+        // kg＝true 是「這個專案有圖」的記號（workflow 範本的共同前綴靠它多一行查圖的指示），只有有圖時才寫
+        m.remove("kg");
         Value::Object(m)
     };
     check!("plan：pack-args 其他的鍵和沒有圖時相同", other_keys(&plan_args) == other_keys(&base_plan), "");
+    let args_of = |set: &[(String, String)], f: &str| -> Value { serde_json::from_str(&get(set, f)).unwrap_or_else(|_| json!({})) };
+    let stage_args = ["plan/pack-args.json", "design/pack-args.json", "build/pack-args.json", "deliver/pack-args.json"];
+    check!("有圖：每段的 pack-args 多一個 kg＝true；沒有圖時沒有這個鍵", stage_args.iter().all(|f| args_of(&with, f).get("kg") == Some(&json!(true)) && args_of(&base, f).get("kg").is_none()), "");
     {
         // 只命中一個符號：不夠，located 不動
         let mut sink = String::new();
@@ -144,7 +149,7 @@ pub fn selftest(out: &mut String) -> i32 {
     let t1 = get(&with, "build/t1/pack.md");
     check!("build：子任務資料包帶檔案的呼叫者與相依", t1.contains("呼叫者與相依") && t1.contains("- src/billing/export.test.ts:") && t1.contains("- src/billing/format.ts:") && t1.contains("- src/lib/money.ts:"), hpy::head(&t1, 1500));
     check!("build：原本的內容還在（子任務、spec 行段），圖的一節接在最後", t1.starts_with(&get(&base, "build/t1/pack.md").trim_end_matches('\n').to_string()), "");
-    check!("build：pack-args 和沒有圖時相同（內容寫在資料包裡，不加新的鍵）", get(&with, "build/pack-args.json") == get(&base, "build/pack-args.json"), "");
+    check!("build：pack-args 除了 kg 和沒有圖時相同（內容寫在資料包裡）", other_keys(&args_of(&with, "build/pack-args.json")) == other_keys(&args_of(&base, "build/pack-args.json")), "");
     let deliv = |set: &[(String, String)]| -> Vec<(String, Vec<String>)> {
         let v: Value = serde_json::from_str(&get(set, "deliver/pack-args.json")).unwrap_or_else(|_| json!({}));
         pyfmt::items(v.get("deliverables").and_then(|d| d.get("affected"))).iter().map(|a| (pyfmt::str_of(a.get("id").unwrap_or(&Value::Null)), pyfmt::items(a.get("sections")).iter().map(pyfmt::str_of).collect())).collect()
@@ -152,7 +157,7 @@ pub fn selftest(out: &mut String) -> i32 {
     check!("deliver：沒有圖時這份文件不在受影響清單（設定裡沒有寫觸發條件）", deliv(&base).is_empty(), format!("{:?}", deliv(&base)));
     check!("deliver：有圖時依連結多列受影響的小節", deliv(&with) == vec![("guide".to_string(), vec!["匯出".to_string()])], format!("{:?}", deliv(&with)));
     check!("deliver：資料包列出多列的小節與理由", get(&with, "deliver/pack.md").contains("依連結多列的交付文件小節") && get(&with, "deliver/pack.md").contains("- docs/guide.md ｜ 小節「匯出」"), hpy::head(&get(&with, "deliver/pack.md"), 1500));
-    check!("design：pack-args 和沒有圖時相同", get(&with, "design/pack-args.json") == get(&base, "design/pack-args.json"), "");
+    check!("design：pack-args 除了 kg 和沒有圖時相同", other_keys(&args_of(&with, "design/pack-args.json")) == other_keys(&args_of(&base, "design/pack-args.json")), "");
     let again = run_stages(root, work, &[]);
     check!("可重現：同一張圖重跑，每個檔逐字相同", again == with, again.iter().zip(&with).filter(|(a, b)| a != b).map(|(a, _)| a.0.clone()).collect::<Vec<_>>().join("、"));
     let off = run_stages(root, work, &["--no-kg"]);

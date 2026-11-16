@@ -1,5 +1,5 @@
 // sdlc-merge.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { CONSISTENT, EXEC } from './_helpers.mjs'
+import { CONSISTENT, EXEC, kgScenarios } from './_helpers.mjs'
 
 export default [
     {
@@ -107,4 +107,5 @@ export default [
         return e
       },
     },
+  ...kgScenarios(),
 ]

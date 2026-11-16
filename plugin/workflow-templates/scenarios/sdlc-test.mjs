@@ -1,5 +1,5 @@
 // sdlc-test.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { CRIT, SUB_PLANS, crit, extScenario, recipeScenarios } from './_helpers.mjs'
+import { CRIT, SUB_PLANS, crit, extScenario, recipeScenarios, kgScenarios } from './_helpers.mjs'
 
 // 三個分片都驗 abc（CRIT 一律填 abc）、彙整照抄：B-1／B-5 的情境以它為基礎只改一處
 const SHARD1 = {
@@ -214,4 +214,5 @@ export default [
       fakes: { 'verify#1': CRIT([crit('C1', 'fail')]) },
       expect: (r) => (r.labels.includes('fix#1') ? [] : [`預設要派修正：${r.labels.join(' → ')}`]),
     },
+  ...kgScenarios(),
 ]

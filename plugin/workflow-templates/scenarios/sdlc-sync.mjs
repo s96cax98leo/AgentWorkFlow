@@ -1,5 +1,5 @@
 // sdlc-sync.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { SYNC_APPLY, SYNC_PLAN, TRANSIT, recipeScenarios } from './_helpers.mjs'
+import { SYNC_APPLY, SYNC_PLAN, TRANSIT, recipeScenarios, kgScenarios } from './_helpers.mjs'
 
 // merge／rebase 留在原分支：head_branch 取派工單的 --branch（分支前綴依 init 設定，不寫死）
 const ON_BRANCH = (sync) => (base, prompt) => SYNC_APPLY({ ...sync, head_branch: (String(prompt).match(/--branch (\S+)/) || [])[1] })(base)
@@ -66,4 +66,36 @@ export default [
       fakes: { plan: SYNC_PLAN({ strategy: 'merge', behind: 2, published: true, conflicts: [] }), 'apply:merge': ON_BRANCH({ strategy: 'merge', conflicts: [], head_sha: 'a'.repeat(40) }) },
       expect: (r) => (/awf run-brief/.test(r.prompts['apply:merge'] || '') ? [] : ['apply 派工單要求 verify 用 awf run-brief']),
     })),
+  {
+    // rebase 前的備份 ref（profile 的 conventions.sync.backup_ref）：有設才在派工單寫出樣式，並請工具讀 profile
+    name: '可設定：conventions.sync.backup_ref → rebase 的派工單寫出樣式，apply 帶 --methodology',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), sync: { ...((p.conventions || {}).sync || {}), backup_ref: 'refs/backup/<date>/<branch>' } } }),
+    fakes: { plan: SYNC_PLAN({ strategy: 'rebase', behind: 2, published: false, conflicts: [] }), 'apply:rebase': ON_BRANCH({ strategy: 'rebase', conflicts: [], head_sha: 'c'.repeat(40) }) },
+    expect: (r) => {
+      const p = r.prompts['apply:rebase'] || ''
+      return [
+        ...(/備份 ref（refs\/backup\/<date>\/<branch>）再 rebase/.test(p) ? [] : ['派工單沒有寫出設定的備份 ref 樣式']),
+        ...(/apply [^\n]*--config \.claude\/teams\/guard\.config\.json --methodology \.claude\/teams\/methodology\.json\n/.test(p) ? [] : ['apply 沒有帶 --methodology（工具讀不到設定）']),
+      ]
+    },
+  },
+  {
+    name: '可設定：backup_ref 不合規則（不在 refs/backup/ 底下）→ 派工單和原本相同，不帶 --methodology',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), sync: { ...((p.conventions || {}).sync || {}), backup_ref: 'refs/heads/<branch>-<date>' } } }),
+    fakes: { plan: SYNC_PLAN({ strategy: 'rebase', behind: 2, published: false, conflicts: [] }), 'apply:rebase': ON_BRANCH({ strategy: 'rebase', conflicts: [], head_sha: 'c'.repeat(40) }) },
+    expect: (r) => {
+      const p = r.prompts['apply:rebase'] || ''
+      return [
+        ...(/備份 ref（refs\/backup\/…）再 rebase/.test(p) ? [] : ['不合規則的樣式要退回原本的說法']),
+        ...(/apply [^\n]*--methodology/.test(p) ? ['不合規則時不該帶 --methodology'] : []),
+      ]
+    },
+  },
+  {
+    name: '可設定：backup_ref 有設但這次走 merge → apply 不帶 --methodology（備份 ref 只有 rebase 用）',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), sync: { ...((p.conventions || {}).sync || {}), backup_ref: 'refs/backup/<date>/<branch>' } } }),
+    fakes: { plan: SYNC_PLAN({ strategy: 'merge', behind: 2, published: true, conflicts: [] }), 'apply:merge': ON_BRANCH({ strategy: 'merge', conflicts: [], head_sha: 'a'.repeat(40) }) },
+    expect: (r) => (/apply [^\n]*--methodology/.test(r.prompts['apply:merge'] || '') ? ['merge 不該帶 --methodology'] : []),
+  },
+  ...kgScenarios(),
 ]

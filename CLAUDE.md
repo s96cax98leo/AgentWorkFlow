@@ -218,7 +218,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 - **原則**：有圖（`awf kg build` 建的）而且能開才用；沒有圖、開不了、查不到時，`pack.md`、`pack-args.json`、交付文件的狀態和沒有這個功能時逐字相同（`pack_parity`、`deliverables_parity` 不動）。流程不替使用者建圖。
 - **讀圖的共用函式**：`crates/awf-core/src/kg/flow.rs`（`open_root`、`plan_facts`、`file_links`、`callers_and_deps`、`doc_sections`、`section_links`、`requirement_rows`；條數上限是那裡的常數）。
-- **資料包**：`pack/graph.rs`。plan、design 的一節接在 `pack.md` 最後，build 接在每份子任務資料包最後；plan 的 `located.code-contracts` 在 `PlanFacts::code_enough` 與「和工具定位有重疊」都成立時標成夠用。deliver 走 `deliverables::pack_args_with`（`deliverables/kgflow.rs` 的 `extend_affected`：只會多列）。`--no-kg` 關閉。新內容都寫在 `pack.md`，沒有加範本要讀的新鍵。
+- **資料包**：`pack/graph.rs`。plan、design 的一節接在 `pack.md` 最後，build 接在每份子任務資料包最後；plan 的 `located.code-contracts` 在 `PlanFacts::code_enough` 與「和工具定位有重疊」都成立時標成夠用。deliver 走 `deliverables::pack_args_with`（`deliverables/kgflow.rs` 的 `extend_affected`：只會多列）。`--no-kg` 關閉。新內容都寫在 `pack.md`；範本要讀的新鍵只有一個布林 `kg`（圖開得起來才寫）。
+- **派工單**：八支 sdlc 範本的 `awfInit` 帶 `kg: A.kg === true`，challenge 片段的 `awfPrefix` 才多一行查圖的指示（只讀資料包列的行段、`awf kg locate`、`awf kg impact`）；`sdlc-plan` 的 `toolLocated` 認 `source: "kg"`（回傳的 `located_by` 寫 `kg`）；`sdlc-design` 的 `KG_NOTE` 指到資料包的那一節。沒有 `kg` 時派工單逐字不變。情境：`scenarios/_helpers.mjs` 的 `kgScenarios` 與 `sdlc-plan.mjs`／`sdlc-design.mjs` 的「知識圖」情境。
 - **規格層的 id**：需求來源是 openspec 時，子任務的 `spec_refs` 可以寫穩定 id（`pack::SpecIds`，變更的差異優先於現行規格）；找不到的才進 `spec_ref_errors`。
 - **別的 repo**：profile 的 `knowledge.repos`、`spec_root`、`timeout`（`kg::layout`、`build.rs` 的 `repos_of`／`scan_repo`）；語意規則在 `schema::methodology_errors`，但建圖時再驗一次（不合規則的整筆略過並說明）。
 - **交付文件**：`deliverables/kgflow.rs`。`Links`（小節連到的需求、情境、符號、程式檔的指紋，記在 `deliverables.state.json` 的 `links`；`linked_state` 只把 fresh 改成 stale 或 unstamped）、`project_matrix`（`awf deliverables matrix --project`，只讀、沒有圖回非零）。指紋存在圖的 `fps` 表（`store::put_fp`）。
@@ -351,6 +352,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改 watcher**：`awf watch --selftest`；事件類型或欄位改了，`schemas/progress-event.schema.json`、`methodology.schema.json` 的 `progress.notify.events`、`docs/監控與整合.md` 的事件表要一起改；送給外部指令的欄位只能加進 `NOTIFY_FIELDS`（不放需求內容、摘要、路徑）；任何失敗都只警告。
 - **改派工單或派工數**：跑 `cargo xtask check-budget`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。
 - **新增會寫紀錄的唯讀角色**：加進 `config.rs` 的 `RECORD_ONLY_ROLES` 與 `check_agents.rs` 的對應檢查，hook 測試補該擋（寫 repo、run.json、merge-audit）與該放（寫 runs_dir 的 `.md`）。
+- **新增可調的值（profile）**：預設值＝原本寫死的值，沒寫或不合法一律退回預設（範本用 challenge 片段的 `awfInt`；前綴裡的字走 `awfTune`、執行紀錄的節走 `awfRecordSections`）；放寬閘門或確定性核對的方向不開放（例：`limits.envelope` 只能調小、`review.min_confidence` 只能調低、`conventions.sync.backup_ref` 只能在 `refs/backup/` 底下，規則在 `sync_branch::backup_ref_ok`）。要一起改：`methodology.schema.json`（上下限）、`schema::methodology_errors`（schema 表達不了的，例如 `limits.event` 對 `events` 的角度數）、golden 正反例、對應的情境（開、不合法退回預設）、`crates/xtask/src/js/kernel.cjs`（片段的函式）、`docs/自訂與擴充.md` 的欄位表。改完用乾跑報告確認「沒設定時每張派工單逐字相同」。
 - **新增 guard.config 欄位**：`guard.config.json.tmpl` 的 `_說明`、`config.rs` 的預設值、`docs/自動合併信任模型.md` 或 `docs/自訂與擴充.md` 一起改；`awf init --upgrade` 會把新鍵補進既有專案。
 - **版本（VERSION）**：發佈前遞增 `plugin/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json`（`metadata.version` 與 `plugins[].version`）。init 寫的 `.claude/teams/VERSION` 取自 plugin.json，三處一致由 `crates/awf/tests/smoke_init.rs` 檢查。
 - **CHANGELOG**：每次發佈在 `CHANGELOG.md` 補一節，破壞性變更（角色改名、command 刪除、hook 語意）與升級步驟要寫清楚。

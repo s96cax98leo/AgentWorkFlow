@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -90,5 +90,24 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(/\[arch\] ARCHITECTURE\.md：分層（要對照）/.test(pre) && /\[frontend\] docs\/fe\.md（只適用於碰到 web\/\*\*、\*\*\/\*\.tsx 的部分）/.test(pre) && /\| <id> \| 符合／偏離／不適用 \|/.test(pre), `前綴沒有帶出限制文件：${pre.slice(-400)}`)
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', constraints: [] })
   need(!/限制文件/.test(k.awfPrefix()), '沒有限制時前綴不該多出規則')
+  // 可調的值（1.0）：沒寫或不合法一律用預設；前綴在沒有 tune、沒有 kg 時逐字不變
+  need(k.awfInt({ n: 5 }, 'n', 1, 9, 3) === 5 && k.awfInt({ n: 0 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 10 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 2.5 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: '5' }, 'n', 1, 9, 3) === 3 && k.awfInt(null, 'n', 1, 9, 3) === 3 && k.awfInt('x', 'n', 1, 9, 3) === 3, 'awfInt 的範圍或型別判斷不對')
+  const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12 })
+  need(JSON.stringify(k.awfTune(null)) === T0 && JSON.stringify(k.awfTune({})) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: 'graft' }, limits: { envelope: { summary_chars: 401, evidence_items: 2 } } })) === T0, `awfTune 的預設不對：${JSON.stringify(k.awfTune(null))}`)
+  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: ['a', 'a'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: ['x\ny'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: Array.from({ length: 9 }, (_, i) => `t${i}`) } })) === T0, 'code_tools 重複、含換行或超過 8 個要退回預設')
+  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3 }), 'awfTune 沒有採用合法的設定')
+  const SIX = '產出、驗證'
+  const rs = (v) => k.awfRecordSections({ stages: { deliver: { record_sections: v } } }, SIX)
+  need(rs(['甲', '乙']) === '甲、乙' && rs([]) === SIX && rs(['甲', '甲']) === SIX && rs(['甲\n乙']) === SIX && rs([' 甲']) === SIX && rs(['x'.repeat(41)]) === SIX && rs('甲') === SIX && rs(Array.from({ length: 13 }, (_, i) => `節${i}`)) === SIX && k.awfRecordSections(null, SIX) === SIX, 'awfRecordSections 的判斷不對')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' })
+  const plain = k.awfPrefix()
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', kg: false, tune: k.awfTune(null), constraints: [] })
+  need(k.awfPrefix() === plain, '帶預設的 tune、kg=false 時前綴要和沒帶時逐字相同')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', kg: 'true' })
+  need(k.awfPrefix() === plain, 'kg 不是布林 true 時前綴不該變')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', kg: true })
+  need(k.awfPrefix().startsWith(plain) && /awf kg locate "<文字>"/.test(k.awfPrefix().slice(plain.length)) && /awf kg impact <檔>/.test(k.awfPrefix()) && /_runs\/r1\/plan\/pack\.md 列了行段/.test(k.awfPrefix()), 'kg=true 時前綴要在最後多一行查圖的指示')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', tune: k.awfTune({ knowledge: { code_tools: ['ast-grep'] }, limits: { envelope: { summary_chars: 200, evidence_items: 6 } } }) })
+  need(/程式碼有 ast-grep 就先用。/.test(k.awfPrefix()) && /summary 不超過 200 字、evidence 最多 6 則/.test(k.awfPrefix()) && !/graft/.test(k.awfPrefix()), 'tune 的值沒有寫進前綴')
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })

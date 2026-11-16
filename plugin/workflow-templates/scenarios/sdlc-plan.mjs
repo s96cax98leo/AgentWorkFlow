@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extScenario, ENV } from './_helpers.mjs'
+import { extScenario, ENV, kgScenarios, tuneScenarios } from './_helpers.mjs'
 
 const SD_PROFILE = { stages: { design: { system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設'], feature_scope: 'x', system_scope: 'x' } } } }
 
@@ -292,6 +292,48 @@ const V04 = [
     ],
   },
   {
+    // 知識圖判定程式角度夠用（awf pack 標 enough＝true、source＝kg）：不派 locate:code-contracts，回傳的 located_by 寫 kg
+    name: '知識圖：程式角度由圖判定夠用（source=kg）→ 不派 locate:code-contracts，located_by 寫 kg，粗估少一個',
+    profile: MP,
+    args: { recipe: 'feature', kg: true, located: {
+      'code-contracts': { enough: true, source: 'kg', locations: [{ path: 'src/billing/export.ts', start: 10, end: 48, why: '符號 exportInvoice' }, { path: 'src/billing/format.ts', start: 1, end: 30, why: '符號 formatRow' }, { path: 'src/lib/money.ts', start: 5, end: 22, why: '符號 toCents' }] },
+    } },
+    fakes: { 'research:code-contracts': (base, prompt) => { if (!/知識圖查到、和工具定位互相印證的/.test(prompt) || !/src\/billing\/export\.ts:10-48/.test(prompt) || !/最多再補 6 段/.test(prompt)) throw new Error('分析沒有收到知識圖定位的行段'); return base } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:code-contracts') ? ['圖判定夠用了還派 locate:code-contracts'] : []),
+      ...(r.labels.includes('research:code-contracts') ? [] : ['沒有派 research:code-contracts']),
+      ...(r.labels.includes('locate:specs-adr') ? [] : ['其他角度要照派定位 agent']),
+      ...(r.out && r.out.located_by && r.out.located_by['code-contracts'] === 'kg' && r.out.located_by['specs-adr'] === 'agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+      ...(r.out && r.out.locations && (r.out.locations['code-contracts'] || []).length === 3 ? [] : ['圖定位的行段要進 locations']),
+      ...(r.labels.length === 8 && r.out && r.out.estimated_agents && r.out.estimated_agents.plan === 8 ? [] : [`圖判定夠用時 plan 段派 8 個（少一個定位）：實際 ${r.labels.length}、粗估 ${JSON.stringify(r.out && r.out.estimated_agents && r.out.estimated_agents.plan)}`]),
+      ...(r.out && r.out.halted !== true ? [] : ['不該 halted']),
+    ],
+  },
+  {
+    // 對照組：同樣的行段但沒有標夠用（沒有圖時 awf pack 對程式角度只給種子）→ 照派定位 agent，派工數多一個
+    name: '知識圖：沒有圖時同樣的行段只是種子（enough=false）→ 照派 locate:code-contracts，located_by 是 tool+agent',
+    profile: MP,
+    args: { recipe: 'feature', located: {
+      'code-contracts': { enough: false, locations: [{ path: 'src/billing/export.ts', start: 10, end: 48, why: '工具定位：命中 export' }, { path: 'src/billing/format.ts', start: 1, end: 30, why: 'x' }, { path: 'src/lib/money.ts', start: 5, end: 22, why: 'x' }] },
+    } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:code-contracts') ? [] : ['沒有標夠用的程式角度要照派定位 agent']),
+      ...(r.labels.length === 9 && r.out && r.out.estimated_agents && r.out.estimated_agents.plan === 9 ? [] : [`沒有圖時 plan 段派 9 個：實際 ${r.labels.length}、粗估 ${JSON.stringify(r.out && r.out.estimated_agents && r.out.estimated_agents.plan)}`]),
+      ...(r.out && r.out.located_by && r.out.located_by['code-contracts'] === 'tool+agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+    ],
+  },
+  {
+    name: '知識圖：標了 source=kg 但合格的行段不到 3 段 → 不算夠用，照派定位 agent（located_by 是 kg+agent）',
+    profile: MP,
+    args: { recipe: 'feature', kg: true, located: {
+      'code-contracts': { enough: true, source: 'kg', locations: [{ path: 'src/billing/export.ts', start: 10, end: 48, why: 'x' }, { path: '/abs/format.ts', start: 1, end: 30, why: 'x' }, { path: '../money.ts', start: 5, end: 22, why: 'x' }] },
+    } },
+    expect: (r) => [
+      ...(r.labels.includes('locate:code-contracts') ? [] : ['不到 3 段要照派定位 agent']),
+      ...(r.out && r.out.located_by && r.out.located_by['code-contracts'] === 'kg+agent' ? [] : [`located_by 不對：${JSON.stringify(r.out && r.out.located_by)}`]),
+    ],
+  },
+  {
     name: '派工數上限：到上限就 halted，不靜默截斷',
     profile: { ...RP, limits: { max_agents: 3 } }, args: { recipe: 'feature' },
     expect: (r) => [
@@ -470,4 +512,35 @@ export default [
       ...(/低於 0\.7 時/.test(r.prompts.triage || '') ? [] : ['不合法的值要退回 0.7']),
     ],
   },
+  {
+    // 查詢量與調研上限（profile 的 limits.dispatch、limits.research）：派工單上的數字跟著設定；有種子時減半（無條件進位）
+    name: '可設定：limits.dispatch.triage_queries 與 limits.research → triage、定位、分析的派工單照設定寫',
+    profile: { ...RP, limits: { dispatch: { triage_queries: 5 }, research: { locate_rounds: 9, locate_queries: 20, max_segments: 16, segment_lines: 200, context_lines: 30, stall: 5, analysis_rounds: 25, extra_segments: 3 } } },
+    args: { located: { 'code-contracts': { enough: false, locations: [{ path: 'src/export.py', start: 151, end: 190, why: '工具定位：命中 export' }] } } },
+    fakes: FEATURE_TRIAGE,
+    expect: (r) => [
+      ...(/最多 5 次查詢，不整檔讀/.test(r.prompts.triage || '') ? [] : ['triage 的查詢數沒有跟著設定']),
+      ...(/前後各 30 行以內/.test(r.prompts['locate:specs-adr'] || '') && /最多 9 輪、20 次查詢（[^）]*），連續 5 次查詢沒有新的相關行段就停。最多回報 16 段，每段不超過 200 行/.test(r.prompts['locate:specs-adr'] || '') ? [] : ['定位（沒有種子）的上限沒有跟著設定']),
+      ...(/最多 5 輪、10 次查詢（[^）]*），連續 3 次查詢沒有新的相關行段就停。最多回報 16 段（含上面確認相關的），每段不超過 200 行/.test(r.prompts['locate:code-contracts'] || '') ? [] : ['定位（有種子）要減半、無條件進位']),
+      ...(/最多再補 3 段/.test(r.prompts['research:specs-adr'] || '') && /最多 25 輪工具呼叫；連續 5 次查詢沒有新發現/.test(r.prompts['research:specs-adr'] || '') ? [] : ['分析的上限沒有跟著設定']),
+    ],
+  },
+  {
+    name: '可設定：limits.research 的行段直接由工具給時，補段數是 1.5 倍（無條件進位）',
+    profile: { ...RP, limits: { research: { extra_segments: 3 } } },
+    args: { recipe: 'feature', located: { 'specs-adr': { enough: true, locations: [{ path: 'docs/a.md', start: 1, end: 9, why: 'x' }, { path: 'docs/b.md', start: 1, end: 9, why: 'x' }, { path: 'docs/c.md', start: 1, end: 9, why: 'x' }] } } },
+    expect: (r) => (/最多再補 5 段/.test(r.prompts['research:specs-adr'] || '') && /最多再補 3 段/.test(r.prompts['research:code-contracts'] || '') ? [] : ['工具直接給行段時補段數應為 5，定位 agent 找的應為 3']),
+  },
+  {
+    name: '可設定：limits.dispatch、limits.research 不合法（超出範圍、不是整數）時照預設',
+    profile: { ...RP, limits: { dispatch: { triage_queries: 0 }, research: { locate_rounds: 99, locate_queries: '12', max_segments: 2, segment_lines: 5, context_lines: 0, stall: 2.5, analysis_rounds: 1, extra_segments: -1 } } },
+    fakes: FEATURE_TRIAGE,
+    expect: (r) => [
+      ...(/最多 8 次查詢，不整檔讀/.test(r.prompts.triage || '') ? [] : ['triage 的查詢數要退回 8']),
+      ...(/前後各 20 行以內/.test(r.prompts['locate:specs-adr'] || '') && /最多 6 輪、12 次查詢（[^）]*），連續 3 次查詢沒有新的相關行段就停。最多回報 12 段，每段不超過 120 行/.test(r.prompts['locate:specs-adr'] || '') ? [] : ['定位的上限要退回預設']),
+      ...(/最多再補 4 段/.test(r.prompts['research:specs-adr'] || '') && /最多 15 輪工具呼叫；連續 3 次查詢沒有新發現/.test(r.prompts['research:specs-adr'] || '') ? [] : ['分析的上限要退回預設']),
+    ],
+  },
+  ...tuneScenarios({ fakes: FEATURE_TRIAGE }),
+  ...kgScenarios({ fakes: FEATURE_TRIAGE }),
 ]

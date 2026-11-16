@@ -1,6 +1,6 @@
 // sdlc-build.js 的乾跑情境：走預設乾跑碰不到的分支。
 
-import { FIX_SUBTASKS, SAMPLE_SUBTASKS, recipeScenarios } from './_helpers.mjs'
+import { FIX_SUBTASKS, SAMPLE_SUBTASKS, recipeScenarios, kgScenarios } from './_helpers.mjs'
 
 const NONE = () => null
 const out = (r) => r.out || {}
@@ -307,4 +307,5 @@ export default [
     fakes: { 'Implement:t1': { status: 'blocked', summary: '卡住' }, 'Implement:t1#2': { status: 'blocked', summary: '卡住' }, 'Implement:t1#3': { status: 'blocked', summary: '卡住' } },
     expect: (r) => (r.labels.includes('Implement:t1#3') && !r.labels.includes('Implement:t1#4') ? [] : [`預設要派到第 3 次為止：${r.labels.join(' → ')}`]),
   },
+  ...kgScenarios(),
 ]
