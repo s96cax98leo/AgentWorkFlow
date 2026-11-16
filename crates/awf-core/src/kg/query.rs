@@ -4,9 +4,9 @@
 
 use super::build::{ident_words, Layout};
 use super::sources::resolve_id;
-use super::store::{self, e};
+use super::store;
 use crate::kb::{self, pyish};
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -507,12 +507,10 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
 /// 斷掉的與缺的連結。`run` 有給時只看那個 run 寫的連結。只觀察，不修。
 pub fn check(g: &Graph, run: Option<&str>) -> Answer {
     let mut ans = Answer { title: match run { Some(r) => format!("check --run {r}"), None => "check".into() }, ..Default::default() };
-    let prov_like = run.map(|r| format!("ledger:{}/%", r.replace('%', "").replace('_', "\\_")));
     let in_run = |prov: &str| match run {
         Some(r) => prov.strip_prefix("ledger:").and_then(|p| p.split('/').next()) == Some(r),
         None => true,
     };
-    let _ = prov_like;
     // 斷掉：帳本或推導出來的邊，有一端不在圖裡
     let rows: Vec<(Edge, bool, bool)> = (|| -> rusqlite::Result<Vec<(Edge, bool, bool)>> {
         let mut st = g.con.prepare(
@@ -725,7 +723,3 @@ pub fn answer_json(ans: &Answer) -> String {
     serde_json::to_string_pretty(&serde_json::json!({"query": ans.title, "items": items, "notes": ans.notes})).unwrap_or_else(|_| "{}".into())
 }
 
-/// 查詢常用的一行：`SELECT` 一個數字。
-pub fn scalar(g: &Graph, sql: &str) -> i64 {
-    g.con.query_row(sql, params![], |r| r.get(0)).map_err(e).unwrap_or(0)
-}

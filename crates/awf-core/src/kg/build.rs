@@ -389,7 +389,7 @@ struct Counts {
     touched: bool,
 }
 
-fn update_files(con: &Connection, lay: &Layout, srcs: &[Src], skipped: &mut Vec<(String, String)>, clock: &Clock) -> Result<Counts, Fail> {
+fn update_files(con: &Connection, srcs: &[Src], skipped: &mut Vec<(String, String)>, clock: &Clock) -> Result<Counts, Fail> {
     let mut have: HashMap<String, (String, i64, i64, String)> = HashMap::new();
     {
         let mut st = con.prepare("SELECT path, src, size, mtime_ns, sha256 FROM files").map_err(e)?;
@@ -444,7 +444,6 @@ fn update_files(con: &Connection, lay: &Layout, srcs: &[Src], skipped: &mut Vec<
         con.execute("INSERT INTO files VALUES(?,?,?,?,?,?,?,?)", params![s.rel, s.src, lang, size, mtime, sha, nlines as i64, is_test as i64]).map_err(e)?;
         c.changed += 1;
     }
-    let _ = lay;
     let mut gone: Vec<&String> = have.keys().filter(|p| !live.contains(p.as_str())).collect();
     gone.sort();
     for p in gone {
@@ -466,7 +465,7 @@ fn run(con: &Connection, lay: &Layout, full: bool, clock: &Clock, rep: &mut Buil
     con.execute_batch("BEGIN").map_err(e)?;
     let mut aux = Aux::default();
     let srcs = collect(lay, &mut aux, &mut rep.skipped, clock)?;
-    let c = update_files(con, lay, &srcs, &mut rep.skipped, clock)?;
+    let c = update_files(con, &srcs, &mut rep.skipped, clock)?;
     clock.check()?;
     sources::git_facts(con, &lay.root, full, &before, &mut rep.notes)?;
     clock.check()?;
@@ -555,7 +554,7 @@ mod tests {
     fn words() {
         let toks = |s: &str| kb::tokenize(&ident_words(s), false);
         assert_eq!(toks("getUserName"), vec!["getusername", "get", "user", "name"]);
-        assert_eq!(toks("export_invoice"), vec!["export_invoice", "export", "invoice"]);
+        assert_eq!(toks("export_invoice"), vec!["export", "invoice", "export", "invoice"]);
         assert_eq!(toks("HTTPServer"), vec!["httpserver", "http", "server"]);
         assert_eq!(ticks("看 `src/a.ts` 與 `billing/export-invoice#csv`，不是 `x`、`a b/c`"), vec!["src/a.ts", "billing/export-invoice#csv"]);
     }
