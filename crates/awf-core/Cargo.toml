@@ -21,7 +21,12 @@ tree-sitter-go = "0.25.0"
 tree-sitter-java = "0.23.5"
 tree-sitter-rust = "0.24.2"
 ignore = "0.4.30"
-tree-sitter-c-sharp = "0.23.5"
-tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-php = "0.25.1"
 tree-sitter-ruby = "0.23.1"
+tree-sitter-c-sharp = { version = "0.23.5", optional = true }
+tree-sitter-kotlin-ng = { version = "1.1.0", optional = true }
+
+[features]
+# 選用的語言：預設不放（執行檔會超過 15MB 的目標）。要用時 cargo build --features lang-csharp,lang-kotlin
+lang-csharp = ["dep:tree-sitter-c-sharp"]
+lang-kotlin = ["dep:tree-sitter-kotlin-ng"]

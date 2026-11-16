@@ -26,7 +26,7 @@ pub enum Lang {
 }
 
 /// 支援的語言（顯示用）。
-pub const LANG_NAMES: [&str; 10] = ["typescript", "javascript", "python", "go", "java", "rust", "csharp", "kotlin", "php", "ruby"];
+pub const LANG_NAMES: [&str; 8] = ["typescript", "javascript", "python", "go", "java", "rust", "php", "ruby"];
 
 impl Lang {
     /// 依副檔名判斷語言。
@@ -41,8 +41,8 @@ impl Lang {
             "go" => Lang::Go,
             "java" => Lang::Java,
             "rs" => Lang::Rust,
-            "cs" => Lang::CSharp,
-            "kt" | "kts" => Lang::Kotlin,
+            "cs" if cfg!(feature = "lang-csharp") => Lang::CSharp,
+            "kt" | "kts" if cfg!(feature = "lang-kotlin") => Lang::Kotlin,
             "php" => Lang::Php,
             "rb" => Lang::Ruby,
             _ => return None,
@@ -80,8 +80,9 @@ impl Lang {
         })
     }
 
-    fn language(self) -> tree_sitter::Language {
-        match self {
+    /// 這個執行檔有沒有放這個語言的文法（C#、Kotlin 是選用的 feature）。
+    fn language(self) -> Option<tree_sitter::Language> {
+        Some(match self {
             Lang::Ts => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
             Lang::Js => tree_sitter_javascript::LANGUAGE.into(),
@@ -89,11 +90,15 @@ impl Lang {
             Lang::Go => tree_sitter_go::LANGUAGE.into(),
             Lang::Java => tree_sitter_java::LANGUAGE.into(),
             Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
+            #[cfg(feature = "lang-csharp")]
             Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            #[cfg(feature = "lang-kotlin")]
             Lang::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
             Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
             Lang::Ruby => tree_sitter_ruby::LANGUAGE.into(),
-        }
+            #[allow(unreachable_patterns)]
+            _ => return None,
+        })
     }
 }
 
@@ -980,7 +985,7 @@ fn attach_marks(out: &mut FileSyms) {
 /// 解析一個原始檔。語法有錯的部分 tree-sitter 會跳過，其餘照收；完全解析不了回 None。
 pub fn parse(lang: Lang, src: &str) -> Option<FileSyms> {
     let mut parser = Parser::new();
-    parser.set_language(&lang.language()).ok()?;
+    parser.set_language(&lang.language()?).ok()?;
     let tree = parser.parse(src.as_bytes(), None)?;
     let mut w = Walker { lang, src: src.as_bytes(), out: FileSyms::default(), scope: Vec::new() };
     w.visit(tree.root_node(), 0);
@@ -992,7 +997,7 @@ pub fn parse(lang: Lang, src: &str) -> Option<FileSyms> {
 /// 除錯與測試用：語法樹的 S 運算式。
 pub fn sexp(lang: Lang, src: &str) -> Option<String> {
     let mut parser = Parser::new();
-    parser.set_language(&lang.language()).ok()?;
+    parser.set_language(&lang.language()?).ok()?;
     Some(parser.parse(src.as_bytes(), None)?.root_node().to_sexp())
 }
 

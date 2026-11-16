@@ -439,6 +439,10 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
                     }
                     "imports" | "calls" | "extends" | "implements" if !whole_file => {
                         let path = g.node(&ed.src).map(|n| n.path).unwrap_or_default();
+                        // 看整個檔的時候，檔內互相呼叫不算「引用它」
+                        if s.kind == "file" && path == s.path {
+                            continue;
+                        }
                         let group = if g.is_test(&path) { "受影響的測試" } else { "引用它的程式" };
                         push(&mut ans, group, &ed.src, why)
                     }

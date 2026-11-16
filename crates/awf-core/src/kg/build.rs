@@ -72,6 +72,9 @@ pub struct Layout {
 
 pub fn layout(root: Option<&str>, profile: Option<&str>, dir: Option<&str>, spec_root: Option<&str>) -> Result<Layout, String> {
     let cfg = kb::load_config(root, profile, None, None, dir).map_err(|err| format!("讀不到專案設定（{}）", err.msg))?;
+    if !Path::new(&cfg.root).is_dir() {
+        return Err(format!("專案根目錄不存在：{}", cfg.root));
+    }
     let runs = kb::guard_dir(&cfg.root, "runs_dir", "_tpm/runs");
     let spec = spec_root.filter(|s| !s.is_empty()).unwrap_or("openspec");
     crate::spec::check_root_arg(spec)?;
