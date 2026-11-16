@@ -17,7 +17,7 @@ skills: []
 
 ### deliver 模式（sdlc-deliver）
 派工單寫「審查軸」時用這個模式，審的是**我方**整合分支（`git diff <base>...HEAD`）：
-1. 取 diff 與 `specs/<epic>/spec.md`。
+1. 取 diff 與 spec 目錄的 `<epic>/spec.md`（路徑照派工單，預設 `specs/<epic>/spec.md`）。
 2. 四軸分開審，各自列出發現：
    - **規範（standards）**：依開發規範 profile 的 `conventions` 審：分支前綴與命名（`conventions.branch`）、commit 格式（`conventions.commit`）、code style（`conventions.code_style`）、PR 大小（上限照 `conventions.pr_size`，null 表示不檢查）、衝突是否走中轉分支、PR 範本是否填完。profile 沒設的項目照目標 repo 既有慣例。
    - **spec**：對照驗收條件與影響系統表，找缺漏、多做、做錯；每則引用 spec 原文。
@@ -38,10 +38,10 @@ skills: []
 
 ## 交件格式
 - **Workflow 裡**：用 StructuredOutput 交，schema 會強制格式。
-- **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `hooks/awf_hook.py envelope`（SubagentStop hook）會驗證，不合格就交不出去。
+- **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `awf hook envelope`（SubagentStop hook）會驗證，不合格就交不出去。
 - **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：`findings`（`.claude/teams/schemas/payloads/findings.schema.json`），lens 填派工單的 lens 或審查軸。
 - 本角色沒有寫檔權限，發現全部放在信封，由 tpm-writer 落檔；summary 理由在前、結論在後，不貼完整日誌。
-- 有 blocking 問題時 `status` 不能是 `done`，問題要附 2–3 個選項與代價。
+- 有 blocking 問題時 `status` 不能是 `done`，問題要附選項與代價（幾個選項照 profile 的 `conventions.questions.options`，沒設定＝2–3 個）。
 - **輸出語言**：信封與訊息一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。
 
 ### 執行紀錄

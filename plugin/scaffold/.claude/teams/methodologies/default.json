@@ -1,0 +1,287 @@
+{
+  "name": "default",
+  "description": "預設 profile（模版原本的做法）：spec 驅動，驗收條件用 EARS 句型，測試先行（先寫會失敗的驗收測試再實作），Conventional Commits 加 Story scope，PR 修改既有檔上限 300 行或 15 檔。",
+  "stages": {
+    "plan": {
+      "artifacts": ["intent.md"],
+      "template": "目標（問題與期望結果）、範圍（受影響的使用者與系統、用例與量級假設：使用者數、請求率、資料量、讀寫比、延遲與可用性目標；限制）、不做的事、驗收條件（每條可驗證）、待解問題",
+      "guidance": "intent 只寫問題空間，不寫解法；SA 照 System Design Primer 第 1 步（用例、限制、假設與量級），數字要有出處，沒有就標成假設；每個主張附出處；最多 5 個待釐清問題，blocking 的附 2–3 個選項與代價。"
+    },
+    "design": {
+      "artifacts": ["design.md", "spec.md", "plan.md", "progress.md"],
+      "requirement_style": "spec.md 的驗收條件用 EARS 句型（例：「當 <觸發> 時，系統應 <行為>」），逐條對 Story ID，數值與錯誤碼照原文；另有影響系統表、疑慮節、整合修訂與例外節。",
+      "guidance": "design.md 每個需求都寫，照 system_design 的步驟做功能層或系統層 SD；架構取捨寫 ADR（至少 2 個真實選項）。plan.md 寫任務、檔案、測試對應表；progress.md 是從 plan 拆出的清單。",
+      "system_design": {
+        "source": "System Design Primer（https://github.com/donnemartin/system-design-primer，CC BY 4.0）；整理見模版 docs/系統設計方法.md",
+        "steps": [
+          "1 用例、限制與假設（SA）：誰在什麼情境用、輸入與輸出、資料量、請求率、讀寫比、延遲與可用性目標；沒有實際數字就寫假設並標明依據",
+          "2 高階設計：主要元件與資料流（圖或清單），每個選擇附理由",
+          "3 核心元件：API（REST 或 RPC、錯誤碼、冪等、分頁）、資料模型與 schema（選 SQL 或 NoSQL 的理由、索引）、元件內部流程",
+          "4 擴展與取捨：依第 1 步的限制找出瓶頸，每個取捨寫選了什麼、放棄什麼、為什麼"
+        ],
+        "feature_scope": "每個需求都要做功能層 SD：至少寫第 1、3 步，加上和這次改動相關的第 4 步取捨（一致性、快取、非同步、失敗與重試、安全）；規模小可以精簡，但不能跳過，不適用的項目寫一句理由",
+        "system_scope": "有系統面時（新服務、新資料儲存、跨服務呼叫、對流量／延遲／可用性有要求、資料量會成長）四步都要完整：第 1 步附量級粗估（QPS、儲存量、頻寬），第 4 步逐項檢查 topics",
+        "topics": [
+          "效能 vs 擴展性",
+          "延遲 vs 吞吐量",
+          "可用性 vs 一致性（CAP：選 CP 還是 AP）",
+          "一致性模式（弱、最終、強）",
+          "可用性模式（failover、複製、可用性的數字）",
+          "DNS 與 CDN（push、pull）",
+          "負載平衡（L4、L7、水平擴展）與反向代理",
+          "應用層（微服務、服務發現）",
+          "資料庫（複製、federation、分片、反正規化、SQL 調校；SQL 還是 NoSQL）",
+          "快取（放在哪一層；更新策略：cache-aside、write-through、write-behind、refresh-ahead）",
+          "非同步（訊息佇列、任務佇列、back pressure）",
+          "通訊（TCP、UDP、RPC、REST）",
+          "安全"
+        ],
+        "document": "design.md 的「系統設計」節：第一行寫這次是功能層還是系統層，以及判斷理由"
+      }
+    },
+    "build": {
+      "test_first": true,
+      "unit_tests": "單元測試由實作者以 TDD（紅燈 → 綠燈 → 重構）撰寫。",
+      "guidance": "驗收測試先寫、確認以預期的理由失敗並合進整合分支，才開始實作；實作者不得修改驗收測試。"
+    },
+    "test": {
+      "verification": "在目前 HEAD 逐條驗證 spec.md 的驗收條件（pass／fail／not_verifiable），fail 用缺陷四欄寫，並對 diff 做反作弊檢查。",
+      "guidance": "先跑機械檢查（verify 指令），再核對證據，最後對抗性抽查。"
+    },
+    "deliver": {
+      "review_axes": [],
+      "guidance": "四軸審查（standards、spec、bugs、history），只留信心 ≥0.8 且未被 skeptic 推翻的發現。"
+    },
+    "merge": {
+      "guidance": "需求清單逐條對照驗證證據，全部一致且 awf merge-gate 判 merge 才合併。"
+    }
+  },
+  "parallelism": {
+    "split_threshold": 8,
+    "max_sub_plans": 4,
+    "shard_verification": true
+  },
+  "models": {
+    "mode": "auto",
+    "tiers": {"light": "haiku", "standard": "sonnet", "strong": "inherit"},
+    "defaults": {"*": "standard"},
+    "floors": {}
+  },
+  "limits": {
+    "whole_file_lines": 400,
+    "read_budget": {"default": 800000, "roles": {"tpm-researcher": 240000, "tpm-skeptic": 240000, "tpm-planner": 160000}},
+    "max_agents": 40
+  },
+  "knowledge": {
+    "sources": ["README.md", "CLAUDE.md", "docs/**/*.md", "specs/**/*.md"],
+    "exclude": ["**/node_modules/**", "**/.worktrees/**"],
+    "dir": "_tpm/kb"
+  },
+  "requirements": {
+    "source": "json",
+    "path": "",
+    "command": "",
+    "id_pattern": "",
+    "notes": "預設不指定需求檔：sdlc-merge 用 args.requirements 或 merge_gate --requirements 帶入；guard.config.json 的 requirements 有設 path／command 時以它為準。"
+  },
+  "conventions": {
+    "code_style": {
+      "description": "照目標 repo 既有的 linter／formatter 設定（CLAUDE.md、設定檔）；新增程式碼不得新增 lint 錯誤。",
+      "tool": null,
+      "command": null
+    },
+    "commit": {
+      "format": "Conventional Commits：<type>(<scope>): <摘要>，scope 放 Story ID（文件類放 epic）；結尾署名行。",
+      "examples": {
+        "docs": "docs(<epic>): intent 草稿",
+        "test": "test(<Story>): 驗收測試",
+        "feat": "feat(<Story>): 實作",
+        "fix": "fix(<Story>): 修正驗收失敗"
+      },
+      "check_regex": null
+    },
+    "branch": {
+      "prefix": "feature/",
+      "naming": "epic 分支 <prefix><epic>；子任務分支 <prefix><epic>--<子任務 id>；子任務合進整合分支有衝突時用 merge/<短名>-into-<整合分支>-<YYYYMMDD>。"
+    },
+    "sync": {
+      "strategy": "auto",
+      "transit_naming": "merge/<短名>-into-<base>-<YYYYMMDD>"
+    },
+    "pr_size": {
+      "max_lines": 300,
+      "max_files": 15,
+      "scope": "只算修改既有檔（git diff --numstat --diff-filter=M）；超過時建議拆成依序可合的小 PR。"
+    },
+    "doc_format": {
+      "format": "Markdown",
+      "notes": "specs/<epic>/ 下的文件照 specs/_templates/ 的範本；沒有範本時用本 profile 各段的說明。"
+    }
+  },
+  "recipes": {
+    "feature": {
+      "description": "新功能：完整 7 段（改版前的預設流程）",
+      "stages": ["plan", "design", "build", "sync", "test", "deliver", "merge"],
+      "plan_mode": "feature",
+      "research_angles": ["requirement", "specs-adr", "code-contracts", "upstream"],
+      "design_lenses": ["coverage", "plan", "system-design"],
+      "test": {"design_review": "auto", "security_review": "auto", "modes": ["verify"]},
+      "deliver_axes": ["standards", "spec", "bugs", "history"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": false,
+      "split": true,
+      "small": {"research_angles": ["requirement", "code-contracts"], "split": false}
+    },
+    "bugfix": {
+      "description": "回報的 bug、錯誤行為：先診斷根因（重現→根因），修正並補回歸測試；沒有 design 段",
+      "stages": ["plan", "build", "sync", "test", "deliver", "merge"],
+      "plan_mode": "diagnose",
+      "research_angles": ["requirement", "code-contracts"],
+      "design_lenses": [],
+      "test": {"design_review": "auto", "security_review": "auto", "modes": ["verify", "regression"]},
+      "deliver_axes": ["spec", "bugs"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": false,
+      "split": false
+    },
+    "change": {
+      "description": "需求變更（CR）：先盤點既有功能與驗收條件要改、留、刪哪些，design 只寫差異，test 加跑受影響舊驗收條件的回歸",
+      "stages": ["plan", "design", "build", "sync", "test", "deliver", "merge"],
+      "plan_mode": "impact",
+      "research_angles": ["requirement", "specs-adr", "code-contracts"],
+      "design_lenses": ["coverage", "plan", "delta"],
+      "test": {"design_review": "auto", "security_review": "auto", "modes": ["verify", "regression"]},
+      "deliver_axes": ["standards", "spec", "bugs", "history"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": false,
+      "split": true
+    },
+    "hotfix": {
+      "description": "線上事故：最短路徑修正，事後一定要開後續 run 補完整流程",
+      "stages": ["plan", "build", "test", "deliver", "merge"],
+      "plan_mode": "diagnose",
+      "research_angles": ["code-contracts"],
+      "design_lenses": [],
+      "test": {"design_review": "auto", "security_review": "auto", "modes": ["verify", "regression"]},
+      "deliver_axes": ["bugs"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": true,
+      "split": false
+    },
+    "refactor": {
+      "description": "不改行為的重構：先列出不能改變的行為、先寫 characterization test，驗行為等價",
+      "stages": ["plan", "build", "sync", "test", "deliver", "merge"],
+      "plan_mode": "invariants",
+      "research_angles": ["code-contracts", "specs-adr"],
+      "design_lenses": [],
+      "test": {"design_review": "auto", "security_review": "auto", "modes": ["verify", "equivalence"]},
+      "deliver_axes": ["standards", "bugs", "history"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": false,
+      "split": false
+    },
+    "deps": {
+      "description": "依賴升級：讀 changelog 找破壞性變更，強制安全審查",
+      "stages": ["plan", "build", "sync", "test", "deliver", "merge"],
+      "plan_mode": "changelog",
+      "research_angles": ["requirement", "code-contracts"],
+      "design_lenses": [],
+      "test": {"design_review": "auto", "security_review": "always", "modes": ["verify", "regression"]},
+      "deliver_axes": ["standards", "bugs"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": false,
+      "split": false
+    },
+    "docs": {
+      "description": "只改文件、設定說明、文案：build 只能有 doc 子任務",
+      "gate_mode": "plan-only",
+      "stages": ["plan", "build", "deliver", "merge"],
+      "plan_mode": "research",
+      "research_angles": ["requirement"],
+      "design_lenses": [],
+      "test": {"design_review": "never", "security_review": "never", "modes": []},
+      "deliver_axes": ["standards", "spec"],
+      "build_kinds": ["doc"],
+      "publishable": true,
+      "followup": false,
+      "split": false
+    },
+    "test-only": {
+      "description": "補測試、修 flaky：不能改產品程式",
+      "gate_mode": "plan-only",
+      "stages": ["plan", "build", "test", "deliver", "merge"],
+      "plan_mode": "research",
+      "research_angles": ["code-contracts"],
+      "design_lenses": [],
+      "test": {"design_review": "never", "security_review": "auto", "modes": ["verify"]},
+      "deliver_axes": ["standards", "bugs"],
+      "build_kinds": ["test"],
+      "publishable": true,
+      "followup": false,
+      "split": false
+    },
+    "perf": {
+      "description": "效能改善：先量基線，改完前後對照",
+      "stages": ["plan", "design", "build", "sync", "test", "deliver", "merge"],
+      "plan_mode": "baseline",
+      "research_angles": ["requirement", "code-contracts"],
+      "design_lenses": ["coverage", "plan", "system-design"],
+      "test": {"design_review": "auto", "security_review": "auto", "modes": ["verify", "benchmark"]},
+      "deliver_axes": ["standards", "spec", "bugs", "history"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": false,
+      "split": true
+    },
+    "spike": {
+      "description": "調研、可行性評估：只有 plan 段，產出 intent 與調研結論，不能推送",
+      "stages": ["plan"],
+      "plan_mode": "research",
+      "research_angles": ["requirement", "specs-adr", "code-contracts"],
+      "design_lenses": [],
+      "test": {"design_review": "never", "security_review": "never", "modes": []},
+      "deliver_axes": [],
+      "build_kinds": [],
+      "publishable": false,
+      "followup": false,
+      "split": false
+    },
+    "revert": {
+      "description": "合併後回退：build 只跑 git revert，事後補原因與恢復條件",
+      "stages": ["plan", "build", "test", "deliver", "merge"],
+      "plan_mode": "revert",
+      "research_angles": ["code-contracts"],
+      "design_lenses": [],
+      "test": {"design_review": "auto", "security_review": "auto", "modes": ["verify", "regression"]},
+      "deliver_axes": ["bugs"],
+      "build_kinds": ["code", "test", "doc"],
+      "publishable": true,
+      "followup": false,
+      "split": false
+    }
+  },
+  "modifiers": {
+    "ui": {"description": "有畫面改動：一定做設計審查", "test": {"design_review": "always"}},
+    "security": {"description": "有安全面（auth、權限、機敏資料、外部輸入）：一定做安全審查", "test": {"security_review": "always"}, "deliver_axes": ["bugs"], "model_floors": {"tpm-skeptic": "strong"}},
+    "migration": {
+      "description": "資料庫 migration：強制 design 段與回滾計畫、一定做安全審查",
+      "add_stages": ["design"],
+      "design_lenses": ["coverage", "plan", "rollback"],
+      "test": {"security_review": "always", "modes": ["regression"]}
+    },
+    "public_api": {
+      "description": "公開 API 或對外契約：強制 design 段檢查相容性，deliver 加歷史軸",
+      "add_stages": ["design"],
+      "design_lenses": ["coverage", "plan", "compat"],
+      "deliver_axes": ["spec", "history"]
+    },
+    "large": {"description": "範圍大：允許拆子計劃、調研四個角度全開", "research_angles": ["requirement", "specs-adr", "code-contracts", "upstream"], "split": true, "model_floors": {"dev-spec-author": "strong"}}
+  },
+  "deliverables": {"enabled": false, "dir": "docs/deliverables", "documents": [{"id": "biz-rules"}, {"id": "func-spec"}, {"id": "sys-arch"}, {"id": "db-design"}, {"id": "api-spec"}, {"id": "batch-design"}]}
+}

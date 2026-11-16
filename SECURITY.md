@@ -12,53 +12,92 @@
 
 ## 支援的版本
 
-只有**最新的 minor 版本**會收到安全修正。舊版請先升級（步驟見 `CHANGELOG.md` 各版本的「升級步驟」）。
+目前只支援**最新的主版本**：安全修正只發佈在它最新的那一版（版本號見 `CHANGELOG.md` 最上面一節）。舊版請先升級（步驟見 `CHANGELOG.md` 各版本的「升級步驟」）。
 
 | 版本 | 支援 |
 |---|---|
-| 最新 minor（目前 0.2.x） | 是 |
+| 最新的主版本（它最新的一版） | 是 |
 | 更舊的版本 | 否 |
 
-已 init 的專案不會自動更新 scaffold 的檔案；升級 plugin 後要在專案裡跑 `init.py --upgrade`，scaffold 的修正才會生效。
+已 init 的專案不會自動更新 scaffold 的檔案；升級 plugin 後要在專案裡跑 `awf init --upgrade`，scaffold 的修正才會生效。
 
 ## 威脅模型摘要
 
 ### hook 是 client 端的減速帶，不是信任邊界
 
-`plugin/hooks/` 的守門 hook（`awf_hook.py guard-shell|guard-paths|envelope`）在使用者的電腦上執行，用來擋下 agent 的誤操作：推送受保護分支、寫上游、越權寫入、合併與核准 PR 等。它**可以被繞過**：使用者可以停用 plugin、改設定，有權限的程序也可以不經過 Claude Code 直接操作 git 與 GitHub。
+`plugin/hooks/` 的守門 hook（`awf hook guard-shell|guard-paths|envelope`）在使用者的電腦上執行，用來擋下 agent 的誤操作：推送受保護分支、寫上游、越權寫入、合併與核准 PR 等。它**可以被繞過**：使用者可以停用 plugin、改設定，有權限的程序也可以不經過 Claude Code 直接操作 git 與 GitHub。
 
-所以真正的信任邊界在**伺服器端**：
+所以真正的信任邊界在**伺服器端**（哪些寫法擋不住，見下面〈守門擋不住的寫法〉）：
 
 - base 分支的 ruleset（或 branch protection）：禁止直接 push、要求 PR、要求 review。
-- required status check：`scaffold/.github/workflows/agent-merge-gate.yml.tmpl` 產生的 merge gate CI，從受保護的 base 執行確定性 gate。
+- required status check：`plugin/scaffold/.github/workflows/agent-merge-gate.yml.tmpl` 產生的 merge gate CI，從受保護的 base 執行確定性 gate。
 - 合併用的身分（GitHub App 或專用帳號）只給需要的權限，搭配 CODEOWNERS。
 
 自動合併的完整信任模型見 `docs/自動合併信任模型.md` 與 `docs/adr-agent-auto-merge.md`。
 
+### 守門擋不住的寫法
+
+`awf hook guard-shell` 看的是「這次要執行的指令文字」。直接寫出來的 `git push`、`gh pr merge`、`gh api`、`awf save-run approve` 這類指令它認得；`bash -c`、`eval`、`pwsh -Command` 包住的內層指令會展開來看，`xargs` 這類看不到子指令的轉呼叫當成寫入處理。但是下面幾種寫法，從字面看不出最後會執行什麼，hook 擋不住，或只能擋到一部分：
+
+- **複製或改名執行檔再執行**：把 `awf`、`gh`、`git` 複製到別的路徑或換個檔名，再用新名字執行。
+- **alias、shell function、符號連結**：先替指令取別名，之後只出現別名。
+- **從 stdin 把指令餵給 shell 或直譯器**：指令內容不在指令列上（管線、here-doc、讀檔轉給 `sh`）。
+- **先寫成腳本檔再執行**：寫檔和執行分成兩步，各自看起來都無害。
+- **透過別的程式的設定間接執行**：git 的 alias 與 hook、`make` 的 target、套件管理工具的 scripts、編輯器或測試工具的設定檔等，讓另一個程式代為執行。
+
+1.0 起，下面這些會展開來看：指令替換（`$(…)`、反引號、`<(…)`，含雙引號裡與巢狀的）、ANSI-C 引號與大括號展開改寫的子指令、藏在包裝或 shell 關鍵字後面的 `bash -c`、會執行參數的指令（`trap`、`watch`、`git bisect run`、`git rebase -x`、awk 的 `system()`、`osascript` 的 `do shell script`），以及 `awf run-brief --log` 的寫入目標。即使如此，這幾種仍然擋不住或只擋到一部分：
+
+- **執行時才組出來的名稱或路徑**：執行檔名用字串相接或運算得到（PowerShell 的 `& ('aw'+'f') …`、`-EncodedCommand`、base64 解碼後再執行）；`awf run-brief --log "$變數"` 的實際路徑（變數與指令替換的值 hook 看不到，只檢查寫得出字面路徑的）。
+- **指令替換超過上限**：一條指令裡超過 256 個指令替換或巢狀超過 4 層時，team agent 直接擋下；主 session 只檢查看得到的部分。
+- **主 session 的字面比對規則不進 `bash -c` 的內層**：推受保護分支、讀機敏檔這幾條對主 session 的規則，只看直接寫出來的指令與指令替換的內層；`awf` 子指令與唯讀角色寫檔的檢查才會展開 `bash -c`。
+- **別的語言的程式文字只做字面比對**：awk、`osascript` 裡要看得到 `awf <子指令>` 才擋；把名稱拆開或用變數組合就看不到。沒有列出的「會執行參數」的程式（編輯器的 `-c '!…'`、`git -c core.pager=…`、`GIT_EXTERNAL_DIFF=…` 這類環境變數）也看不到。
+- **here-doc 的內文不當成指令**：內文餵給誰由前面的指令決定（同上面「從 stdin 餵給 shell」）；只有沒加引號的 here-doc 內文裡的指令替換會檢查。
+
+1.0 第二次審查後另外補上的（都只對 team agent），和它們各自仍然看不到的部分：
+
+- **變數間接**：同一條指令裡的簡單賦值（`d=_tpm/runs; echo x >> $d/links.jsonl`、`export 名=值`、PowerShell 的 `$名 = '值'`）會展開一次再比對。看不到的：值本身來自另一個變數、指令替換或運算的；超過 16 個變數、值超過 256 字、指令超過 16KB 的；前一條指令設好、這一條才用的環境變數；`read`、`printf -v`、陣列、`${名:-預設}` 這類寫法。
+- **整個目錄搬進受保護的位置**：`cp -r`、`mv`、`rsync`、`ln`、`Copy-Item -Recurse`、`Move-Item` 的目的地是 `.github` 或 `.claude`，或來源本身就叫這個名字時擋。看不到的：**`git apply`、`git am`、`patch`、`tar`／`unzip` 解到上層目錄**——內容在 patch 或壓縮檔裡，指令文字看不出會寫到 `.github/workflows/`；`git checkout <別的分支> -- .github`、`git stash pop`、`git merge` 帶進來的檔同樣看不到。這些改動仍然要過 PR 與伺服器端的 CODEOWNERS。
+- **知識圖的檔**：作用目錄已經在 vault 裡的寫入、`sqlite3 <graph.db>` 會擋。看不到的：用別的程式開 SQLite 檔（直譯器裡的 sqlite 模組沒有寫出 `graph.db` 的檔名時）。
+- **「唯讀」子指令裡會寫檔或執行東西的旗標**：`awf script assemble`／`--out`、`awf checklist check … --write`、`awf deliverables status … --write`、把 git 的選項塞進參數（`awf check-rules --git . --output=<檔>`、`--upload-pack=<指令>`）、設定或拿掉 `CLAUDE_PROJECT_DIR`（`awf watch --once` 會執行那個專案 profile 的通知指令）會擋。看不到的：`awf checklist check <檔>` 不帶 `--write` 照舊放行，而它會把檔裡每一項的驗證指令交給 shell 執行（內容不在指令列上，和「先寫成腳本檔再執行」相同）；`awf hook guard-shell`／`guard-paths` 是公開的入口，自己餵一份輸入就能讓它轉呼叫另一個 repo 的 `.claude/hooks/guard-*`（等於執行那個 repo 裡的腳本，和「先寫成腳本檔再執行」相同）；在沒有 `CLAUDE_PROJECT_DIR` 的環境裡先 `cd` 到別的目錄再跑 `awf`，工具認到的專案根就是那個目錄。
+- **`~/.claude/projects/`**（Claude Code 的記憶與對話紀錄）：模版角色的 Write／Edit 與 shell 寫入會擋，讀不擋。看不到的同上面幾類（變數組出來的路徑、直譯器裡算出來的路徑）。
+- **進對話的文字**：SessionStart 的摘要與提問時帶的位置清單，每一欄都清過（一行、去掉控制字元、反引號、角括號、截短），寫得像指示的整筆不放。這是關鍵字與句式的比對，不是理解：換一種說法、換一種語言就可能通過。所以這兩個 hook 的輸出一律包在資料標籤裡，主 session 應該把它當資料；決策只列筆數與位置，不列文字。
+
+這些不是待修的個別漏洞，而是「在使用者電腦上檢查指令文字」這種做法的極限：同一台機器上有 shell 權限的程序，總找得到 hook 沒看過的寫法。所以：
+
+- hook 只當輔助，用來擋下 agent 的誤操作與明顯的越權，不拿來當唯一的防線。
+- 合併、核准、推受保護分支能不能成功，由伺服器端決定（下一段的 ruleset、required check、CODEOWNERS、合併身分的權限）。本機的紀錄（`run.json`、`merge-audit.jsonl`）也不是信任來源：merge gate 的 CI 從受保護的 base 分支重新判定，不採信 PR 或本機帶來的結論。
+- 本機的閘門不拿「目前目錄」當專案：專案根是 `--project-dir`、`CLAUDE_PROJECT_DIR`，或從目前目錄往上找到的最外層 `.claude/teams/VERSION`，找不到就報錯。在 PR 的 checkout 裡執行，裡面自帶的 `.claude/teams/`（設定、schema、profile）不會被採用。
+- 發現 hook 該擋而沒擋的**直接寫法**，仍然歡迎照上面的方式回報。
+
 ### hook 跑不起來時放行
 
-以 user scope 安裝的 plugin，hook 會套用在使用者的**所有專案**，包括沒有 init 過的專案。如果「找不到 Python 就擋下所有工具」，使用者會被整個鎖死，所以 plugin 註冊的 hook 採取以下取捨：
+以 user scope 安裝的 plugin，hook 會套用在使用者的**所有專案**，包括沒有 init 過的專案。如果「找不到執行檔就擋下所有工具」，使用者會被整個鎖死，所以 plugin 註冊的 hook 採取以下取捨：
 
-- **hook 本身跑不起來**（找不到 Python、timeout、Windows 只有 PowerShell 等）：放行（`"onFailure": "continue"`，timeout 10 秒）。
-- **hook 跑得起來**：輸入壞掉一律擋（exit 2）；guard 模組載入失敗時改用內建的最小規則，不會因此全部放行。
+- **hook 本身跑不起來**（找不到執行檔、timeout 等）：放行（`"onFailure": "continue"`，timeout 10 秒）。
+- **hook 跑得起來**：輸入壞掉一律擋（exit 2）；守門設定載入失敗或程式內部出錯時改用內建的最小規則（擋 push、合併、核准、GitHub API 寫入），不會因此全部放行。
+- **程式內部出錯時依身分分開**：規則已經開始跑才出錯，而且這次是 team agent（模版角色、登記的擴充 agent），一律擋下：規則沒跑完等於沒檢查，最小規則又不管寫入範圍與 `awf` 子指令。主 session 與使用者自己的 agent 照最小規則，所以使用者不會被鎖死。
+- **`guard.config.json` 讀不懂時**：模版角色的寫入全部擋下（讀與唯讀指令照常），主 session 照預設值的規則，可以直接修設定檔。
 
 ### 要更嚴格：project 模式
 
 需要「hook 跑不起來就擋」的專案（例如啟用 `auto_merge`），用 project 模式：
 
 ```bash
-python3 init.py --target <專案> --hooks project
+awf init --target <專案> --hooks project
 ```
 
-hook 會複製進專案的 `.claude/hooks/`，在專案的 settings 註冊，寫入 Python 的絕對路徑，並可設 `"onFailure": "block"`。即使如此，信任邊界仍然在伺服器端。
+hook 改在專案的 settings 註冊，寫入執行檔的絕對路徑，並可設 `"onFailure": "block"`。即使如此，信任邊界仍然在伺服器端。
 
 ### plugin 在所有專案執行，所以 hook 的範圍要小
 
-- **只用標準庫**：不需要安裝任何第三方套件，沒有第三方依賴的供應鏈風險。
-- **不連網**：hook 與 plugin 內的 Python 程式不做任何網路呼叫。
+- **單一執行檔**：hook 與工具都是 plugin 內附的 `awf`（Rust），執行時不需要安裝任何直譯器或套件，plugin 裡也沒有會被執行的腳本（啟動器 `bin/awf`、`bin/awf.cmd` 只負責挑對應平台的執行檔）。
+- **相依來源固定**：編譯時用到的 crate 鎖在 `Cargo.lock`，只能來自 crates.io（不收 git 來源與 workspace 以外的 path 相依），名單要和允許清單 `crates/xtask/allowed-crates.txt` 完全一致，新增或間接帶進一個 crate 都要有人明確加進清單。
+- **發佈檔可核對**：發佈的執行檔附 sha256 與原始碼雜湊（`plugin/bin/checksums.json`，發佈時產生），核對方式見 `docs/建置與發佈.md`。merge gate 的 CI 執行 gate 之前也會先核對執行檔的 sha256。
+- **不連網**：hook 不做任何網路呼叫；`awf` 只有在你執行會碰 GitHub 的子指令（例如 `awf publish`）時才透過 `git`／`gh` 連線。乾跑 workflow 用的 Node 腳本只 import 內建模組與相對路徑，而且不用網路模組。
 - **不讀機敏檔**：hook 只讀 hook 輸入與專案的 `.claude/teams/guard.config.json`、執行紀錄，不讀 `.env`、憑證或私鑰。
+- **CI 的 action 釘版本**：這個 repo 的 CI 與給專案用的 merge gate CI 範本，action 一律釘 40 字元 commit SHA。
 
-以上由 `tests/check_supply.py` 在 CI 強制檢查（另外檢查 GitHub Actions 都釘 commit SHA、版控裡沒有 `.env`、私鑰與 `__pycache__`）。
+相依來源、允許清單、Node 腳本的 import、action 釘 SHA，以及版控裡沒有 `.env`、私鑰與直譯器快取檔，由 `cargo xtask check-supply` 在 CI 強制檢查。
 
 ## 安裝建議
 

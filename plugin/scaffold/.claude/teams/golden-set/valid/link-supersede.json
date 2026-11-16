@@ -1,0 +1,9 @@
+{
+  "schema": "link",
+  "data": {
+    "schema_version": 1,
+    "op": "supersede",
+    "run": "20261114-sdlc-refund",
+    "stage": "design"
+  }
+}

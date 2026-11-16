@@ -1,67 +1,158 @@
-# AgentWorkFlow 模版本身的 CI：在三個作業系統跑 tests/run_all.py
-# （去客戶化掃描、init 煙霧測試含 golden-set／build.py --check／check_workflows.mjs／check_agents.py、
-# hook 測試、tests/check_*.py，例如供應鏈檢查 check_supply.py）。
-# Windows 用 pwsh 執行，確認不依賴 bash。
-# 主矩陣用 Python 3.12；另在 ubuntu 跑支援範圍的兩端 3.9 與 3.13。
+# AgentWorkFlow 模版本身的 CI：跑全部檢查（目前只在 macOS arm64，見 check 的矩陣）。
+# 全部檢查＝cargo test --workspace（單元測試、回歸基準、hook 案例、init 煙霧測試）＋cargo xtask check-all
+# （去客戶化掃描、golden、文件核對、recipe／執行核心／pattern／派工預算、供應鏈、啟動器、舊版指紋、片段漂移、
+# 各子指令的 selftest、workflow 乾跑）。工具與測試都是 Rust；只有驗證 workflow 的幾步要 node。
+# Windows 用預設的 pwsh 執行，確認不依賴 bash。
+# dist／dist-bundle job：只在手動觸發或推 tag 時跑，建置五個平台的執行檔並彙整成一個 artifact；
+# CI 不 commit、不 push，由人下載後放進 plugin/bin（見 docs/建置與發佈.md）。
 # 所有 action 都釘 40 字元 commit SHA，註解保留對應的版本標籤；由 .github/dependabot.yml 每週提更新。
 name: ci
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: test (${{ matrix.os }}, py${{ matrix.python }})
+  check:
+    name: check (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.12"]
-        include:
-          # ubuntu-latest（26.04 起）沒有 3.9 的預建版本，支援下限改在 22.04 跑
-          - os: ubuntu-22.04
-            python: "3.9"
-          - os: ubuntu-latest
-            python: "3.13"
+        # 1.0.0 先只驗 macOS arm64（plugin/bin 目前只附這個平台的執行檔）。
+        # 做五個平台的發佈時把 ubuntu-latest、windows-latest 加回來。
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: 保留 LF 換行（Windows 預設 autocrlf 會把 checkout 的檔案改成 CRLF）
+      - name: 保留 LF 換行（Windows 預設 autocrlf 會把 checkout 的檔案改成 CRLF；awf.cmd 的 CRLF 由 .gitattributes 指定）
+        run: git config --global core.autocrlf false
+
+      # 要完整的 git 歷史：舊版指紋（cargo xtask gen-legacy、legacy-tools.json）與 0.x 專案的升級測試要從歷史取檔，
+      # 淺層 clone 時 gen-legacy 會判失敗。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # 驗證 workflow 的步驟（check-recipes、check-kernel、check-patterns、check-budget、乾跑）要 node。
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: git 身分（測試會建暫存 repo）
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+
+      # 用 runner 內建的 rustup，不另外引用 action。
+      - name: Rust 工具鏈（stable）
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          cargo --version
+
+      - name: cargo build
+        run: cargo build --workspace --all-targets --locked
+
+      # 回歸基準的測試多半只在 unix 編譯，Windows 上會少跑，這是已知的。
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+      # 守門的長指令時限：除錯版在共用機器上太慢，完整長度（127KB）用發佈版量。
+      - name: 長指令（發佈版）
+        run: cargo test --release --locked -p awf --test hooks_awf_cli long_chained_command_stays_fast
+
+      - name: cargo xtask check-all
+        run: cargo xtask check-all
+
+      # plugin/bin 沒有執行檔時（開發期間）直接通過；有的話要和 checksums.json、現在的原始碼一致。
+      - name: checksums 核對
+        run: cargo xtask checksums --check
+
+  dist:
+    name: dist (${{ matrix.target }})
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          # 在較舊的 ubuntu 建置，執行檔需要的 glibc 版本比較低。
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          # arm64 用 GitHub 的 arm runner 原生建置，不用交叉編譯工具鏈。
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 保留 LF 換行（原始碼雜湊雖然會正規化換行，checkout 仍保持一致）
         run: git config --global core.autocrlf false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: ${{ matrix.python }}
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "20"
-
-      # pip 會依 Python 版本挑相容的 jsonschema（3.9 也有支援的版本），不用分開處理。
-      - name: 安裝 golden-set 需要的 jsonschema
-        run: python -m pip install --disable-pip-version-check jsonschema
-
-      - name: git 身分（hook 測試會建暫存 repo）
+      - name: Rust 工具鏈（stable）與 target
         run: |
-          git config --global user.name ci
-          git config --global user.email ci@example.invalid
-          git config --global init.defaultBranch main
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+          cargo --version
 
-      - name: 全部測試（POSIX）
-        if: runner.os != 'Windows'
-        shell: bash
-        run: python tests/run_all.py
+      - name: 建置
+        run: cargo xtask dist --target ${{ matrix.target }} --out dist
 
-      - name: 全部測試（Windows，pwsh）
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          PYTHONUTF8: "1"
-        run: python tests/run_all.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: awf-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  dist-bundle:
+    name: dist（彙整 plugin/bin）
+    needs: dist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust 工具鏈（stable）
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          cargo --version
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: awf-*
+          path: plugin/bin
+          merge-multiple: true
+
+      # artifact 不保留檔案權限。
+      - name: 補回執行權限
+        run: chmod +x plugin/bin/awf-*
+
+      - name: 寫 checksums.json 並核對（五個缺一就失敗）
+        run: |
+          cargo xtask checksums --write --require-all
+          cargo xtask checksums --check --require-all
+          cat plugin/bin/checksums.json
+
+      # 只上傳，不 commit、不 push：由人下載後放進 plugin/bin 再 commit。
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-bin
+          path: plugin/bin/
+          if-no-files-found: error
+          retention-days: 30

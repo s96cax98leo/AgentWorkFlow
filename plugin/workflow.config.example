@@ -1,0 +1,86 @@
+# AgentWorkFlow 專案設定：awf init 用這些值替換 scaffold/ 裡的 {{佔位符}}。
+# 用法：把這個檔複製成 workflow.config，改值後跑 awf init --target <專案目錄> --config workflow.config
+# 格式：每行 KEY=value（value 到行尾，不用加引號）；# 開頭是註解；值留空＝不設定。
+# 清單用逗號分隔。不要在這裡放任何金鑰或密碼。
+
+# 專案名（文件標題、guard.config.json 的 project_name）。預設：my-project
+PROJECT_NAME=my-project
+
+# 客戶泛稱（CLAUDE.md 的資料邊界段）。預設：示範客戶
+CLIENT_NAME=示範客戶
+
+# 我方 repo clone 所在的目錄（相對工作區）；留空＝工作區本身就是目標 repo。預設：repos
+REPOS_DIR=repos
+
+# 上游 repo（不可寫入；push 與 gh 寫入會被擋），格式 owner/repo，可多個用逗號分隔。預設：留空
+UPSTREAM_REPO=
+
+# 我方 fork（推送目標；gh 寫入要明確寫 --repo 這個值），格式 owner/repo。預設：留空
+FORK_REPO=
+
+# 絕對不能碰的目錄（相對工作區或絕對路徑）或 repo（owner/repo），逗號分隔。預設：留空
+FORBIDDEN_REPOS=
+
+# 輸出語言（rules.md 的強約束、派工單）。預設：繁體中文
+OUTPUT_LANGUAGE=繁體中文
+
+# 任務編號前綴（上層系統發的編號長相：前綴＋數字，例如 TASK-0123）；留空＝不檢查自編編號。預設：TASK-
+TASK_ID_PREFIX=TASK-
+
+# 發任務編號的上層系統或角色名。預設：任務管理系統
+TASK_AUTHORITY=任務管理系統
+
+# 拍板的人（泛稱）。預設：使用者
+DECISION_OWNER=使用者
+
+# 需求方（泛稱）。預設：需求方
+STAKEHOLDER=需求方
+
+# 需要人決策時怎麼通知（寫進 rules.md 規則 11，給主 session 與 agent 看的一句話；留空＝在對話中提問即可）。進度事件要送到外部指令是另一件事：設開發規範 profile 的 progress.notify。預設：推播到手機（PushNotification）
+NOTIFY_HOW=推播到手機（PushNotification）
+
+# 開發分支前綴（epic 與子任務分支）。預設：feature/
+BRANCH_PREFIX=feature/
+
+# 允許的新分支前綴，逗號分隔（要包含 BRANCH_PREFIX）。預設：feature/,bugfix/,hotfix/,release/,merge/
+ALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/
+
+# 受保護分支（agent 與主 session 都不能直接 push，合併走 PR），逗號分隔；留空＝main、master。預設：main,master
+PROTECTED_BRANCHES=main,master
+
+# 主線分支（沒帶 base 時各段的比對基準、PR 的目標分支；只寫分支名，不含 remote）。寫進 guard.config.json 的 base_branch，範本與工具都讀它。它不會因此受保護：要擋直接 push 請同時列進 PROTECTED_BRANCHES。預設：main
+BASE_BRANCH=main
+
+# 主線所在的 remote（比對基準是 <remote>/<主線分支>，awf sync-branch 預設 fetch 它）。寫進 guard.config.json 的 base_remote；推送一律推 fork，和這個值無關。預設：origin
+BASE_REMOTE=origin
+
+# spec 目錄（相對於目標 repo）：每個需求的 intent、spec、plan、驗證報告放在 <SPECS_DIR>/<epic>/。寫進 guard.config.json 的 specs_dir，範本、工具與 hook 都讀它（tpm-writer 能寫的 spec 文件跟著它）。不能是絕對路徑、含 ..，也不能在 .claude、.github、.git 底下。預設：specs
+SPECS_DIR=specs
+
+# worktree 目錄（目標 repo 底下的一層目錄名）：epic 與子任務的 worktree 開在 <repo>/<WORKTREES_DIR>/ 底下，要加進目標 repo 的 .gitignore。寫進 guard.config.json 的 worktrees_dir。預設：.worktrees
+WORKTREES_DIR=.worktrees
+
+# 文件範本目錄（相對於目標 repo）：有 intent、spec、plan 的範本就照它寫。寫進 guard.config.json 的 spec_templates_dir；還是預設值而 SPECS_DIR 改過時，跟著變成 <SPECS_DIR>/_templates。預設：specs/_templates
+SPEC_TEMPLATES_DIR=specs/_templates
+
+# run 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs
+RUNS_DIR=_tpm/runs
+
+# 簡報目錄（上層系統發來的任務簡報，相對工作區）。預設：_tpm/briefs
+BRIEFS_DIR=_tpm/briefs
+
+# tpm-writer 可以寫的文件目錄（相對工作區），逗號分隔；run 目錄與簡報目錄一律可以寫，不用列。預設：docs
+DOCS_DIRS=docs
+
+# commit 結尾的署名行。預設：Assisted-by: Claude
+ATTRIBUTION_LINE=Assisted-by: Claude
+
+# 設計系統名（設計系統 skill 的名稱）。預設：my-design-system
+DESIGN_SYSTEM_NAME=my-design-system
+
+# workflow 的 agentType 前綴：用 plugin 安裝 agents 時是「plugin 名:」；agents 放專案 .claude/agents 時留空。預設：agent-workflow:
+AGENT_NS=agent-workflow:
+
+# 開發規範 profile（scaffold/.claude/teams/methodologies/ 的檔名，或自己的 profile JSON 路徑）：決定各段做法與慣例（需求寫法、測試先行與否、commit 格式、PR 大小…）。
+# 內建：default（spec 驅動、測試先行、Conventional Commits，即模版原本的做法）、lightweight（範例：需求來自 issue、不強制測試先行）。預設：default
+METHODOLOGY=default

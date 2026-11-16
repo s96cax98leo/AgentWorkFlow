@@ -1,0 +1,32 @@
+"""訂單匯出（CSV）。目前只有「全部匯出」：一次把所有訂單載進記憶體再寫檔。
+
+已知限制（見 docs/維運手冊.md〈匯出逾時〉）：
+- 沒有日期區間，客服只能整包下載再自己篩。
+- 時間欄位直接輸出 UTC，客戶端常誤讀成當地時間。
+- 訂單超過約五萬筆時，同步匯出會超過閘道的 30 秒逾時。
+"""
+from __future__ import annotations
+
+import csv
+import io
+
+from ..orders.repository import OrderRepository
+
+EXPORT_COLUMNS = ("order_no", "customer_id", "placed_at", "status", "total_cents", "currency", "channel")
+SYNC_ROW_LIMIT = 50000  # 超過就該改走背景批次（尚未實作）
+
+
+def export_orders_csv(repo: OrderRepository) -> str:
+    """把全部訂單匯出成 CSV 字串。第一列是欄位名。"""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=EXPORT_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for order in sorted(repo.all(), key=lambda o: o.placed_at):
+        row = order.to_row()
+        writer.writerow({k: row[k] for k in EXPORT_COLUMNS})
+    return buf.getvalue()
+
+
+def export_filename(prefix: str = "orders") -> str:
+    """下載檔名。目前固定，不帶日期區間。"""
+    return f"{prefix}-all.csv"

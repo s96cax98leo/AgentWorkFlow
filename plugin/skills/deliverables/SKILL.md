@@ -9,12 +9,12 @@ argument-hint: <configure、status、check、matrix 或要做的事>
 使用者要做的：$ARGUMENTS
 
 ```bash
-python3 .claude/teams/tools/deliverables.py configure [--preset <情境>] [--suggest] [--import <清單檔>] [--add a,b] [--remove a,b]   # 提案，不寫入
-python3 .claude/teams/tools/deliverables.py configure <同上> --write --by <確認的人>   # 人確認後才寫 .claude/teams/deliverables.json
-python3 .claude/teams/tools/deliverables.py init      # 依設定建文件骨架與總目錄
-python3 .claude/teams/tools/deliverables.py status    # 每份文件：齊全、過期、缺原料、等人補
-python3 .claude/teams/tools/deliverables.py check     # 檔頭、過期小節、禁用字、隱私字串、失效連結、總目錄
-python3 .claude/teams/tools/deliverables.py sync --run <run_dir>   # deliver 之後：併交付摘要、寫追溯矩陣、記錄來源
+awf deliverables configure [--preset <情境>] [--suggest] [--import <清單檔>] [--add a,b] [--remove a,b]   # 提案，不寫入
+awf deliverables configure <同上> --write --by <確認的人>   # 人確認後才寫 .claude/teams/deliverables.json
+awf deliverables init      # 依設定建文件骨架與總目錄
+awf deliverables status    # 每份文件：齊全、過期、缺原料、等人補
+awf deliverables check     # 檔頭、過期小節、禁用字、隱私字串、失效連結、總目錄
+awf deliverables sync --run <run_dir>   # deliver 之後：併交付摘要、寫追溯矩陣、記錄來源
 ```
 
 1. **設定**：先問使用者是哪種情境（黑客松、概念驗證、內部工具、委外專案、維運移交），或有沒有合約／客戶給的交付清單（一行一項存成文字檔給 `--import`）。加 `--suggest` 讓工具依 repo 實況補建議。把提案（每份文件與理由、對不到型錄的項目、不建議的與理由）列給使用者看，**問過之後**才加 `--write --by <使用者>` 寫入。對不到型錄的項目由使用者決定要不要用 `--custom-unmatched` 新增成自訂文件。

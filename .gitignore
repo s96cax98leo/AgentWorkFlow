@@ -12,7 +12,7 @@ workflow.config
 # 本機去客戶化清單（真實客戶、人名、帳號），只留在自己的電腦
 tests/scrub_terms.local.txt
 
-# 根目錄的本機 Claude Code 設定與 agent worktree（scaffold/.claude 是模版，要進版控）
+# 根目錄的本機 Claude Code 設定與 agent worktree（plugin/scaffold/.claude 是模版，要進版控）
 /.claude/
 .worktrees/
 
@@ -33,3 +33,6 @@ node_modules/
 
 # 計畫與可驗證 checklist（本機工作紀錄），不進版控
 /plans/
+
+# Rust 建置產物
+/target/

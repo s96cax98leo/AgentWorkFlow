@@ -1,0 +1,1155 @@
+{
+ "cases": [
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/build-result-sync-transit.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/build-result.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/criteria.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/deliverables.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/docs.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/env-at-limits.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/env-needs-decision.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/findings.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/items.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/locations.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/merge-decision-queued.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/merge-decision.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/methodology-constraints.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/methodology-deliverables.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/methodology-events.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/methodology-models-limits.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/methodology-progress.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/methodology-recipes.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/methodology.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/plan-outline.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/subtasks-expected-red.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/subtasks-spec-refs.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/subtasks-subplan-dep.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/subtasks-wave.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/subtasks.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/triage-model-plan.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/triage.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "valid",
+   "file": "golden-set/valid/verdicts.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/build-result-sync-strategy.json",
+   "errors": [
+    "$.payload.sync.strategy：值 'squash' 不在 ['none', 'rebase', 'merge', 'transit']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/build-result.json",
+   "errors": [
+    "$.payload.tests[0].result：值 'ok' 不在 ['pass', 'fail', 'red_as_expected', 'not_run']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/criteria.json",
+   "errors": [
+    "$.payload.criteria[0].result：值 '通過' 不在 ['pass', 'fail', 'not_verifiable']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/deliverables-banned-sensitive.json",
+   "errors": [
+    "交付設定.banned_terms_file 不能是機敏檔（.env）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/deliverables-extra.json",
+   "errors": [
+    "$.documents[0]：不允許的欄位 magic"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/deliverables-outside.json",
+   "errors": [
+    "交付設定.dir 要是專案內的相對路徑，不能是絕對路徑或含 ..（收到 ../outside）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/deliverables-sources-outside.json",
+   "errors": [
+    "交付設定.documents[db-design].sources 的 glob 要相對目標 repo，不能是絕對路徑或含 ..（收到 /etc/**）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/docs.json",
+   "errors": [
+    "$.payload.documents：至少要 1 項"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-blocking-one-option.json",
+   "errors": [
+    "open_questions[0]：blocking 問題要附 2–3 個選項與代價"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-confidence.json",
+   "errors": [
+    "$.confidence：大於 1"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-done-with-blocking.json",
+   "errors": [
+    "有 blocking 的 open_questions 時 status 不能是 done"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-evidence-result-too-long.json",
+   "errors": [
+    "$.evidence[0].result：長度 301 超過上限 300（細節寫進檔案，信封只放摘要與路徑）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-evidence-too-many.json",
+   "errors": [
+    "$.evidence：13 項，超過上限 12（其餘寫進檔案）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-missing-evidence.json",
+   "errors": [
+    "$：缺欄位 evidence"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-self-tnum.json",
+   "errors": [
+    "derived_work[0]：不可自編任務編號（交 上層系統 編）：DEMO-0399 補測試"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-status.json",
+   "errors": [
+    "$.status：值 '完成' 不在 ['done', 'blocked', 'needs_decision']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/env-summary-too-long.json",
+   "errors": [
+    "$.summary：長度 401 超過上限 400（細節寫進檔案，信封只放摘要與路徑）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/findings.json",
+   "errors": [
+    "$.payload.findings[0].severity：值 'critical' 不在 ['important', 'nit', 'pre_existing', 'info', 'blocker', 'should_fix']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/items.json",
+   "errors": [
+    "$.payload.items[0]：缺欄位 owner"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/locations-no-lines.json",
+   "errors": [
+    "$.payload.locations[0]：缺欄位 start",
+    "$.payload.locations[0]：缺欄位 end"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/merge-decision-match-no-evidence.json",
+   "errors": [
+    "traceability：需求 REQ-2 判 match 卻沒有證據"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/merge-decision-merge-followups.json",
+   "errors": [
+    "decision=merge 時不得有 followups"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/merge-decision-merge-needs-sync.json",
+   "errors": [
+    "needs_sync=true（PR 落後或有衝突）時 decision 不能是 merge"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/merge-decision-merged-on-hold.json",
+   "errors": [
+    "merge_state=merged 時 decision 必須是 merge"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/merge-decision-trace-dup.json",
+   "errors": [
+    "traceability：需求 REQ-1 重複出現"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/merge-decision.json",
+   "errors": [
+    "decision=merge 時不得有 mismatch／missing：['REQ-2']",
+    "需求 REQ-2 不一致或缺證據，卻沒有對應的 followup（新需求）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-constraints-dup.json",
+   "errors": [
+    "constraints 的 id「arch」重複"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-constraints-id.json",
+   "errors": [
+    "$.constraints[0].id：'Arch Doc' 不符合格式 ^[a-z0-9][a-z0-9-]{0,39}$"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-constraints-no-stages.json",
+   "errors": [
+    "$.constraints[0].stages：至少要 1 項"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-constraints-outside.json",
+   "errors": [
+    "constraints[arch].file 要是相對路徑，不能是絕對路徑或含 ..（收到 ../other/ARCHITECTURE.md）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-constraints-paths-outside.json",
+   "errors": [
+    "constraints[fe].paths 的 glob 要相對目標 repo，不能是絕對路徑或含 ..（收到 /abs/web/**）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-constraints-stage.json",
+   "errors": [
+    "$.constraints[0].stages[0]：值 'review' 不在 ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-deliverables-dup.json",
+   "errors": [
+    "deliverables.documents 的 id「db-design」重複"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-deliverables-no-id.json",
+   "errors": [
+    "$.deliverables.documents[0]：缺欄位 id"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-deliverables-source.json",
+   "errors": [
+    "$.deliverables.documents[0].source：值 'magic' 不在 ['auto', 'assisted', 'external']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-events-bad-from.json",
+   "errors": [
+    "events[incident].write.data 的 from「nope」指不到東西（可用：all、doubted、doubted_ids、facts、kept）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-events-dup-angle.json",
+   "errors": [
+    "events[incident].gather.angles 的 key 重複"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-events-no-angles.json",
+   "errors": [
+    "$.events.incident.gather.angles：至少要 1 項"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-events-reserved-name.json",
+   "errors": [
+    "events 不能用「merge」當事件名（已經是別的流程或 SDLC 的段）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-events-return-clash.json",
+   "errors": [
+    "events[incident] 回傳的鍵名（returns 與步驟的 name）重複，或用到固定欄位（capped、challenge、docs、event、halt_reason、halted、missing、note、stage、trace）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-events-too-many-angles.json",
+   "errors": [
+    "events[incident].gather.angles 有 9 個，超過上限 8（limits.event.max_angles；沒寫用 8，最多 16）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-events-unknown-field.json",
+   "errors": [
+    "$.events.incident：不允許的欄位 agent"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-extension-dup.json",
+   "errors": [
+    "extensions：name db-migration 重複"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-extension-name-pattern.json",
+   "errors": [
+    "$.extensions[0].name：'../X' 不符合格式 ^[a-z0-9][a-z0-9-]*$"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-extension-stage.json",
+   "errors": [
+    "$.extensions[1].stage：值 'merge' 不在 ['plan', 'design', 'test', 'deliver']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-id-pattern-group.json",
+   "errors": [
+    "requirements.id_pattern 要有一個群組（需求 ID）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-knowledge-extra.json",
+   "errors": [
+    "$.knowledge：不允許的欄位 embedding"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-limits-budget-type.json",
+   "errors": [
+    "$.limits.read_budget.roles.tpm-researcher：型別應為 integer"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-limits-mode.json",
+   "errors": [
+    "$.limits.mode：值 'block' 不在 ['enforce', 'warn', 'off']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-limits-negative.json",
+   "errors": [
+    "$.limits.whole_file_lines：小於 0"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-models-floor-tier.json",
+   "errors": [
+    "$.models.floors.dev-verifier：值 'strongest' 不在 ['light', 'standard', 'strong']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-models-mode.json",
+   "errors": [
+    "$.models.mode：值 'cheap' 不在 ['auto', 'fixed', 'inherit']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-models-tiers-inverted.json",
+   "errors": [
+    "models.tiers：strong（haiku）不能比 standard（sonnet）弱",
+    "models.tiers：strong（haiku）不能比 light（sonnet）弱"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-models-unknown-tier.json",
+   "errors": [
+    "$.models.tiers：不允許的欄位 ultra"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-progress-event.json",
+   "errors": [
+    "$.progress.notify.events[0]：值 'everything' 不在 ['run_state', 'stage_started', 'stage_saved', 'waiting_gate', 'stage_approved', 'record_written', 'agent_started', 'agent_progress', 'workflow_finished', 'workflow_stalled', 'watch_note']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-progress-no-command.json",
+   "errors": [
+    "$.progress.notify：缺欄位 command"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-recipe-no-deliver.json",
+   "errors": [
+    "recipes.bugfix：會產生改動的 recipe 一定要有 deliver 段"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-recipe-no-plan.json",
+   "errors": [
+    "recipes.revert：stages 沒有 plan（每個 recipe 都要產出 intent、由人在 plan 閘門核准）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-recipe-plan-mode.json",
+   "errors": [
+    "$.recipes.x.plan_mode：值 'yolo' 不在 ['feature', 'diagnose', 'impact', 'invariants', 'changelog', 'baseline', 'research', 'revert']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-semantic.json",
+   "errors": [
+    "conventions.commit.check_regex 不是合法的正規式：missing ), unterminated subpattern at position 1",
+    "requirements.source=command 時要設 command"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-sync-extra-field.json",
+   "errors": [
+    "$.conventions.sync：不允許的欄位 squash"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-sync-strategy.json",
+   "errors": [
+    "$.conventions.sync.strategy：值 'squash' 不在 ['auto', 'rebase', 'merge', 'transit']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology-system-design-steps.json",
+   "errors": [
+    "$.stages.design.system_design.steps：至少要 1 項"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/methodology.json",
+   "errors": [
+    "$.stages.build.test_first：型別應為 boolean",
+    "$.conventions：缺欄位 pr_size"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/plan-outline-semantic.json",
+   "errors": [
+    "子計劃相依有循環：api、ui",
+    "子計劃 api 與 ui 的範圍重疊：services/export/／services/export/web/"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/plan-outline-split-mismatch-false.json",
+   "errors": [
+    "split=false 時 sub_plans 要留空"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/plan-outline-split-mismatch.json",
+   "errors": [
+    "split=true 時至少要 2 個子計劃"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/plan-outline-subplan-dup.json",
+   "errors": [
+    "子計劃 id api 重複"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/plan-outline-subplan-id-pattern.json",
+   "errors": [
+    "$.payload.sub_plans[0].id：'../api' 不符合格式 ^[a-z0-9][a-z0-9-]*$"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/plan-outline-subplan-self-dep.json",
+   "errors": [
+    "子計劃 api 依賴自己"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/plan-outline.json",
+   "errors": [
+    "$.payload：缺欄位 split",
+    "$.payload.sub_plans[0].id：'API 子計劃' 不符合格式 ^[a-z0-9][a-z0-9-]*$"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks-complexity.json",
+   "errors": [
+    "$.payload.subtasks[0].complexity：值 'huge' 不在 ['light', 'standard', 'strong']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks-dep-missing-bad-subplan-ref.json",
+   "errors": [
+    "子任務 t2 的子計劃依賴格式不合法（要是 @<子計劃 id>）：@../api"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks-dep-missing.json",
+   "errors": [
+    "子任務 t2 依賴不存在的 t-nope"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks-expected-red-not-array.json",
+   "errors": [
+    "$.payload.subtasks[0].expected_red：型別應為 array"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks-spec-refs-not-array.json",
+   "errors": [
+    "$.payload.subtasks[0].spec_refs：型別應為 array"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks-wave-depends-later.json",
+   "errors": [
+    "子任務 t2（第 1 波）依賴第 2 波的 t1：不能依賴比自己晚的波次"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks-wave-zero.json",
+   "errors": [
+    "$.payload.subtasks[0].wave：小於 1"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/subtasks.json",
+   "errors": [
+    "子任務 t1 與 t2 同時擁有 src/a.ts（檔案所有權不得重疊）"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/triage-empty-evidence.json",
+   "errors": [
+    "$.payload.reasons[0].evidence：不能是空字串"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/triage-model-plan-no-reason.json",
+   "errors": [
+    "$.payload.model_plan[0]：缺欄位 reason"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/triage-model-plan-tier.json",
+   "errors": [
+    "$.payload.model_plan[0].tier：值 'ultra' 不在 ['light', 'standard', 'strong']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/triage-no-reason.json",
+   "errors": [
+    "$.payload.reasons：至少要 1 項"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/triage-size.json",
+   "errors": [
+    "$.payload.size：值 'huge' 不在 ['small', 'medium', 'large']"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "invalid",
+   "file": "golden-set/invalid/verdicts.json",
+   "errors": [
+    "$.payload.verdicts[0]：缺欄位 refuted"
+   ],
+   "unsupported": []
+  },
+  {
+   "kind": "profile",
+   "file": "methodologies/default.json",
+   "errors": [],
+   "unsupported": []
+  },
+  {
+   "kind": "profile",
+   "file": "methodologies/lightweight.json",
+   "errors": [],
+   "unsupported": []
+  }
+ ],
+ "probes": [
+  {
+   "schema": {
+    "type": "string",
+    "enum": [
+     "a",
+     "b"
+    ]
+   },
+   "data": "c",
+   "errors": [
+    "$：值 'c' 不在 ['a', 'b']"
+   ]
+  },
+  {
+   "schema": {
+    "enum": [
+     1,
+     "x",
+     null
+    ]
+   },
+   "data": true,
+   "errors": []
+  },
+  {
+   "schema": {
+    "enum": [
+     1,
+     "x",
+     null
+    ]
+   },
+   "data": 1.0,
+   "errors": []
+  },
+  {
+   "schema": {
+    "enum": [
+     1,
+     "x",
+     null
+    ]
+   },
+   "data": false,
+   "errors": [
+    "$：值 False 不在 [1, 'x', None]"
+   ]
+  },
+  {
+   "schema": {
+    "enum": [
+     "it's"
+    ]
+   },
+   "data": "say \"hi\"",
+   "errors": [
+    "$：值 'say \"hi\"' 不在 [\"it's\"]"
+   ]
+  },
+  {
+   "schema": {
+    "type": [
+     "string",
+     "null"
+    ]
+   },
+   "data": 3,
+   "errors": [
+    "$：型別應為 string／null"
+   ]
+  },
+  {
+   "schema": {
+    "type": "integer"
+   },
+   "data": 1.0,
+   "errors": [
+    "$：型別應為 integer"
+   ]
+  },
+  {
+   "schema": {
+    "type": "integer"
+   },
+   "data": true,
+   "errors": [
+    "$：型別應為 integer"
+   ]
+  },
+  {
+   "schema": {
+    "type": "number"
+   },
+   "data": 2,
+   "errors": []
+  },
+  {
+   "schema": {
+    "type": "number",
+    "minimum": 0,
+    "maximum": 1
+   },
+   "data": 1.5,
+   "errors": [
+    "$：大於 1"
+   ]
+  },
+  {
+   "schema": {
+    "type": "number",
+    "minimum": 0.5
+   },
+   "data": 0,
+   "errors": [
+    "$：小於 0.5"
+   ]
+  },
+  {
+   "schema": {
+    "type": "string",
+    "minLength": 1
+   },
+   "data": "",
+   "errors": [
+    "$：不能是空字串"
+   ]
+  },
+  {
+   "schema": {
+    "type": "string",
+    "maxLength": 3
+   },
+   "data": "一二三四",
+   "errors": [
+    "$：長度 4 超過上限 3（細節寫進檔案，信封只放摘要與路徑）"
+   ]
+  },
+  {
+   "schema": {
+    "type": "string",
+    "pattern": "^[a-z]+$"
+   },
+   "data": "Abc\n",
+   "errors": [
+    "$：'Abc\\n' 不符合格式 ^[a-z]+$"
+   ]
+  },
+  {
+   "schema": {
+    "type": "string",
+    "pattern": "^[a-z]+$"
+   },
+   "data": "abc",
+   "errors": []
+  },
+  {
+   "schema": {
+    "type": "array",
+    "minItems": 2,
+    "items": {
+     "type": "integer"
+    }
+   },
+   "data": [
+    "x"
+   ],
+   "errors": [
+    "$：至少要 2 項",
+    "$[0]：型別應為 integer"
+   ]
+  },
+  {
+   "schema": {
+    "type": "array",
+    "maxItems": 1
+   },
+   "data": [
+    1,
+    2,
+    3
+   ],
+   "errors": [
+    "$：3 項，超過上限 1（其餘寫進檔案）"
+   ]
+  },
+  {
+   "schema": {
+    "type": "object",
+    "required": [
+     "a",
+     "b"
+    ],
+    "properties": {
+     "a": {
+      "type": "string"
+     }
+    },
+    "additionalProperties": false
+   },
+   "data": {
+    "a": 1,
+    "c": 2
+   },
+   "errors": [
+    "$：缺欄位 b",
+    "$.a：型別應為 string",
+    "$：不允許的欄位 c"
+   ]
+  },
+  {
+   "schema": {
+    "type": "object",
+    "additionalProperties": {
+     "type": "integer"
+    }
+   },
+   "data": {
+    "x": "y",
+    "z": 1
+   },
+   "errors": [
+    "$.x：型別應為 integer"
+   ]
+  },
+  {
+   "schema": {
+    "type": "object",
+    "properties": {
+     "t": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "id"
+       ]
+      }
+     }
+    }
+   },
+   "data": {
+    "t": [
+     {},
+     {
+      "id": 1
+     },
+     3
+    ]
+   },
+   "errors": [
+    "$.t[0]：缺欄位 id",
+    "$.t[2]：型別應為 object"
+   ]
+  }
+ ],
+ "extract": [
+  {
+   "text": "x\n```json\n{\"a\": 1}\n```\ny\n```json\n{\"b\": [1, 2]}\n```\n",
+   "value": {
+    "b": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "text": "```json\n{\"a\": 1}\n```\n```json\n{壞的}\n```",
+   "value": null
+  },
+  {
+   "text": "{\"status\": \"done\"}",
+   "value": {
+    "status": "done"
+   }
+  },
+  {
+   "text": "不是 JSON",
+   "value": null
+  },
+  {
+   "text": "",
+   "value": null
+  }
+ ]
+}

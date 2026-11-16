@@ -1,0 +1,26 @@
+"""時區換算。客戶的時區存在 customers.timezone（IANA 名稱）；系統內一律用不帶時區的 UTC。"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+
+def to_local(utc_naive: datetime, tz_name: str) -> datetime:
+    """UTC（不帶時區）轉成指定時區的當地時間（帶時區）。"""
+    return utc_naive.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+
+
+def to_utc_naive(local: datetime, tz_name: str) -> datetime:
+    """當地時間轉成不帶時區的 UTC。local 不帶時區時視為 tz_name 的時間。"""
+    if local.tzinfo is None:
+        local = local.replace(tzinfo=ZoneInfo(tz_name))
+    return local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def day_range_utc(day: str, tz_name: str) -> tuple[datetime, datetime]:
+    """某個當地日期（YYYY-MM-DD）對應的 UTC 區間 [start, end)。"""
+    start_local = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo(tz_name))
+    end_local = start_local.replace(hour=23, minute=59, second=59, microsecond=999999)
+    start = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    end = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+    return start, end

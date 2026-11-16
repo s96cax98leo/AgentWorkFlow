@@ -1,0 +1,83 @@
+AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，替換 {{佔位符}}，.tmpl 去掉副檔名。
+
+工具都在 awf 這支執行檔裡，不複製進專案，也不需要 Python。macOS、Linux、Windows（PowerShell 或 cmd）都能直接跑：
+
+  awf init --detect --target <專案目錄> [--json]
+  awf init --target <專案目錄> --reconfigure [<主題>] [--answers <檔>]
+  awf init --target <專案目錄>（或直接寫 <專案目錄>） [--config <檔>] [--answers <檔>] [--upgrade] [--adopt-new-fields]
+           [--force] [--overwrite-user-files] [--hooks plugin|project] [--with-mcp] [--with-workflows]
+           [--with-merge-gate [--merge-gate-bin <檔> [--merge-gate-checksums <檔>]]] [--defaults] [--source <plugin 目錄>]
+
+  --target    要初始化的專案目錄（不存在會建立）
+  --config    設定檔（格式見 workflow.config.example）；預設依序找 ./workflow.config、plugin 目錄的 workflow.config；
+              都沒有時互動詢問（非互動環境或加 --defaults 時直接用預設值）
+  --answers   開發規範與慣例的答案檔（JSON，格式見 docs/自訂與擴充.md〈自訂開發規範〉）；給了就不詢問，直接套用
+              （選哪個 methodology profile、code style、commit 格式、分支前綴、PR 大小上限、文件格式）
+              訪談的鍵也收：models、read_limits、parallelism、scrub、knowledge、links、deliverables、ci（原樣合併進
+              methodology.json 的同名鍵）、affected_tests_only、auto_merge、guard（合併進 guard.config.json）、hooks
+  --detect    只偵測、只印、不寫任何檔：依主題列出專案現況（lint 設定、測試指令、近期 commit 標題與分支的樣式、
+              既有的 CI、規格層目錄…）、每題要確認什麼、答案檔的鍵與建議的答案。不執行專案的任何程式、不讀機敏檔；
+              偵測到的只是建議，不會自動採用。--json 輸出給 skill 用的 JSON
+  --reconfigure
+              已 init 的專案改設定：以 .claude/teams/init-answers.json（上次的答案）當預設，互動時再問一輪，
+              或用 --answers 只寫要改的鍵（值寫 null＝拿掉那個答案）。只改答案有變的設定，methodology.json 與
+              guard.config.json 裡手改過的其他鍵不動；改完驗 schema（不過就不寫）。不能配 --upgrade、--force
+              後面接主題 id（--reconfigure knowledge 或 --reconfigure=knowledge）＝只重問那一個主題，其他不問、不動；
+              搭配 --answers 時答案檔只能有那個主題的鍵。可以單獨重問的主題：requirements、models、scrub、links、ci、
+              build_loop、auto_merge、hooks、knowledge、deliverables、parallelism、guard、main_session
+              （methodology、conventions、constraints、read_limits 的題目互相有關，要問一整輪）
+  --upgrade   升級已 init 過的專案（建議的更新方式）：模版檔一律換成這版，使用者的設定保留：
+                .claude/teams/methodology.json：不動；列出這版內建 profile 新增、你的 profile 還沒有的欄位與預設值
+                .claude/teams/guard.config.json：你的值一律保留，只補上這版新增的鍵（說明文字 _說明 換成新版）
+                .claude/teams/rules.md：「## 專案規則」段（含 correct skill 的對照表）之後保留，前面的通用規則更新
+                CLAUDE.md（init 產生的）與 .claude/teams/agent-workflow.CLAUDE.md：「## 專案特定」段之後保留
+              沒給 --config 時用 init 記下的 .claude/teams/workflow.config，不詢問。會顯示 .claude/teams/VERSION 的舊版 → 新版
+              從 0.x 升級：0.x 複製進專案的工具（.claude/teams/tools/、.claude/hooks/ 的 .py）1.0 不再使用。
+              和任何一版原樣相同的移除，改過的保留並逐一列出，你自己加的檔不動；settings.json 裡舊的
+              「python3 .claude/teams/tools/<工具>.py」權限換成「awf <子指令>」，你自己加的權限不動。進行中的 run 目錄不碰
+  --adopt-new-fields
+              搭配 --upgrade：把列出的缺少欄位補進 methodology.json（只補缺的，既有值永遠不改），補完驗 schema 再重新內嵌覆寫檔
+  --force     覆蓋**模版自己的檔案**（.claude/teams/ 底下、.claude/hooks/bin/ 的執行檔、看得出是模版產生的 workflow）。
+              使用者設定的保留規則和 --upgrade 相同（methodology.json、guard.config.json、〈專案規則〉、〈專案特定〉不整份覆寫）。
+              佔位符的值也和 --upgrade 相同：沒給 --config 時沿用 init 記下的 .claude/teams/workflow.config，
+              不會用範例預設值重算（RUNS_DIR 等自訂值不會被換掉）；值不是從 --config 或紀錄檔來時，不覆寫既有的紀錄檔。
+              使用者的檔案（CLAUDE.md、.claude/settings.json、.mcp.json、不是模版產生的同名 workflow）即使加 --force 也不整份覆蓋：
+              CLAUDE.md 只追加一段引用、settings.json 與 .mcp.json 深度合併、其餘保留並列進略過清單
+  --overwrite-user-files
+              連使用者的檔案也整份覆蓋成模版版本（會蓋掉你自己的 CLAUDE.md、settings.json、methodology.json、guard.config.json、
+              rules.md 的〈專案規則〉等，只在想重設時用；要換 profile 時搭配 --answers）
+  --hooks     plugin（預設）：hooks 由 agent-workflow plugin 註冊，settings.json 只放權限
+              project：把這支 awf 執行檔複製到 <專案>/.claude/hooks/bin/，settings.json 用它的絕對路徑註冊 hooks
+              （awf hook <種類>，跑不起來時擋下；這時不要再啟用 plugin 的 hooks）。
+              既有的 settings.json 會保留使用者的欄位與 hooks，只把 awf 的 hooks 合併進去（重跑不重複；
+              0.x 註冊的 awf_hook.py 會換成新的）。執行檔和平台有關，不建議進版控：每台機器各自跑一次
+              awf init --upgrade --hooks project。環境變數 AWF_BIN 有設時複製它指的檔
+  --with-mcp  產生 .mcp.json（預設只產生 .mcp.json.example）
+  --with-workflows
+              把 workflow 範本放進 .claude/workflows/ 當覆寫檔（結尾有 awf-override 標記）。不需要改 workflow 就不用加
+  --with-merge-gate
+              放 .github/workflows/agent-merge-gate.yml（auto_merge 的 merge gate CI），並把 linux-x64 的執行檔與
+              checksums.json 放進 .claude/teams/bin/（CI 從受保護的 base 取出、核對 sha256 後執行 awf merge-gate）。
+              預設不放：沒有設定 gate App 時它會讓每個 PR 失敗。啟用前先完成 docs/自動合併信任模型.md 的啟用前檢查清單。
+              專案已經有模版產生的 agent-merge-gate.yml 時，--upgrade 會一起更新（等同加了這個選項）
+  --merge-gate-bin
+              --with-merge-gate 要放的 linux-x64 執行檔（預設：模版的 plugin/bin/awf-linux-x64）。不是 ELF x86-64 就拒絕
+  --merge-gate-checksums
+              搭配 --merge-gate-bin：記這個執行檔 sha256 的 checksums.json；沒給就依執行檔產生一份
+  --defaults  沒有設定檔時不詢問，全部用預設值（開發規範用 default profile；主 session 的 git／GitHub 限制維持開啟）
+  --source    模版在哪：plugin 目錄（底下有 scaffold/ 與 workflow-templates/），或底下有 plugin/ 的 repo 根目錄。
+              預設依序看環境變數 AWF_TEMPLATE_DIR、AWF_PLUGIN_DIR、CLAUDE_PLUGIN_ROOT，再從執行檔往上找（裝好的 plugin 不用指定）
+  --python    0.x 的選項。1.0 不再需要 Python：給了會提示一行並忽略
+
+套用到既有專案：使用者 .claude/ 下的 agents、skills、commands 一律不動；既有的 CLAUDE.md 不覆蓋，
+模版說明寫成 .claude/teams/agent-workflow.CLAUDE.md，再在 CLAUDE.md 結尾追加一段 @ 引用（重跑不重複追加）。
+
+開發規範（methodology）：模版只管工作流程，TDD、spec 驅動、commit 格式、PR 大小等由使用者決定。
+互動模式在佔位符問答之後，逐項詢問開發規範 profile 與慣例（每題都有預設值，Enter 直接用）；
+結果合併成 <專案>/.claude/teams/methodology.json，由 awf 產生 workflow 腳本時內嵌。
+最後問一題主 session 的習慣（答案檔的鍵 main_session_push_merge）：你既有的 skill 或習慣會不會在主 session 直接 push main、
+合併 PR？答會時，guard.config.json 的 main_session_git_rules、main_session_github_rules 設 false（auto_merge 啟用後主 session 仍不能合併）。
+
+寫入前會印「設定對照表」（設定｜偵測到｜你的回答｜會寫成），互動模式要你確認才寫；--defaults、--answers 不問但照印。
+答案存在 <專案>/.claude/teams/init-answers.json（不含機敏值），之後用 --reconfigure 改。
+限制類的功能（讀取預算、去客戶化掃描、連結強制、交付文件、CI、自動合併）預設都不啟用。

@@ -1,5 +1,5 @@
 {
-  "description": "agent-workflow 守門與交件信封檢查，單一入口 awf_hook.py（純 Python，macOS／Linux／Windows 共用；有 python3 用 python3，沒有改用 python）。shell 守門涵蓋 Bash 與 PowerShell；路徑守門涵蓋 Edit、Write、NotebookEdit、Read、Grep。失敗語意：plugin 會套在使用者所有專案，所以 hook 跑不起來（找不到 Python、逾時、Windows 沒有 Git Bash）時放行（onFailure: continue），不鎖死工具；跑得起來但輸入壞掉時守門擋下、交件放行；guard 模組載入失敗時改用 awf_hook.py 內建的最小規則（擋 push、合併、approve、GitHub API 寫入）。要更嚴格（跑不起來也擋）請用 init.py --hooks project，在專案 settings 寫 onFailure: block 與 Python 絕對路徑；信任邊界在伺服器端（ruleset、required check）。設定讀 ${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json；用 plugin 安裝時，專案的 .claude/settings.json 不要再註冊同樣的 hooks。SessionStart 另有一個版本提示（plugin 與專案 .claude/teams/VERSION 不一致時印一行），只提示、永遠放行。",
+  "description": "agent-workflow 守門與交件信封檢查，單一入口 awf hook <種類>（plugin 內附的執行檔，不需要 Python；bin/awf 啟動器挑這個平台的執行檔，AWF_BIN 可以指到自己建置的）。shell 守門涵蓋 Bash 與 PowerShell；路徑守門涵蓋 Edit、Write、NotebookEdit、Read、Grep。失敗語意：plugin 會套在使用者所有專案，所以 hook 跑不起來（找不到這個平台的執行檔、逾時、Windows 沒有 Git Bash 所以這一行指令跑不了）時放行（onFailure: continue），不鎖死工具；跑得起來但輸入壞掉時守門擋下、交件放行；守門設定載入失敗或內部出錯時改用內建的最小規則（擋 push、合併、approve、GitHub API 寫入）。要更嚴格（跑不起來也擋）請用 awf init --hooks project，在專案 settings 寫 onFailure: block 與執行檔的絕對路徑（Windows 沒有 Git Bash 時也建議用這個）；信任邊界在伺服器端（ruleset、required check）。設定讀 ${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json；用 plugin 安裝時，專案的 .claude/settings.json 不要再註冊同樣的 hooks。SessionStart 另有一個版本提示（plugin 與專案 .claude/teams/VERSION 不一致時印一行）與幾行摘要（進行中的 run、斷掉的連結數、最近的決策），只提示、永遠放行。另外兩個自動接點也只做輔助、永遠 exit 0：PostToolUse（Edit、Write）把改到的檔記進知識圖的待更新清單（沒有圖就不記）；UserPromptSubmit 在 profile 的 knowledge.auto.prompt 開啟時，依訊息裡的需求 id、檔名、符號名查知識圖並注入幾行位置（預設關閉，沒開時什麼都不做）。",
   "hooks": {
     "PreToolUse": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" guard-shell; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" guard-shell; fi",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook guard-shell",
             "timeout": 10,
             "onFailure": "continue"
           }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" guard-paths; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" guard-paths; fi",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook guard-paths",
             "timeout": 10,
             "onFailure": "continue"
           }
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; fi",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook envelope",
             "timeout": 20,
             "onFailure": "continue"
           }
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; fi",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook envelope",
             "timeout": 20
           }
         ]
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" envelope; fi",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook envelope",
             "timeout": 20
           }
         ]
@@ -63,7 +63,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" session-start; else python \"${CLAUDE_PLUGIN_ROOT}/hooks/awf_hook.py\" session-start; fi",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook session-start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook mark-dirty",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/awf\" hook prompt-context",
             "timeout": 5
           }
         ]
