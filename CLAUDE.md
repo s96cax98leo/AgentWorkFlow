@@ -13,7 +13,7 @@ AgentWorkFlow 是**模版本身**，不是套用了模版的專案。全部要�
 
 workflow 範本放在 `plugin/workflow-templates/`（不叫 `workflows/`，避免被 Claude Code 當成 plugin workflow 自動登記），**不複製進專案**：專案的 `awf next` 每段用範本＋`workflow.config` 的佔位符值＋`methodology.json` 產生 `<run_dir>/.wf/<名>.js`，主 session 用 `Workflow({scriptPath})` 執行。工具不在專案裡：全部是單一執行檔 `awf`（Rust，原始碼在 `crates/`：`awf-core` 放全部邏輯、`awf` 是入口、`xtask` 是建置與檢查），由 plugin 的 `bin/` 提供；agent 檔、hook 訊息、派工單一律寫 `awf <子指令>`，不帶路徑。init 只放設定、schema、profile、rules、golden-set。
 
-「模版在哪」只有一套解析（`crates/awf-core/src/template.rs`）：模版根目錄＝plugin 目錄；`AWF_TEMPLATE_DIR`（給 plugin 目錄或 repo 根都可以）→ `AWF_PLUGIN_DIR`／`CLAUDE_PLUGIN_ROOT` → 從執行檔往上找（`<plugin>/bin/` 底下用那個 plugin；開發時的 `target/…/awf` 用 repo 的 `plugin/`）。要找模版的地方一律呼叫它，不要各寫各的。
+「模版在哪」只有一套解析（`crates/awf-core/src/template.rs`）：模版根目錄＝plugin 目錄；`AWF_TEMPLATE_DIR`（給 plugin 目錄或 repo 根都可以）→ `AWF_PLUGIN_DIR`／`CLAUDE_PLUGIN_ROOT` → 從執行檔往上找（`<plugin>/bin/` 底下用那個 plugin；開發時的 `target/…/awf` 用 repo 的 `plugin/`）。要找模版的地方一律呼叫它，不要各寫各的。「專案根在哪」同樣只有一套（`crates/awf-core/src/project.rs`）：`--project-dir` → `CLAUDE_PROJECT_DIR` → 從目前目錄往上找最外層的 `.claude/teams/VERSION`；找不到時閘門類指令（merge-gate、save-run 的 stage／approve／escalate、publish）報錯、不退回目前目錄，輔助類才用目前目錄。
 
 repo 裡沒有 Python：工具、測試、維護檢查都是 Rust（`crates/`），只有驗證 workflow 用 Node。`tests/` 只放資料（回歸基準 `parity/`、hook 案例 `hooks/`、去客戶化清單、基準實跑的需求）。建置與發佈見 `docs/建置與發佈.md`。
 
@@ -326,7 +326,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ## 改動時的檢查清單
 
-- **新增佔位符**：`workflow.config.example`、`awf init` 和 README 的佔位符表要一起改。smoke_init 會檢查產出裡有沒有殘留的 `{{`。
+- **新增佔位符**：`workflow.config.example`、`awf init` 和 README 的佔位符表要一起改（最近加的三個：`PROTECTED_BRANCHES`、`DOCS_DIRS`、`NOTIFY_HOW`；前兩個在訪談的守門主題問）。smoke_init 會檢查產出裡有沒有殘留的 `{{`。
 - **新增 `dev-*`／`tpm-*` agent**：
   - 照既有段落寫：切分理由、職責、硬性約束、工作方式、交件格式。
   - 設 `model: inherit` 和 `skills`。只讀的角色不給 Edit／Write。
@@ -355,7 +355,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改 watcher**：`awf watch --selftest`；事件類型或欄位改了，`schemas/progress-event.schema.json`、`methodology.schema.json` 的 `progress.notify.events`、`docs/監控與整合.md` 的事件表要一起改；送給外部指令的欄位只能加進 `NOTIFY_FIELDS`（不放需求內容、摘要、路徑）；任何失敗都只警告。
 - **改派工單或派工數**：跑 `cargo xtask check-budget`；變多是預期的，才用 `--update` 更新 `golden-set/token-budget.json`，並在 commit 說明理由。
 - **新增會寫紀錄的唯讀角色**：加進 `config.rs` 的 `RECORD_ONLY_ROLES` 與 `check_agents.rs` 的對應檢查，hook 測試補該擋（寫 repo、run.json、merge-audit）與該放（寫 runs_dir 的 `.md`）。
-- **新增可調的值（profile）**：預設值＝原本寫死的值，沒寫或不合法一律退回預設（範本用 challenge 片段的 `awfInt`；前綴裡的字走 `awfTune`、執行紀錄的節走 `awfRecordSections`）；放寬閘門或確定性核對的方向不開放（例：`limits.envelope` 只能調小、`review.min_confidence` 只能調低、`conventions.sync.backup_ref` 只能在 `refs/backup/` 底下，規則在 `sync_branch::backup_ref_ok`）。要一起改：`methodology.schema.json`（上下限）、`schema::methodology_errors`（schema 表達不了的，例如 `limits.event` 對 `events` 的角度數）、golden 正反例、對應的情境（開、不合法退回預設）、`crates/xtask/src/js/kernel.cjs`（片段的函式）、`docs/自訂與擴充.md` 的欄位表。改完用乾跑報告確認「沒設定時每張派工單逐字相同」。
+- **新增可調的值（profile）**：預設值＝原本寫死的值，沒寫或不合法一律退回預設（工具端只影響輔助輸出的值走 `crates/awf-core/src/tune.rs` 的共用讀法；範本用 challenge 片段的 `awfInt`；前綴裡的字走 `awfTune`、執行紀錄的節走 `awfRecordSections`）；放寬閘門或確定性核對的方向不開放（例：`limits.envelope` 只能調小、`review.min_confidence` 只能調低、`conventions.sync.backup_ref` 只能在 `refs/backup/` 底下，規則在 `sync_branch::backup_ref_ok`）。要一起改：`methodology.schema.json`（上下限）、`schema::methodology_errors`（schema 表達不了的，例如 `limits.event` 對 `events` 的角度數）、golden 正反例、對應的情境（開、不合法退回預設）、`crates/xtask/src/js/kernel.cjs`（片段的函式）、`docs/自訂與擴充.md` 的欄位表。範本與閘門都讀的值（例：`constraints_format`、`criteria_id_pattern`、`roles`、守門設定的 `merger_role`）兩邊的規則要一致，並在 `crates/awf/tests/tunables_wiring.rs` 補「派工單寫的，閘門認得」的測試；閘門只認設定檔，不採信 trace 自己記的身分（`save_run::swapped_step`、`config::custom_merger`）。改完用乾跑報告確認「沒設定時每張派工單逐字相同」。
 - **改名稱表或換角色（`lenses`、`test_modes`、`research_angles`、`roles`、`conventions.branch.patterns`）**：範本端的判斷在 challenge 片段（`awfDefs`、`awfBranchPattern`、`awfStep`、`awfSwappable`），工具端在 `schema.rs` 的 `name_table_errors`（`BUILTIN_DESIGN_LENSES`、`BUILTIN_TEST_MODES`、`SWAPPABLE_STEPS`、`branch_pattern_ok`），兩邊要一致；內建的 lens、模式、審查軸有增減時兩邊的清單一起改。recipe 指到沒定義的名稱一律 halted，不默默略過。開放新的可換步驟之前先確認閘門不是依那個角色名核對交件（`save_run::required_roles_missing`）。`sdlc-merge` 的合併角色與凍結檔由 `state/args.rs` 的 `merge_guard_args` 從 guard.config 帶進 args。
 - **新增 guard.config 欄位**：`guard.config.json.tmpl` 的 `_說明`、`config.rs` 的預設值、`docs/自動合併信任模型.md` 或 `docs/自訂與擴充.md` 一起改；`awf init --upgrade` 會把新鍵補進既有專案。
 - **版本（VERSION）**：發佈前遞增 `plugin/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json`（`metadata.version` 與 `plugins[].version`）。init 寫的 `.claude/teams/VERSION` 取自 plugin.json，三處一致由 `crates/awf/tests/smoke_init.rs` 檢查。
