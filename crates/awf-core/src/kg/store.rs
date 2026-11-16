@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 /// 改了資料表就遞增：舊圖整份重建。
-pub const SCHEMA_VERSION: &str = "1";
+pub const SCHEMA_VERSION: &str = "2";
 /// 改了解析、分詞或推導規則就遞增：舊圖整份重建。
 pub const CONTENT_VERSION: &str = "2";
 pub const DB_NAME: &str = "graph.db";
@@ -33,12 +33,14 @@ CREATE TABLE f_calls(path TEXT, seq INTEGER, name TEXT, qual TEXT, scope TEXT, l
 CREATE TABLE f_inherits(path TEXT, seq INTEGER, scope TEXT, target TEXT, kind TEXT, line INTEGER, PRIMARY KEY(path, seq)) WITHOUT ROWID;
 CREATE TABLE f_refs(path TEXT, seq INTEGER, kind TEXT, target TEXT, scope TEXT, line INTEGER, PRIMARY KEY(path, seq)) WITHOUT ROWID;
 CREATE TABLE f_commits(sha TEXT, path TEXT, seq INTEGER, PRIMARY KEY(sha, path)) WITHOUT ROWID;
+CREATE TABLE fps(node TEXT PRIMARY KEY, hash TEXT, owner TEXT) WITHOUT ROWID;
+CREATE INDEX fps_owner ON fps(owner);
 ";
 
 /// 所有資料表（測試比對內容用）。
-pub const TABLES: [&str; 11] = ["meta", "files", "nodes", "edges", "unresolved", "terms", "f_imports", "f_calls", "f_inherits", "f_refs", "f_commits"];
+pub const TABLES: [&str; 12] = ["meta", "files", "nodes", "edges", "unresolved", "terms", "f_imports", "f_calls", "f_inherits", "f_refs", "f_commits", "fps"];
 /// 每個檔自己的事實所在的表與欄位。
-const OWNED: [(&str, &str); 7] = [("nodes", "owner"), ("edges", "owner"), ("terms", "owner"), ("f_imports", "path"), ("f_calls", "path"), ("f_inherits", "path"), ("f_refs", "path")];
+const OWNED: [(&str, &str); 8] = [("nodes", "owner"), ("edges", "owner"), ("terms", "owner"), ("f_imports", "path"), ("f_calls", "path"), ("f_inherits", "path"), ("f_refs", "path"), ("fps", "owner")];
 
 pub fn e(err: rusqlite::Error) -> String {
     format!("資料庫錯誤：{err}")
@@ -101,7 +103,7 @@ pub fn delete_owner(con: &Connection, owner: &str) -> Result<(), String> {
 
 /// 刪掉全域來源與推導的結果（`owner` 以 `@` 開頭的）。
 pub fn delete_global(con: &Connection) -> Result<(), String> {
-    for table in ["nodes", "edges", "terms"] {
+    for table in ["nodes", "edges", "terms", "fps"] {
         con.execute(&format!("DELETE FROM {table} WHERE owner LIKE '@%'"), []).map_err(e)?;
     }
     con.execute("DELETE FROM unresolved", []).map_err(e)?;
@@ -134,6 +136,17 @@ pub fn put_edge(con: &Connection, src: &str, dst: &str, kind: &str, strength: &s
         return Ok(());
     }
     con.prepare_cached("INSERT OR IGNORE INTO edges VALUES(?,?,?,?,?,?,?)").map_err(e)?.execute(params![src, dst, kind, strength, provenance, confidence, owner]).map_err(e)?;
+    Ok(())
+}
+
+/// 節點內容的指紋（需求、情境、符號那幾行的雜湊）：交付文件用它判斷「連到的需求或符號變了」。
+pub fn put_fp(con: &Connection, node: &str, lines: &[&str], start: usize, end: usize, owner: &str) -> Result<(), String> {
+    if start == 0 || end < start {
+        return Ok(());
+    }
+    let body: Vec<&str> = lines.iter().skip(start - 1).take(end + 1 - start).map(|l| l.trim_end()).collect();
+    let hash = &sha256_hex(body.join("\n").as_bytes())[..16];
+    con.prepare_cached("INSERT OR IGNORE INTO fps VALUES(?,?,?)").map_err(e)?.execute(params![node, hash, owner]).map_err(e)?;
     Ok(())
 }
 

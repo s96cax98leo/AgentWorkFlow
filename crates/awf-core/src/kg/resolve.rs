@@ -56,16 +56,36 @@ pub enum Res {
     Skip,
 }
 
+/// 路徑開頭的 `<repo id>:`（別的 repo 的檔；含冒號）與其餘的部分。
+fn repo_prefix(p: &str) -> (&str, &str) {
+    match super::build::split_repo(p) {
+        Some((id, _)) => p.split_at(id.len() + 1),
+        None => ("", p),
+    }
+}
+
+/// 所在的目錄。別的 repo 的檔保留 `<repo id>:` 前綴（`spec:a.md` → `spec:`）。
 pub fn dir_of(p: &str) -> &str {
-    p.rsplit_once('/').map(|x| x.0).unwrap_or("")
+    match p.rsplit_once('/') {
+        Some(x) => x.0,
+        None => repo_prefix(p).0,
+    }
 }
 
 pub fn base_of(p: &str) -> &str {
-    p.rsplit('/').next().unwrap_or(p)
+    repo_prefix(p).1.rsplit('/').next().unwrap_or(p)
 }
 
-/// 把 `rel` 接在 `dir` 後面並化簡 `.` 與 `..`；跑出根目錄回 None。
+/// 把 `rel` 接在 `dir` 後面並化簡 `.` 與 `..`；跑出根目錄回 None。`dir` 帶 `<repo id>:` 前綴時留在那個 repo 裡。
 pub fn join_norm(dir: &str, rel: &str) -> Option<String> {
+    let (prefix, dir) = repo_prefix(dir);
+    if !prefix.is_empty() {
+        return join_plain(dir, rel).map(|p| format!("{prefix}{p}"));
+    }
+    join_plain(dir, rel)
+}
+
+fn join_plain(dir: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = if rel.starts_with('/') { Vec::new() } else { dir.split('/').filter(|s| !s.is_empty()).collect() };
     for seg in rel.split('/') {
         match seg {

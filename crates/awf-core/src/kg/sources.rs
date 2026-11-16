@@ -107,6 +107,9 @@ fn put_req(con: &Connection, lay: &Layout, r: &spec::Requirement, sub: &str) -> 
     ntok += add_terms(&mut terms, &r.id, 2);
     store::put_node(con, &NodeRow { id: &id, kind: "req", sub, name: &r.title, path: &path, start: r.span.start, end: r.span.end, ntok, owner: "@spec" })?;
     store::put_terms(con, &id, &cap_terms(terms), "@spec")?;
+    let text = std::fs::read_to_string(Path::new(&lay.spec_root).join(&r.file)).unwrap_or_default();
+    let lines: Vec<&str> = text.split('\n').collect();
+    store::put_fp(con, &id, &lines, r.span.start, r.span.end, "@spec")?;
     for s in &r.scenarios {
         if s.id.is_empty() {
             continue;
@@ -116,6 +119,7 @@ fn put_req(con: &Connection, lay: &Layout, r: &spec::Requirement, sub: &str) -> 
         let ntok = add_terms(&mut terms, &s.title, 3) + add_terms(&mut terms, &r.title, 1);
         store::put_node(con, &NodeRow { id: &sid, kind: "scn", sub, name: &s.title, path: &path, start: s.span.start, end: s.span.end, ntok, owner: "@spec" })?;
         store::put_terms(con, &sid, &terms, "@spec")?;
+        store::put_fp(con, &sid, &lines, s.span.start, s.span.end, "@spec")?;
         store::put_edge(con, &id, &sid, "contains", "strong", "spec", 1.0, "@spec")?;
     }
     Ok(Some(id))

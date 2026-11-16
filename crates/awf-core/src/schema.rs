@@ -508,6 +508,33 @@ pub fn methodology_errors(doc: &Value) -> Vec<String> {
             errs.push(format!("conventions.commit.check_regex 不是合法的正規式：{e}"));
         }
     }
+    // 知識圖另外收的 repo（knowledge.repos）：id 不重複；
+    // sources 是相對那個 repo 的 glob（不能是絕對路徑或含 ..），不能指名機敏檔；spec_root 要在專案裡
+    if let Some(know) = get(doc, "knowledge").filter(|k| k.is_object()) {
+        let repos: Vec<&Value> = items(get(know, "repos")).iter().filter(|r| r.is_object()).collect();
+        for n in dup_strings(&repos.iter().map(|r| get(r, "id")).collect::<Vec<_>>()) {
+            errs.push(format!("knowledge.repos 的 id「{n}」重複"));
+        }
+        let sensitive = regex::Regex::new(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx)|id_rsa|id_ed25519|credentials.*|secrets?\..*)\n?$").expect("固定的正規式");
+        for r in &repos {
+            let rid = str_opt(get(r, "id"));
+            if get(r, "path").and_then(Value::as_str).is_some_and(|p| p.trim().is_empty() || p.contains('\0')) {
+                errs.push(format!("knowledge.repos[{rid}].path 不能是空白"));
+            }
+            for g in items(get(r, "sources")).iter().filter_map(Value::as_str) {
+                if outside(g) {
+                    errs.push(format!("knowledge.repos[{rid}].sources 要是相對那個 repo 的 glob，不能是絕對路徑或含 ..（收到 {g}）"));
+                } else if sensitive.is_match(&g.replace('\\', "/")) {
+                    errs.push(format!("knowledge.repos[{rid}].sources 不能指名機敏檔（{g}）"));
+                }
+            }
+        }
+        if let Some(sr) = get(know, "spec_root").and_then(Value::as_str) {
+            if outside(sr) {
+                errs.push(format!("knowledge.spec_root 要是專案內的相對路徑，不能是絕對路徑或含 ..（收到 {sr}）"));
+            }
+        }
+    }
     // 自訂事件類型（event.js）：名字不能和別的流程或 SDLC 的段撞名；data 的 from 要指得到東西；回傳的鍵不能蓋掉固定欄位
     let name_re = regex::Regex::new(r"^[a-z][a-z0-9-]{0,31}\n?$").expect("固定的正規式");
     if let Some(events) = obj(get(doc, "events")) {

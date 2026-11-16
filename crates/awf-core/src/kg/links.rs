@@ -56,6 +56,61 @@ fn end(v: Option<&Value>) -> Option<End> {
     Some(End { ty: ty.to_string(), id: text(o, "id")?.to_string() })
 }
 
+/// 連結種類在摘要裡的寫法。
+const KIND_TEXT: [(&str, &str); 7] = [
+    ("req_run", "需求 ↔ run"),
+    ("ac_spec", "驗收條件 → 規格"),
+    ("ac_file", "驗收條件 → 檔案"),
+    ("ac_test", "驗收條件 → 測試"),
+    ("ac_commit", "驗收條件 → commit"),
+    ("decision_req", "決策 → 需求"),
+    ("change_deliverable", "這次改動 → 交付文件小節"),
+];
+/// 摘要裡每一種連結最多列幾條。
+const SECTION_CAP: usize = 12;
+
+/// 結案摘要的〈連結〉一節：帳本裡這個 run 目前有效的連結，照種類整理。
+/// 帳本不存在、讀不到、格式比認得的新、或這個 run 沒有連結時回空的（摘要就沒有這一節）。只由帳本內容決定，重跑結果相同。
+pub fn run_section(ledger_file: &str, run_name: &str) -> Vec<String> {
+    let Ok(raw) = std::fs::read(ledger_file) else { return Vec::new() };
+    let ledger = parse_ledger(&String::from_utf8_lossy(&raw));
+    let mine: Vec<&Link> = ledger.links.iter().filter(|l| l.run == run_name).collect();
+    if mine.is_empty() {
+        return Vec::new();
+    }
+    let flat = |t: &str| -> String {
+        let one: String = t.chars().map(|c| if c.is_control() || c == '|' { ' ' } else { c }).collect();
+        let one = one.trim();
+        if one.chars().count() > 100 { format!("{}…", one.chars().take(100).collect::<String>()) } else { one.to_string() }
+    };
+    let mut kinds: Vec<&str> = KIND_TEXT.iter().map(|k| k.0).collect();
+    for l in &mine {
+        if !kinds.contains(&l.kind.as_str()) {
+            kinds.push(l.kind.as_str());
+        }
+    }
+    let mut out = vec![String::new(), "## 連結".to_string(), String::new(), "> 取自連結帳本（links.jsonl）：這個 run 各段存檔時宣告的連結，重存後作廢的不列。".to_string(), String::new()];
+    for kind in kinds {
+        let mut pairs: Vec<String> = Vec::new();
+        for l in mine.iter().filter(|l| l.kind == kind) {
+            let p = if kind == "req_run" { flat(&l.from.id) } else { format!("{} → {}", flat(&l.from.id), flat(&l.to.id)) };
+            if !pairs.contains(&p) {
+                pairs.push(p);
+            }
+        }
+        if pairs.is_empty() {
+            continue;
+        }
+        let label = KIND_TEXT.iter().find(|k| k.0 == kind).map(|k| k.1.to_string()).unwrap_or_else(|| format!("其他（{}）", flat(kind)));
+        out.push(format!("- {label}（{} 條）", pairs.len()));
+        out.extend(pairs.iter().take(SECTION_CAP).map(|p| format!("  - {p}")));
+        if pairs.len() > SECTION_CAP {
+            out.push(format!("  - …其餘 {} 條見帳本", pairs.len() - SECTION_CAP));
+        }
+    }
+    out
+}
+
 pub fn parse_ledger(text_in: &str) -> Ledger {
     let mut out = Ledger::default();
     for raw in text_in.lines() {

@@ -136,6 +136,12 @@ fn append_bad_lines(root: &Path) {
     let _ = std::fs::write(p, text);
 }
 
+/// 給別的模組的 selftest 用：在 `root` 造同一個小專案（原始檔、OpenSpec 目錄、交付設定、由 `save_run` 寫出來的連結帳本）。不建圖。
+pub fn selftest_project(root: &Path) -> Result<(), String> {
+    project(root);
+    write_ledger(root)
+}
+
 fn has(ans: &Answer, group: &str, needle: &str) -> bool {
     ans.items.iter().any(|i| i.group == group && (i.path == needle || i.id == needle))
 }
@@ -351,6 +357,9 @@ fn run_all(root: &Path, t: &mut Tally) -> Result<(), String> {
     t.check("export --out", code == 0 && root.join("exported/hot.md").is_file(), &out);
     let _ = std::fs::remove_dir_all(root.join("exported"));
 
+    println!("別的 repo（knowledge.repos）與 profile 的選項");
+    cross_repo(root, t)?;
+
     println!("git（沒有 git 時略過）");
     if git_ok(root, &["init", "-q"]) && git_ok(root, &["add", "src/billing/format.ts"]) && git_ok(root, &["commit", "-q", "-m", "init"]) {
         let r = build(&opts(root))?;
@@ -362,6 +371,74 @@ fn run_all(root: &Path, t: &mut Tally) -> Result<(), String> {
     } else {
         println!("  [略過] 這台機器跑不了 git");
     }
+    Ok(())
+}
+
+/// 跨 repo：另一個 repo 放在專案外面（唯讀、只收列出的 glob、機敏檔不收），節點 id 帶 `<id>:` 前綴，
+/// 用同一個需求 id 和專案的規格接起來；`knowledge.spec_root`、`knowledge.timeout` 由 profile 給。
+fn cross_repo(root: &Path, t: &mut Tally) -> Result<(), String> {
+    let rs = root.to_string_lossy().into_owned();
+    let other = root.with_file_name(format!("{}-docs", root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+    let _ = std::fs::remove_dir_all(&other);
+    put(&other, "docs/api.md", "# 對外介面\n\n## 匯出\n\n對應需求 `billing/export-invoice`，由示範客戶 ACME 的文件 repo 維護。\n");
+    put(&other, "docs/credentials.md", "# 不該被收\n");
+    put(&other, "src/client.ts", "export function callExport(): number {\n  return 1;\n}\n");
+    put(&other, "notes/skip.md", "# 沒有列在 sources\n\n`billing/export-invoice`\n");
+    let other_s = other.canonicalize().unwrap_or(other.clone()).to_string_lossy().replace('\\', "/");
+    let before: Vec<(String, String)> = ["docs/api.md", "src/client.ts"].iter().map(|f| (f.to_string(), std::fs::read_to_string(other.join(f)).unwrap_or_default())).collect();
+    let profile = json!({"knowledge": {
+        "repos": [
+            {"id": "acme-docs", "path": other_s, "sources": ["docs/**/*.md", "src/**/*.ts"]},
+            {"id": "Bad_Id", "path": other_s, "sources": ["docs/**/*.md"]},
+            {"id": "escape", "path": other_s, "sources": ["../**/*.md"]},
+            {"id": "missing", "path": "no/such/dir", "sources": ["**/*.md"]}
+        ],
+        "timeout": 120
+    }});
+    put(root, ".claude/teams/methodology.json", &profile.to_string());
+    let lay = layout(Some(&rs), None, None, None)?;
+    t.check("profile：knowledge.timeout、repos 讀得到，不合規則的項目略過並說明", lay.timeout == Some(120) && lay.repos.len() == 1 && lay.repos[0].id == "acme-docs" && lay.notes.iter().filter(|n| n.contains("略過")).count() == 3, &format!("{:?} {:?}", lay.repos, lay.notes));
+    let r = build(&opts(root))?;
+    t.check("建圖的說明列出略過的 repo 設定", r.notes.iter().any(|n| n.contains("knowledge.repos[1]")), &format!("{:?}", r.notes));
+    let g = query::open(&lay)?;
+    t.check("別的 repo：節點 id 帶 repo 前綴", g.node("file:acme-docs:docs/api.md").is_some() && g.node("file:acme-docs:src/client.ts").is_some() && g.node("sym:acme-docs:src/client.ts#callExport").is_some(), "");
+    t.check("別的 repo：只收列出的 glob", g.node("file:acme-docs:notes/skip.md").is_none(), "");
+    t.check("別的 repo：機敏檔不收", g.node("file:acme-docs:docs/credentials.md").is_none() && r.skipped.iter().any(|(p, why)| p == "acme-docs:docs/credentials.md" && why == "機敏檔"), &format!("{:?}", r.skipped));
+    let tr = query::trace(&g, REQ)?;
+    let shown = format!("{other_s}/docs/api.md");
+    t.check("別的 repo：用同一個需求 id 接到專案的規格（trace 看得到，路徑是讀得到的寫法）", tr.items.iter().any(|i| i.path == shown), &format!("{:?}", tr.items.iter().map(|i| i.path.clone()).collect::<Vec<_>>()));
+    let nb = query::neighbors(&g, &shown, 2);
+    t.check("別的 repo：可以用輸出裡看到的路徑查（neighbors 走得到專案的需求）", nb.as_ref().is_ok_and(|a| a.items.iter().any(|i| i.id == format!("req:{REQ}"))), &format!("{:?}", nb.map(|a| a.items.iter().map(|i| i.id.clone()).collect::<Vec<_>>())));
+    let lo = query::locate(&g, "callExport", 5);
+    t.check("別的 repo：locate 找得到它的符號", lo.items.iter().any(|i| i.path == format!("{other_s}/src/client.ts")), &format!("{:?}", lo.items.iter().map(|i| i.path.clone()).collect::<Vec<_>>()));
+    drop(g);
+    put(&other, "src/client.ts", "export function callExport(): number {\n  return 2;\n}\n\nexport function added(): void {}\n");
+    let r2 = build(&opts(root))?;
+    t.check("別的 repo：增量只重讀改過的檔", r2.outcome == Outcome::Updated && r2.changed == 1, &format!("{r2:?}"));
+    let after: Vec<(String, String)> = ["docs/api.md"].iter().map(|f| (f.to_string(), std::fs::read_to_string(other.join(f)).unwrap_or_default())).collect();
+    let listing = |d: &Path| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(d).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+        v.sort();
+        v
+    };
+    t.check("別的 repo：唯讀（沒有多出檔案、內容沒被動）", after[0] == before[0] && listing(&other) == ["docs", "notes", "src"] && listing(&other.join("docs")) == ["api.md", "credentials.md"], &format!("{:?}", listing(&other)));
+    // spec_root：profile 給；命令列的 --spec-root 優先
+    let mut with_spec = profile.clone();
+    with_spec["knowledge"]["spec_root"] = json!("altspec");
+    put(root, ".claude/teams/methodology.json", &with_spec.to_string());
+    let lay2 = layout(Some(&rs), None, None, None)?;
+    let lay3 = layout(Some(&rs), None, None, Some("openspec"))?;
+    t.check("profile：knowledge.spec_root 讀得到，--spec-root 優先", lay2.spec_root.ends_with("/altspec") && lay3.spec_root.ends_with("/openspec"), &format!("{} {}", lay2.spec_root, lay3.spec_root));
+    with_spec["knowledge"]["spec_root"] = json!("../outside");
+    put(root, ".claude/teams/methodology.json", &with_spec.to_string());
+    t.check("profile：spec_root 指到專案外面就拒絕", layout(Some(&rs), None, None, None).is_err(), "");
+    // 收回設定：別的 repo 的節點清掉
+    let _ = std::fs::remove_file(root.join(".claude/teams/methodology.json"));
+    build(&opts(root))?;
+    let lay = layout(Some(&rs), None, None, None)?;
+    let g = query::open(&lay)?;
+    t.check("拿掉設定後重建：別的 repo 的節點清掉", g.node("file:acme-docs:docs/api.md").is_none() && g.node(&format!("req:{REQ}")).is_some(), "");
+    let _ = std::fs::remove_dir_all(&other);
     Ok(())
 }
 

@@ -130,6 +130,8 @@ const RULES: &[Case] = &[
     ("awf deliverables status", DEV, ALLOW, Sh::Both),
     ("awf deliverables check", DEV, ALLOW, Sh::Both),
     ("awf deliverables affected", DEV, ALLOW, Sh::Both),
+    ("awf deliverables matrix --project", DEV, BLOCK, Sh::Both),
+    ("awf deliverables matrix --project", MAIN, ALLOW, Sh::Both),
     ("awf deliverables sync", MAIN, ALLOW, Sh::Both),
     // kb：只能 query／lint
     ("awf kb build", DEV, BLOCK, Sh::Both),

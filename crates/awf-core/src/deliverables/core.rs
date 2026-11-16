@@ -607,6 +607,11 @@ pub fn section_state(doc_id: &str, sec: &Section, state: &Value, files: &[String
 // ------------------------------------------------------------------ status
 /// 一份文件的狀態（ok、stale、missing、waiting）與各小節的狀態。
 pub fn doc_status(doc: &Value, cfg: &Value, root: &str, state: &Value, files: &[String], src_root: &str) -> Value {
+    doc_status_with(doc, cfg, root, state, files, src_root, None)
+}
+
+/// [`doc_status`]，有知識圖時多看「小節連到的需求或符號變了」（只會讓更多小節過期）。
+pub fn doc_status_with(doc: &Value, cfg: &Value, root: &str, state: &Value, files: &[String], src_root: &str, links: Option<&super::kgflow::Links>) -> Value {
     let id = sget(doc, "id");
     let p = doc_path(cfg, root, doc);
     let mut out = Map::new();
@@ -645,7 +650,7 @@ pub fn doc_status(doc: &Value, cfg: &Value, root: &str, state: &Value, files: &[
     let mut secs = Vec::new();
     let mut kinds: Vec<(&str, Vec<String>)> = Vec::new();
     for s in &parsed.sections {
-        let (st, why) = section_state(id, s, state, files, src_root);
+        let (st, why) = super::kgflow::linked_state(section_state(id, s, state, files, src_root), id, s, state, links);
         secs.push(json!({"title": s.title, "state": st, "detail": why}));
         match kinds.iter_mut().find(|k| k.0 == st) {
             Some(k) => k.1.push(s.title.clone()),
@@ -681,7 +686,8 @@ pub fn status_all(root: &str, repo: Option<&str>) -> (Option<Vec<Value>>, String
     let src_root = source_root(&cfg, root, repo);
     let files = repo_files(&src_root);
     let state = load_state(root);
-    (Some(resolve_docs(&cfg, &cat).iter().map(|d| doc_status(d, &cfg, root, &state, &files, &src_root)).collect()), note)
+    let links = super::kgflow::Links::open(root);
+    (Some(resolve_docs(&cfg, &cat).iter().map(|d| doc_status_with(d, &cfg, root, &state, &files, &src_root, links.as_ref())).collect()), note)
 }
 
 // ------------------------------------------------------------------ index
@@ -902,6 +908,7 @@ pub fn check_all(root: &str, repo: Option<&str>) -> (Option<Vec<String>>, String
     let mut errs: Vec<String> = notes;
     let runrule = [run_name_rule(root)];
     let d_out = out_dir(&cfg, root);
+    let links = super::kgflow::Links::open(root);
     for doc in &docs {
         let id = sget(doc, "id");
         if sget(doc, "source") == "external" {
@@ -927,7 +934,7 @@ pub fn check_all(root: &str, repo: Option<&str>) -> (Option<Vec<String>>, String
             errs.push(format!("{rel}：檔頭的 id（{mid}）和檔名不一致"));
         }
         for s in &parsed.sections {
-            let (st, why) = section_state(id, s, &state, &files, &src_root);
+            let (st, why) = super::kgflow::linked_state(section_state(id, s, &state, &files, &src_root), id, s, &state, links.as_ref());
             if st == "stale" || st == "unstamped" {
                 errs.push(format!("{rel}〈{}〉：{why}", s.title));
             }

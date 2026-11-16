@@ -61,6 +61,8 @@ pub struct Graph {
     pub con: Connection,
     pub meta: BTreeMap<String, String>,
     pub root: String,
+    /// 別的 repo：（id, 設定裡寫的路徑）。
+    pub repos: Vec<(String, String)>,
 }
 
 /// 開圖。圖不存在、沒建完或版本不同都回 Err，訊息裡有怎麼建。
@@ -71,7 +73,8 @@ pub fn open(lay: &Layout) -> Result<Graph, String> {
     let con = store::open_ro(&lay.db)?;
     let meta = store::meta(&con).map_err(|_| "知識圖讀不懂。重建：awf kg build --full".to_string())?;
     store::usable(&meta).map_err(|why| format!("{why}。重建：awf kg build --full"))?;
-    Ok(Graph { con, meta, root: lay.root.clone() })
+    let repos = meta.iter().filter_map(|(k, v)| k.strip_prefix("repo:").map(|id| (id.to_string(), v.clone()))).collect();
+    Ok(Graph { con, meta, root: lay.root.clone(), repos })
 }
 
 impl Graph {
@@ -113,7 +116,7 @@ impl Graph {
         self.edges("SELECT src, dst, kind, strength, provenance, confidence FROM edges WHERE dst=? ORDER BY kind, src, provenance", id)
     }
 
-    fn strings(&self, sql: &str, arg: &str) -> Vec<String> {
+    pub(crate) fn strings(&self, sql: &str, arg: &str) -> Vec<String> {
         let run = || -> rusqlite::Result<Vec<String>> {
             let mut st = self.con.prepare_cached(sql)?;
             let rows = st.query_map([arg], |r| r.get::<_, String>(0))?;
@@ -122,8 +125,28 @@ impl Graph {
         run().unwrap_or_default()
     }
 
-    fn is_test(&self, path: &str) -> bool {
+    pub(crate) fn is_test(&self, path: &str) -> bool {
         self.con.prepare_cached("SELECT is_test FROM files WHERE path=?").and_then(|mut s| s.query_row([path], |r| r.get::<_, i64>(0))).unwrap_or(0) == 1
+    }
+
+    /// 圖裡的路徑 → 讀得到的路徑：別的 repo 的檔（`<repo id>:…`）換成「設定裡寫的那個 repo 的路徑/…」。
+    pub fn readable(&self, path: &str) -> String {
+        if let Some((id, rest)) = super::build::split_repo(path) {
+            if let Some((_, display)) = self.repos.iter().find(|r| r.0 == id) {
+                return format!("{display}/{rest}");
+            }
+        }
+        path.to_string()
+    }
+
+    /// 結果裡的路徑一律換成讀得到的寫法（查詢的最後一步）。
+    pub fn finish(&self, mut ans: Answer) -> Answer {
+        if !self.repos.is_empty() {
+            for i in &mut ans.items {
+                i.path = self.readable(&i.path);
+            }
+        }
+        ans
     }
 
     /// 把使用者給的字串對到節點：id、檔案路徑、`路徑#名稱`、符號名稱（可能不只一個）。
@@ -133,7 +156,11 @@ impl Graph {
         if let Some(id) = resolve_id(&self.con, raw) {
             cands.push(id);
         }
-        let posix = kb::to_posix(raw);
+        let mut posix = kb::to_posix(raw);
+        // 別的 repo 的檔可以寫成輸出裡看到的路徑（設定的 repo 路徑/…）
+        if let Some((id, rest)) = self.repos.iter().find_map(|(id, d)| posix.strip_prefix(d.as_str()).and_then(|r| r.strip_prefix('/')).map(|r| (id, r))) {
+            posix = format!("{id}:{rest}");
+        }
         cands.push(format!("file:{posix}"));
         if raw.contains('#') {
             cands.push(format!("sym:{posix}"));
@@ -152,7 +179,7 @@ impl Graph {
     }
 }
 
-fn label(kind: &str) -> &'static str {
+pub(crate) fn label(kind: &str) -> &'static str {
     match kind {
         "cap" => "能力",
         "req" => "需求",
@@ -174,7 +201,7 @@ fn label(kind: &str) -> &'static str {
 }
 
 /// 節點的短稱呼（id 去掉型別前綴；不含標題原文）。
-fn short(id: &str) -> &str {
+pub(crate) fn short(id: &str) -> &str {
     id.split_once(':').map(|x| x.1).unwrap_or(id)
 }
 
@@ -195,11 +222,16 @@ fn edge_note(ed: &Edge) -> String {
 // ---------------------------------------------------------------- locate
 /// 用需求的文字找位置：詞的種子 → 沿圖擴展兩層 → 依分數排序。
 pub fn locate(g: &Graph, text: &str, top: usize) -> Answer {
+    g.finish(locate_scored(g, text, top).0)
+}
+
+/// [`locate`]，另外回傳哪些節點是用詞直接命中的（其餘是沿連結擴展出來的）。路徑是圖裡的寫法（還沒換成讀得到的）。
+pub fn locate_scored(g: &Graph, text: &str, top: usize) -> (Answer, HashSet<String>) {
     let mut ans = Answer { title: "locate".into(), ..Default::default() };
     let terms = kb::query_terms(&format!("{text} {}", ident_words(text)));
     if terms.is_empty() {
         ans.notes.push("查詢沒有可用的詞".into());
-        return ans;
+        return (ans, HashSet::new());
     }
     let total: f64 = g.con.query_row("SELECT COUNT(*) FROM nodes WHERE ntok > 0", [], |r| r.get::<_, i64>(0)).unwrap_or(0) as f64;
     let avg: f64 = g.con.query_row("SELECT COALESCE(AVG(ntok), 1.0) FROM nodes WHERE ntok > 0", [], |r| r.get(0)).unwrap_or(1.0);
@@ -290,7 +322,7 @@ pub fn locate(g: &Graph, text: &str, top: usize) -> Answer {
     if ans.items.is_empty() {
         ans.notes.push("沒有符合的位置".into());
     }
-    ans
+    (ans, seed_ids)
 }
 
 // ---------------------------------------------------------------- trace
@@ -403,7 +435,7 @@ pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
             ans.notes.push(format!("沒有連到{need}"));
         }
     }
-    Ok(ans)
+    Ok(g.finish(ans))
 }
 
 // ---------------------------------------------------------------- impact
@@ -541,7 +573,7 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
     if !starts.is_empty() && reqs.is_empty() {
         ans.notes.push("沒有需求或情境連到這些檔案".into());
     }
-    ans
+    g.finish(ans)
 }
 
 // ---------------------------------------------------------------- check
@@ -670,7 +702,7 @@ pub fn check(g: &Graph, run: Option<&str>) -> Answer {
     if ans.items.is_empty() {
         ans.notes.insert(0, "沒有斷掉或缺的連結".into());
     }
-    ans
+    g.finish(ans)
 }
 
 // ---------------------------------------------------------------- neighbors
@@ -705,7 +737,7 @@ pub fn neighbors(g: &Graph, raw: &str, depth: usize) -> Result<Answer, String> {
         }
         frontier = next;
     }
-    Ok(ans)
+    Ok(g.finish(ans))
 }
 
 // ---------------------------------------------------------------- 輸出
@@ -719,7 +751,7 @@ fn loc(i: &Item) -> String {
     }
 }
 
-fn neutral(s: &str) -> String {
+pub(crate) fn neutral(s: &str) -> String {
     kb::neutralize(s).replace("<kg-data", "＜kg-data").replace("</kg-data", "＜/kg-data").replace(['\n', '\r'], " ")
 }
 

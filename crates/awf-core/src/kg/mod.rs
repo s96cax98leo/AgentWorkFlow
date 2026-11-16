@@ -7,6 +7,7 @@
 pub mod build;
 pub mod code;
 pub mod export;
+pub mod flow;
 pub mod links;
 pub mod query;
 pub mod resolve;
@@ -14,7 +15,8 @@ mod selftest;
 pub mod sources;
 pub mod store;
 
-pub use build::{build, layout, BuildOpts, BuildReport, Layout, Outcome, DEFAULT_TIMEOUT};
+pub use selftest::selftest_project;
+pub use build::{build, layout, BuildOpts, BuildReport, Layout, Outcome, RepoSrc, DEFAULT_TIMEOUT};
 pub use query::{answer_json, check, format_answer, impact, locate, neighbors, open, trace, Answer, Graph, Item};
 pub use selftest::selftest;
 
@@ -36,11 +38,11 @@ pub const USAGE: &str = "知識圖：規格、文件、連結帳本、程式索�
     --root <目錄>       專案根目錄（預設 CLAUDE_PROJECT_DIR，再沒有就是目前目錄）
     --profile <檔>      開發規範 profile（預設 .claude/teams/methodology.json）
     --dir <目錄>        圖所在的目錄（預設 profile 的 knowledge.dir，再沒有就是 _tpm/kb）
-    --spec-root <目錄>  規格根目錄（預設 openspec；只有 build 用）
+    --spec-root <目錄>  規格根目錄（預設 profile 的 knowledge.spec_root，再沒有就是 openspec；只有 build 用）
     --json              給機器讀的輸出（查詢）
     --budget <字數>     輸出的字數上限（預設依 repo 檔數分三級：2400、4000、6000）
 
-build 逾時（預設 60 秒）會放棄這次更新、保留上一版的圖，結束碼 3。其他錯誤結束碼 1。
+build 逾時（--timeout，沒給用 profile 的 knowledge.timeout，預設 60 秒）會放棄這次更新、保留上一版的圖，結束碼 3。其他錯誤結束碼 1。
 ";
 
 /// 給流程接點（之後的 `awf next`、SessionStart hook）用的結果。

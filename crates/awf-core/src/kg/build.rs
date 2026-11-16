@@ -26,10 +26,10 @@ pub struct BuildOpts {
     pub profile: Option<String>,
     /// 圖放在哪個目錄（預設是 profile 的 `knowledge.dir`，再沒有就是 `_tpm/kb`）。
     pub dir: Option<String>,
-    /// 規格根目錄（預設 `openspec`）。
+    /// 規格根目錄（沒給用 profile 的 `knowledge.spec_root`，再沒有就是 `openspec`）。
     pub spec_root: Option<String>,
     pub full: bool,
-    /// 時間上限（秒）；None 用 [`DEFAULT_TIMEOUT`]。
+    /// 時間上限（秒）；None 用 profile 的 `knowledge.timeout`，再沒有就是 [`DEFAULT_TIMEOUT`]。
     pub timeout: Option<u64>,
 }
 
@@ -55,6 +55,30 @@ pub struct BuildReport {
     pub notes: Vec<String>,
 }
 
+/// 別的 repo（profile 的 `knowledge.repos`）：只讀、只收 `sources` 列出的 glob、機敏檔不收。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepoSrc {
+    /// 節點 id 與圖裡的路徑用的前綴（`<id>:`）。
+    pub id: String,
+    /// 這個 repo 的根目錄（已解開符號連結的絕對路徑）。
+    pub abs: String,
+    /// 設定裡寫的路徑（輸出時用它拼出讀得到的路徑）。
+    pub display: String,
+    pub sources: Vec<String>,
+}
+
+/// repo id 的寫法：小寫英數與連字號，字母開頭。
+pub fn repo_id_ok(id: &str) -> bool {
+    let mut cs = id.chars();
+    cs.next().is_some_and(|c| c.is_ascii_lowercase()) && id.len() <= 32 && cs.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// 路徑開頭的 `<repo id>:`（別的 repo 的檔）→（id, 其餘）。
+pub fn split_repo(path: &str) -> Option<(&str, &str)> {
+    let (id, rest) = path.split_once(':')?;
+    (repo_id_ok(id) && !id.contains('/')).then_some((id, rest))
+}
+
 /// 目錄配置。
 pub struct Layout {
     /// 專案根目錄（已解開符號連結的絕對路徑）。
@@ -68,6 +92,61 @@ pub struct Layout {
     pub spec_root: String,
     pub spec_display: String,
     pub cfg: kb::Config,
+    /// 別的 repo（`knowledge.repos`）；設定不合規則的項目略過並記在 `notes`。
+    pub repos: Vec<RepoSrc>,
+    /// profile 的 `knowledge.timeout`（秒）。
+    pub timeout: Option<u64>,
+    pub notes: Vec<String>,
+}
+
+/// profile 的 `knowledge` 物件；讀不到或不是物件回空的。
+fn knowledge_of(root: &str, profile: Option<&str>) -> serde_json::Map<String, serde_json::Value> {
+    let p = match profile.filter(|p| !p.is_empty()) {
+        Some(p) => pyish::ppath(p),
+        None => pyish::pjoin(root, ".claude/teams/methodology.json"),
+    };
+    std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("knowledge").and_then(|k| k.as_object()).cloned())
+        .unwrap_or_default()
+}
+
+fn repos_of(root: &str, know: &serde_json::Map<String, serde_json::Value>, notes: &mut Vec<String>) -> Vec<RepoSrc> {
+    let mut out: Vec<RepoSrc> = Vec::new();
+    let Some(list) = know.get("repos").and_then(|v| v.as_array()) else { return out };
+    for (i, r) in list.iter().enumerate() {
+        let text = |k: &str| r.get(k).and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+        let (id, path) = (text("id"), kb::to_posix(text("path")));
+        let sources: Vec<String> = r.get("sources").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()).map(|g| kb::to_posix(g.trim())).filter(|g| !g.is_empty()).collect();
+        let bad = |why: &str, notes: &mut Vec<String>| notes.push(format!("knowledge.repos[{i}] 略過：{why}"));
+        if !repo_id_ok(id) || out.iter().any(|x| x.id == id) {
+            bad("id 要是小寫英數與連字號、字母開頭，而且不能重複", notes);
+            continue;
+        }
+        if path.is_empty() || path.contains('\0') || sources.is_empty() {
+            bad("要有 path 與至少一個 sources", notes);
+            continue;
+        }
+        if sources.iter().any(|g| g.starts_with('/') || g.split('/').any(|c| c == "..") || g.chars().nth(1) == Some(':')) {
+            bad("sources 要是相對於那個 repo 的 glob，不能是絕對路徑或含 ..", notes);
+            continue;
+        }
+        let joined = if pyish::is_abs(&path) { pyish::ppath(&path) } else { pyish::pjoin(root, &path) };
+        let abs = match std::fs::canonicalize(&joined) {
+            Ok(p) if p.is_dir() => kb::to_posix(&p.to_string_lossy()),
+            _ => {
+                bad(&format!("找不到目錄 {}", pyish::take(&path, 120)), notes);
+                continue;
+            }
+        };
+        if abs == root {
+            bad("path 就是專案自己（專案自己的檔本來就會收）", notes);
+            continue;
+        }
+        out.push(RepoSrc { id: id.to_string(), abs, display: path.trim_end_matches('/').to_string(), sources });
+    }
+    out
 }
 
 pub fn layout(root: Option<&str>, profile: Option<&str>, dir: Option<&str>, spec_root: Option<&str>) -> Result<Layout, String> {
@@ -76,11 +155,16 @@ pub fn layout(root: Option<&str>, profile: Option<&str>, dir: Option<&str>, spec
         return Err(format!("專案根目錄不存在：{}", cfg.root));
     }
     let runs = kb::guard_dir(&cfg.root, "runs_dir", "_tpm/runs");
-    let spec = spec_root.filter(|s| !s.is_empty()).unwrap_or("openspec");
-    crate::spec::check_root_arg(spec)?;
+    let know = knowledge_of(&cfg.root, profile);
+    let mut notes = Vec::new();
+    let from_profile = know.get("spec_root").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+    let spec = spec_root.filter(|s| !s.is_empty()).or(from_profile).unwrap_or("openspec");
+    crate::spec::check_root_arg(spec).map_err(|e| if spec_root.is_some_and(|s| !s.is_empty()) { e.replace("--root", "--spec-root") } else { e.replace("--root", "knowledge.spec_root") })?;
+    let timeout = know.get("timeout").and_then(|v| v.as_u64()).filter(|t| (1..=3600).contains(t));
+    let repos = repos_of(&cfg.root, &know, &mut notes);
     let spec_abs = if pyish::is_abs(spec) { pyish::ppath(spec) } else { pyish::pjoin(&cfg.root, spec) };
     let spec_display = if pyish::is_under(&spec_abs, &cfg.root) { kb::to_posix(&pyish::relpath(&spec_abs, &cfg.root)) } else { kb::to_posix(spec) };
-    Ok(Layout { db: pyish::pjoin(&cfg.dir, store::DB_NAME), root: cfg.root.clone(), dir: cfg.dir.clone(), runs, spec_root: spec_abs, spec_display, cfg })
+    Ok(Layout { db: pyish::pjoin(&cfg.dir, store::DB_NAME), root: cfg.root.clone(), dir: cfg.dir.clone(), runs, spec_root: spec_abs, spec_display, cfg, repos, timeout, notes })
 }
 
 pub(crate) enum Fail {
@@ -168,6 +252,7 @@ fn index_code(con: &Connection, rel: &str, lang: Lang, text: &str) -> Result<usi
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut first: HashMap<String, String> = HashMap::new();
     let stem = ident_words(pyish::splitext_stem(pyish::basename(rel)));
+    let src_lines: Vec<&str> = text.split('\n').collect();
     for d in &syms.defs {
         let q = d.qualified();
         let id = unique_id(&mut seen, format!("sym:{rel}#{q}"));
@@ -177,6 +262,7 @@ fn index_code(con: &Connection, rel: &str, lang: Lang, text: &str) -> Result<usi
         ntok += add_terms(&mut terms, &stem, 1);
         store::put_node(con, &NodeRow { id: &id, kind: "sym", sub: d.kind, name: &q, path: rel, start: d.start, end: d.end, ntok, owner: rel })?;
         store::put_terms(con, &id, &terms, rel)?;
+        store::put_fp(con, &id, &src_lines, d.start, d.end, rel)?;
         let parent = first.get(&d.parent).cloned().unwrap_or_else(|| file_id.clone());
         store::put_edge(con, &parent, &id, "contains", "strong", "code", 1.0, rel)?;
         first.entry(q).or_insert(id);
@@ -338,6 +424,74 @@ fn scan_code(lay: &Layout, out: &mut Vec<Src>, aux: &mut Aux, skipped: &mut Vec<
     Ok(())
 }
 
+/// 別的 repo：只收 `sources` 的 glob 對得上的檔（程式檔與文字檔），照 .gitignore 走訪；機敏檔、連到 repo 外的連結不收。
+/// 圖裡的路徑是 `<repo id>:<相對於那個 repo 的路徑>`。
+fn scan_repo(repo: &RepoSrc, lay: &Layout, out: &mut Vec<Src>, skipped: &mut Vec<(String, String)>, clock: &Clock) -> Result<(), Fail> {
+    let globs: Vec<regex::Regex> = repo.sources.iter().filter_map(|g| kb::glob_regex(g)).collect();
+    let dir_abs = lay.dir.clone();
+    let mut wb = ignore::WalkBuilder::new(&repo.abs);
+    wb.hidden(true).git_ignore(true).git_exclude(false).git_global(false).require_git(false).follow_links(false).sort_by_file_name(|a, b| a.cmp(b));
+    wb.filter_entry(move |ent| {
+        let name = ent.file_name().to_string_lossy();
+        !(kb::PRUNE_DIRS.contains(&name.as_ref()) || ent.path().to_string_lossy() == dir_abs.as_str())
+    });
+    for (k, ent) in wb.build().enumerate() {
+        if k % 256 == 0 {
+            clock.check()?;
+        }
+        let Ok(ent) = ent else { continue };
+        if !ent.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let Some(abs) = ent.path().to_str() else { continue };
+        let inner = kb::to_posix(&pyish::relpath(abs, &repo.abs));
+        if inner.starts_with("../") || !globs.iter().any(|g| g.is_match(&inner)) {
+            continue;
+        }
+        let lang = Lang::from_path(&inner);
+        let low = inner.to_lowercase();
+        if lang.is_none() && !kb::TEXT_EXTS.iter().any(|x| low.ends_with(x)) {
+            continue;
+        }
+        let rel = format!("{}:{inner}", repo.id);
+        if sensitive(&inner) {
+            skipped.push((rel, "機敏檔".into()));
+            continue;
+        }
+        // 連結的名字正常、指到的卻在那個 repo 外面或是機敏檔：不收
+        match std::fs::canonicalize(abs) {
+            Ok(real) => {
+                let real = kb::to_posix(&real.to_string_lossy());
+                if !pyish::is_under(&real, &repo.abs) {
+                    skipped.push((rel, "連到 repo 外".into()));
+                    continue;
+                }
+                if sensitive(&real) {
+                    skipped.push((rel, "機敏檔".into()));
+                    continue;
+                }
+            }
+            Err(_) => {
+                skipped.push((rel, "讀不到".into()));
+                continue;
+            }
+        }
+        match ent.metadata() {
+            Ok(m) if m.len() > MAX_CODE_BYTES => {
+                skipped.push((rel, "超過 1 MB".into()));
+                continue;
+            }
+            Err(_) => {
+                skipped.push((rel, "讀不到".into()));
+                continue;
+            }
+            _ => {}
+        }
+        out.push(Src { rel, abs: abs.to_string(), src: if lang.is_some() { "code" } else { "doc" }, lang });
+    }
+    Ok(())
+}
+
 fn walk_md(dir: &Path, out: &mut Vec<String>, depth: usize) {
     if depth > 12 {
         return;
@@ -375,6 +529,9 @@ fn collect(lay: &Layout, aux: &mut Aux, skipped: &mut Vec<(String, String)>, clo
             continue;
         }
         out.push(Src { rel, abs, src: "note", lang: None });
+    }
+    for repo in &lay.repos {
+        scan_repo(repo, lay, &mut out, skipped, clock)?;
     }
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
     out.dedup_by(|a, b| a.rel == b.rel);
@@ -480,6 +637,10 @@ fn run(con: &Connection, lay: &Layout, full: bool, clock: &Clock, rep: &mut Buil
     sources::git_edges(con, &world)?;
     rep.bad_links = sources::ledger(con, lay, &world, &mut rep.notes)?;
     clock.check()?;
+    con.execute("DELETE FROM meta WHERE key LIKE 'repo:%'", []).map_err(e)?;
+    for r in &lay.repos {
+        store::set_meta(con, &format!("repo:{}", r.id), &r.display)?;
+    }
     let hash = store::graph_hash(con)?;
     for (k, v) in [
         ("schema_version", store::SCHEMA_VERSION),
@@ -507,8 +668,9 @@ fn run(con: &Connection, lay: &Layout, full: bool, clock: &Clock, rep: &mut Buil
 
 /// 建圖或增量更新。Err 是失敗的原因；逾時不是 Err，看 `outcome`。
 pub fn build(o: &BuildOpts) -> Result<BuildReport, String> {
-    let clock = Clock { start: Instant::now(), limit: Duration::from_secs(o.timeout.unwrap_or(DEFAULT_TIMEOUT)) };
+    let start = Instant::now();
     let lay = layout(o.root.as_deref(), o.profile.as_deref(), o.dir.as_deref(), o.spec_root.as_deref())?;
+    let clock = Clock { start, limit: Duration::from_secs(o.timeout.or(lay.timeout).unwrap_or(DEFAULT_TIMEOUT)) };
     pyish::mkdir_p(&lay.dir).map_err(|err| format!("建不出目錄 {}（{}）", lay.dir, err.msg))?;
     let tmp = format!("{}.tmp-{}", lay.db, std::process::id());
     rm(&tmp);
@@ -516,7 +678,7 @@ pub fn build(o: &BuildOpts) -> Result<BuildReport, String> {
     if prev_ok {
         std::fs::copy(&lay.db, &tmp).map_err(|err| format!("複製上一版的圖失敗（{err}）"))?;
     }
-    let mut rep = BuildReport { outcome: Outcome::Updated, db: lay.db.clone(), files: 0, changed: 0, removed: 0, nodes: 0, edges: 0, unresolved: 0, skipped: Vec::new(), bad_links: 0, notes: Vec::new() };
+    let mut rep = BuildReport { outcome: Outcome::Updated, db: lay.db.clone(), files: 0, changed: 0, removed: 0, nodes: 0, edges: 0, unresolved: 0, skipped: Vec::new(), bad_links: 0, notes: lay.notes.clone() };
     let result = store::open_rw(&tmp, !prev_ok).map_err(Fail::Msg).and_then(|con| {
         let r = run(&con, &lay, o.full || !prev_ok, &clock, &mut rep);
         drop(con);

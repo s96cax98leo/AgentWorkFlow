@@ -211,6 +211,17 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **對外介面**：`awf save-run status --json` 與 `progress.jsonl` 帶 `schema_version`（`STATUS_SCHEMA_VERSION`、`watch::PROGRESS_SCHEMA_VERSION`），同版本內只加不改；status 的每段有 `skipped`。承諾寫在 `docs/監控與整合.md`〈相容承諾〉。
 - 測試：`awf save-run --selftest` 的 1.0 案例（`save_run/selftest_v1.rs`）、golden 的 `methodology-openspec*`、`methodology-links*`、`link*`、hook 案例的「D1 連結帳本」。
 
+### 知識圖接進資料包與交付文件（1.0）
+
+- **原則**：有圖（`awf kg build` 建的）而且能開才用；沒有圖、開不了、查不到時，`pack.md`、`pack-args.json`、交付文件的狀態和沒有這個功能時逐字相同（`pack_parity`、`deliverables_parity` 不動）。流程不替使用者建圖。
+- **讀圖的共用函式**：`crates/awf-core/src/kg/flow.rs`（`open_root`、`plan_facts`、`file_links`、`callers_and_deps`、`doc_sections`、`section_links`、`requirement_rows`；條數上限是那裡的常數）。
+- **資料包**：`pack/graph.rs`。plan、design 的一節接在 `pack.md` 最後，build 接在每份子任務資料包最後；plan 的 `located.code-contracts` 在 `PlanFacts::code_enough` 與「和工具定位有重疊」都成立時標成夠用。deliver 走 `deliverables::pack_args_with`（`deliverables/kgflow.rs` 的 `extend_affected`：只會多列）。`--no-kg` 關閉。新內容都寫在 `pack.md`，沒有加範本要讀的新鍵。
+- **規格層的 id**：需求來源是 openspec 時，子任務的 `spec_refs` 可以寫穩定 id（`pack::SpecIds`，變更的差異優先於現行規格）；找不到的才進 `spec_ref_errors`。
+- **別的 repo**：profile 的 `knowledge.repos`、`spec_root`、`timeout`（`kg::layout`、`build.rs` 的 `repos_of`／`scan_repo`）；語意規則在 `schema::methodology_errors`，但建圖時再驗一次（不合規則的整筆略過並說明）。
+- **交付文件**：`deliverables/kgflow.rs`。`Links`（小節連到的需求、情境、符號、程式檔的指紋，記在 `deliverables.state.json` 的 `links`；`linked_state` 只把 fresh 改成 stale 或 unstamped）、`project_matrix`（`awf deliverables matrix --project`，只讀、沒有圖回非零）。指紋存在圖的 `fps` 表（`store::put_fp`）。
+- **結案摘要**：`save_run/archive.rs` 的 `archive_text` 只多一個呼叫點（`kg::links::run_section`）；帳本不存在或這個 run 沒有連結時沒有〈連結〉一節。
+- 測試：`awf pack --selftest`、`awf deliverables --selftest` 的 1.0 案例（各自的 `selftest_v1.rs`，只有命令列會接著跑，原本那一段的輸出是對跑基準、不動）、`awf kg --selftest` 的「別的 repo」案例、golden 的 `methodology-knowledge-*`。
+
 ### 平行處理
 
 - **`sdlc-design`**：先由 dev-spec-author 出大綱（`plan-outline`）。預估子任務超過 `parallelism.split_threshold`，或有多個可以各自規劃的區塊時，拆成最多 `max_sub_plans` 個子計劃。每個子計劃由一個 dev-spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，不 commit；最後由一個 dev-spec-author 彙整並 commit。跨子計劃的相依寫成 `@<子計劃 id>`，由 workflow 展開；指向不存在、沒有子任務或自己的子計劃時 halted。

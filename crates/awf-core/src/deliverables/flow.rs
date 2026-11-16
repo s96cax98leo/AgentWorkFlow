@@ -163,8 +163,15 @@ pub fn changed_paths(repo: &str, base: &str) -> Vec<String> {
 
 /// 給資料包工具用：這一段的 workflow 需要的交付資訊。沒有交付設定回空的（流程不變）。
 pub fn pack_args(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &Value, paths: Option<&[String]>) -> (Value, Vec<String>) {
+    let (v, notes, _) = pack_args_with(stage, run, root, repo, data, paths, None);
+    (v, notes)
+}
+
+/// [`pack_args`]，有知識圖時 deliver 段多列「改到的檔在圖裡連到的交付文件小節」（只會多列，不會少）。
+/// `kg` 是（圖, 目標 repo 的檔在圖裡的前綴）；第三個回傳值是要寫進資料包的那一節（沒有多列就是空的）。
+pub fn pack_args_with(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &Value, paths: Option<&[String]>, kg: Option<(&crate::kg::Graph, Option<&str>)>) -> (Value, Vec<String>, Vec<String>) {
     let (cfg, _) = load_config(root);
-    let Some(cfg) = cfg.filter(|_| stage == "design" || stage == "deliver") else { return (json!({}), vec![]) };
+    let Some(cfg) = cfg.filter(|_| stage == "design" || stage == "deliver") else { return (json!({}), vec![], vec![]) };
     let mut owned: Vec<String> = paths.map(<[String]>::to_vec).unwrap_or_default();
     if let (None, "deliver", Some(repo)) = (paths, stage, repo) {
         let base = get(obj_or_null(get(data, "args")), "base");
@@ -175,16 +182,24 @@ pub fn pack_args(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &
     if stage == "design" {
         let ds = list("design_sections");
         if ds.is_empty() {
-            return (json!({}), vec![]);
+            return (json!({}), vec![], vec![]);
         }
         let n = ds.len();
-        return (json!({"design_sections": ds}), vec![format!("交付文件：design.md 要有 {n} 份文件需要的小節")]);
+        return (json!({"design_sections": ds}), vec![format!("交付文件：design.md 要有 {n} 份文件需要的小節")], vec![]);
     }
     let mut notes = Vec::new();
     let mut out = Map::new();
     // 有交付設定就寫交付摘要（給客戶看的這次交付說明）
     out.insert("summary".into(), json!(posix(&pyish::pjoin(run, &format!("deliver/{SUMMARY_NAME}")))));
-    let aff = list("affected");
+    let mut aff = list("affected");
+    let mut glines = Vec::new();
+    if let Some((g, prefix)) = kg {
+        let (lines, n) = super::kgflow::extend_affected(g, prefix, &cfg, root, &owned, &mut aff);
+        glines = lines;
+        if n > 0 {
+            notes.push(format!("知識圖：依連結多列 {n} 個受影響的交付文件小節"));
+        }
+    }
     if !aff.is_empty() {
         out.insert("affected".into(), Value::Array(aff.clone()));
         let cat = load_catalog(root);
@@ -205,7 +220,7 @@ pub fn pack_args(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &
     if !hints.is_empty() {
         out.insert("hints".into(), Value::Array(hints));
     }
-    (Value::Object(out), notes)
+    (Value::Object(out), notes, glines)
 }
 
 // ------------------------------------------------------------------ 需求追溯矩陣
@@ -473,6 +488,8 @@ pub fn stamp(root: &str, cfg: &Value, cat: &Value, repo: Option<&str>, reviewed:
     let files = repo_files(&src_root);
     let mut state = load_state(root);
     let (mut done, mut stale) = (Vec::new(), Vec::new());
+    // 有知識圖時，記錄小節連到的需求與符號的指紋（之後它們變了而內文沒動，這一節算過期）
+    let links = super::kgflow::Links::open(root);
     for doc in resolve_docs(cfg, cat) {
         if sget(&doc, "source") == "external" {
             continue;
@@ -481,7 +498,7 @@ pub fn stamp(root: &str, cfg: &Value, cat: &Value, repo: Option<&str>, reviewed:
         let p = doc_path(cfg, root, &doc);
         let Some(text) = (if is_file(&p) { read_text(&p) } else { None }) else { continue };
         for s in doc_sections(&doc, &text).sections {
-            let (st, why) = section_state(id, &s, &state, &files, &src_root);
+            let (st, why) = super::kgflow::linked_state(section_state(id, &s, &state, &files, &src_root), id, &s, &state, links.as_ref());
             let key = format!("{id}#{}", s.title);
             let ok = reviewed.contains(&key);
             if only.is_some_and(|o| st == "unstamped" && !o.contains(&key) && !ok) {
@@ -489,7 +506,10 @@ pub fn stamp(root: &str, cfg: &Value, cat: &Value, repo: Option<&str>, reviewed:
                 continue;
             }
             if st == "unstamped" || (st == "stale" && ok) {
-                let rec = json!({"sources": section_sources(&s.sources, &files, &src_root), "body": body_hash(&s.body)});
+                let mut rec = json!({"sources": section_sources(&s.sources, &files, &src_root), "body": body_hash(&s.body)});
+                if let Some(l) = links.as_ref().and_then(|l| l.record(&rel_to(&p, root), &s.title)) {
+                    rec["links"] = l;
+                }
                 if let Some(m) = state.as_object_mut() {
                     let slot = m.entry(id.to_string()).or_insert_with(|| json!({}));
                     if !slot.is_object() {
@@ -956,6 +976,19 @@ pub fn run(root: &str, argv: &[String], out: &mut String) -> i32 {
     let run_dir: Option<String> = if run_raw.is_empty() { None } else { Some(pyish::ppath(&run_raw)) };
     let run_dir = run_dir.as_deref();
     let need_run = || run_dir.unwrap_or("");
+    if cmd == "matrix" && has(rest, "--project") {
+        // 專案層：每個現行需求目前由哪些檔案、測試、commit 支撐（從知識圖；只讀、印到標準輸出）
+        return match super::kgflow::project_matrix(root) {
+            Ok((text, js)) => {
+                say(out, if as_json { py::dumps(&js, Some(1)) } else { text.trim_end_matches('\n').to_string() }.as_str());
+                0
+            }
+            Err(why) => {
+                say(out, &why);
+                1
+            }
+        };
+    }
     if ["affected", "matrix", "sync"].contains(&cmd) && run_dir.is_none() {
         say(out, "缺 --run <run 目錄>");
         return 2;
