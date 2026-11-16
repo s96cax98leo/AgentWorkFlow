@@ -483,7 +483,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             }
         }
         if let Some(enforce) = links_on {
-            let gaps = link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()));
+            let gaps = link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()), &data);
             let st = st_mut(&mut data, stage)?;
             if gaps.is_empty() {
                 st.shift_remove("link_gaps");
@@ -661,7 +661,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
                     errs.extend(spec_issues(stage, &result, sc, &data)?.into_iter().map(|e| format!("規格檢查：{e}")));
                 }
                 if links_setting(&cprof) == Some(true) {
-                    errs.extend(link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok())).into_iter().map(|e| format!("連結檢查：{e}")));
+                    errs.extend(link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok()), &data).into_iter().map(|e| format!("連結檢查：{e}")));
                 }
             }
         }
