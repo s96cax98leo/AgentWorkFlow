@@ -31,6 +31,35 @@ pub const MAX_FAILS: usize = 20;
 pub const DEFAULT_TAIL: i64 = 20;
 pub const UNKNOWN_TAIL: i64 = 40;
 
+/// 濃縮的大小（profile 的 `limits.run_brief`）。預設＝原本寫死的值；沒寫或不合範圍的那一項用預設。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BriefTune {
+    /// 失敗的測試最多列幾則。
+    pub max_fails: usize,
+    /// 認得框架時結尾留幾行。
+    pub tail: i64,
+    /// 認不得框架時結尾留幾行。
+    pub unknown_tail: i64,
+}
+
+impl Default for BriefTune {
+    fn default() -> Self {
+        BriefTune { max_fails: MAX_FAILS, tail: DEFAULT_TAIL, unknown_tail: UNKNOWN_TAIL }
+    }
+}
+
+impl BriefTune {
+    pub fn of(profile: &serde_json::Value) -> BriefTune {
+        use crate::tune::{at, int};
+        let k = |name: &str| at(profile, &["limits", "run_brief", name]);
+        BriefTune {
+            max_fails: int(k("max_fails"), 1, 200, MAX_FAILS as i64) as usize,
+            tail: int(k("tail"), 5, 500, DEFAULT_TAIL),
+            unknown_tail: int(k("unknown_tail"), 5, 500, UNKNOWN_TAIL),
+        }
+    }
+}
+
 struct Framework {
     name: &'static str,
     detect: Regex,
@@ -172,6 +201,11 @@ fn run_merged(cmd: &[String]) -> std::io::Result<(i32, String)> {
 
 /// 跑 cmd、寫 log、回（結束碼，摘要文字）。`tail` 是 0 或沒給時用預設行數。
 pub fn brief(cmd: &[String], log: &str, tail: Option<i64>) -> std::io::Result<(i32, String)> {
+    brief_with(cmd, log, tail, &BriefTune::default())
+}
+
+/// 同 [`brief`]，大小用 `tune`（profile 的 `limits.run_brief`）。
+pub fn brief_with(cmd: &[String], log: &str, tail: Option<i64>, tune: &BriefTune) -> std::io::Result<(i32, String)> {
     let log = norm(log);
     let (code, text) = run_merged(cmd)?;
     if let Some(parent) = Path::new(&log).parent() {
@@ -183,17 +217,18 @@ pub fn brief(cmd: &[String], log: &str, tail: Option<i64>) -> std::io::Result<(i
     let (fw, fails) = detect(&text);
     let n = match tail {
         Some(t) if t != 0 => t,
-        _ if !fw.is_empty() => DEFAULT_TAIL,
-        _ => UNKNOWN_TAIL,
+        _ if !fw.is_empty() => tune.tail,
+        _ => tune.unknown_tail,
     };
     let lines = splitlines(text.trim_end_matches('\n'));
     let total = lines.len() as i64;
     let fw_text = if fw.is_empty() { format!("認不得（印最後 {n} 行）") } else { fw };
     let mut out = vec![format!("結束碼：{code}"), format!("框架：{fw_text}")];
     if !fails.is_empty() {
-        let more = if fails.len() > MAX_FAILS { format!("，只列前 {MAX_FAILS} 則") } else { String::new() };
+        let max_fails = tune.max_fails;
+        let more = if fails.len() > max_fails { format!("，只列前 {max_fails} 則") } else { String::new() };
         out.push(format!("失敗的測試（{} 則{more}）：", fails.len()));
-        out.extend(fails.iter().take(MAX_FAILS).map(|f| format!("  - {f}")));
+        out.extend(fails.iter().take(max_fails).map(|f| format!("  - {f}")));
     }
     out.push(format!("最後 {} 行（共 {total} 行）：", n.min(total)));
     // lines[-n:]：n 是負數時等於 lines[|n|:]
@@ -340,7 +375,9 @@ pub fn main(argv: &[String]) -> i32 {
             }
         }
     };
-    match brief(cmd, &log, tail) {
+    // 大小讀專案的 profile（limits.run_brief）；找不到專案或沒設定就是預設值
+    let tune = BriefTune::of(&crate::tune::project_profile());
+    match brief_with(cmd, &log, tail, &tune) {
         Ok((code, text)) => {
             println!("{text}");
             // 和 Python 的 sys.exit 一樣：被訊號結束的負數結束碼取低 8 位

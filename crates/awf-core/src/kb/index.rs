@@ -20,6 +20,33 @@ pub struct Config {
     pub exclude: Vec<String>,
     /// 索引目錄（絕對路徑）。
     pub dir: String,
+    /// 收哪些副檔名（小寫、帶點）。profile 的 `knowledge.extensions`；沒寫或不合規定用 [`TEXT_EXTS`]。
+    pub extensions: Vec<String>,
+}
+
+/// `knowledge.extensions` 最多幾個。
+pub const EXTENSIONS_MAX: usize = 16;
+
+/// 副檔名：點開頭、後面 1–16 個小寫英數字或 `.+_-`（例：`.md`、`.rst`、`.adoc`）。
+pub fn extension_ok(s: &str) -> bool {
+    let mut it = s.chars();
+    it.next() == Some('.') && {
+        let rest: Vec<char> = it.collect();
+        (1..=16).contains(&rest.len()) && rest.first().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) && rest.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '+' | '_' | '-'))
+    }
+}
+
+/// profile 的 `knowledge.extensions`：1–16 個合規定的副檔名才採用（整份），否則用預設並警告。
+fn extensions_of(v: Option<&Value>) -> Vec<String> {
+    let default = || TEXT_EXTS.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    match v {
+        None | Some(Value::Null) => default(),
+        Some(Value::Array(a)) if !a.is_empty() && a.len() <= EXTENSIONS_MAX && a.iter().all(|x| x.as_str().is_some_and(extension_ok)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+        Some(_) => {
+            warn("knowledge.extensions 不合規定（要是 1–16 個像 .md 的小寫副檔名），改用預設的副檔名");
+            default()
+        }
+    }
 }
 
 /// 沒給 --root 時的專案根目錄。
@@ -147,7 +174,8 @@ pub fn load_config(root: Option<&str>, profile: Option<&str>, sources: Option<&[
         (None, None) => DEFAULT_DIR.to_string(),
     };
     let dir = if pyish::is_abs(&d) { pyish::ppath(&d) } else { pyish::pjoin(&root_p, &d.replace('\\', "/")) };
-    Ok(Config { root: root_p, sources: src, exclude: exc, dir })
+    let extensions = extensions_of(know.get("extensions"));
+    Ok(Config { root: root_p, sources: src, exclude: exc, dir, extensions })
 }
 
 // ------------------------------------------------------------------ 掃檔
@@ -194,7 +222,7 @@ pub fn scan(cfg: &Config, max_bytes: u64) -> Result<(BTreeMap<String, String>, V
             return;
         }
         let low = rel.to_lowercase();
-        if !TEXT_EXTS.iter().any(|x| low.ends_with(x)) {
+        if !cfg.extensions.iter().any(|x| low.ends_with(x.as_str())) {
             return;
         }
         if excludes.iter().flatten().any(|rx| rx.is_match(&rel)) {

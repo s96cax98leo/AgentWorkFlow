@@ -88,9 +88,13 @@ pub fn highlights(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str
     let res = stage_result(env, run, stage)?;
     let st = stage_entry(data, stage)?;
     let envs = envelopes(&res);
+    // 列幾個 agent、幾則問題：profile 的 limits.display（沒寫或不合範圍用原本的 40、30）
+    let (prof, _err) = sr::load_profile_for(&env.sr(), &[]);
+    let shown = |name: &str, default: i64| crate::tune::int(crate::tune::at(&prof, &["limits", "display", name]), 1, 200, default) as usize;
+    let (max_agents, max_questions) = (shown("agents", 40), shown("questions", 30));
     let mut h = Map::new();
     let mut agents: Vec<Value> = Vec::new();
-    for (w, e) in envs.iter().take(40) {
+    for (w, e) in envs.iter().take(max_agents) {
         agents.push(json!({"where": w, "status": py::get(e, "status")?, "summary": pyish::take(&s_or(py::get(e, "summary")?), 200)}));
     }
     h.insert("agents".into(), Value::Array(agents));
@@ -110,11 +114,11 @@ pub fn highlights(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str
     if !qs.is_empty() {
         // 要先決定的排前面；agent 已照建議先做的（default_applied）另外列成 provisional，讓人一次確認
         qs.sort_by_key(|q| q.get("blocking") != Some(&Value::Bool(true)));
-        qs.truncate(30);
+        qs.truncate(max_questions);
         h.insert("open_questions".into(), Value::Array(qs));
         let mut prov = provisional(&res)?;
         if !prov.is_empty() {
-            prov.truncate(30);
+            prov.truncate(max_questions);
             h.insert("provisional".into(), Value::Array(prov));
         }
     }

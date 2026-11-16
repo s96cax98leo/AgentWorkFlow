@@ -65,6 +65,46 @@ pub static SECRETISH: Re = Re::new(
 pub static SAFE_TEXT: Re = Re::new(r"^[\w:.#@+\- 一-鿿]{0,80}", "");
 /// 同一個 agent 每多這麼多 token 才再記一筆 agent_progress。
 pub const PROGRESS_STEP: i128 = 50_000;
+/// 輪詢間隔與停滯門檻的預設（秒）。
+pub const DEFAULT_INTERVAL: i64 = 5;
+pub const DEFAULT_STALL: i64 = 900;
+
+/// watcher 的節奏（profile 的 `progress.watch`）。預設＝原本寫死的值；沒寫或不合範圍的那一項用預設。
+/// `interval`、`stall_seconds` 只是命令列旗標沒給時的預設，旗標有給以旗標為準。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WatchTune {
+    pub interval: i64,
+    pub stall_seconds: i64,
+    /// 同一個 agent 每多用這麼多 token 記一筆 agent_progress。
+    pub progress_step: i64,
+}
+
+impl Default for WatchTune {
+    fn default() -> Self {
+        WatchTune { interval: DEFAULT_INTERVAL, stall_seconds: DEFAULT_STALL, progress_step: PROGRESS_STEP as i64 }
+    }
+}
+
+impl WatchTune {
+    pub fn of(profile: &Value) -> WatchTune {
+        use crate::tune::{at, int};
+        let k = |name: &str| at(profile, &["progress", "watch", name]);
+        WatchTune {
+            interval: int(k("interval"), 1, 3600, DEFAULT_INTERVAL),
+            stall_seconds: int(k("stall_seconds"), 0, 86_400, DEFAULT_STALL),
+            progress_step: int(k("progress_step"), 1000, 10_000_000, PROGRESS_STEP as i64),
+        }
+    }
+}
+
+thread_local! {
+    /// 這次執行的 agent_progress 間距。`awf watch` 依 profile 放進來；直接呼叫函式（測試、對跑基準）時是預設值。
+    static STEP: std::cell::Cell<i128> = const { std::cell::Cell::new(PROGRESS_STEP) };
+}
+
+pub fn set_progress_step(n: i64) {
+    STEP.with(|c| c.set(i128::from(n)));
+}
 pub const FINISHED: [&str; 7] = ["completed", "failed", "cancelled", "canceled", "error", "stopped", "killed"];
 
 const DAY_US: i64 = 86_400_000_000;
@@ -540,7 +580,7 @@ pub fn diff_events(prev: &Value, cur: &Value, stall_seconds: i64) -> R<(Vec<Valu
                     if let Some(ags) = ow.get_mut("agents") {
                         set(ags, &id, json!({"tokens": a_tokens}))?;
                     }
-                } else if py_int(a_tokens)? - py_int(get(&oa, "tokens")?)? >= PROGRESS_STEP {
+                } else if py_int(a_tokens)? - py_int(get(&oa, "tokens")?)? >= STEP.with(std::cell::Cell::get) {
                     ev.push(event("agent_progress", &base));
                     if let Some(slot) = ow.get_mut("agents").and_then(|ags| ags.get_mut(&id)) {
                         set(slot, "tokens", a_tokens.clone())?;
@@ -867,7 +907,12 @@ fn run_inner(env: &mut Env, argv: &[String], out: &mut dyn Write, err: &mut dyn 
         return Ok(1);
     }
     let run = pj(&env.project, run_arg);
-    let (Some(stall), Some(interval)) = (pyutil::int_of_str(opt(argv, "--stall-seconds", "900")), pyutil::int_of_str(opt(argv, "--interval", "5"))) else {
+    // 節奏的預設讀 profile（progress.watch）；沒設定就是原本的 900 與 5，命令列旗標有給以旗標為準
+    let (prof, _) = save_run::load_profile_for(&env.ctx, &[]);
+    let wt = WatchTune::of(&prof);
+    set_progress_step(wt.progress_step);
+    let (d_stall, d_interval) = (wt.stall_seconds.to_string(), wt.interval.to_string());
+    let (Some(stall), Some(interval)) = (pyutil::int_of_str(opt(argv, "--stall-seconds", &d_stall)), pyutil::int_of_str(opt(argv, "--interval", &d_interval))) else {
         let _ = writeln!(err, "--stall-seconds 與 --interval 要是整數");
         return Ok(1);
     };
@@ -878,7 +923,6 @@ fn run_inner(env: &mut Env, argv: &[String], out: &mut dyn Write, err: &mut dyn 
         None => cost::project_dir(&env.project).ok(),
     };
     let mut tr = Transcripts::new(root.as_deref(), &env.ctx.abs(&run));
-    let (prof, _) = save_run::load_profile_for(&env.ctx, &[]);
     let cfg = notify_config(&prof)?;
     let once = has("--once");
     loop {

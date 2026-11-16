@@ -33,6 +33,75 @@ const FILE_RATIO: f64 = 0.15;
 pub const MIN_SEGMENTS: usize = 3;
 /// 選中的行段涵蓋的查詢詞比例低於這個就算不夠。
 const MIN_COVERAGE: f64 = 0.3;
+/// `knowledge.locate.prune` 最多幾個目錄名。
+pub const PRUNE_EXTRA_MAX: usize = 32;
+
+/// 工具定位的門檻（profile 的 `knowledge.locate`）。預設＝原本寫死的值；沒寫或不合範圍的那一項用預設。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocateTune {
+    /// 每個角度最多幾段。
+    pub max_segments: usize,
+    /// 合併後每段最多幾行。
+    pub segment_lines: usize,
+    /// 少於幾段算不夠。
+    pub min_segments: usize,
+    /// 涵蓋的查詢詞比例低於這個算不夠。
+    pub min_coverage: f64,
+    /// 最多看幾個檔。
+    pub max_files: usize,
+    /// 另外不看的目錄名（內建的那些永遠不看，這裡只能加）。
+    pub prune: Vec<String>,
+}
+
+impl Default for LocateTune {
+    fn default() -> Self {
+        LocateTune { max_segments: MAX_SEGMENTS, segment_lines: MAX_SEGMENT_LINES, min_segments: MIN_SEGMENTS, min_coverage: MIN_COVERAGE, max_files: MAX_FILES, prune: Vec::new() }
+    }
+}
+
+/// 目錄名：不含分隔符、不是 `.`／`..`、沒有 glob 字元與控制字元。
+pub fn prune_name_ok(s: &str) -> bool {
+    !s.is_empty() && s.chars().count() <= 64 && s != "." && s != ".." && !s.chars().any(|c| matches!(c, '/' | '\\' | '*' | '?') || c.is_control())
+}
+
+impl LocateTune {
+    pub fn of(profile: &Value) -> LocateTune {
+        use crate::tune::{at, int, num};
+        let k = |name: &str| at(profile, &["knowledge", "locate", name]);
+        // prune：整份要合規定才採用（有一項不對就整份不用，避免只生效一半）
+        let prune = match k("prune") {
+            Some(Value::Array(a)) if a.len() <= PRUNE_EXTRA_MAX && a.iter().all(|x| x.as_str().is_some_and(prune_name_ok)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+            _ => Vec::new(),
+        };
+        LocateTune {
+            max_segments: int(k("max_segments"), 1, 40, MAX_SEGMENTS as i64) as usize,
+            segment_lines: int(k("segment_lines"), WINDOW as i64, 400, MAX_SEGMENT_LINES as i64) as usize,
+            // 只能調高：範本另外用自己的下限（3 段）判斷，調低了兩邊會不一致
+            min_segments: int(k("min_segments"), MIN_SEGMENTS as i64, 12, MIN_SEGMENTS as i64) as usize,
+            min_coverage: num(k("min_coverage"), 0.05, 1.0, MIN_COVERAGE),
+            max_files: int(k("max_files"), 100, 20_000, MAX_FILES as i64) as usize,
+            prune,
+        }
+    }
+
+    fn pruned(&self, name: &str) -> bool {
+        PRUNE.contains(&name) || self.prune.iter().any(|p| p == name)
+    }
+}
+
+thread_local! {
+    /// 這次執行用的門檻。`awf locate` 與 `awf pack` 依專案的 profile 放進來；直接呼叫函式時是預設值。
+    static LOCATE_TUNE: std::cell::RefCell<LocateTune> = std::cell::RefCell::new(LocateTune::default());
+}
+
+pub fn set_tune(t: LocateTune) {
+    LOCATE_TUNE.with(|c| *c.borrow_mut() = t);
+}
+
+pub fn tune() -> LocateTune {
+    LOCATE_TUNE.with(|c| c.borrow().clone())
+}
+
 const K1: f64 = 1.5;
 const B: f64 = 0.75;
 const MAX_TERMS: usize = 400;
@@ -130,14 +199,16 @@ fn git_files(repo: &str) -> Option<Vec<String>> {
         return None;
     }
     let text = String::from_utf8_lossy(&q.stdout).into_owned();
+    let tn = tune();
     let mut out: Vec<String> = text.split('\0').filter(|n| !n.is_empty())
-        .filter(|n| !n.split('/').any(|part| PRUNE.contains(&part)))
+        .filter(|n| !n.split('/').any(|part| tn.pruned(part)))
         .map(posix).collect();
     out.sort();
     Some(out)
 }
 
 fn walk(dir: &std::path::Path, rel: &str, out: &mut Vec<String>) {
+    let tn = tune();
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut dirs: Vec<String> = Vec::new();
     for e in rd.flatten() {
@@ -146,7 +217,7 @@ fn walk(dir: &std::path::Path, rel: &str, out: &mut Vec<String>) {
         if path.is_dir() {
             // os.walk 不跟著符號連結往下走（連到目錄的連結既不算檔也不走進去）
             let link = std::fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
-            if !link && !PRUNE.contains(&name.as_str()) {
+            if !link && !tn.pruned(name.as_str()) {
                 dirs.push(name);
             }
         } else {
@@ -323,6 +394,7 @@ pub fn locate(repo: &str, text: &str, angle: &str, extra_files: &[(String, Strin
     let seed_only = SEED_ONLY.contains(&angle);
     let tset: HashMap<&str, usize> = terms.iter().enumerate().map(|(i, t)| (t.as_str(), i)).collect();
     let mut docs: Vec<Win> = Vec::new();
+    let tn = tune();
     let mut texts: BTreeMap<String, String> = BTreeMap::new();
     let mut sizes: HashMap<String, usize> = HashMap::new();
     let mut total = 0usize;
@@ -331,7 +403,7 @@ pub fn locate(repo: &str, text: &str, angle: &str, extra_files: &[(String, Strin
     files.extend(extra_files.iter().cloned());
     let mut slot: Vec<usize> = vec![usize::MAX; terms.len()];
     for (i, (rel, full)) in files.iter().enumerate() {
-        if i >= MAX_FILES || total > MAX_TOTAL_BYTES {
+        if i >= tn.max_files || total > MAX_TOTAL_BYTES {
             truncated = true;
             break;
         }
@@ -401,11 +473,11 @@ pub fn locate(repo: &str, text: &str, angle: &str, extra_files: &[(String, Strin
     let Some(top) = ranked.first().map(|d| d.score) else {
         return Located::empty("查詢詞在這個角度的檔案裡都沒有出現");
     };
-    let mut picked: Vec<&Win> = ranked.iter().copied().filter(|d| d.score >= top * KEEP_RATIO).take(MAX_SEGMENTS * 2).collect();
+    let mut picked: Vec<&Win> = ranked.iter().copied().filter(|d| d.score >= top * KEEP_RATIO).take(tn.max_segments * 2).collect();
     let mut seen_files: HashSet<&str> = picked.iter().map(|d| d.path.as_str()).collect();
     // ranked 已依分數排序：每個還沒入選的檔，第一次出現的就是它最好的視窗
     for d in &ranked {
-        if picked.len() >= MAX_SEGMENTS * 2 || d.score < top * FILE_RATIO {
+        if picked.len() >= tn.max_segments * 2 || d.score < top * FILE_RATIO {
             break;
         }
         if seen_files.insert(d.path.as_str()) {
@@ -417,7 +489,7 @@ pub fn locate(repo: &str, text: &str, angle: &str, extra_files: &[(String, Strin
     let mut merged: Vec<Seg> = Vec::new();
     for d in picked {
         match merged.last_mut() {
-            Some(m) if m.path == d.path && d.start <= m.end + 1 && d.end + 1 - m.start <= MAX_SEGMENT_LINES => {
+            Some(m) if m.path == d.path && d.start <= m.end + 1 && d.end + 1 - m.start <= tn.segment_lines => {
                 m.end = m.end.max(d.end);
                 m.score = m.score.max(d.score);
                 for &(ti, c) in &d.tf {
@@ -431,7 +503,7 @@ pub fn locate(repo: &str, text: &str, angle: &str, extra_files: &[(String, Strin
         }
     }
     merged.sort_by(|a, b| by_score((a.score, &a.path, a.start), (b.score, &b.path, b.start)));
-    merged.truncate(MAX_SEGMENTS);
+    merged.truncate(tn.max_segments);
     let term = |ti: usize| terms.get(ti).map(String::as_str).unwrap_or("");
     let mut covered: BTreeSet<usize> = BTreeSet::new();
     let mut locs: Vec<Location> = Vec::new();
@@ -474,7 +546,7 @@ pub fn locate(repo: &str, text: &str, angle: &str, extra_files: &[(String, Strin
                 }
             }
         }
-        let room = MAX_EXPAND.min(MAX_SEGMENTS.saturating_sub(locs.len()));
+        let room = MAX_EXPAND.min(tn.max_segments.saturating_sub(locs.len()));
         for (other, why) in added.into_iter().take(room) {
             let (s0, e0) = match best.get(other.as_str()) {
                 Some(b) => (b.start, b.end),
@@ -484,7 +556,7 @@ pub fn locate(repo: &str, text: &str, angle: &str, extra_files: &[(String, Strin
         }
     }
     let coverage = pyish::round_nd(covered.len() as f64 / terms.len() as f64, 3);
-    let enough = locs.len() >= MIN_SEGMENTS && coverage >= MIN_COVERAGE && !truncated && !seed_only;
+    let enough = locs.len() >= tn.min_segments && coverage >= tn.min_coverage && !truncated && !seed_only;
     let note = if truncated {
         "repo 太大，只看了一部分檔案".to_string()
     } else if seed_only {
@@ -562,6 +634,8 @@ pub fn run(argv: &[String], out: &mut String) -> i32 {
         }
     };
     let repo = pyish::ppath(&opt("--repo"));
+    // 門檻讀專案的 profile（knowledge.locate）；找不到專案或沒設定就是預設值
+    set_tune(LocateTune::of(&crate::tune::project_profile()));
     let raw = opt("--requirement");
     let mut angles: Vec<String> = argv.iter().enumerate().filter(|(i, a)| *a == "--angle" && i + 1 < argv.len()).filter_map(|(i, _)| argv.get(i + 1).cloned()).collect();
     if angles.is_empty() {

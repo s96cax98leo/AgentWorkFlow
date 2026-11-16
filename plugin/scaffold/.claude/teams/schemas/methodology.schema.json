@@ -125,6 +125,25 @@
           }
         },
         "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent（沒寫用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
+        "run_brief": {
+          "type": "object",
+          "description": "選填：長輸出濃縮（awf run-brief）的大小。沒寫或不合範圍的那一項用預設；完整輸出一律在 log 檔",
+          "additionalProperties": false,
+          "properties": {
+            "max_fails": {"type": "integer", "minimum": 1, "maximum": 200, "description": "失敗的測試最多列幾則（沒寫用 20）"},
+            "tail": {"type": "integer", "minimum": 5, "maximum": 500, "description": "認得測試框架時結尾留幾行（沒寫用 20）；--tail 有給以它為準"},
+            "unknown_tail": {"type": "integer", "minimum": 5, "maximum": 500, "description": "認不得框架時結尾留幾行（沒寫用 40）"}
+          }
+        },
+        "display": {
+          "type": "object",
+          "description": "選填：閘門重點（awf next 回的 highlights）列多少。只是顯示用的截斷，完整內容在各段存下來的結果裡；沒寫或不合範圍用預設",
+          "additionalProperties": false,
+          "properties": {
+            "agents": {"type": "integer", "minimum": 1, "maximum": 200, "description": "最多列幾個 agent 的摘要（沒寫用 40）"},
+            "questions": {"type": "integer", "minimum": 1, "maximum": 200, "description": "未決問題與暫定做法各最多列幾則（沒寫用 30）"}
+          }
+        },
         "rounds": {
           "type": "object",
           "description": "選填：重做與修正的輪數上限。跑滿仍然停下交人（這點固定）；調大會多派 agent，仍受 max_agents 限制",
@@ -203,6 +222,32 @@
         },
         "spec_root": {"type": "string", "minLength": 1, "description": "選填：知識圖讀規格（OpenSpec 目錄）的位置，相對專案根目錄；預設 openspec"},
         "timeout": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "選填：awf kg build 的逾時秒數；預設 60"},
+        "extensions": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "pattern": "^\\.[a-z0-9][a-z0-9.+_-]{0,15}$"}, "description": "選填：知識庫與知識圖收哪些副檔名的文件（小寫、帶點）。沒寫用 .md、.markdown、.txt；寫了就是整份清單（要保留預設的也要列出來）。sources 的 glob 要對得到這些檔才會收；機敏檔一律不收。不合規定時用預設並警告"},
+        "pack": {
+          "type": "object",
+          "description": "選填：資料包（awf pack）的大小。沒寫或不合範圍的那一項用預設；只影響 pack.md 的長度，閘門不讀",
+          "additionalProperties": false,
+          "properties": {
+            "top": {"type": "integer", "minimum": 1, "maximum": 50, "description": "知識庫取幾筆（沒寫用 12）"},
+            "budget": {"type": "integer", "minimum": 200, "maximum": 20000, "description": "知識庫節錄的字數預算（沒寫用 3000）"},
+            "decisions": {"type": "integer", "minimum": 0, "maximum": 50, "description": "〈既有決定〉最多帶幾筆（沒寫用 12；0＝不帶）"},
+            "requirement_lines": {"type": "integer", "minimum": 20, "maximum": 2000, "description": "需求是檔案時貼前幾行（沒寫用 200）"},
+            "headings": {"type": "integer", "minimum": 1, "maximum": 200, "description": "子任務資料包裡每份限制文件最多列幾個標題（沒寫用 40）"}
+          }
+        },
+        "locate": {
+          "type": "object",
+          "description": "選填：工具先定位（awf locate）的門檻。沒寫或不合範圍的那一項用預設；只決定要不要多派定位 agent，閘門不讀",
+          "additionalProperties": false,
+          "properties": {
+            "max_segments": {"type": "integer", "minimum": 1, "maximum": 40, "description": "每個角度最多幾段（沒寫用 12）"},
+            "segment_lines": {"type": "integer", "minimum": 40, "maximum": 400, "description": "相鄰的行段合併後最多幾行（沒寫用 120）"},
+            "min_segments": {"type": "integer", "minimum": 3, "maximum": 12, "description": "少於幾段算不夠、照派定位 agent（沒寫用 3；只能調高，3 段是範本與知識圖共用的下限）"},
+            "min_coverage": {"type": "number", "minimum": 0.05, "maximum": 1, "description": "行段涵蓋的查詢詞比例低於這個算不夠（沒寫用 0.3）"},
+            "max_files": {"type": "integer", "minimum": 100, "maximum": 20000, "description": "最多看幾個檔，超過算沒看完、結果不算夠（沒寫用 4000）"},
+            "prune": {"type": "array", "maxItems": 32, "items": {"type": "string", "pattern": "^[^/\\\\*?]{1,64}$"}, "description": "另外不看的目錄名（單一層的名字，不是路徑）。內建的 .git、node_modules、dist、build、target 等永遠不看，這裡只能加"}
+          }
+        },
         "auto": {
           "type": "object",
           "description": "選填：自動接點（流程自己呼叫知識圖與規格層，不用人記指令）。每一項失敗都只警告、不擋流程；閘門不讀它們的輸出。沒有知識圖（<dir>/graph.db）時，除了 update 明確開啟以外全部不做",
@@ -231,6 +276,16 @@
       "description": "選填：進度監看（awf watch）。不設就只寫 <run_dir>/progress.jsonl，不呼叫任何外部指令",
       "additionalProperties": false,
       "properties": {
+        "watch": {
+          "type": "object",
+          "description": "選填：watcher 的節奏。沒寫或不合範圍的那一項用預設；interval、stall_seconds 是命令列旗標沒給時的預設，旗標有給以旗標為準",
+          "additionalProperties": false,
+          "properties": {
+            "interval": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "每隔幾秒看一次（沒寫用 5）"},
+            "stall_seconds": {"type": "integer", "minimum": 0, "maximum": 86400, "description": "workflow 還沒結束、超過幾秒沒有動靜就記 workflow_stalled（沒寫用 900；0＝不記）"},
+            "progress_step": {"type": "integer", "minimum": 1000, "maximum": 10000000, "description": "同一個 agent 每多用多少 token 記一筆 agent_progress（沒寫用 50000）"}
+          }
+        },
         "notify": {
           "type": "object",
           "description": "選填：每個事件呼叫一次的外部指令（例如送到聊天室）。事件以 JSON 從 stdin 給，只含狀態與數字的白名單欄位；內容像機敏值就不送。指令失敗只警告",

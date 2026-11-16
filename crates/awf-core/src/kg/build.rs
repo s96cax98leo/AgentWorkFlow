@@ -450,7 +450,7 @@ fn scan_repo(repo: &RepoSrc, lay: &Layout, out: &mut Vec<Src>, skipped: &mut Vec
         }
         let lang = Lang::from_path(&inner);
         let low = inner.to_lowercase();
-        if lang.is_none() && !kb::TEXT_EXTS.iter().any(|x| low.ends_with(x)) {
+        if lang.is_none() && !lay.cfg.extensions.iter().any(|x| low.ends_with(x.as_str())) {
             continue;
         }
         let rel = format!("{}:{inner}", repo.id);

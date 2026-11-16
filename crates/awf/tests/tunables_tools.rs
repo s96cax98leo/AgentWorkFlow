@@ -631,6 +631,233 @@ fn t15_kg_skips_extra_secret_files() {
     assert!(o.code != 0 && o.all().contains("機敏檔的設定用不了"), "寫壞了不建圖：{}", o.all());
 }
 
+// ------------------------------------------------------------------ T17：資料包的大小（knowledge.pack）
+
+/// 有文件、有一份 300 行需求檔的專案。
+fn pack_project(tag: &str, extra: Value) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("ws");
+    mk(&root, &builtin_profile(extra));
+    for i in 1..=4 {
+        write(&root.join(format!("docs/export-{i}.md")), &format!("# 匯出報表 {i}\n\n匯出 CSV 報表的說明第 {i} 份，exportmarker。\n"));
+    }
+    let req: String = (1..=300).map(|i| format!("第 {i} 行：匯出 CSV 報表 exportmarker\n")).collect();
+    write(&root.join("docs/req.md"), &req);
+    write_json(&root.join(RUN).join("run.json"), &json!({"requirement": "docs/req.md"}));
+    (t, root)
+}
+
+fn pack_md(root: &Path) -> String {
+    must(awf(&["pack", "plan", "--run", RUN], root, None), "pack plan");
+    std::fs::read_to_string(root.join(RUN).join("plan/pack.md")).expect("pack.md")
+}
+
+fn req_lines(pack: &str) -> usize {
+    pack.lines().filter(|l| l.starts_with("第 ") && l.contains(" 行：")).count()
+}
+
+fn kb_rows(pack: &str) -> usize {
+    pack.lines().filter(|l| l.starts_with("- docs/") && l.contains(" ｜ ")).count()
+}
+
+#[test]
+fn t17_pack_sizes_follow_the_profile() {
+    let (_t, root) = pack_project("t17-default", json!({}));
+    let base = pack_md(&root);
+    assert_eq!(req_lines(&base), 200, "預設貼 200 行");
+    assert!(base.contains("共 300 行"), "{base}");
+    assert!(kb_rows(&base) >= 2, "預設的知識庫命中不只一筆：{base}");
+
+    let (_t, root) = pack_project("t17-set", json!({"knowledge": {"pack": {"requirement_lines": 50, "top": 1}}}));
+    let set = pack_md(&root);
+    assert_eq!(req_lines(&set), 50, "requirement_lines=50");
+    assert!(set.contains("共 300 行"), "省略的說明照舊");
+    assert_eq!(kb_rows(&set), 1, "top=1 只取一筆：{set}");
+    assert_eq!(pack_md(&root), set, "同樣的輸入重跑逐字相同（可重現）");
+
+    // 不合範圍、型別不對：那一項用預設，資料包和沒設定時逐字相同
+    for bad in [json!({"requirement_lines": 5, "top": 0}), json!({"requirement_lines": "50", "top": 1.5, "budget": true}), json!([1])] {
+        let (_t, root) = pack_project("t17-bad", json!({"knowledge": {"pack": bad.clone()}}));
+        assert_eq!(pack_md(&root), base, "{bad}");
+    }
+}
+
+// ------------------------------------------------------------------ T19：副檔名與工具定位的門檻
+
+fn kb_ext_project(tag: &str, know: Value) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("ws");
+    mk(&root, &builtin_profile(json!({"knowledge": know})));
+    write(&root.join("docs/a.md"), "# 正常\n\n內文 okmarker\n");
+    write(&root.join("docs/b.rst"), "標題\n====\n\n內文 rstmarker\n");
+    (t, root)
+}
+
+#[test]
+fn t19_kb_extensions_follow_the_profile() {
+    let (_t, root) = kb_ext_project("t19-ext-default", json!({"sources": ["docs/**/*"]}));
+    must(awf(&["kb", "build"], &root, None), "kb build");
+    assert!(!awf(&["kb", "query", "rstmarker"], &root, None).out.contains("b.rst"), "預設不收 .rst");
+    assert!(awf(&["kb", "query", "okmarker"], &root, None).out.contains("docs/a.md"));
+
+    let (_t, root) = kb_ext_project("t19-ext-set", json!({"sources": ["docs/**/*"], "extensions": [".md", ".rst"]}));
+    must(awf(&["kb", "build"], &root, None), "kb build");
+    assert!(awf(&["kb", "query", "rstmarker"], &root, None).out.contains("docs/b.rst"), "列了 .rst 就收");
+    assert!(awf(&["kb", "query", "okmarker"], &root, None).out.contains("docs/a.md"));
+
+    for bad in [json!(["rst"]), json!([".RST"]), json!(".rst"), json!([]), json!([".md", 3])] {
+        let (_t, root) = kb_ext_project("t19-ext-bad", json!({"sources": ["docs/**/*"], "extensions": bad.clone()}));
+        let o = must(awf(&["kb", "build"], &root, None), "kb build");
+        assert!(o.all().contains("knowledge.extensions 不合規定"), "{bad}：要警告：{}", o.all());
+        assert!(!awf(&["kb", "query", "rstmarker"], &root, None).out.contains("b.rst"), "{bad}：退回預設、不收 .rst");
+        assert!(awf(&["kb", "query", "okmarker"], &root, None).out.contains("docs/a.md"), "{bad}：預設的照收");
+    }
+}
+
+fn locate_project(tag: &str, locate: Option<Value>) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("ws");
+    let extra = match locate {
+        Some(l) => json!({"knowledge": {"locate": l}}),
+        None => json!({}),
+    };
+    mk(&root, &builtin_profile(extra));
+    for (dir, n) in [("src", 4), ("vendor/lib", 2)] {
+        for i in 1..=n {
+            write(&root.join(format!("app/{dir}/export_{i}.py")), &format!("def export_csv_report_{i}(rows):\n    # exportcsv reportrows 匯出報表\n    return rows\n"));
+        }
+    }
+    (t, root)
+}
+
+fn locate_json(root: &Path) -> (String, Vec<String>) {
+    let o = must(awf(&["locate", "--repo", "app", "--requirement", "export_csv_report exportcsv reportrows 匯出報表", "--angle", "code-contracts", "--json"], root, None), "locate");
+    let v: Value = serde_json::from_str(&o.out).expect("JSON");
+    let paths = v["code-contracts"]["locations"].as_array().cloned().unwrap_or_default().iter().map(|l| l["path"].as_str().unwrap_or_default().to_string()).collect();
+    (o.out, paths)
+}
+
+#[test]
+fn t19_locate_thresholds_follow_the_profile() {
+    let (_t, root) = locate_project("t19-loc-default", None);
+    let (base, paths) = locate_json(&root);
+    assert!(paths.len() >= 4 && paths.iter().any(|p| p.starts_with("vendor/")), "預設會看 vendor/、段數不只 2：{base}");
+
+    let (_t, root) = locate_project("t19-loc-set", Some(json!({"prune": ["vendor"], "max_segments": 2})));
+    let (out, paths) = locate_json(&root);
+    assert!(!paths.is_empty() && paths.len() <= 2, "max_segments=2：{out}");
+    assert!(paths.iter().all(|p| !p.starts_with("vendor/")), "prune 加了 vendor：{out}");
+
+    let (_t, root) = locate_project("t19-loc-prune", Some(json!({"prune": ["vendor"]})));
+    let (out, paths) = locate_json(&root);
+    assert!(paths.iter().all(|p| !p.starts_with("vendor/")) && paths.iter().any(|p| p.starts_with("src/")), "只加 prune：{out}");
+
+    // 不合規定：那一項用預設，輸出和沒設定時逐字相同（prune 有一項不對就整份不用；內建的略過清單拿不掉）
+    for bad in [json!({"max_segments": 0, "min_coverage": 7, "segment_lines": 1}), json!({"prune": ["a/b", "vendor"]}), json!({"prune": "vendor", "max_files": 1}), json!("x")] {
+        let (_t, root) = locate_project("t19-loc-bad", Some(bad.clone()));
+        assert_eq!(locate_json(&root).0, base, "{bad}");
+    }
+}
+
+// ------------------------------------------------------------------ T24：長輸出濃縮（limits.run_brief）
+
+fn brief_project(tag: &str, extra: Value) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("ws");
+    mk(&root, &builtin_profile(extra));
+    let text: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+    write(&root.join("out.txt"), &text);
+    (t, root)
+}
+
+/// 濃縮的文字（拿掉會變的 log 路徑那一行）。
+fn brief_text(root: &Path, extra_args: &[&str]) -> String {
+    let log = s(&root.join("_tpm/runs/r1/logs/b.log"));
+    let mut a = vec!["run-brief", "--log", &log];
+    a.extend(extra_args);
+    #[cfg(unix)]
+    a.extend(["--", "cat", "out.txt"]);
+    #[cfg(not(unix))]
+    a.extend(["--", "cmd", "/c", "type", "out.txt"]);
+    must(awf(&a, root, None), "run-brief").out
+}
+
+fn shown_lines(text: &str) -> usize {
+    text.lines().filter(|l| l.trim_start().starts_with("line ")).count()
+}
+
+#[test]
+fn t24_run_brief_sizes_follow_the_profile() {
+    let (_t, root) = brief_project("t24-default", json!({}));
+    let base = brief_text(&root, &[]);
+    assert_eq!(shown_lines(&base), 40, "認不得框架時預設留 40 行：{base}");
+
+    let (_t, root) = brief_project("t24-set", json!({"limits": {"run_brief": {"unknown_tail": 7}}}));
+    let set = brief_text(&root, &[]);
+    assert_eq!(shown_lines(&set), 7, "unknown_tail=7：{set}");
+    assert_eq!(shown_lines(&brief_text(&root, &["--tail", "3"])), 3, "--tail 有給以它為準");
+
+    for bad in [json!({"unknown_tail": 0}), json!({"unknown_tail": "7", "tail": 9999, "max_fails": -1}), json!(7)] {
+        let (_t, root) = brief_project("t24-bad", json!({"limits": {"run_brief": bad.clone()}}));
+        assert_eq!(shown_lines(&brief_text(&root, &[])), 40, "{bad}：退回預設");
+    }
+}
+
+// ------------------------------------------------------------------ T28：閘門重點列多少（limits.display）
+
+/// design 存檔後狀態機回的閘門重點裡，agents 有幾筆。
+fn gate_agents(tag: &str, extra: Value) -> (usize, Value) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("proj");
+    mk(&root, &builtin_profile(extra));
+    plan(&root);
+    must(approve(&root, "plan", "human"), "approve plan");
+    must(save(&root, "design", design_of(json!([task(&["AC-1 下載"])]))), "stage design");
+    let n = awf(&["next", "--run", RUN], &root, None);
+    let act: Value = serde_json::from_str(&n.out).unwrap_or_else(|e| panic!("next 的輸出不是 JSON（{e}）：{}", n.all()));
+    assert!(act["action"] == "gate" && act["stage"] == "design", "{act}");
+    (act["highlights"]["agents"].as_array().map(Vec::len).unwrap_or(0), act)
+}
+
+#[test]
+fn t28_gate_highlights_follow_the_profile() {
+    let (n, base) = gate_agents("t28-default", json!({}));
+    assert_eq!(n, 2, "design 段有兩份交件：{base}");
+    assert_eq!(gate_agents("t28-set", json!({"limits": {"display": {"agents": 1}}})).0, 1, "agents=1 只列一筆");
+    for bad in [json!({"agents": 0}), json!({"agents": "1"}), json!({"agents": 9999}), json!([1])] {
+        let (n, act) = gate_agents("t28-bad", json!({"limits": {"display": bad.clone()}}));
+        assert_eq!(n, 2, "{bad}：退回預設");
+        assert_eq!(act["highlights"], base["highlights"], "{bad}：重點和沒設定時相同");
+    }
+}
+
+// ------------------------------------------------------------------ T23：watcher 的節奏（progress.watch）
+
+/// 單次模式的輸出不受節奏設定影響；命令列旗標寫壞照舊回錯誤（設定不會蓋掉這個檢查）。
+#[test]
+fn t23_watch_once_is_unchanged_by_the_setting() {
+    let once = |tag: &str, extra: Value| {
+        let t = Tmp::new(tag);
+        let root = t.path().join("proj");
+        mk(&root, &builtin_profile(extra));
+        plan(&root);
+        let o = must(awf(&["watch", "--run", RUN, "--once", "--json"], &root, None), "watch --once");
+        let bad = awf(&["watch", "--run", RUN, "--once", "--interval", "x"], &root, None);
+        assert!(bad.code == 1 && bad.all().contains("要是整數"), "{}", bad.all());
+        let mut v: Value = serde_json::from_str(&o.out).unwrap_or_else(|e| panic!("不是 JSON（{e}）：{}", o.all()));
+        // 拿掉每次都不同的欄位（時間、暫存目錄）
+        for k in ["at", "run", "run_dir", "updated_at"] {
+            if let Some(m) = v.as_object_mut() {
+                m.remove(k);
+            }
+        }
+        v
+    };
+    let base = once("t23-default", json!({}));
+    assert_eq!(once("t23-set", json!({"progress": {"watch": {"interval": 30, "stall_seconds": 60, "progress_step": 2000}}})), base);
+    assert_eq!(once("t23-bad", json!({"progress": {"watch": {"interval": 0, "stall_seconds": "x", "progress_step": 1}}})), base);
+}
+
 #[allow(dead_code)]
 fn unused_helpers(p: &Path) -> String {
     let _ = awf_env(&[], p, None, &[]);
