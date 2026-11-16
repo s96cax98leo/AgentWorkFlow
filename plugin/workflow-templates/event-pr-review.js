@@ -280,7 +280,14 @@ awfInit({ run_dir: A.run_dir, stage: 'pr-review', lang: '{{OUTPUT_LANGUAGE}}', r
 // 執行核心：模型分級、失敗升級、派工數上限（I8）。上限＝profile 的 limits.max_agents（沒設用 40）；PR 審查正常不超過 15
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40)
 awfKernelInit({ profile: METHODOLOGY, stage: 'pr-review', modifiers: [], max_agents: MAX_AGENTS })
-const LENSES = A.lenses || ['standards', 'spec', 'bugs', 'security', 'design', 'history']
+// 預設的 lens：args.lenses > profile 的 review.lenses > 內建六個
+const REVIEW = MP.review || {}
+const LENSES = A.lenses || ((Array.isArray(REVIEW.lenses) && REVIEW.lenses.length) ? [...new Set(REVIEW.lenses)] : ['standards', 'spec', 'bugs', 'security', 'design', 'history'])
+// 審查發現的信心門檻：profile 的 review.min_confidence（0–0.8；只能調低＝留下更多發現；沒寫或不合法用 0.8）
+const REVIEW_CONF = (MP.review || {}).min_confidence
+const MIN_CONF = (typeof REVIEW_CONF === 'number' && REVIEW_CONF >= 0 && REVIEW_CONF <= 0.8) ? REVIEW_CONF : 0.8
+// 報告裡 Nit 最多列幾則：profile 的 review.max_nits（0–50；沒寫或不合法用 5）
+const MAX_NITS = (Number.isInteger(REVIEW.max_nits) && REVIEW.max_nits >= 0 && REVIEW.max_nits <= 50) ? REVIEW.max_nits : 5
 const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 gh pr diff／git diff，不 approve、不 merge、不 comment。`
 /*@snippet:challenge*/
 // ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
@@ -459,13 +466,13 @@ const missing = []
 const halt = (stage, extra = {}) => haltMissing({ event: 'pr-review' }, stage, missing, { ...extra, trace: awfTrace() })
 
 phase('Review')
-const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 REVIEW.md 分級，每則附 file:line 與 0–1 信心，只列 ≥0.8。payload 用 findings（lens=${lens}）。`,
+const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 REVIEW.md 分級，每則附 file:line 與 0–1 信心，只列 ≥${MIN_CONF}。payload 用 findings（lens=${lens}）。`,
   { label: `review:${lens}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS })))
 // 各 lens 的發現 id 各自編號，加 lens 前綴（<lens>:<id>），skeptic 的 target_id 才不會撞號
 const batches = []
 reviews.forEach((r, i) => {
   const lens = LENSES[i]
-  const { fs } = takeFindings(r, `review:${lens}`, { prefix: lens, missing })
+  const { fs } = takeFindings(r, `review:${lens}`, { prefix: lens, missing, minConfidence: MIN_CONF })
   if (fs) batches.push({ lens, fs })
 })
 if (missing.length) return halt('review')
@@ -488,7 +495,7 @@ const kept = dedupeFindings(reviewed, 'lens')
 log(`保留 ${kept.length} 則（去重後）`)
 
 phase('Write')
-const docs = await awfAgent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir}/review.md：依 lens 分節，每則「[Important|Nit|Pre-existing] file:line — 問題 — 建議 — 信心」，Nit 最多 5 則。要不要貼到 PR 由使用者決定。跑 awf check-rules。\n發現：${JSON.stringify(kept)}\npayload 用 docs。`,
+const docs = await awfAgent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir}/review.md：依 lens 分節，每則「[Important|Nit|Pre-existing] file:line — 問題 — 建議 — 信心」，Nit 最多 ${MAX_NITS} 則。要不要貼到 PR 由使用者決定。跑 awf check-rules。\n發現：${JSON.stringify(kept)}\npayload 用 docs。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 if (!docs) { missing.push('write'); return halt('write', { findings: kept }) }
 

@@ -1187,6 +1187,9 @@ pub fn evaluate(sch: &Schemas, inp: &Inp, cfg: &Value, audit_lines: &[Value]) ->
     if let (true, Some(checks)) = (v.need(inp.checks.is_some(), "required checks 狀態"), inp.checks.as_ref()) {
         if checks.is_empty() { v.hold.push("沒有任何 required check".into()); }
         let allowed = list_of(g(am, "allowed_skipped_checks"))?;
+        // 專案自己列的必過 check（awf ci render --write 會把 required 的 job 名稱加進來）：沒出現在 checks 裡＝沒驗到，hold
+        let missing: Vec<String> = list_of(g(am, "required_checks"))?.into_iter().filter(|n| !checks.iter().any(|(k, _)| k == n)).collect();
+        if !missing.is_empty() { v.hold.push(format!("auto_merge.required_checks 列的 check 沒有出現在 checks 裡（沒驗到）：{}", repr_strs(&missing))); }
         let (mut failed, mut skipped) = (Vec::new(), Vec::new());
         for (n, s) in checks {
             let st = strip(s).to_lowercase();

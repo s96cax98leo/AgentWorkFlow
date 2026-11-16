@@ -443,7 +443,11 @@ const SPEC = `${EPIC_DIR}/specs/${A.epic}`
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}）\n${HAS_DESIGN ? `spec：${SPEC}/spec.md、plan.md${HAS_PROGRESS ? '、progress.md' : ''}` : `需求與驗收條件：${SPEC}/intent.md（這個 recipe 沒有 design 段，沒有 spec.md）`}\nrecipe：${RECIPE.summary}\nrun 目錄：${A.run_dir}\n不 push。commit 結尾 {{ATTRIBUTION_LINE}}。\n${METH_NOTE}\n${CODE_STYLE}${STAGE.guidance ? `\nprofile 的 build 指引：${STAGE.guidance}` : ''}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
-const MAX_RETRY = 2
+// 子任務被退回時最多重做幾次：profile 的 limits.rounds.build_retry（0–5；沒寫或不合法用 2）。跑滿仍然交人
+const ROUNDS = (MP.limits || {}).rounds || {}
+const MAX_RETRY = (Number.isInteger(ROUNDS.build_retry) && ROUNDS.build_retry >= 0 && ROUNDS.build_retry <= 5) ? ROUNDS.build_retry : 2
+// 修正迴圈只跑受影響的測試（profile 的 stages.build.affected_tests_only，預設關）：只影響第 2 次以後的派工單；test 段照舊全跑
+const AFFECTED_ONLY = STAGE.affected_tests_only === true ? `修正時先用 awf kg impact --diff ${A.base || 'origin/main'} 算受影響的測試、只跑那些（算不出來就照常全跑；test 段仍會全跑）。\n` : ''
 
 const all = A.subtasks
 const ids = new Set(all.map((s) => s.id))
@@ -532,6 +536,7 @@ function runTask(s, role, phaseName, extra) {
       res = await awfAgent(
         `${CTX}\n\n## 派工單（${phaseName}，第 ${attempt} 次）\n${taskBrief(s)}\n` +
         `在自己的 worktree 做：git -C "${A.repo}" worktree add .worktrees/${A.epic}--${s.id} -b {{BRANCH_PREFIX}}${A.epic}--${s.id} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
+        (attempt > 1 ? AFFECTED_ONLY : '') +
         (attempt > 1 && res ? `上一次的結果（請修正）：${JSON.stringify({ status: res.status, summary: res.summary, open_questions: res.open_questions })}\n` : '') +
         `${RUN_BRIEF}\npayload 用 build-result（task_id=${s.id}、branch={{BRANCH_PREFIX}}${A.epic}--${s.id}、worktree=${wtFor(s)}）。`,
         // 子任務的 complexity（design 段標的）是建議的模型等級；下限仍由執行核心守

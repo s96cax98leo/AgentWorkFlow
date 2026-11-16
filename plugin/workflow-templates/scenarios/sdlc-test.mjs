@@ -202,4 +202,16 @@ export default [
       args: { recipe: 'test-only', has_ui: true, has_security: true },
       expect: (r) => (!r.labels.includes('design-review') && r.labels.includes('security-review') ? [] : [`test-only：design_review=never、security_review=auto：${r.labels.join(',')}`]),
     },
+    {
+      // 輪數（profile 的 limits.rounds.test_fix）：設 0 就不自動修正，驗證沒過直接停在閘門交人
+      name: '可設定：limits.rounds.test_fix=0 → 驗證 fail 也不派修正',
+      profile: (p) => ({ limits: { ...(p.limits || {}), rounds: { test_fix: 0 } } }),
+      fakes: { 'verify#1': CRIT([crit('C1', 'fail')]) },
+      expect: (r) => (r.labels.includes('verify#1') && !r.labels.some((l) => l.startsWith('fix')) ? [] : [`test_fix=0 不該派修正：${r.labels.join(' → ')}`]),
+    },
+    {
+      name: '可設定：沒設 limits.rounds 時驗證 fail 會派修正（預設 2 輪）',
+      fakes: { 'verify#1': CRIT([crit('C1', 'fail')]) },
+      expect: (r) => (r.labels.includes('fix#1') ? [] : [`預設要派修正：${r.labels.join(' → ')}`]),
+    },
 ]

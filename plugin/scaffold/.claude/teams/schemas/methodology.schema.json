@@ -51,6 +51,7 @@
           "properties": {
             "test_first": {"type": "boolean", "description": "true：先由 dev-acceptance-tester 寫會失敗的測試、合進整合分支後才實作；false：先實作，再補驗證測試"},
             "unit_tests": {"type": "string", "description": "實作者寫單元測試的方式"},
+            "affected_tests_only": {"type": "boolean", "description": "選填，預設 false。true：修正迴圈（子任務被退回重做的那幾次）的派工單多一句「先用 awf kg impact --diff <base> 算受影響的測試、只跑那些」，省掉每輪全跑的時間；test 段的閘門照舊全跑。需要知識圖（awf kg）"},
             "guidance": {"type": "string"}
           }
         },
@@ -121,7 +122,16 @@
             "roles": {"type": "object", "description": "各角色的額度（鍵是不帶命名空間的角色名）；0＝該角色不限", "additionalProperties": {"type": "integer", "minimum": 0}}
           }
         },
-        "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent（沒寫用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"}
+        "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent（沒寫用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
+        "rounds": {
+          "type": "object",
+          "description": "選填：重做與修正的輪數上限。跑滿仍然停下交人（這點固定）；調大會多派 agent，仍受 max_agents 限制",
+          "additionalProperties": false,
+          "properties": {
+            "build_retry": {"type": "integer", "minimum": 0, "maximum": 5, "description": "build 段子任務回 blocked 時最多重做幾次（沒寫用 2；0＝不重做）"},
+            "test_fix": {"type": "integer", "minimum": 0, "maximum": 5, "description": "test 段驗證沒過時最多修正幾輪（沒寫用 2；0＝不自動修正，直接交人）"}
+          }
+        }
       }
     },
     "knowledge": {
@@ -313,6 +323,24 @@
         }
       }
     },
+    "triage": {
+      "type": "object",
+      "description": "選填：sdlc-plan 的需求分類（triage）",
+      "additionalProperties": false,
+      "properties": {
+        "min_confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "triage 的信心低於它就不採用建議、改走 feature 完整流程（沒寫用 0.7）。調高＝更常走完整流程；分類只是建議，plan 閘門一律由人核准"}
+      }
+    },
+    "review": {
+      "type": "object",
+      "description": "選填：審查（sdlc-deliver、event-pr-review）留多少發現、報告怎麼呈現",
+      "additionalProperties": false,
+      "properties": {
+        "min_confidence": {"type": "number", "minimum": 0, "maximum": 0.8, "description": "審查發現的信心門檻（沒寫用 0.8）。只能調低：門檻越低留下的發現越多；高於 0.8 會放掉內建本來會留的發現，不接受"},
+        "max_nits": {"type": "integer", "minimum": 0, "maximum": 50, "description": "event-pr-review 的報告裡 Nit 最多列幾則（沒寫用 5）"},
+        "lenses": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"enum": ["standards", "spec", "bugs", "security", "design", "history"]}, "description": "event-pr-review 沒帶 args.lenses 時用哪些 lens（沒寫用全部六個）"}
+      }
+    },
     "constraints": {
       "type": "array",
       "description": "選填：限制文件。使用者指定哪份文件（架構、設計、前後端規範、審查規範…）套用到哪些段、哪些路徑；workflow 只帶給對得上的 agent，閘門可以要求逐條對照或跑檢查指令",
@@ -327,7 +355,8 @@
           "stages": {"type": "array", "minItems": 1, "items": {"enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}, "description": "套用到哪些段"},
           "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "選填 glob：只適用於碰到這些路徑的工作。build 段只發給擁有的路徑對得上的子任務；其他段整段適用並註明範圍"},
           "trace": {"enum": ["none", "table"], "description": "table＝該段的執行紀錄要有〈限制對照〉一列（符合／偏離／不適用），缺了或偏離不能政策核准；預設 none"},
-          "check": {"type": "string", "minLength": 1, "description": "選填：檢查指令（在目標 repo 執行）。awf save-run stage 存檔時執行，exit 非 0 不能政策核准"}
+          "check": {"type": "string", "minLength": 1, "description": "選填：檢查指令（在目標 repo 執行）。awf save-run stage 存檔時執行，exit 非 0 不能政策核准"},
+          "timeout": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "選填：check 指令的逾時秒數（沒寫用 300）。逾時仍然算沒過"}
         }
       }
     },
@@ -536,6 +565,33 @@
         "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "只掃這些路徑（glob，相對被掃的 repo）；沒寫＝全部"},
         "exclude": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "略過這些路徑（glob）"},
         "when": {"type": "array", "items": {"enum": ["publish"]}, "description": "自動跑的時機：publish＝awf publish 推送前掃要推的檔，命中就不推。空的＝只在人手動跑 awf scrub 時掃"}
+      },
+      "additionalProperties": false
+    },
+    "ci": {
+      "type": "object",
+      "description": "選填：專案的測試／lint CI（awf ci render）。enabled 是 true 才有作用；沒寫＝不產生也不檢查任何 CI 檔。跑哪些指令、哪些必過由專案決定",
+      "properties": {
+        "enabled": {"type": "boolean", "description": "預設 false。開了之後 awf ci render 才會產生 workflow 檔、awf doctor 才檢查漂移"},
+        "provider": {"type": "string", "enum": ["github"], "description": "CI 平台；目前只支援 github（GitHub Actions）"},
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$", "description": "workflow 名稱，也是檔名（.github/workflows/<name>.yml）；預設 project-ci。不能是 agent-merge-gate"},
+        "jobs": {
+          "type": "array",
+          "description": "要跑的檢查，一項一個 job",
+          "items": {
+            "type": "object",
+            "required": ["id", "run"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$", "description": "job 的代號（不能重複）"},
+              "name": {"type": "string", "minLength": 1, "description": "顯示名稱，也是 GitHub 上的 check 名稱（不能重複）；沒寫用 id"},
+              "run": {"type": "string", "minLength": 1, "description": "要跑的指令（可以多行）。不能寫 GitHub Actions 的運算式，也不能引用 secrets"},
+              "required": {"type": "boolean", "description": "true＝必過：awf ci render --write 會把 name 加進 guard.config.json 的 auto_merge.required_checks（merge gate 要求它出現在 checks 裡）。預設 false"}
+            }
+          }
+        },
+        "triggers": {"type": "array", "minItems": 1, "items": {"enum": ["pull_request", "push", "workflow_dispatch"]}, "description": "觸發時機；預設只有 pull_request"},
+        "runs_on": {"description": "runner 標籤（字串，或自架 runner 用的字串陣列）；預設 ubuntu-latest"}
       },
       "additionalProperties": false
     }

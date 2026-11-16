@@ -2,6 +2,8 @@ AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，�
 
 工具都在 awf 這支執行檔裡，不複製進專案，也不需要 Python。macOS、Linux、Windows（PowerShell 或 cmd）都能直接跑：
 
+  awf init --detect --target <專案目錄> [--json]
+  awf init --target <專案目錄> --reconfigure [--answers <檔>]
   awf init --target <專案目錄>（或直接寫 <專案目錄>） [--config <檔>] [--answers <檔>] [--upgrade] [--adopt-new-fields]
            [--force] [--overwrite-user-files] [--hooks plugin|project] [--with-mcp] [--with-workflows]
            [--with-merge-gate [--merge-gate-bin <檔> [--merge-gate-checksums <檔>]]] [--defaults] [--source <plugin 目錄>]
@@ -11,6 +13,15 @@ AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，�
               都沒有時互動詢問（非互動環境或加 --defaults 時直接用預設值）
   --answers   開發規範與慣例的答案檔（JSON，格式見 docs/自訂與擴充.md〈自訂開發規範〉）；給了就不詢問，直接套用
               （選哪個 methodology profile、code style、commit 格式、分支前綴、PR 大小上限、文件格式）
+              訪談的鍵也收：models、read_limits、parallelism、scrub、knowledge、links、deliverables、ci（原樣合併進
+              methodology.json 的同名鍵）、affected_tests_only、auto_merge、guard（合併進 guard.config.json）、hooks
+  --detect    只偵測、只印、不寫任何檔：依主題列出專案現況（lint 設定、測試指令、近期 commit 標題與分支的樣式、
+              既有的 CI、規格層目錄…）、每題要確認什麼、答案檔的鍵與建議的答案。不執行專案的任何程式、不讀機敏檔；
+              偵測到的只是建議，不會自動採用。--json 輸出給 skill 用的 JSON
+  --reconfigure
+              已 init 的專案改設定：以 .claude/teams/init-answers.json（上次的答案）當預設，互動時再問一輪，
+              或用 --answers 只寫要改的鍵（值寫 null＝拿掉那個答案）。只改答案有變的設定，methodology.json 與
+              guard.config.json 裡手改過的其他鍵不動；改完驗 schema（不過就不寫）。不能配 --upgrade、--force
   --upgrade   升級已 init 過的專案（建議的更新方式）：模版檔一律換成這版，使用者的設定保留：
                 .claude/teams/methodology.json：不動；列出這版內建 profile 新增、你的 profile 還沒有的欄位與預設值
                 .claude/teams/guard.config.json：你的值一律保留，只補上這版新增的鍵（說明文字 _說明 換成新版）
@@ -62,3 +73,7 @@ AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，�
 結果合併成 <專案>/.claude/teams/methodology.json，由 awf 產生 workflow 腳本時內嵌。
 最後問一題主 session 的習慣（答案檔的鍵 main_session_push_merge）：你既有的 skill 或習慣會不會在主 session 直接 push main、
 合併 PR？答會時，guard.config.json 的 main_session_git_rules、main_session_github_rules 設 false（auto_merge 啟用後主 session 仍不能合併）。
+
+寫入前會印「設定對照表」（設定｜偵測到｜你的回答｜會寫成），互動模式要你確認才寫；--defaults、--answers 不問但照印。
+答案存在 <專案>/.claude/teams/init-answers.json（不含機敏值），之後用 --reconfigure 改。
+限制類的功能（讀取預算、去客戶化掃描、連結強制、交付文件、CI、自動合併）預設都不啟用。

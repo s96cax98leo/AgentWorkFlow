@@ -60,7 +60,8 @@ cargo xtask checksums [--write|--check]          # 執行檔的 sha256 與原始
 `awf` 的子指令。在這個 repo 開發時，`awf` 換成 `cargo run -q -p awf --`，或 `cargo build --release` 後把 `AWF_BIN` 指到 `target/release/awf`。有 `--selftest` 的子指令不需要已 init 的專案：在這個 repo 裡從 `plugin/scaffold/` 底下跑（有幾支要讀 `.claude/teams/` 的 schema 與 profile；`cargo xtask check-all` 就是這樣全部跑一遍）。其餘要在**已 init 的專案根目錄**執行。
 
 ```bash
-awf init --target <專案> [--hooks plugin|project] [--answers <答案.json>] [--defaults] [--upgrade [--adopt-new-fields]] [--source <模版>]
+awf init --target <專案> [--hooks plugin|project] [--answers <答案.json>] [--defaults] [--upgrade [--adopt-new-fields]]
+awf init --detect --target <專案> [--json]    # 只偵測、只印（訪談用）；awf init --target <專案> --reconfigure [--answers <檔>] 改已 init 專案的設定 [--source <模版>]
 awf render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 12 支 workflow 腳本
 node plugin/workflow-templates/check_workflows.mjs --project <專案> --wf-dir <目錄>   # 乾跑所有 workflow（含 plugin/workflow-templates/scenarios/*.mjs 的情境）
 awf build [--check]   # 只處理專案的覆寫檔（.claude/workflows/*.js）；在模版 repo 裡處理 plugin/workflow-templates/
@@ -83,6 +84,7 @@ awf program --selftest                                      # 多需求排程（
 awf checklist --selftest、awf spec --selftest、awf run-brief --selftest、awf tokens --selftest   # 其餘有 selftest 的子指令
 awf golden [--dir <golden-set 目錄>] [--verbose]                 # 專案的 golden-set（schema 正反例）
 awf tokens check [--all] <檔案或目錄>…、awf tokens verify [tokens.css] [正本檔]   # 設計系統 skill 的色碼掃描與 tokens 核對
+awf ci render [--write]、awf ci check、awf ci --selftest          # 專案的測試／lint CI（profile 的 ci；預設不啟用；--write 只由主 session 跑）
 awf scrub [路徑…] [--json]、awf scrub --selftest                 # 專案自己訂的去客戶化掃描（profile 的 scrub；預設不啟用）
 ```
 
@@ -310,7 +312,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - `plugin/skills/tpm-team/SKILL.md` 只寫 `awf next` → 照做 → `done` 的迴圈（不超過 60 行、描述不超過 200 字，`VP B1.5` 檢查）；事件對照表、recipe、閘門規則與手動執行在同目錄的 `reference/*.md`。
 - plugin 有 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`，都是薄殼。
 - 其他入口是 skill，用 `/agent-workflow:<skill>` 叫用（沒有同名指令時可省略前綴）。不要再新增和 skill 同名的 command。
-  - `/agent-workflow:init-workflow`：先在對話中確認使用者的習慣，再跑 `awf init --answers`。
+  - `/agent-workflow:init-workflow`：先跑 `awf init --detect`，逐主題在對話中確認使用者的做法，再跑 `awf init --answers` 並唸出對照表（訪談在 `crates/awf-core/src/init/detect.rs`、`interview.rs`；答案存 `.claude/teams/init-answers.json`，`--reconfigure` 只改有變的設定）。
   - `/agent-workflow:add-agent`：把使用者自己的 agent 加進 SDLC。
   - `/agent-workflow:correct`：把一則教訓變成最高可行層級的強制機制，並在 rules.md〈專案規則〉維護「規則 ↔ 強制方式」對照表。
   - `/agent-workflow:deliverables`：薄殼，在對話中走交付設定（提案 → 人確認 → `--write`）與盤點（`status`、`check`）。

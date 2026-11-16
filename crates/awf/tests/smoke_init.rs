@@ -1182,3 +1182,160 @@ fn upgrade_real_06_project() {
     assert!(t.join(".claude/teams/bin/checksums.json").is_file());
     assert!(!t.join(".claude/teams/tools").exists(), "工具照樣移除：{:?}", tools_left(&t));
 }
+
+/// 訪談用的示範專案：有 package.json、lint 設定、openspec/、既有的 CI 檔；有 git 時另外放幾個 commit 與分支。
+fn interview_project(t: &Path) -> bool {
+    write(&t.join("package.json"), "{\"name\": \"acme-shop\", \"scripts\": {\"test\": \"vitest run\", \"lint\": \"eslint .\"}}\n");
+    for f in ["pnpm-lock.yaml", ".eslintrc.json", "openspec/specs/keep.md", ".github/workflows/deploy.yml", "docs/a.md", ".env"] {
+        write(&t.join(f), if f == ".env" { "DEMO_VALUE=not-read\n" } else { "" });
+    }
+    if which("git").is_none() {
+        return false;
+    }
+    let git = |argv: &[&str]| exec("git", argv, t, &[("GIT_CONFIG_GLOBAL", "/dev/null"), ("GIT_CONFIG_SYSTEM", "/dev/null")], None);
+    if git(&["init", "-q", "."]).code != 0 {
+        return false;
+    }
+    for m in ["feat: 加匯出", "fix(api): 修正分頁", "docs: 補說明", "feat(ui): 新按鈕", "chore: 升級相依", "手動調整"] {
+        git(&["-c", "user.name=demo", "-c", "user.email=demo@example.invalid", "commit", "-q", "--allow-empty", "-m", m]).ok("git commit");
+    }
+    git(&["branch", "feat/export"]).ok("git branch");
+    git(&["branch", "feat/paging"]).ok("git branch");
+    true
+}
+
+fn topic<'a>(doc: &'a Value, id: &str) -> &'a Value {
+    doc["topics"].as_array().and_then(|a| a.iter().find(|t| t["id"] == json!(id))).unwrap_or(&Value::Null)
+}
+
+/// 訪談（1.0）：`--detect` 只讀、答案檔的新鍵、對照表、答案檔可重跑、`--reconfigure` 只改有變的設定。
+#[test]
+fn interview() {
+    let w = Work::new("interview");
+    let t = w.dir("project-interview");
+    let has_git = interview_project(&t);
+    let before = files(&t).len();
+
+    // 1. --detect：只印、不寫任何檔；--json 給 skill 用
+    let det = awf(&["init", "--detect", "--target", s(&t), "--json"], &w.0);
+    det.ok("awf init --detect --json");
+    assert_eq!(files(&t).len(), before, "--detect 不能寫檔");
+    assert!(!t.join(".claude").exists());
+    let doc: Value = serde_json::from_str(&det.stdout).unwrap_or_else(|e| panic!("--detect --json 不是 JSON：{e}\n{}", det.stdout));
+    assert_eq!(doc["schema_version"], json!(1));
+    let sug = &doc["suggested_answers"];
+    assert_eq!(sug["code_style"]["command"], json!("pnpm run lint"), "{sug}");
+    assert_eq!(sug["requirements"], json!({"source": "openspec", "path": "openspec"}));
+    assert_eq!(sug["ci"]["enabled"], json!(false), "偵測到指令也不能自己啟用 CI");
+    assert_eq!(sug["ci"]["jobs"][0]["run"], json!("pnpm run test"));
+    assert!(topic(&doc, "ci")["detected"].to_string().contains(".github/workflows/deploy.yml"));
+    assert!(!det.all().contains("not-read") && !det.all().contains("DEMO_VALUE"), "不能讀機敏檔");
+    if has_git {
+        assert_eq!(sug["branch_prefix"], json!("feat/"), "{sug}");
+        assert!(sug["commit_regex"].as_str().is_some_and(|r| r.contains("feat") && r.contains("fix")), "{sug}");
+    }
+    let text = awf(&["init", "--detect", "--target", s(&t)], &w.0);
+    assert!(text.ok("awf init --detect").stdout.contains("== 專案的測試／lint CI（ci） =="));
+    assert_ne!(awf(&["init", "--target", s(&t), "--json"], &w.0).code, 0, "--json 要搭配 --detect");
+
+    // 2. 答案檔的新鍵：原樣寫進 methodology.json；guard／auto_merge 合併進 guard.config.json；印對照表；存答案檔
+    let answers = json!({
+        "methodology": "lightweight",
+        "models": "inherit",
+        "scrub": {"enabled": true, "terms_files": [".claude/teams/scrub_terms.txt"], "when": ["publish"]},
+        "links": {"enforce": false},
+        "ci": {"enabled": true, "jobs": [{"id": "test", "name": "測試", "run": "pnpm run test", "required": true}]},
+        "requirements": {"source": "openspec", "path": "openspec"},
+        "parallelism": {"max_sub_plans": 2},
+        "guard": {"protected_branches": ["main", "release"]},
+        "auto_merge": false,
+    });
+    let af = w.0.join("answers.json");
+    write(&af, &answers.to_string());
+    let out = init(&t, &["--answers", s(&af)]);
+    out.ok("awf init --answers（訪談的鍵）");
+    assert!(out.stdout.contains("== 設定對照表（設定｜偵測到｜你的回答｜會寫成） =="), "{}", out.stdout);
+    assert!(out.stdout.contains("code style 檢查指令｜pnpm run lint｜（沒回答，用預設）"), "偵測到的只列出來、不自動採用：\n{}", out.stdout);
+    assert!(out.stdout.contains("模型分級｜—｜inherit｜methodology.json：models.mode = inherit"), "{}", out.stdout);
+    let meth = t.join(".claude/teams/methodology.json");
+    let prof = load(&meth);
+    assert_eq!(prof["models"]["mode"], json!("inherit"));
+    assert_eq!(prof["scrub"]["when"], json!(["publish"]));
+    assert_eq!(prof["links"], json!({"enforce": false}));
+    assert_eq!(prof["ci"]["jobs"][0]["run"], json!("pnpm run test"));
+    assert_eq!(prof["parallelism"]["max_sub_plans"], json!(2));
+    assert!(prof["parallelism"]["split_threshold"].is_number(), "沒回答的鍵沿用 profile");
+    assert_eq!(prof["conventions"]["code_style"]["command"], Value::Null, "--answers 不採用偵測值");
+    let guard = load(&t.join(".claude/teams/guard.config.json"));
+    assert_eq!(guard["protected_branches"], json!(["main", "release"]));
+    assert_eq!(guard["auto_merge"]["enabled"], json!(false));
+    assert!(guard["auto_merge"]["daily_cap"].is_number(), "合併不能弄丟範本的其他鍵");
+    let saved = load(&t.join(".claude/teams/init-answers.json"));
+    assert_eq!(saved, answers, "答案檔要原樣存下來");
+    check_output(&t);
+    // 專案的 CI 接得起來：只印不寫
+    let ci = awf(&["ci", "render"], &t);
+    assert!(ci.ok("awf ci render").stdout.contains("pnpm run test") && !t.join(".github/workflows/project-ci.yml").exists());
+
+    // 3. --reconfigure：只改答案有變的鍵；使用者手改過的其他鍵不動
+    let mut hand = load(&meth);
+    hand["stages"]["build"]["guidance"] = json!("示範客戶 ACME 手改的 build 指引");
+    hand["parallelism"]["split_threshold"] = json!(99);
+    dump(&meth, &hand);
+    let gpath = t.join(".claude/teams/guard.config.json");
+    let mut hand_guard = load(&gpath);
+    hand_guard["writer_dirs"] = json!(["handbook"]);
+    dump(&gpath, &hand_guard);
+    let af2 = w.0.join("answers2.json");
+    write(&af2, &json!({"models": "auto", "links": {"enforce": true}, "scrub": null, "main_session_push_merge": true}).to_string());
+    let re = awf(&["init", "--target", s(&t), "--reconfigure", "--answers", s(&af2)], &w.0);
+    re.ok("awf init --reconfigure");
+    assert!(re.stdout.contains("會改 5 項") && re.stdout.contains("models.mode") && re.stdout.contains("== 設定對照表"), "{}", re.stdout);
+    let prof = load(&meth);
+    assert_eq!(prof["models"]["mode"], json!("auto"));
+    assert_eq!(prof["links"]["enforce"], json!(true));
+    assert!(prof.get("scrub").is_none(), "答案寫 null＝拿掉那個答案");
+    assert_eq!(prof["stages"]["build"]["guidance"], json!("示範客戶 ACME 手改的 build 指引"), "手改的鍵不動");
+    assert_eq!(prof["parallelism"]["split_threshold"], json!(99), "沒變的答案不重寫");
+    assert_eq!(prof["parallelism"]["max_sub_plans"], json!(2));
+    assert_eq!(prof["ci"]["enabled"], json!(true));
+    let guard = load(&gpath);
+    assert_eq!((&guard["main_session_git_rules"], &guard["main_session_github_rules"]), (&json!(false), &json!(false)));
+    assert_eq!(guard["writer_dirs"], json!(["handbook"]), "guard.config 手改的鍵不動");
+    assert_eq!(guard["protected_branches"], json!(["main", "release"]));
+    let saved = load(&t.join(".claude/teams/init-answers.json"));
+    assert_eq!(saved["models"], json!("auto"));
+    assert!(saved.get("scrub").is_none() && saved["ci"]["enabled"] == json!(true), "答案檔＝舊答案套上這次改的");
+    // 再跑一次同樣的答案：沒有要改的
+    let again = awf(&["init", "--target", s(&t), "--reconfigure", "--answers", s(&af2)], &w.0);
+    assert!(again.ok("--reconfigure 重跑").stdout.contains("沒有要改的"), "{}", again.stdout);
+    assert_eq!(load(&meth), prof);
+    // 改出不合 schema 的設定：不寫
+    let af3 = w.0.join("answers3.json");
+    write(&af3, &json!({"ci": {"enabled": true, "jobs": [{"id": "a", "run": "x"}, {"id": "a", "run": "y"}]}}).to_string());
+    let bad = awf(&["init", "--target", s(&t), "--reconfigure", "--answers", s(&af3)], &w.0);
+    assert!(bad.code != 0 && bad.stderr.contains("id 重複"), "{}", bad.all());
+    assert_eq!(load(&meth), prof, "不合 schema 時不能寫");
+
+    // 4. 還沒 init 的專案不能 --reconfigure；不能和 --upgrade 一起用
+    let empty = w.dir("empty");
+    assert_ne!(awf(&["init", "--target", s(&empty), "--reconfigure"], &w.0).code, 0);
+    assert_ne!(awf(&["init", "--target", s(&t), "--reconfigure", "--upgrade"], &w.0).code, 0);
+}
+
+/// 沒帶新旗標、沒有新答案鍵：對照表照樣印，多一個答案檔；限制類的功能都沒有啟用。
+#[test]
+fn interview_defaults() {
+    let w = Work::new("interview-defaults");
+    let t = w.dir("project-defaults");
+    let out = awf(&["init", "--target", s(&t), "--defaults"], &w.0);
+    out.ok("awf init --defaults");
+    assert!(out.stdout.contains("== 設定對照表") && out.stdout.contains("hook 註冊方式｜—｜（沒回答，用預設）｜hooks 由 plugin 註冊"), "{}", out.stdout);
+    assert_eq!(read(&t.join(".claude/teams/init-answers.json")), "{}\n");
+    let prof = load(&t.join(".claude/teams/methodology.json"));
+    for off in ["ci", "scrub", "links"] {
+        assert!(prof.get(off).is_none_or(|v| v["enabled"] != json!(true)), "{off} 預設不啟用");
+    }
+    assert!(prof["stages"]["build"].get("affected_tests_only").is_none());
+    assert!(prof["limits"].get("mode").is_none(), "讀取預算預設不啟用");
+}

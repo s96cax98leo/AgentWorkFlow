@@ -29,6 +29,13 @@ pub struct Args {
     pub merge_gate_bin: Option<String>,
     /// 搭配 `--merge-gate-bin`：記這個執行檔 sha256 的 `checksums.json`（沒給就依執行檔產生一份）。
     pub merge_gate_checksums: Option<String>,
+    /// 只印偵測結果（不寫任何檔）；搭配 `--json` 印 JSON。
+    pub detect: bool,
+    pub json: bool,
+    /// 拿存下來的答案（`.claude/teams/init-answers.json`）當預設重新設定，只改有變的設定。
+    pub reconfigure: bool,
+    /// 指令列有沒有明確給 `--hooks`（沒給時答案檔的 `hooks` 才算數）。
+    pub hooks_given: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -57,10 +64,13 @@ const OPTS: &[(&str, bool)] = &[
     ("--source", true),
     ("--merge-gate-bin", true),
     ("--merge-gate-checksums", true),
+    ("--detect", false),
+    ("--json", false),
+    ("--reconfigure", false),
 ];
 
 pub const USAGE: &str = "usage: awf init [-h] [--target TARGET] [--config CONFIG] [--answers ANSWERS] [--upgrade] [--adopt-new-fields] [--force] \
-[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--source SOURCE] [--merge-gate-bin MERGE_GATE_BIN] [--merge-gate-checksums MERGE_GATE_CHECKSUMS] [positional]";
+[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--source SOURCE] [--merge-gate-bin MERGE_GATE_BIN] [--merge-gate-checksums MERGE_GATE_CHECKSUMS] [--detect] [--json] [--reconfigure] [positional]";
 
 enum Seen {
     Plain,
@@ -181,6 +191,9 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgStop> {
                 "--with-workflows" => a.with_workflows = true,
                 "--with-merge-gate" => a.with_merge_gate = true,
                 "--defaults" => a.defaults = true,
+                "--detect" => a.detect = true,
+                "--json" => a.json = true,
+                "--reconfigure" => a.reconfigure = true,
                 _ => {}
             }
             continue;
@@ -204,7 +217,10 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgStop> {
             "--target" => a.target = Some(value),
             "--config" => a.config = Some(value),
             "--answers" => a.answers = Some(value),
-            "--hooks" => a.hooks = value,
+            "--hooks" => {
+                a.hooks = value;
+                a.hooks_given = true;
+            }
             "--python" => a.python = Some(value),
             "--source" => a.source = Some(value),
             "--merge-gate-bin" => a.merge_gate_bin = Some(value),
@@ -243,6 +259,7 @@ mod tests {
         assert_eq!(msg(&["--force=1"]), "argument --force: ignored explicit argument '1'");
         assert_eq!(msg(&["--merge-gate"]), "ambiguous option: --merge-gate could match --merge-gate-bin, --merge-gate-checksums");
         assert_eq!(run(&["x", "-h"]).err(), Some(ArgStop::Help));
+        assert_eq!(msg(&["--de"]), "ambiguous option: --de could match --defaults, --detect");
     }
 
     #[test]
@@ -253,7 +270,9 @@ mod tests {
         assert_eq!(a.hooks, "project");
         let b = run(&["--force", "dir", "--defaults"]).ok().unwrap_or_default();
         assert_eq!(b.positional.as_deref(), Some("dir"));
-        assert!(b.force && b.defaults);
+        assert!(b.force && b.defaults && !b.hooks_given && !b.detect);
+        let d = run(&["--detect", "--json", "--reconf", "--hooks", "plugin"]).ok().unwrap_or_default();
+        assert!(d.detect && d.json && d.reconfigure && d.hooks_given);
         let c = run(&["--python", "/x/py", "--merge-gate-b", "awf", "--merge-gate-checksums=c.json"]).ok().unwrap_or_default();
         assert_eq!((c.python.as_deref(), c.merge_gate_bin.as_deref(), c.merge_gate_checksums.as_deref()), (Some("/x/py"), Some("awf"), Some("c.json")));
     }

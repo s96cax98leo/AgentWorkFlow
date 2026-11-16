@@ -439,7 +439,9 @@ const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const SPEC = `${EPIC_DIR}/specs/${A.epic}`
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，比對基準 ${A.base || 'origin/main'}）\nrun 目錄：${A.run_dir}\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
-const MAX_FIX = 2
+// 驗證沒過時最多修正幾輪：profile 的 limits.rounds.test_fix（0–5；沒寫或不合法用 2）。跑滿仍然交人
+const ROUNDS = (MP.limits || {}).rounds || {}
+const MAX_FIX = (Number.isInteger(ROUNDS.test_fix) && ROUNDS.test_fix >= 0 && ROUNDS.test_fix <= 5) ? ROUNDS.test_fix : 2
 
 // 分片驗證：有 2 個以上子計劃時，每個子計劃一個分片，另加一個整合分片（總覽 spec 的跨子計劃驗收條件＋整條 diff 的反作弊）
 const SUBS = (A.sub_plans || []).filter((s) => s && s.id)

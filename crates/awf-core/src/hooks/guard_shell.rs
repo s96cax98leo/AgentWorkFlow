@@ -1147,6 +1147,7 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                         Deny::Spec(x) => format!("不能跑 awf spec {x}（規格與編號登記只由主 session 改；team agent 只能跑 awf spec status／validate／show，以及不帶 --write／--adopt／--retire 的 ids）"),
                         Deny::Kg(x) => format!("不能跑 awf kg {x}（圖與 vault 只由主 session 建與匯出；team agent 只能跑 awf kg locate／trace／impact／check／neighbors）"),
                         Deny::Program(x) => format!("不能跑 awf program {x}（多需求排程的開工建議給主 session 與人看；team agent 只能跑唯讀的 awf program status）"),
+                        Deny::Ci(x) => format!("不能跑 awf ci {x}（CI 檔與 required checks 只由主 session 或人寫；team agent 只能跑不帶 --write 的 awf ci render 與 awf ci check）"),
                         Deny::Watch => "只能跑 awf watch --once（持續監看會一直寫進度事件，由主 session 或人執行）".to_string(),
                         Deny::Unknown(x) => format!("不能跑 awf {x}（看不出是哪個子指令，無法確認是否允許；請直接寫 awf <子指令> <參數>）"),
                         Deny::Opaque(x) => format!("不能這樣呼叫 awf{x}；請直接寫 awf <子指令> <參數>"),

@@ -12,4 +12,35 @@ export default [
     expect: (r) => [...halted('review:security')(r), ...(r.labels.some((l) => l.startsWith('verify:')) ? ['lens 缺件還往下跑'] : [])],
   },
   { name: '缺件：skeptic 沒交件不能當成全部沒被推翻', fakes: { 'verify:bugs': () => null }, expect: halted('verify:bugs') },
+  {
+    // 審查的預設（profile 的 review）：lens 清單、Nit 上限、信心門檻（只能調低）
+    name: '可設定：review.lenses、max_nits、min_confidence → 只派指定的 lens，派工單與報告的數字跟著變，0.6 的發現留下來',
+    profile: { review: { lenses: ['bugs', 'security'], max_nits: 3, min_confidence: 0.5 } },
+    fakes: { 'review:bugs': (base) => ({ ...base, payload: { ...base.payload, findings: [{ id: 'f1', severity: 'important', claim: 'x', location: 'a.py:1', recommendation: 'y', confidence: 0.6 }] } }) },
+    expect: (r) => {
+      const errs = []
+      const lenses = r.labels.filter((l) => l.startsWith('review:')).sort().join(',')
+      if (lenses !== 'review:bugs,review:security') errs.push(`只該派 bugs、security：${lenses}`)
+      if (!/只列 ≥0\.5。/.test(r.prompts['review:bugs'] || '')) errs.push('lens 派工單的門檻沒有跟著設定')
+      if (!r.labels.includes('verify:bugs')) errs.push(`門檻 0.5 時信心 0.6 的發現要送去反駁：${r.labels.join(' → ')}`)
+      if (!/Nit 最多 3 則。/.test(r.prompts.write || '')) errs.push('報告的 Nit 上限沒有跟著設定')
+      return errs
+    },
+  },
+  {
+    name: '可設定：沒設 review 時信心 0.6 的發現不留（門檻 0.8）；min_confidence 高於 0.8 不接受、照 0.8',
+    profile: { review: { min_confidence: 0.95 } },
+    fakes: { 'review:bugs': (base) => ({ ...base, payload: { ...base.payload, findings: [
+      { id: 'f1', severity: 'important', claim: 'x', location: 'a.py:1', recommendation: 'y', confidence: 0.6 },
+      { id: 'f2', severity: 'important', claim: 'x', location: 'a.py:2', recommendation: 'y', confidence: 0.85 }] } }) },
+    expect: (r) => {
+      const errs = []
+      if (r.labels.filter((l) => l.startsWith('review:')).length !== 6) errs.push('沒設 lenses 時要派六個 lens')
+      if (!/只列 ≥0\.8。/.test(r.prompts['review:bugs'] || '')) errs.push('高於 0.8 的門檻不能採用（會放掉發現）')
+      const p = r.prompts['verify:bugs'] || ''
+      if (!p || !/f2/.test(p) || /bugs:f1/.test(p)) errs.push('0.85 的發現要留、0.6 的不留')
+      if (!/Nit 最多 5 則。/.test(r.prompts.write || '')) errs.push('Nit 上限預設 5')
+      return errs
+    },
+  },
 ]

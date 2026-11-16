@@ -459,7 +459,9 @@ const triageField = (t) => (t ? { triage: t } : {})
 // ── Triage（intake）：判斷這次要走哪個 recipe、需要哪些調研角度、各角色用哪個模型等級。args.recipe 有給（含續跑）就不派 ──
 const RECIPES = MP.recipes || {}
 const MODIFIERS = Object.keys(MP.modifiers || {}).length ? MP.modifiers : recipeBuiltinModifiers()
-const TRIAGE_MIN_CONFIDENCE = 0.7
+// triage 信心門檻：profile 的 triage.min_confidence（0–1；沒寫或不合法用 0.7）
+const TRIAGE_CONF = (MP.triage || {}).min_confidence
+const TRIAGE_MIN_CONFIDENCE = (typeof TRIAGE_CONF === 'number' && TRIAGE_CONF >= 0 && TRIAGE_CONF <= 1) ? TRIAGE_CONF : 0.7
 let triage = null
 let recipeName = A.recipe
 let modifiers = Array.isArray(A.modifiers) ? A.modifiers : (A.modifiers ? String(A.modifiers).split(',').map((s) => s.trim()).filter(Boolean) : [])

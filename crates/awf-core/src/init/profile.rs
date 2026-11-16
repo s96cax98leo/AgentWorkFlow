@@ -335,6 +335,8 @@ pub fn apply_answers(profile: &Value, ans: &Map<String, Value>) -> R<Map<String,
     if let Some(c) = ans.get("constraints") {
         prof.insert("constraints".to_string(), Value::Array(parse_constraints(c)?));
     }
+    // 1.0 新增的主題（models、scrub、knowledge、links、deliverables、ci、parallelism、affected_tests_only）
+    super::interview::apply_topic_answers(&mut prof, ans)?;
     if let Some(ov) = ans.get("overrides").and_then(Value::as_object) {
         prof = deep_merge(&prof, ov);
     }
@@ -354,7 +356,8 @@ fn shown_or(v: Option<&Value>, default: &str) -> String {
 }
 
 /// 互動模式：逐項確認使用者的開發規範與慣例習慣，回傳（profile 名稱, 回答）。
-pub fn ask_methodology(con: &mut Console, site: &Site, default_name: &str, branch_prefix: &str) -> R<(String, Map<String, Value>)> {
+/// `seed`＝先有的答案（偵測到的建議，或 `--reconfigure` 時存下來的答案）：當每題的預設值，Enter 就採用。
+pub fn ask_methodology(con: &mut Console, site: &Site, default_name: &str, branch_prefix: &str, seed: &Map<String, Value>) -> R<(String, Map<String, Value>)> {
     con.say("\n== 開發規範與慣例（模版只管工作流程，做法由你決定；Enter＝用預設值） ==");
     for n in profile_names(site) {
         let p = load_profile(site, &n)?;
@@ -364,9 +367,19 @@ pub fn ask_methodology(con: &mut Console, site: &Site, default_name: &str, branc
     }
     let name = con.ask("開發規範 profile（上面的名稱，或自己的 profile JSON 路徑）", if default_name.is_empty() { "default" } else { default_name });
     let loaded = load_profile(site, &name)?;
-    let Some(prof) = loaded.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
+    // 題目的預設值＝profile 套上先有的答案；回答和它不同才記成新的答案
+    let seeded;
+    let prof = if seed.is_empty() {
+        let Some(p) = loaded.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
+        p
+    } else {
+        let mut s = seed.clone();
+        s.shift_remove("overrides");
+        seeded = apply_answers(&loaded, &s)?;
+        &seeded
+    };
     let conv = sub(prof, "conventions", "profile")?;
-    let mut ans: Map<String, Value> = Map::new();
+    let mut ans: Map<String, Value> = seed.clone();
     let build = sub(sub(prof, "stages", "profile")?, "build", "stages")?;
     let tf_now = build.get("test_first").map(pyfmt::truthy).unwrap_or(true);
     let tf = con.ask("build 段要不要先寫會失敗的測試再實作（y／n）", if tf_now { "y" } else { "n" });
@@ -438,8 +451,11 @@ pub fn ask_methodology(con: &mut Console, site: &Site, default_name: &str, branc
         }
     }
     con.say("  限制文件（可以不設）：你要 agent 遵守的文件，例如 ARCHITECTURE.md、DESIGN.md、REVIEW.md。寫法：路徑，或 路徑=段+段（段：plan、design、build、test、deliver…；沒寫＝design+deliver）。");
-    let cs_in = con.ask("限制文件（逗號分隔；- ＝沒有）", "-");
-    if !cs_in.is_empty() && cs_in != "-" {
+    let cs_keep = if ans.contains_key("constraints") { "沿用" } else { "-" };
+    let cs_in = con.ask("限制文件（逗號分隔；- ＝沒有）", cs_keep);
+    if cs_in == "-" || cs_in.is_empty() {
+        ans.shift_remove("constraints");
+    } else if cs_in != "沿用" {
         ans.insert("constraints".to_string(), json!(cs_in));
     }
     let lim = sub(prof, "limits", "profile")?;
@@ -450,6 +466,8 @@ pub fn ask_methodology(con: &mut Console, site: &Site, default_name: &str, branc
         let lines = con.ask("超過幾行的檔要分段讀（0 ＝不限）", &shown_or(lim.get("whole_file_lines"), "0"));
         let budget = con.ask("每個 agent 一次派工最多讀幾個位元組（0 ＝不限；各角色的額度之後可在 methodology.json 調）", &shown_or(rb.get("default"), "0"));
         ans.insert("read_limits".to_string(), json!({"mode": lm, "whole_file_lines": lines, "read_budget": {"default": budget}}));
+    } else if ans.contains_key("read_limits") {
+        ans.insert("read_limits".to_string(), json!("off"));
     }
     Ok((name, ans))
 }
@@ -478,7 +496,7 @@ pub fn ask_main_session(con: &mut Console, answers: Option<&Shown>, interactive:
 }
 
 /// 用模版自己的 schema 驗 profile（`schemalib.check_doc(prof, "methodology")`）。
-fn check_methodology(site: &Site, prof: &Map<String, Value>) -> R<Vec<String>> {
+pub fn check_methodology(site: &Site, prof: &Map<String, Value>) -> R<Vec<String>> {
     match Schemas::new(site.scaffold_teams()).check_doc(&Value::Object(prof.clone()), "methodology") {
         Ok(errs) => Ok(errs),
         Err(m) => crash(m),
@@ -489,8 +507,9 @@ fn first5(errs: &[String]) -> String {
     errs.iter().take(5).map(String::as_str).collect::<Vec<_>>().join("；")
 }
 
-/// 決定專案的開發規範 profile：答案檔 > 互動問答 > workflow.config 的 METHODOLOGY（`--defaults` 用 default）。
-pub fn build_methodology(con: &mut Console, site: &Site, vals: &mut Kv, answers: Option<&Shown>, interactive: bool, defaults: bool) -> R<Map<String, Value>> {
+/// 收集開發規範的答案：答案檔 > 互動問答 > 沒有（用 workflow.config 的 METHODOLOGY；`--defaults` 用 default）。
+/// 回（profile 名稱, 答案）。`seed` 見 [`ask_methodology`]（只有互動問答用）。
+pub fn collect_answers(con: &mut Console, site: &Site, vals: &Kv, answers: Option<&Shown>, interactive: bool, defaults: bool, seed: &Map<String, Value>) -> R<(String, Map<String, Value>)> {
     let mut name = if defaults && answers.is_none() {
         "default".to_string()
     } else {
@@ -514,9 +533,14 @@ pub fn build_methodology(con: &mut Console, site: &Site, vals: &mut Kv, answers:
         }
     } else if interactive {
         let bp = vals.get("BRANCH_PREFIX").unwrap_or_default().to_string();
-        (name, ans) = ask_methodology(con, site, &name, &bp)?;
+        (name, ans) = ask_methodology(con, site, &name, &bp, seed)?;
     }
-    let mut prof = apply_answers(&load_profile(site, &name)?, &ans)?;
+    Ok((name, ans))
+}
+
+/// 把答案套進 profile、和 BRANCH_PREFIX 對齊、驗 schema。回專案的開發規範 profile。
+pub fn finish_methodology(site: &Site, vals: &mut Kv, name: &str, ans: &Map<String, Value>) -> R<Map<String, Value>> {
+    let mut prof = apply_answers(&load_profile(site, name)?, ans)?;
     // 分支前綴：回答了就改 BRANCH_PREFIX（workflow 的分支名用它）；沒回答就讓 profile 跟 BRANCH_PREFIX 一致
     {
         let conv = setdefault_obj(&mut prof, "conventions", "profile")?;
@@ -537,7 +561,7 @@ pub fn build_methodology(con: &mut Console, site: &Site, vals: &mut Kv, answers:
             branch.insert("prefix".to_string(), json!(bp));
         }
     }
-    let final_name = shown_or(prof.get("name"), &name);
+    let final_name = shown_or(prof.get("name"), name);
     vals.set("METHODOLOGY", &final_name);
     let errs = check_methodology(site, &prof)?;
     if !errs.is_empty() {

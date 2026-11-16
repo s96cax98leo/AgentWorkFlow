@@ -20,6 +20,9 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 // awf build 內嵌到這裡；不要手改，改 profile 後重跑 awf build。null＝沒有 profile，改用中性指引（依目標 repo 既有慣例）。
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
+// 審查發現的信心門檻：profile 的 review.min_confidence（0–0.8；只能調低＝留下更多發現；沒寫或不合法用 0.8）
+const REVIEW_CONF = (MP.review || {}).min_confidence
+const MIN_CONF = (typeof REVIEW_CONF === 'number' && REVIEW_CONF >= 0 && REVIEW_CONF <= 0.8) ? REVIEW_CONF : 0.8
 const STAGE = ((MP.stages || {}).deliver) || {}
 const CONV = MP.conventions || {}
 const METH_NOTE = METHODOLOGY
@@ -514,11 +517,11 @@ function dedupeFindings(groups, field) {
 if (R.errors.length || unknownAxes.length || !AXES.length) return { stage: 'deliver', halted: true, halt_reason: `recipe 解析有錯：${[...R.errors, ...unknownAxes.map((k) => `不認得的審查軸：${k}`), ...(AXES.length ? [] : ['沒有任何審查軸'])].join('；')}`, missing: [], gate: null, findings: [], dropped: 0, docs: null, recipe: RECIPE, next: '修正 args.recipe／modifiers 後重跑 sdlc-deliver', trace: awfTrace() }
 const reviewed = await pipeline(
   [...AXES, ...EXT.map((e) => ({ key: e.name, ext: e }))],
-  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥0.8 的。`, 'Review')() : awfAgent(`${CTX}\n\n## 派工單（deliver 模式，審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥0.8 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
+  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥${MIN_CONF} 的。`, 'Review')() : awfAgent(`${CTX}\n\n## 派工單（deliver 模式，審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥${MIN_CONF} 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
     { label: `review:${a.key}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS }),
   (r, a) => {
     // 缺件不是「沒有發現」（rules.md 規則 26）：審查軸缺件記下 label，不能當成空清單
-    const { fs, missing: lacking } = takeFindings(r, a.ext ? `ext:${a.key}` : `review:${a.key}`)
+    const { fs, missing: lacking } = takeFindings(r, a.ext ? `ext:${a.key}` : `review:${a.key}`, { minConfidence: MIN_CONF })
     if (!fs) return { axis: a.key, kept: [], dropped: [], missing: lacking }
     if (!fs.length) return { axis: a.key, kept: [], dropped: [] }
     // 反駁缺件：發現全部保留（keepOnMissing，不能當成被推翻），但這一軸沒經過反駁，整段停下
