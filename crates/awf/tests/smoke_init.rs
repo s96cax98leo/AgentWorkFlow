@@ -23,7 +23,7 @@
 //! | `check_upgrade`（含四種 workflow 副本、`--adopt-new-fields`、`--force`） | `upgrade` | 「改過的工具檔換成新版」改成「改過的工具檔保留並列出」；golden-set 沒有對應 |
 //! | `check_force_keeps_values` | `force_keeps_values` | 相同 |
 //! | `check_with_workflows` | `with_workflows` | 相同 |
-//! | （沒有） | `upgrade_real_06_project` | 新增：用 git 取出 0.6.0 的模版、用它的 `init.py` 建專案，再用 `awf init --upgrade`（原樣、改過工具、`--hooks project`、有 merge gate 四種）；沒有 git、python3 或那個 commit 就略過 |
+//! | （沒有） | `upgrade_real_06_project` | 新增：用 git 取出 0.6.0 的模版、照 0.6 的 init 會放的位置擺成專案（`init_06`，不需要 Python），再用 `awf init --upgrade`（原樣、改過工具、`--hooks project`、有 merge gate 四種）；沒有 git、tar 或那個 commit（淺層 clone）就略過並印說明 |
 
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -51,9 +51,10 @@ const REQUIRED: [&str; 10] = [
     ".claude/teams/deliverables/catalog.json",
 ];
 /// 有 `--selftest` 的子指令（0.x 是「tools/ 裡有 --selftest 的 .py」）。`state` 另外處理，見檔頭。
-const SELFTESTS: [&str; 16] = [
+const SELFTESTS: [&str; 17] = [
     "checklist", "cost", "deliverables", "doctor", "kb", "locate", "merge-gate", "pack", "publish", "recipe", "run-brief", "save-run", "script",
     "spec", "sync-branch", "watch",
+    "scrub",
 ];
 /// 0.6.0 的 merge commit（`plugin/legacy-tools.json` 的 `revs` 也是它）。
 const REV_06: &str = "f98ae6ae4ffface0cf09a97273ef8473dd4de828";
@@ -903,42 +904,186 @@ fn with_workflows() {
     assert!(r.code == 0 && n == WORKFLOWS.len() && r.stdout.contains("覆寫檔"), "--upgrade 動到了覆寫檔：\n{}", r.all());
 }
 
-/// 取出 0.6.0 的模版；沒有 git、tar 或那個 commit 回 None。
+/// 取出 0.6.0 的模版（`scaffold/`、`plugin/hooks/`、版本檔、`workflow.config.example`）；沒有 git、tar 或那個 commit（淺層 clone）回 None。
 fn checkout_06(w: &Work) -> Option<PathBuf> {
-    let git = which("git")?;
-    let tar = which("tar")?;
+    let git = which("git").or_else(|| which("git.exe"))?;
+    let tar = which("tar").or_else(|| which("tar.exe"))?;
     let r = root();
     if exec(s(&git), &["cat-file", "-e", &format!("{REV_06}^{{commit}}")], &r, &[], None).code != 0 {
         return None;
     }
     let ar = w.0.join("v06.tar");
-    if exec(s(&git), &["archive", "--format=tar", "-o", s(&ar), REV_06], &r, &[], None).code != 0 {
+    let paths = ["scaffold", "plugin/hooks", "plugin/.claude-plugin/plugin.json", "workflow.config.example"];
+    let mut argv = vec!["archive", "--format=tar", "-o", s(&ar), REV_06];
+    argv.extend(paths);
+    if exec(s(&git), &argv, &r, &[], None).code != 0 {
         return None;
     }
     let d = w.dir("template-0.6");
-    (exec(s(&tar), &["-xf", s(&ar), "-C", s(&d)], &w.0, &[], None).code == 0 && d.join("init.py").is_file()).then_some(d)
+    (exec(s(&tar), &["-xf", s(&ar), "-C", s(&d)], &w.0, &[], None).code == 0 && d.join("scaffold/.claude/teams/tools/save_run.py").is_file()).then_some(d)
 }
 
-/// 真的 0.6.0 專案（用 0.6.0 的 `init.py` 建）升級到 1.0：原樣、改過工具、`--hooks project`、有 merge gate。
+/// 0.6 的 `read_kv`：`KEY=value` 逐行（保留順序），值兩端的雙引號各去一個。
+fn kv_06(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in text.trim_start_matches('\u{feff}').lines() {
+        let Some((k, v)) = line.split_once('=') else { continue };
+        if k.is_empty() || !k.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
+            continue;
+        }
+        let v = v.strip_prefix('"').unwrap_or(v);
+        let v = v.strip_suffix('"').unwrap_or(v);
+        match out.iter_mut().find(|(key, _)| key == k) {
+            Some(e) => e.1 = v.to_string(),
+            None => out.push((k.to_string(), v.to_string())),
+        }
+    }
+    out
+}
+
+/// 0.6 的 `Writer.render`：有值的佔位符換掉（`.json` 檔裡換成 JSON 跳脫過的值；`raw` 的兩個是算好的片段，原樣放），沒有值的原樣留著。
+fn render_06(text: &str, vals: &[(String, String)], raw: &[&str], as_json: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("{{") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let n = after.chars().take_while(|c| c.is_ascii_uppercase() || *c == '_').count();
+        let val = (n > 0 && after[n..].starts_with("}}")).then(|| vals.iter().find(|(k, _)| k == &after[..n])).flatten();
+        match val {
+            Some((k, v)) => {
+                if as_json && !raw.contains(&k.as_str()) {
+                    let q = serde_json::to_string(v).unwrap();
+                    out.push_str(&q[1..q.len() - 1]);
+                } else {
+                    out.push_str(v);
+                }
+                rest = &after[n + 2..];
+            }
+            None => {
+                out.push_str("{{");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 寫檔並沿用來源檔的權限（0.6 的 init 用 `shutil.copymode`）。
+fn put_06(src: &Path, dst: &Path, bytes: &[u8]) {
+    std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+    std::fs::write(dst, bytes).unwrap();
+    if let Ok(m) = std::fs::metadata(src) {
+        let _ = std::fs::set_permissions(dst, m.permissions());
+    }
+}
+
+/// 把 0.6.0 的模版擺成專案，位置與內容照 0.6.0 的 `init.py --target <t> --config workflow.config.example`
+/// （`--hooks plugin|project`、有沒有 `--with-merge-gate`）：
+/// - `scaffold/` 逐檔複製：`_runs/` 放到 RUNS_DIR、去掉 `.tmpl`、沒有 `--with-mcp` 時 `.mcp.json` 變成 `.mcp.json.example`、
+///   settings 依 hooks 模式二選一、merge gate CI 要 `--with-merge-gate` 才放；UTF-8 的檔換佔位符。
+/// - `--hooks project`：`plugin/hooks/`（`hooks.json` 除外）原樣複製到 `.claude/hooks/`。
+/// - `VERSION`、`workflow.config`（這次的佔位符值）、`methodology.json`（內建 default 加上分支前綴）、BRIEFS_DIR。
+///
+/// 0.6 的 init 最後跑的 `build.py` 只處理 `.claude/workflows/` 的覆寫檔，這裡沒有放，所以不用做。
+/// 工具檔擺得對不對由升級測試本身驗證：`plugin/legacy-tools.json` 的指紋涵蓋佔位符換過的內容，擺錯了「原樣的工具全部移除」就不會成立。
+fn init_06(tpl: &Path, t: &Path, hooks_project: bool, merge_gate: bool) {
+    let mut vals = kv_06(&read(&tpl.join("workflow.config.example")));
+    let get = |vals: &[(String, String)], k: &str| vals.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let teams_src = tpl.join("scaffold/.claude/teams");
+    let mut meth = load(&teams_src.join("methodologies/default.json"));
+    let prefix = get(&vals, "BRANCH_PREFIX");
+    if !prefix.is_empty() {
+        meth["conventions"]["branch"]["prefix"] = json!(prefix);
+    }
+    let name = meth["name"].as_str().unwrap_or("default").to_string();
+    if let Some(e) = vals.iter_mut().find(|(k, _)| k == "METHODOLOGY") {
+        e.1 = name;
+    }
+    let record: String = vals.iter().map(|(k, v)| format!("{k}={v}\n")).collect();
+    // hook 的指令：0.6 寫的是跑 init 的那個 Python 的絕對路徑；升級只看「註冊的是 awf_hook.py」，路徑是什麼不影響
+    let script = "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/awf_hook.py\"";
+    let (cmd, shell) = if cfg!(windows) {
+        (format!("& \"C:\\Python312\\python.exe\" {script}"), ", \"shell\": \"powershell\"")
+    } else {
+        (format!("\"/usr/bin/python3\" {script}"), "")
+    };
+    let cmd = serde_json::to_string(&cmd).unwrap();
+    vals.push(("AWF_HOOK_CMD".into(), cmd[1..cmd.len() - 1].to_string()));
+    vals.push(("AWF_HOOK_SHELL".into(), shell.to_string()));
+    let raw = ["AWF_HOOK_CMD", "AWF_HOOK_SHELL"];
+    let runs = get(&vals, "RUNS_DIR");
+    let runs = if runs.is_empty() { "_tpm/runs".to_string() } else { runs.trim_matches('/').to_string() };
+    let skip = |p: &Path| p.components().any(|c| c.as_os_str() == "__pycache__") || p.file_name().is_some_and(|n| n == ".DS_Store");
+
+    let scaffold = tpl.join("scaffold");
+    for src in files(&scaffold) {
+        if skip(&src) {
+            continue;
+        }
+        let r = rel(&scaffold, &src);
+        let mut to = match r.strip_prefix("_runs/") {
+            Some(rest) => format!("{runs}/{rest}"),
+            None => r.clone(),
+        };
+        match r.as_str() {
+            ".github/workflows/agent-merge-gate.yml.tmpl" if !merge_gate => continue,
+            ".claude/settings.json.tmpl" if hooks_project => continue,
+            ".claude/settings.project-hooks.json.tmpl" if !hooks_project => continue,
+            ".claude/settings.project-hooks.json.tmpl" => to = ".claude/settings.json.tmpl".into(),
+            ".mcp.json.tmpl" => to = ".mcp.json.example.tmpl".into(),
+            _ => {}
+        }
+        let to = to.strip_suffix(".tmpl").unwrap_or(&to).to_string();
+        let bytes = std::fs::read(&src).unwrap();
+        let dst = t.join(&to);
+        match String::from_utf8(bytes) {
+            Ok(text) => put_06(&src, &dst, render_06(&text, &vals, &raw, to.ends_with(".json") || to.ends_with(".json.example")).as_bytes()),
+            Err(e) => put_06(&src, &dst, e.as_bytes()),
+        }
+    }
+    if hooks_project {
+        let hooks = tpl.join("plugin/hooks");
+        for src in files(&hooks) {
+            if skip(&src) || src.file_name().is_some_and(|n| n == "hooks.json") {
+                continue;
+            }
+            put_06(&src, &t.join(".claude/hooks").join(src.strip_prefix(&hooks).unwrap()), &std::fs::read(&src).unwrap());
+        }
+    }
+    let briefs = get(&vals, "BRIEFS_DIR");
+    if !briefs.trim_matches('/').is_empty() {
+        std::fs::create_dir_all(t.join(briefs.trim_matches('/'))).unwrap();
+    }
+    let ver = load(&tpl.join("plugin/.claude-plugin/plugin.json"))["version"].as_str().unwrap().to_string();
+    assert_eq!(ver, "0.6.0", "REV_06 應該是 0.6.0");
+    write(&t.join(".claude/teams/VERSION"), &format!("{ver}\n"));
+    write(
+        &t.join(".claude/teams/workflow.config"),
+        &format!("# init.py 這次用的佔位符值（init.py --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\n{record}"),
+    );
+    write(&t.join(".claude/teams/methodology.json"), &format!("{}\n", serde_json::to_string_pretty(&meth).unwrap()));
+}
+
+/// 真的 0.6.0 專案（0.6.0 的模版檔照它的 init 會放的位置擺好，見 [`init_06`]）升級到 1.0：原樣、改過工具、`--hooks project`、有 merge gate。
 #[test]
 fn upgrade_real_06_project() {
     let w = Work::new("real06");
-    let (Some(py), Some(tpl)) = (which("python3"), checkout_06(&w)) else {
-        eprintln!("[略過] 沒有 python3、git、tar 或 0.6.0 的 commit，略過真的 0.6 專案升級");
+    let Some(tpl) = checkout_06(&w) else {
+        eprintln!("[略過] 沒有 git、tar 或 git 歷史裡沒有 0.6.0 的 commit（淺層 clone），略過真的 0.6 專案升級");
         return;
     };
-    let init06 = |t: &Path, extra: &[&str]| {
-        let mut argv = vec![s(&tpl.join("init.py")).to_string(), "--target".into(), s(t).to_string(), "--config".into(), s(&tpl.join("workflow.config.example")).to_string()];
-        argv.extend(extra.iter().map(|x| x.to_string()));
-        let a: Vec<&str> = argv.iter().map(|x| x.as_str()).collect();
-        exec(s(&py), &a, &w.0, &[("PYTHONUTF8", "1"), ("PYTHONDONTWRITEBYTECODE", "1")], None)
+    let init06 = |t: &Path, extra: &[&str]| -> Out {
+        init_06(&tpl, t, extra.contains(&"project"), extra.contains(&"--with-merge-gate"));
+        Out { code: 0, stdout: String::new(), stderr: String::new() }
     };
     let run_json = "{\"stages\": {\"plan\": {\"status\": \"done\"}}}\n";
     let tools_left = |t: &Path| -> Vec<String> { files(&t.join(".claude/teams/tools")).iter().map(|p| rel(t, p)).collect() };
 
     // 1. 原樣的 0.6 專案：工具全部移除、目錄不留；設定與 run 不動
     let t = w.dir("p-pristine");
-    init06(&t, &[]).ok("0.6 init.py");
+    init06(&t, &[]).ok("擺 0.6 專案");
     assert!(t.join(".claude/teams/tools/save_run.py").is_file(), "0.6 的專案應該有 tools/");
     write(&t.join("_tpm/runs/2026-01-01-acme-export/run.json"), run_json);
     let meth_before = read(&t.join(".claude/teams/methodology.json"));
@@ -960,7 +1105,7 @@ fn upgrade_real_06_project() {
 
     // 2. 改過工具、加了自己的工具與權限：改過的保留並列出，自己的不動
     let t = w.dir("p-modified");
-    init06(&t, &[]).ok("0.6 init.py");
+    init06(&t, &[]).ok("擺 0.6 專案");
     let tool = t.join(".claude/teams/tools/save_run.py");
     let body = format!("{}\n# 示範客戶 ACME 的修改\n", read(&tool));
     write(&tool, &body);
@@ -989,7 +1134,7 @@ fn upgrade_real_06_project() {
 
     // 3. --hooks project：舊腳本移除、換成執行檔複本，註冊不留兩份，使用者的 hook 不動
     let t = w.dir("p-hooks");
-    init06(&t, &["--hooks", "project"]).ok("0.6 init.py --hooks project");
+    init06(&t, &["--hooks", "project"]).ok("擺 0.6 專案（--hooks project）");
     assert!(t.join(".claude/hooks/awf_hook.py").is_file(), "0.6 --hooks project 應該有 .claude/hooks/awf_hook.py");
     let sp = t.join(".claude/settings.json");
     let mut st = load(&sp);
@@ -1016,7 +1161,7 @@ fn upgrade_real_06_project() {
 
     // 4. 有 merge gate：沒有執行檔就整個停下（什麼都不動）；給了就更新 yml 並放兩個檔
     let t = w.dir("p-gate");
-    init06(&t, &["--with-merge-gate"]).ok("0.6 init.py --with-merge-gate");
+    init06(&t, &["--with-merge-gate"]).ok("擺 0.6 專案（--with-merge-gate）");
     let ci = t.join(".github/workflows/agent-merge-gate.yml");
     assert!(read(&ci).contains("merge_gate.py"), "0.6 的 CI 跑 merge_gate.py");
     if !root().join("plugin/bin/awf-linux-x64").is_file() {

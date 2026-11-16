@@ -3,6 +3,7 @@
 //! 原本是 0.x 的 Python 工具 `check_agents.py`；訊息文字是對跑基準的一部分（`tests/parity/tools.expected.json`）。
 //!
 //! 找 agents 目錄的順序：`--agents-dir <dir>` → `--plugin-dir <dir>/agents` → 環境變數 AWF_PLUGIN_DIR、CLAUDE_PLUGIN_ROOT 的 agents/
+//! → [`crate::template::find`] 找到的 plugin 的 agents/（只裝 plugin、專案沒有 `.claude/agents` 的情況；見 [`pick_plugin`]）
 //! → 專案 `.claude/agents`。skill 會在這些地方找：plugin 的 skills/、agents 目錄旁的 skills/、專案 `.claude/skills`、`~/.claude/skills`、內建。
 //! 檢查 plugin 的 agents 時做雙向比對（少了或多出沒登記的 tpm-*／dev-* 都算錯），並核對守門那一邊的常數
 //! （[`crate::config::RESERVED_ROLES`]、[`crate::config::RECORD_ONLY_ROLES`]）：CORE 與 ALIASES 都要在 RESERVED_ROLES 裡、
@@ -372,10 +373,16 @@ fn check(argv: &[String], claude: &str, env_plugin: Option<&str>, home: &str) ->
     Ok((1, format!("{}\n", errs.join("\n"))))
 }
 
-/// 回（exit code，stdout，stderr）；plugin 目錄與家目錄取自環境變數。
+/// 沒有明確參數時用哪個 plugin 目錄：環境變數（AWF_PLUGIN_DIR 先、再 CLAUDE_PLUGIN_ROOT；有設就用，和以前相同）→
+/// 模版的解析結果（`found`，底下要真的有 `agents/` 才算）。都沒有回 None，由呼叫端退回專案的 `.claude/agents`。
+pub fn pick_plugin(env: &dyn Fn(&str) -> Option<String>, found: Option<String>) -> Option<String> {
+    env("AWF_PLUGIN_DIR").or_else(|| env("CLAUDE_PLUGIN_ROOT")).or_else(|| found.filter(|p| is_dir(&join(p, "agents"))))
+}
+
+/// 回（exit code，stdout，stderr）；plugin 目錄與家目錄取自環境變數，環境變數沒設時用模版的解析結果。
 pub fn run_captured(argv: &[String], claude: &str) -> (i32, String, String) {
     let env = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
-    let env_plugin = env("AWF_PLUGIN_DIR").or_else(|| env("CLAUDE_PLUGIN_ROOT"));
+    let env_plugin = pick_plugin(&env, crate::template::find_str());
     let home = env(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_else(|| "/".into());
     run_with(argv, claude, env_plugin.as_deref(), &home.replace('\\', "/"))
 }
@@ -420,6 +427,25 @@ mod tests {
         assert_eq!(block("\n### 執行紀錄\nA\n#### 小\nB\n## 下", "### 執行紀錄", stop_h2_plus), Some("\nA\n"));
         assert_eq!(name_tokens("Read, agent-workflow:tpm-team  x_1"), vec!["Read", "agent-workflow:tpm-team", "x_1"]);
         assert!(has_skill_word("Read, Skill") && !has_skill_word("Skills") && !has_skill_word("MySkill"));
+    }
+
+    /// 沒有明確參數時：環境變數 → 模版解析到的 plugin（要有 agents/）→ 都沒有（退回專案的 .claude/agents）。
+    #[test]
+    fn plugin_fallback_order() {
+        let base = std::env::temp_dir().join(format!("awf-agents-pick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("with/agents")).expect("mkdir");
+        std::fs::create_dir_all(base.join("without")).expect("mkdir");
+        let p = |n: &str| base.join(n).to_string_lossy().replace('\\', "/");
+        let none = |_: &str| None;
+        assert_eq!(pick_plugin(&none, Some(p("with"))), Some(p("with")), "只裝 plugin：用模版解析到的");
+        assert_eq!(pick_plugin(&none, Some(p("without"))), None, "解析到的目錄沒有 agents/：退回專案");
+        assert_eq!(pick_plugin(&none, None), None);
+        let env = |k: &str| (k == "CLAUDE_PLUGIN_ROOT").then(|| "/env/plugin".to_string());
+        assert_eq!(pick_plugin(&env, Some(p("with"))), Some("/env/plugin".into()), "環境變數先於模版解析");
+        let both = |k: &str| Some(format!("/{k}"));
+        assert_eq!(pick_plugin(&both, None), Some("/AWF_PLUGIN_DIR".into()));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// 守門那一邊的常數和這裡一致（執行時也會核對；這裡讓不一致在 `cargo test` 就失敗）。

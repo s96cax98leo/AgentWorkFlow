@@ -9,7 +9,13 @@
 //! - JSON 解析見 `pyjson`（NaN、巢狀過深當成讀不到）；整數只收 ASCII 數字。
 //! - hunk 標頭只收 ASCII 數字，行數超過 64 位元當成解析不了（hold）。
 //!
-//! 私有的重複實作（等 save-run 移植後換成它的函式）：`recipe_tamper_errors`、`load_profile_for`。
+//! 私有的重複實作：`recipe_tamper_errors`、`load_profile_for`（對應 `save_run::recipe_tamper_errors`、`save_run::load_profile`）。
+//! 判定規則相同，但兩份不是逐案例相同，所以沒有併成一份：
+//! - 讀 profile 的 JSON：save_run 多擋「落單的代理字元跳脫」與「超出 64 位元的整數」（`save_run::py::loads`），這裡用 `pyjson::loads` 不擋。
+//! - 形狀不對的 run.json（缺 `resolved`、`build_kinds` 的項目不是字串…）：save_run 照 Python 的例外類別回錯，這裡是 `Crash`，訊息文字不同
+//!   （兩邊都不放行）。
+//! - 相對路徑：save_run 以 `Ctx::cwd` 為基準，這裡的路徑在呼叫前已經接上專案目錄。
+//! 要併的話以 save_run 那份為準（只會更嚴），並逐項更新 `tests/parity/gates.expected.json` 受影響的案例。
 
 pub mod pyargs;
 pub mod pyjson;

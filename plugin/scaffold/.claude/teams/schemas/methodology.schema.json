@@ -485,6 +485,19 @@
           "additionalProperties": false
         }
       }
+    },
+    "scrub": {
+      "type": "object",
+      "description": "選填：去客戶化掃描（awf scrub）。要不要掃、規則、範圍、時機都由專案決定；沒寫或 enabled 不是 true＝完全不掃",
+      "properties": {
+        "enabled": {"type": "boolean", "description": "預設 false。開了之後 awf scrub 才會掃"},
+        "terms": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "直接寫在這裡的規則，一條一個正規式。這份檔會進版控，真實名稱請放 terms_files 指到的本機檔"},
+        "terms_files": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "規則檔（相對專案根目錄；一行一個正規式，# 開頭是註解）。可以是 gitignore 的本機檔，不存在就略過並提示"},
+        "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "只掃這些路徑（glob，相對被掃的 repo）；沒寫＝全部"},
+        "exclude": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "略過這些路徑（glob）"},
+        "when": {"type": "array", "items": {"enum": ["publish"]}, "description": "自動跑的時機：publish＝awf publish 推送前掃要推的檔，命中就不推。空的＝只在人手動跑 awf scrub 時掃"}
+      },
+      "additionalProperties": false
     }
   }
 }

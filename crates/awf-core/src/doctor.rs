@@ -7,6 +7,8 @@
 //! - 沒有 `python` 這一項：執行檔不需要 Python。
 //! - 沒有 `hooks-compile` 這一項：那是「hook 的 .py 編譯得過」，hook 改註冊成執行檔之後換成執行檔的檢查。
 //!
+//! 1.0 加的體檢五項（`models`、`kb`、`openspec`、`requirements-outside`、`runs`）只提示：level 只有 info 或 warn、都附修法、沒事時不列。
+//!
 //! 訊息裡的指令已改成 `awf <子指令>`（`awf init --upgrade`、`awf next`），基準檔的對應字串一起換過。
 
 use crate::kb::pyish;
@@ -420,6 +422,159 @@ fn check_overrides(env: &Env, plugin: Option<&str>) -> Part {
     Ok(out)
 }
 
+// ------------------------------------------------------------------ 體檢（只提示、附修法）
+//
+// 下面五項看的是「設定能用，但可能不是你要的」：一律是說明或注意，不會讓 doctor 判失敗。
+// 沒事的時候不列項目（不佔版面）；每一項自己出錯只會變成一筆「有一項檢查自己出錯了」。
+
+/// 專案的 profile（讀不懂回 None：那是 `check_config` 的事）。
+fn profile_of(env: &Env) -> Option<Value> {
+    load_json(&pyish::pjoin(&env.teams(), "methodology.json")).filter(Value::is_object)
+}
+
+fn guard_of(env: &Env) -> Option<Value> {
+    load_json(&pyish::pjoin(&env.teams(), "guard.config.json")).filter(Value::is_object)
+}
+
+fn text_at<'a>(v: Option<&'a Value>, keys: &[&str]) -> &'a str {
+    let mut cur = v;
+    for k in keys {
+        cur = cur.and_then(|c| c.get(k));
+    }
+    cur.and_then(Value::as_str).unwrap_or("")
+}
+
+/// 1. `models.mode` 是 inherit（或沒有 `models`）：每個 agent 都用主對話的模型。
+fn check_models(env: &Env) -> Part {
+    let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
+    let models = prof.get("models").filter(|m| m.is_object());
+    let mode = text_at(models, &["mode"]);
+    if models.is_some() && mode != "inherit" {
+        return Ok(Vec::new());
+    }
+    let why = if models.is_none() { "methodology.json 沒有 models" } else { "models.mode 是 inherit" };
+    Ok(vec![item(
+        "models",
+        INFO,
+        format!("{why}：每個 agent 都用主對話的模型，定位、整理這類輕的工作也一樣，成本比分級高"),
+        "想省成本：把 models.mode 改成 auto（輕的工作用較小的模型，審查與合併有下限，不會降）；沒有 models 時先跑 awf init --target <這個專案> --upgrade --adopt-new-fields。欄位說明見 docs/自訂與擴充.md",
+    )])
+}
+
+/// 2. 知識庫沒建：`<knowledge.dir>/kb.sqlite` 不存在。
+fn check_kb(env: &Env) -> Part {
+    let prof = profile_of(env);
+    let dir = text_at(prof.as_ref(), &["knowledge", "dir"]);
+    let dir = if dir.is_empty() { crate::kb::DEFAULT_DIR } else { dir };
+    let full = if pyish::is_abs(dir) { dir.to_string() } else { pyish::pjoin(&env.project, dir) };
+    if is_file(&pyish::pjoin(&full, "kb.sqlite")) {
+        return Ok(Vec::new());
+    }
+    Ok(vec![item(
+        "kb",
+        INFO,
+        format!("知識庫還沒建（{dir}/kb.sqlite 不存在）：agent 查不到「哪個檔的哪幾行」，會直接讀整份文件"),
+        "在專案根目錄跑 awf kb build（之後文件有改再跑一次，只會重建改過的）；要索引哪些檔在 methodology.json 的 knowledge.sources 設定",
+    )])
+}
+
+/// 生效的需求來源：guard.config.json 的 `requirements` 有設 path／command 時以它為準，否則看 profile 的。回（source, path）。
+fn requirements_of(env: &Env) -> (String, String) {
+    let (guard, prof) = (guard_of(env), profile_of(env));
+    let g = guard.as_ref().and_then(|g| g.get("requirements")).filter(|r| r.is_object());
+    let p = prof.as_ref().and_then(|p| p.get("requirements")).filter(|r| r.is_object());
+    let set = |r: Option<&Value>| !text_at(r, &["path"]).is_empty() || !text_at(r, &["command"]).is_empty();
+    let pick = if set(g) { g } else { p };
+    (text_at(pick, &["source"]).to_string(), text_at(pick, &["path"]).to_string())
+}
+
+/// 3. 專案有 `openspec/`，但需求來源不是 openspec。
+fn check_openspec(env: &Env) -> Part {
+    if !is_dir(&pyish::pjoin(&env.project, "openspec")) {
+        return Ok(Vec::new());
+    }
+    let (source, _) = requirements_of(env);
+    if source == "openspec" {
+        return Ok(Vec::new());
+    }
+    let now = if source.is_empty() { "沒有設定".to_string() } else { format!("是 {source}") };
+    Ok(vec![item(
+        "openspec",
+        INFO,
+        format!("專案有 openspec/ 目錄，但需求來源（requirements.source）{now}：合併閘門對照需求時不會讀 openspec 的規格"),
+        "要以 openspec 的規格當需求來源：把 methodology.json 的 requirements.source 設成 openspec（guard.config.json 有設 requirements 時改那一份）。只是剛好有這個目錄、不打算用就不用理",
+    )])
+}
+
+/// 路徑（已經是 `/` 分隔、正規化過）在不在 `base` 底下。
+fn under(path: &str, base: &str) -> bool {
+    let b = base.trim_end_matches('/');
+    !b.is_empty() && (path == b || path.starts_with(&format!("{b}/")))
+}
+
+/// 4. 需求來源指到工作區外，但 guard.config.json 的 `linked_repos` 沒有涵蓋它。
+fn check_requirements_outside(env: &Env) -> Part {
+    let (_, raw) = requirements_of(env);
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let norm = |p: &str| pyish::ppath(&pyish::normpath(&p.replace('\\', "/")));
+    let home_rel = raw.strip_prefix("~/").map(|rest| pyish::pjoin(&std::env::var("HOME").unwrap_or_default(), rest));
+    let full = match &home_rel {
+        Some(p) => norm(p),
+        None if pyish::is_abs(&raw.replace('\\', "/")) => norm(&raw),
+        None => norm(&pyish::pjoin(&env.project, &raw)),
+    };
+    let project = norm(&env.project);
+    if under(&full, &project) {
+        return Ok(Vec::new());
+    }
+    let guard = guard_of(env);
+    let linked: Vec<String> = guard.as_ref().and_then(|g| g.get("linked_repos")).and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(|l| if pyish::is_abs(&l.replace('\\', "/")) { norm(l) } else { norm(&pyish::pjoin(&env.project, l)) }).collect())
+        .unwrap_or_default();
+    if linked.iter().any(|l| under(&full, l)) {
+        return Ok(Vec::new());
+    }
+    Ok(vec![item(
+        "requirements-outside",
+        WARN,
+        format!("需求來源（requirements.path＝{raw}）在這個專案的工作區外，guard.config.json 的 linked_repos 沒有涵蓋它：agent 讀寫那個位置不受這裡的規則管，換一台機器也可能找不到"),
+        "那是我方的另一個 repo：把它的路徑加進 guard.config.json 的 linked_repos。只是放錯位置：把需求檔搬進專案，requirements.path 改成相對路徑",
+    )])
+}
+
+/// 5. 最近的 run 沒有狀態機的痕跡（run.json 沒有 `awf` 鍵）：流程是手動排的。
+fn check_recent_runs(env: &Env) -> Part {
+    const RECENT: usize = 3;
+    let guard = guard_of(env);
+    let runs = text_at(guard.as_ref(), &["runs_dir"]);
+    let runs = if runs.is_empty() { "_tpm/runs" } else { runs };
+    let dir = if pyish::is_abs(runs) { runs.to_string() } else { pyish::pjoin(&env.project, runs) };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(Vec::new()) };
+    let mut names: Vec<String> = rd.flatten().filter(|e| e.path().join("run.json").is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    // run 目錄以日期開頭：依名稱倒排就是由新到舊（不看修改時間，結果才可重現）
+    names.sort();
+    names.reverse();
+    names.truncate(RECENT);
+    let mut manual: Vec<String> = Vec::new();
+    for n in &names {
+        match load_json(&pyish::pjoin(&pyish::pjoin(&dir, n), "run.json")) {
+            Some(Value::Object(o)) if !o.contains_key("awf") => manual.push(n.clone()),
+            _ => {} // 有 awf 鍵，或讀不懂（不是這一項要管的）
+        }
+    }
+    if manual.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(vec![item(
+        "runs",
+        INFO,
+        format!("最近 {} 個 run 裡有 {} 個不是由 awf next 排的（run.json 沒有 awf 的紀錄）：{}。手動排段容易漏掉備資料包、續跑與政策核准", names.len(), manual.len(), manual.join("、")),
+        "之後的需求改用 /agent-workflow:sdlc（或 awf start 開 run、每段 awf next → 照做 → awf done）；進行中的 run 可以直接 awf next <run 目錄> 接手。閘門與核准紀錄不受影響",
+    )])
+}
+
 // ------------------------------------------------------------------ 主流程
 pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> Vec<Item> {
     let mut out = check_env(which);
@@ -447,7 +602,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 5] = [&|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin)];
+    let parts: [&dyn Fn() -> Part; 10] = [
+        &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
+        &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
+    ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查
         match part() {
@@ -718,6 +876,78 @@ fn selftest_in(root: &Path) -> i32 {
         ov.iter().map(|i| i.id.as_str()).collect::<Vec<_>>() == ["override", "override", "override-old"] && ov[0].level == WARN && ov[1].level == INFO && ov[2].msg.contains("sdlc-build.js"),
         format!("{ov:?}"),
     );
+
+    // ── 體檢五項：只提示（info／warn）、都附修法、沒事時不列
+    let health = ["models", "kb", "openspec", "requirements-outside", "runs"];
+    let guard_ok = json!({"runs_dir": "_tpm/runs"});
+    let set_prof = |edit: &dyn Fn(&mut Value)| {
+        let mut m = good.clone();
+        edit(&mut m);
+        w("proj/.claude/teams/methodology.json", &m.to_string());
+    };
+    set_prof(&|_| {});
+    w("proj/.claude/teams/guard.config.json", &guard_ok.to_string());
+    let r = doctor();
+    let kb = find(&r, "kb");
+    check("體檢：知識庫沒建 → 說明，修法是 awf kb build", kb.level == INFO && kb.fix.contains("awf kb build"), format!("{r:?}"));
+    w("proj/_tpm/kb/kb.sqlite", "x");
+    let r = doctor();
+    check("體檢：都沒事時五項都不列", !ids(&r, None).iter().any(|i| health.contains(&i.as_str())), format!("{r:?}"));
+    set_prof(&|m| m["knowledge"] = json!({"dir": "notes/kb"}));
+    check("體檢：知識庫的位置照 profile 的 knowledge.dir", find(&doctor(), "kb").msg.contains("notes/kb"), String::new());
+    set_prof(&|m| m["models"]["mode"] = json!("inherit"));
+    w("proj/_tpm/kb/kb.sqlite", "x");
+    let r = doctor();
+    let mo = find(&r, "models");
+    check("體檢：models.mode 是 inherit → 說明，修法提到 auto", mo.level == INFO && mo.fix.contains("auto") && !ids(&r, None).contains(&"kb".to_string()), format!("{r:?}"));
+    set_prof(&|m| {
+        if let Some(o) = m.as_object_mut() {
+            o.shift_remove("models");
+        }
+    });
+    check("體檢：沒有 models（等同 inherit）→ 說明", find(&doctor(), "models").msg.contains("沒有 models"), String::new());
+    set_prof(&|_| {});
+    let _ = std::fs::create_dir_all(root.join("proj/openspec/specs"));
+    let r = doctor();
+    let os = find(&r, "openspec");
+    check("體檢：有 openspec/ 但需求來源不是 openspec → 說明", os.level == INFO && os.msg.contains("json") && !os.fix.is_empty(), format!("{r:?}"));
+    set_prof(&|m| m["requirements"]["source"] = json!("openspec"));
+    check("體檢：需求來源已經是 openspec → 不列（只比字串，schema 收不收是另一項的事）", !ids(&doctor(), None).contains(&"openspec".to_string()), String::new());
+    let _ = std::fs::remove_dir_all(root.join("proj/openspec"));
+    set_prof(&|m| m["requirements"]["path"] = json!("../shared/requirements.json"));
+    let r = doctor();
+    let ro = find(&r, "requirements-outside");
+    check("體檢：需求來源在工作區外、linked_repos 沒涵蓋 → 注意，修法提到 linked_repos", ro.level == WARN && ro.fix.contains("linked_repos"), format!("{r:?}"));
+    w("proj/.claude/teams/guard.config.json", &json!({"runs_dir": "_tpm/runs", "linked_repos": [p("shared")]}).to_string());
+    check("體檢：linked_repos 涵蓋了 → 不列", !ids(&doctor(), None).contains(&"requirements-outside".to_string()), String::new());
+    w("proj/.claude/teams/guard.config.json", &json!({"runs_dir": "_tpm/runs", "requirements": {"source": "json", "path": "specs/requirements.json"}}).to_string());
+    check("體檢：guard.config.json 的 requirements 有設時以它為準（在專案裡 → 不列）", !ids(&doctor(), None).contains(&"requirements-outside".to_string()), String::new());
+    set_prof(&|m| m["requirements"]["path"] = json!("specs/requirements.json"));
+    w("proj/.claude/teams/guard.config.json", &guard_ok.to_string());
+    check("體檢：需求來源在專案裡 → 不列", !ids(&doctor(), None).contains(&"requirements-outside".to_string()), String::new());
+    set_prof(&|_| {});
+    w("proj/_tpm/runs/2026-01-01-acme-a/run.json", &json!({"stages": {}}).to_string());
+    w("proj/_tpm/runs/2026-01-02-acme-b/run.json", &json!({"stages": {}, "awf": {"pending": "design"}}).to_string());
+    w("proj/_tpm/runs/2026-01-03-acme-c/run.json", &json!({"stages": {}, "awf": {}}).to_string());
+    w("proj/_tpm/runs/2026-01-04-acme-d/run.json", &json!({"stages": {}, "awf": {}}).to_string());
+    check("體檢：最近三個 run 都有 awf 的紀錄 → 不列（更舊的不看）", !ids(&doctor(), None).contains(&"runs".to_string()), String::new());
+    w("proj/_tpm/runs/2026-01-05-acme-e/run.json", &json!({"stages": {}}).to_string());
+    w("proj/_tpm/runs/2026-01-06-acme-f/run.json", "{壞掉");
+    let r = doctor();
+    let ru = find(&r, "runs");
+    check(
+        "體檢：最近的 run 沒有 awf 的紀錄 → 說明，列出是哪一個、修法提到 awf next；讀不懂的 run.json 不算",
+        ru.level == INFO && ru.msg.contains("2026-01-05-acme-e") && !ru.msg.contains("acme-a") && !ru.msg.contains("acme-f") && ru.fix.contains("awf next"),
+        format!("{r:?}"),
+    );
+    check("體檢：五項都不會是問題，exit code 不受影響", !r.iter().any(|i| i.level == ERR), format!("{r:?}"));
+    w("proj/.claude/teams/guard.config.json", "{壞掉");
+    w("proj/.claude/teams/methodology.json", "[1, 2]");
+    let r = doctor();
+    check("體檢：設定讀不懂時五項不出錯（由設定那一項報）", !ids(&r, None).contains(&"doctor".to_string()) && ids(&r, Some(ERR)).contains(&"methodology".to_string()), format!("{r:?}"));
+    let _ = std::fs::remove_dir_all(root.join("proj/_tpm/runs"));
+    set_prof(&|_| {});
+    w("proj/.claude/teams/guard.config.json", &guard_ok.to_string());
 
     // ── 不改檔、可以輸出 JSON
     fn snapshot(d: &Path, out: &mut Vec<(String, u64)>) {

@@ -1,9 +1,8 @@
 //! SessionStart 的版本提示：plugin 版本和專案 `.claude/teams/VERSION` 不一致時印一行 JSON。
 //! 只是提示，不是守門：永遠 exit 0；沒套用的專案、讀不到版本、輸入壞掉、任何失敗都不印任何東西。
 //!
-//! plugin 目錄：0.x 的 Python 版是「腳本所在目錄的上一層」。執行檔沒有這個關係，依序看
-//! `CLAUDE_PLUGIN_ROOT`、`AWF_PLUGIN_DIR`、執行檔所在目錄的上一層（`<plugin>/bin/awf`）。
-//! 找不到 `.claude-plugin/plugin.json`（例如複製進專案的 hook）就不提示。
+//! plugin 目錄由 [`crate::template::find_installed`] 找（`AWF_PLUGIN_DIR`、`CLAUDE_PLUGIN_ROOT`、執行檔所在目錄的上一層，
+//! 只認有 `.claude-plugin/plugin.json` 的）。找不到（例如註冊在專案、執行檔不在 plugin 裡）就不提示。
 
 use super::path;
 use super::py;
@@ -73,13 +72,7 @@ fn env_dir(k: &str) -> Option<String> {
 }
 
 fn plugin_root() -> Option<String> {
-    let mut cands: Vec<String> = ["CLAUDE_PLUGIN_ROOT", "AWF_PLUGIN_DIR"].iter().filter_map(|k| env_dir(k)).collect();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(root) = exe.parent().and_then(|d| d.parent()) {
-            cands.push(root.to_string_lossy().into_owned());
-        }
-    }
-    cands.into_iter().find(|c| path::is_file(&path::join(c, ".claude-plugin/plugin.json")))
+    crate::template::find_installed().map(|p| p.to_string_lossy().into_owned())
 }
 
 pub fn run() -> i32 {

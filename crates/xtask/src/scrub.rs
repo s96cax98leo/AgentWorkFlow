@@ -7,13 +7,14 @@
 //! 任何命中就以 1 退出，並列出「檔案:行號:內容」。排除 .git、__pycache__、node_modules、根目錄的本機目錄
 //! （_tpm、graft、.claude、.idea、Rust 的建置產物 target）、兩份掃描清單本身與二進位檔。
 //!
+//! 讀規則、走目錄、逐行比對的邏輯在 [`awf_core::scrub`]（專案用的 `awf scrub` 是同一套）；這裡只決定規則檔、略過哪些目錄與輸出格式。
+//!
 //! 和 0.x 的 Python 版不同的地方（都只會更嚴，不會更鬆）：
 //!   - 清單裡 Rust 編不過的規則：明確報錯、exit 1，不略過。錯誤訊息只寫檔名與行號，不印規則內容。
-//!   - 正規式的差異由 [`crate::termre`] 逐條改寫；路徑名結尾有換行時多比一次。
+//!   - 正規式的差異由 [`awf_core::termre`] 逐條改寫；路徑名結尾有換行時多比一次。
 //!   - 指定的路徑是 repo 以外的絕對路徑：0.x 的 Python 版當掉（traceback），這裡印一行說明，exit code 同樣是 1。
 
-use crate::termre::{self, Pat};
-use awf_core::merge_gate::pyutil;
+use awf_core::scrub::{is_binary, match_lines, match_name, parse_terms, shown_of, walk_dir, Entry, Rule};
 use std::path::{Path, PathBuf};
 
 const TERMS_NAME: &str = "scrub_terms.txt";
@@ -23,7 +24,7 @@ const SKIP_DIRS: &[&str] = &[".git", "__pycache__", "node_modules"];
 const LOCAL_ROOT_DIRS: &[&str] = &["_tpm", "graft", ".claude", ".idea", "target"];
 
 /// 讀兩份清單；回 `Err((exit code, stderr 的文字))`。
-fn load_patterns(root: &Path) -> Result<Vec<Pat>, (i32, String)> {
+fn load_patterns(root: &Path) -> Result<Vec<Rule>, (i32, String)> {
     let terms = root.join("tests").join(TERMS_NAME);
     if !terms.is_file() {
         return Err((2, format!("找不到掃描清單：{}\n", terms.display())));
@@ -36,70 +37,11 @@ fn load_patterns(root: &Path) -> Result<Vec<Pat>, (i32, String)> {
         }
         let text = std::fs::read(&f).ok().and_then(|b| String::from_utf8(b).ok())
             .ok_or_else(|| (1, format!("掃描清單 tests/{name} 讀不到或不是 UTF-8\n")))?;
-        let text = pyutil::universal_newlines(&text);
-        for (i, line) in pyutil::splitlines(&text).into_iter().enumerate() {
-            if pyutil::strip(line).is_empty() || line.trim_start_matches(pyutil::is_py_space).starts_with('#') {
-                continue;
-            }
-            match termre::compile(line) {
-                Ok(p) => pats.push(p),
-                Err(why) => {
-                    return Err((1, format!("掃描清單 tests/{name} 第 {} 行的規則編不過（{why}）；規則不能略過，請改寫這一行\n", i + 1)));
-                }
-            }
-        }
+        let rules = parse_terms(&text, &format!("tests/{name}"))
+            .map_err(|(line, why)| (1, format!("掃描清單 tests/{name} 第 {line} 行的規則編不過（{why}）；規則不能略過，請改寫這一行\n")))?;
+        pats.extend(rules);
     }
     Ok(pats)
-}
-
-/// 一個要掃的項目：顯示用的相對路徑、實際路徑、是不是檔案。目錄本身也算一項，用來掃路徑名。
-struct Entry {
-    shown: String,
-    path: PathBuf,
-    is_file: bool,
-}
-
-fn shown_of(rel: &[String]) -> String {
-    if rel.is_empty() { ".".to_string() } else { format!("./{}", rel.join("/")) }
-}
-
-/// 照 `os.walk` 的順序（每層先列子目錄、再列檔案，都依名稱排序，然後才往下走）。
-fn walk_dir(dir: &Path, rel: &[String], out: &mut Vec<Entry>) {
-    let mut dirs: Vec<(String, bool)> = Vec::new();
-    let mut files: Vec<String> = Vec::new();
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        // 和 os.walk 一樣：指向目錄的符號連結列在目錄那一組，但不往下走
-        let is_dir = std::fs::metadata(e.path()).map(|m| m.is_dir()).unwrap_or(false);
-        if is_dir {
-            let is_link = e.file_type().map(|t| t.is_symlink()).unwrap_or(false);
-            dirs.push((name, is_link));
-        } else {
-            files.push(name);
-        }
-    }
-    dirs.retain(|(d, _)| !SKIP_DIRS.contains(&d.as_str()) && !(rel.is_empty() && LOCAL_ROOT_DIRS.contains(&d.as_str())));
-    dirs.sort();
-    files.sort();
-    let child = |name: &str| {
-        let mut r = rel.to_vec();
-        r.push(name.to_string());
-        r
-    };
-    for (d, _) in &dirs {
-        out.push(Entry { shown: shown_of(&child(d)), path: dir.join(d), is_file: false });
-    }
-    for f in &files {
-        if SKIP_DIRS.contains(&f.as_str()) {
-            continue; // worktree 裡的 .git 是檔案
-        }
-        out.push(Entry { shown: shown_of(&child(f)), path: dir.join(f), is_file: true });
-    }
-    for (d, is_link) in &dirs {
-        if !is_link {
-            walk_dir(&dir.join(d), &child(d), out);
-        }
-    }
 }
 
 /// 指令列的一個路徑 →（實際路徑、相對 repo 根目錄的各段）。和 pathlib 一樣丟掉 `.` 與空段、保留 `..`；
@@ -118,10 +60,6 @@ fn resolve_target(root: &Path, arg: &str) -> Option<(PathBuf, Vec<String>)> {
         full.push(p);
     }
     Some((full, rel))
-}
-
-fn is_binary(data: &[u8]) -> bool {
-    data.iter().take(8192).any(|b| *b == 0)
 }
 
 /// 指令本體：`root` 是 repo 根目錄，`argv` 是要掃的路徑（空的就掃整個 repo）。回（exit code、stdout、stderr）。
@@ -154,18 +92,13 @@ pub fn run_captured(root: &Path, argv: &[String]) -> (i32, String, String) {
             entries.push(Entry { shown: shown_of(rel), path: target.clone(), is_file: true });
         } else {
             entries.push(Entry { shown: shown_of(rel), path: target.clone(), is_file: false });
-            walk_dir(target, rel, &mut entries);
+            walk_dir(target, rel, SKIP_DIRS, LOCAL_ROOT_DIRS, &mut entries);
         }
         for e in entries {
-            for pat in &pats {
-                match pat.search_name(&e.shown) {
-                    Ok(true) => {
-                        path_hits.push(e.shown.clone());
-                        break;
-                    }
-                    Ok(false) => {}
-                    Err(msg) => return failed(msg),
-                }
+            match match_name(&pats, &e.shown) {
+                Ok(Some(_)) => path_hits.push(e.shown.clone()),
+                Ok(None) => {}
+                Err(msg) => return failed(msg),
             }
             let name = e.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             if !e.is_file || name == TERMS_NAME || name == LOCAL_TERMS_NAME {
@@ -176,17 +109,9 @@ pub fn run_captured(root: &Path, argv: &[String]) -> (i32, String, String) {
                 continue;
             }
             let text = String::from_utf8_lossy(&data);
-            for (i, line) in pyutil::splitlines(&text).into_iter().enumerate() {
-                for pat in &pats {
-                    match pat.search(line) {
-                        Ok(true) => {
-                            content_hits.push(format!("{}:{}:{line}", e.shown, i + 1));
-                            break;
-                        }
-                        Ok(false) => {}
-                        Err(msg) => return failed(msg),
-                    }
-                }
+            match match_lines(&pats, &text) {
+                Ok(hits) => content_hits.extend(hits.into_iter().map(|(n, _, line)| format!("{}:{n}:{line}", e.shown))),
+                Err(msg) => return failed(msg),
             }
         }
     }

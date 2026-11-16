@@ -20,123 +20,18 @@
 //! 但通過」那一項。兩個驗證器的逐例對照留在 `tests/parity/schema.expected.json`（awf-core 的 schema_parity 測試）。
 //! 範例檔讀不懂、缺 `data`、既沒有 `payload` 也沒有 `schema`：0.x 的 Python 版當掉，這裡算那一例失敗。
 //!
+//! 判定邏輯只有一份，在 [`awf_core::golden`]（`awf golden` 用同一份）；這裡只決定目錄（模版的 `.claude/teams/golden-set`）與輸出格式。
+//!
 //! 用法：`cargo xtask golden [--verbose] [--root <目錄>]`（`--verbose` 每個範例印一行判定）。
 
 use crate::util::{self, Captured};
-use awf_core::schema::{self, Schemas};
-use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// 一個範例的結果。
-pub struct CaseResult {
-    /// `valid` 或 `invalid`。
-    pub kind: &'static str,
-    pub name: String,
-    /// 完整檢查（schema＋語意規則）的錯誤數。
-    pub errors: usize,
-    /// 只算 schema 的錯誤數。
-    pub schema_errors: usize,
-    /// 沒通過的理由（空的＝通過）。
-    pub problems: Vec<String>,
-}
-
-fn json_files(dir: &Path) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "json"))
-        .collect();
-    out.sort();
-    out
-}
-
-fn file_name(p: &Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-}
-
-/// Python 的 list repr（`['a', 'b']`）。
-fn list_repr(items: &[String]) -> String {
-    format!("[{}]", items.iter().map(|s| awf_core::pyfmt::repr_str(s)).collect::<Vec<_>>().join(", "))
-}
-
-fn run_case(teams: &Path, kind: &'static str, name: String, case: &Value) -> CaseResult {
-    let mut res = CaseResult { kind, name, errors: 0, schema_errors: 0, problems: Vec::new() };
-    let mut schemas = Schemas::new(teams);
-    schemas.config_override = case.get("config").and_then(Value::as_object).cloned();
-    let Some(data) = case.get("data") else {
-        res.problems.push("範例沒有 data".into());
-        return res;
-    };
-    let doc = case.get("schema").and_then(Value::as_str);
-    // `"payload": null` 是「只驗信封、payload 不限形狀」；連鍵都沒有才算範例寫錯
-    let (schema, mine) = match (doc, case.get("payload")) {
-        (Some(d), _) => (schemas.doc_schema(d), schemas.check_doc(data, d)),
-        (None, Some(p)) if p.is_null() || p.is_string() => (schemas.compose(p.as_str()), schemas.check(data, p.as_str())),
-        (None, Some(_)) => {
-            res.problems.push("範例的 payload 要是字串或 null".into());
-            return res;
-        }
-        (None, None) => {
-            res.problems.push("範例既沒有 payload 也沒有 schema".into());
-            return res;
-        }
-    };
-    let (schema, mine) = match (schema, mine) {
-        (Ok(s), Ok(m)) => (s, m),
-        (s, m) => {
-            res.problems.extend(s.err());
-            res.problems.extend(m.err());
-            res.problems.dedup();
-            return res;
-        }
-    };
-    let schema_only = schema::validate(data, &schema, "$");
-    res.errors = mine.len();
-    res.schema_errors = schema_only.len();
-    for u in schema::unsupported_keywords(&schema, "$") {
-        res.problems.push(format!("schema 用了驗證器不認得的關鍵字：{u}"));
-    }
-    if let Some(expect) = case.get("expect").and_then(Value::as_str).filter(|e| !e.is_empty()) {
-        if !mine.iter().any(|e| e.contains(expect)) {
-            res.problems.push(format!("錯誤訊息沒有「{expect}」：{}", list_repr(&mine)));
-        }
-    }
-    let want_ok = kind == "valid";
-    if mine.is_empty() != want_ok {
-        res.problems.push(format!("驗證器判 {}：{}", if mine.is_empty() { "通過" } else { "不通過" }, list_repr(&mine)));
-    }
-    let semantic = case.get("semantic").is_some_and(awf_core::pyfmt::truthy);
-    if kind == "invalid" && !semantic && schema_only.is_empty() {
-        res.problems.push("不是語意反例，schema 應該擋但通過（語意反例要標 semantic）".into());
-    }
-    res
-}
+pub use awf_core::golden::CaseResult;
 
 /// 跑全部範例：回每一例的結果，順序同 run.py（valid、invalid、內建 profile、專案 profile）。
 pub fn run_all(root: &Path) -> Vec<CaseResult> {
-    let teams = util::teams_dir(root);
-    let here = teams.join("golden-set");
-    let mut out = Vec::new();
-    let mut one = |kind: &'static str, path: &Path, wrap: bool| {
-        let name = file_name(path);
-        let case = util::read_json(path).map(|v| if wrap { serde_json::json!({"schema": "methodology", "data": v}) } else { v });
-        out.push(match case {
-            Ok(c) => run_case(&teams, kind, name, &c),
-            Err(e) => CaseResult { kind, name, errors: 0, schema_errors: 0, problems: vec![e] },
-        });
-    };
-    for kind in ["valid", "invalid"] {
-        for f in json_files(&here.join(kind)) {
-            one(kind, &f, false);
-        }
-    }
-    for f in json_files(&teams.join("methodologies")) {
-        one("valid", &f, true);
-    }
-    let own = teams.join("methodology.json");
-    if own.is_file() {
-        one("valid", &own, true);
-    }
-    out
+    awf_core::golden::run_all(&util::teams_dir(root).join("golden-set"))
 }
 
 /// 指令本體：`root` 是 repo 根目錄，`args` 是 `--verbose`。
