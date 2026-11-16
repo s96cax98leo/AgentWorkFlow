@@ -526,6 +526,14 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
             }
         }
         let stage = py::s(py::idx(&act, "stage")?);
+        // 中斷回收只認「交出去當時的 session」的 transcript，所以在會回收的那一種動作（SDLC 的 plan 段、標準腳本）記下來。
+        // 認不出 session 就不寫（之後也就不回收）；其他動作的 pending 不變
+        if mark.is_empty() && stage == "plan" && act.get("workflow").and_then(Value::as_str) == Some("sdlc-plan") && data.get("event").and_then(Value::as_str) == Some("sdlc") {
+            let sess = current_session(env).unwrap_or_default();
+            if !sess.is_empty() {
+                pending.insert("session".into(), json!(sess));
+            }
+        }
         let aw = setdefault_obj(&mut data, "awf")?;
         aw.insert("pending".into(), Value::Object(pending));
         if !mark.is_empty() {
