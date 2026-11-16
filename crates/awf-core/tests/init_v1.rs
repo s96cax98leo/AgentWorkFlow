@@ -1043,3 +1043,40 @@ fn e_interactive_init_asks_the_new_topics_last() {
     let _ = std::fs::remove_dir_all(&d);
     let _ = std::fs::remove_dir_all(&d2);
 }
+
+/// `auto_merge.required_checks` 是選填、範本沒有預設鍵：說明文字有寫，但 init 與 `--upgrade` 都不會替專案加這個鍵；
+/// 專案自己列的照舊保留。
+#[test]
+fn e_required_checks_is_documented_but_never_added() {
+    let d = tmp("reqchecks");
+    let p = d.join("proj");
+    let ps = p.to_string_lossy().into_owned();
+    let r = run(&d, None, &["--target", &ps, "--defaults"]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    let guard = p.join(".claude/teams/guard.config.json");
+    let fresh = json_of(&guard);
+    let note = fresh["auto_merge"]["_說明"].as_str().unwrap_or_default().to_string();
+    assert!(note.contains("required_checks"), "說明要提到 required_checks：{note}");
+    assert!(fresh["auto_merge"].get("required_checks").is_none(), "新專案不放這個鍵");
+
+    // 既有專案：說明是舊的、沒有這個鍵 → 升級只換說明，不補鍵
+    let mut old = fresh.clone();
+    old["auto_merge"]["_說明"] = Value::String("舊版的說明".to_string());
+    old["auto_merge"].as_object_mut().expect("auto_merge").remove("allowed_skipped_checks");
+    write(&guard, &serde_json::to_string_pretty(&old).expect("序列化"));
+    let r = run(&d, None, &["--target", &ps, "--upgrade"]);
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    let up = json_of(&guard);
+    assert_eq!(up["auto_merge"]["_說明"], note.as_str(), "說明換成新版");
+    assert_eq!(up["auto_merge"]["allowed_skipped_checks"], serde_json::json!([]), "範本有的新鍵照舊會補");
+    assert!(up["auto_merge"].get("required_checks").is_none(), "升級不會補 required_checks：{}", up["auto_merge"]);
+
+    // 專案自己列了 → 升級保留原值
+    let mut own = up.clone();
+    own["auto_merge"]["required_checks"] = serde_json::json!(["test", "lint"]);
+    write(&guard, &serde_json::to_string_pretty(&own).expect("序列化"));
+    let r = run(&d, None, &["--target", &ps, "--upgrade"]);
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    assert_eq!(json_of(&guard)["auto_merge"]["required_checks"], serde_json::json!(["test", "lint"]));
+    let _ = std::fs::remove_dir_all(&d);
+}
