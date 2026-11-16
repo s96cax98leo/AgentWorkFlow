@@ -74,6 +74,17 @@ impl Guard {
         Ok(false)
     }
 
+    /// Write／Edit 的路徑在某個 repo 的 `.github/workflows/` 底下（CI 檔；照寫的路徑與解開符號連結後的路徑都看）。
+    fn ci_workflow_path(&self, p: &str) -> R<bool> {
+        let mut cands = vec![norm(p)];
+        match path::resolve(&norm(p)) {
+            Ok(r) => cands.push(r),
+            Err(e) if e.class == "FileNotFoundError" || e.class == "OSError" => {}
+            Err(e) => return Err(e.into()),
+        }
+        Ok(cands.iter().any(|c| format!("/{}", fold(c)).contains("/.github/workflows/")))
+    }
+
     fn spec_doc_match(&self, rel: &str) -> bool {
         let repo = if self.repos.is_empty() { String::new() } else { format!("{}[^/]+/", regex::escape(&self.repos)) };
         Re::dynamic(format!(r"^{repo}(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$"), "").is_match(rel)
@@ -143,6 +154,10 @@ impl Guard {
         if has_role && self.team_config_path(&p)? {
             return Err(self.block(&format!("{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/ 底下的檔、methodology.json 或 guard.config.json（不論在哪個目錄；\
 守門設定、profile 與 workflow 腳本只由人或主 session 改）（{}）", shown(&rel))));
+        }
+        if has_role && self.ci_workflow_path(&p)? {
+            return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（不論在哪個 repo；CI 檔決定哪些檢查會跑，只由人或主 session 改，\
+例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）（{}）", shown(&rel))));
         }
         if has_role && super::guard::kg_path(&p) {
             return Err(self.block(&format!("{agent} 不能寫知識圖的檔（graph.db 與 vault，含 vault/notes/；圖只由主 session 跑 awf kg build／export 產生，筆記是人寫的）（{}）", shown(&rel))));

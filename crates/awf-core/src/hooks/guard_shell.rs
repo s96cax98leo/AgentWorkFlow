@@ -103,6 +103,8 @@ re!(TEAM_TOOL_CALL, r#"(?:python[\d.]*|py|pypy[\d.]*)(?:\.exe)?(?:\s+-\S+)*\s+["
 re!(TEAM_CONFIG_MKDIR, r"(?:^|[\s;&|(`])(?:mkdir|md|rmdir)(?:\.exe)?(?=\s|$)", "i");
 re!(MULTI_SLASH, r"(?<![:/])[/\\\\]{2,}");
 re!(TEAMS_REL, r#"(?:^|[\s"'=])\.?[/\\\\]?(?:teams|workflows)(?:[/\\\\]|\s|$)"#);
+re!(CI_TARGET, r#"(?:^|[/\\\s"'=])\.github[/\\]workflows(?:[/\\"']|\s|$)"#, "i");
+re!(CI_REL, r#"(?:^|[\s"'=])\.?[/\\]?workflows(?:[/\\"']|\s|$)"#, "i");
 re!(PUSH_RE, r"\bgit\b.*\b(?:push|send-pack)\b");
 re!(GIT_WORD, r"\bgit\b");
 re!(NO_VERIFY, r"(?:^|\s)--no-verify\b");
@@ -120,7 +122,7 @@ pub fn all_patterns() -> Vec<&'static Re> {
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
-         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &PUSH_RE, &GIT_WORD,
+         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
 }
 
@@ -1002,6 +1004,22 @@ impl Guard {
         Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
     }
 
+    /// shell 寫入某個 repo 的 `.github/workflows/`（CI 檔；盡力而為，判法比照 [`Self::shell_writes_team_config`]）。
+    fn shell_writes_ci(&self, seg: &str, cwd: &str) -> R<bool> {
+        let probe = MULTI_SLASH.replace_all(&norm(seg), "/");
+        let here = match path::resolve(cwd) {
+            Ok(r) => format!("/{}/", fold(&r).trim_matches('/')),
+            Err(e) if e.class == "RuntimeError" || e.class == "ValueError" => return Err(Stop::Err(e)),
+            Err(_) => format!("/{}/", fold(&norm(cwd)).trim_matches('/')),
+        };
+        let inside = here.contains("/.github/workflows/") || (here.ends_with("/.github/") && CI_REL.is_match(&probe));
+        if !inside && !CI_TARGET.is_match(&probe) {
+            return Ok(false);
+        }
+        let probe = NULL_REDIR.replace_all(&probe, " ");
+        Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    }
+
     /// Bash 與 PowerShell 工具共用的 shell 守門規則。
     pub fn check_shell_rules(&self, data: &Value) -> R<()> {
         let ti = tool_input(data)?;
@@ -1171,6 +1189,10 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
             if team && self.shell_writes_team_config(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .claude/teams/、.claude/workflows/、run 目錄的 .wf/、methodology.json 或 guard.config.json\
 （守門設定、profile 與 workflow 腳本只由人或主 session 改）")));
+            }
+            if team && self.shell_writes_ci(seg, d)? {
+                return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（CI 檔決定哪些檢查會跑，只由人或主 session 改，\
+例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）")));
             }
             for (tool_name, sub, tool_re) in [("awf publish", "publish", &PUBLISH_PY), ("awf merge-gate", "merge-gate", &MERGE_GATE_PY)] {
                 let via_awf: Vec<&awf_cli::Call> = awf.iter().filter(|c| c.sub == sub).collect();
