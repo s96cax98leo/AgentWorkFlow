@@ -1027,17 +1027,33 @@ impl Guard {
     /// shell 寫入某個 repo 的 `.github/workflows/`（CI 檔；盡力而為，判法比照 [`Self::shell_writes_team_config`]）。
     fn shell_writes_ci(&self, seg: &str, cwd: &str) -> R<bool> {
         let probe = MULTI_SLASH.replace_all(&norm(seg), "/");
-        let here = match path::resolve(cwd) {
-            Ok(r) => format!("/{}/", fold(&r).trim_matches('/')),
-            Err(e) if e.class == "RuntimeError" || e.class == "ValueError" => return Err(Stop::Err(e)),
-            Err(_) => format!("/{}/", fold(&norm(cwd)).trim_matches('/')),
-        };
+        let here = self.folded_here(cwd)?;
         let inside = here.contains("/.github/workflows/") || (here.ends_with("/.github/") && CI_REL.is_match(&probe));
         if !inside && !CI_TARGET.is_match(&probe) {
             return Ok(false);
         }
         let probe = NULL_REDIR.replace_all(&probe, " ");
         Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    }
+
+    /// 作用目錄解析並摺疊後的路徑（前後帶 `/`）。同一個目錄連續問只解析一次。
+    fn folded_here(&self, cwd: &str) -> R<String> {
+        if let Ok(memo) = self.here_memo.lock() {
+            if let Some((k, v)) = memo.as_ref() {
+                if k == cwd {
+                    return Ok(v.clone());
+                }
+            }
+        }
+        let here = match path::resolve(cwd) {
+            Ok(r) => format!("/{}/", fold(&r).trim_matches('/')),
+            Err(e) if e.class == "RuntimeError" || e.class == "ValueError" => return Err(Stop::Err(e)),
+            Err(_) => format!("/{}/", fold(&norm(cwd)).trim_matches('/')),
+        };
+        if let Ok(mut memo) = self.here_memo.lock() {
+            *memo = Some((cwd.to_string(), here.clone()));
+        }
+        Ok(here)
     }
 
     /// shell 寫入 profile 的 `knowledge.repos` 列的 repo（盡力而為）：這一段作用的目錄在那個 repo 裡，或指令裡有指到它底下的路徑

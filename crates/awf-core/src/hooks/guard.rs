@@ -63,6 +63,9 @@ pub struct Guard {
     kg_repo_paths: Vec<String>,
     /// 解析後的（絕對路徑, 照寫的路徑）；用到才算。
     kg_repos: OnceLock<Vec<(String, String)>>,
+    /// 最近一次解析過的作用目錄（原字串 → 解析並摺疊後、前後帶 `/` 的路徑）。一個指令的每一段多半是同一個目錄，
+    /// 上萬段的長指令不用每段都去問檔案系統。
+    pub(crate) here_memo: std::sync::Mutex<Option<(String, String)>>,
 }
 
 /// `data.get(key) or ""` 當字串用：假值是空字串，字串原樣，其他型別在 Python 會丟例外。
@@ -253,7 +256,7 @@ impl Guard {
         names.sort_by_key(|s| std::cmp::Reverse(s.chars().count()));
         let alt = names.iter().map(|s| regex::escape(s)).collect::<Vec<_>>().join("|");
         let stage_json_fragment = Re::dynamic(format!(r"(?:^|[^\w-])(?:{alt})\W{{0,16}}\.json\b"), "i");
-        Ok(Guard { cfg, ws, runs, repos, am, run_stages, stage_json_fragment, ws_real: OnceLock::new(), kg_repo_paths: bits.knowledge_repos, kg_repos: OnceLock::new() })
+        Ok(Guard { cfg, ws, runs, repos, am, run_stages, stage_json_fragment, ws_real: OnceLock::new(), kg_repo_paths: bits.knowledge_repos, kg_repos: OnceLock::new(), here_memo: std::sync::Mutex::new(None) })
     }
 
     /// 印出擋下的訊息，回傳要結束的狀態（呼叫端 `return Err(g.block(…))`）。
