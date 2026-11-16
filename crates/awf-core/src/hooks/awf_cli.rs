@@ -324,6 +324,13 @@ fn calls_raw(seg: &str, depth: usize, out: &mut Vec<Call>) {
             inner_cmds.push(ic);
         }
     }
+    // shell 不在開頭的（sudo -u root bash -c …、if …; then bash -c …、xargs -I{} bash -c …、find -exec bash -c …）：
+    // 任何位置的 shell 名稱後面有 -c 就把它的指令字串展開。開頭是只把參數當文字的指令（echo、grep…）時不看
+    for ic in hidden_shells(&toks) {
+        if !inner_cmds.contains(&ic) {
+            inner_cmds.push(ic);
+        }
+    }
     let shellish = has(SHELL_NAMES, &name) || has(PS_NESTED_SHELLS, &name) || name == "cmd" || matches!(name.as_str(), "eval" | "invoke-expression" | "iex");
     if !shellish && INTERP.is_match(seg) {
         // python -c、node -e 這類內嵌程式裡提到 awf：看不到它怎麼呼叫
@@ -347,6 +354,66 @@ fn calls_raw(seg: &str, depth: usize, out: &mut Vec<Call>) {
             calls_at(&s, depth + 1, out);
         }
     }
+}
+
+/// shell 選項裡自己帶一個值的（`bash -o pipefail -c …`）。
+const SHELL_VALUE_FLAGS: &[&str] = &["-o", "+o", "-O", "+O", "--rcfile", "--init-file"];
+
+/// `bash [選項] -c [選項] <指令字串> [參數…]`：選項裡有 -c 時，第一個不是選項的參數就是指令字串。
+fn shell_command_arg(args: &[String]) -> Option<&String> {
+    let mut saw_c = false;
+    let mut k = 0;
+    while k < args.len() {
+        let a = args[k].as_str();
+        if a == "--" {
+            return if saw_c { args.get(k + 1) } else { None };
+        }
+        if a.len() > 1 && (a.starts_with('-') || a.starts_with('+')) {
+            if is_dash_c(a) {
+                saw_c = true;
+            }
+            k += if has(SHELL_VALUE_FLAGS, a) { 2 } else { 1 };
+            continue;
+        }
+        return if saw_c { Some(&args[k]) } else { None };
+    }
+    None
+}
+
+/// 段落裡任何位置的 shell（`bash -c`、`pwsh -Command`、`cmd /c`、`eval`）帶的內層指令。回 [(內層指令, 是不是 PowerShell 語法)]。
+/// 開頭是只把參數當文字的指令（echo、grep、git…）時回空的。
+pub(crate) fn hidden_shells(toks: &[String]) -> Vec<(String, bool)> {
+    let mut out: Vec<(String, bool)> = Vec::new();
+    let first = toks.iter().find(|x| !ENV_ASSIGN.is_match(x)).map(|t| cmd_name(clean_head(t).0)).unwrap_or_default();
+    if has(HARMLESS, &first) {
+        return out;
+    }
+    for (k, t) in toks.iter().enumerate() {
+        if out.len() >= 8 {
+            break;
+        }
+        let name = cmd_name(clean_head(t).0);
+        let rest = &toks[k + 1..];
+        if has(SHELL_NAMES, &name) {
+            if let Some(ic) = shell_command_arg(rest) {
+                out.push((ic.clone(), false));
+            }
+            if let Some(j) = rest.iter().position(|x| is_dash_c(x)) {
+                if let Some(ic) = rest.get(j + 1).filter(|x| x.as_str() != "--") {
+                    out.push((ic.clone(), false));
+                }
+            }
+        } else if has(PS_NESTED_SHELLS, &name) || name == "cmd" {
+            if let Some(j) = rest.iter().position(|x| matches!(py::lower(x).as_str(), "-c" | "-command" | "/c" | "/k")) {
+                if j + 1 < rest.len() {
+                    out.push((rest[j + 1..].join(" "), true));
+                }
+            }
+        } else if matches!(name.as_str(), "eval" | "invoke-expression" | "iex") && !rest.is_empty() {
+            out.push((rest.join(" "), false));
+        }
+    }
+    out
 }
 
 /// 去掉開頭的包裝指令（sudo、env、timeout…）和它們的旗標、數字、環境變數設定。

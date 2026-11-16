@@ -703,3 +703,53 @@ const REWRITTEN: &[Case] = &[
 fn rewritten_subcommands_are_recognised() {
     check("rewrite", REWRITTEN);
 }
+
+// ───────── 10. bash -c 藏在帶值旗標的包裝或關鍵字後面 ─────────
+
+const HIDDEN_SHELL: &[Case] = &[
+    ("sudo -u root bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("env -u FOO bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("if true; then bash -c 'awf save-run approve r'; fi", DEV, BLOCK, Sh::Bash),
+    ("! bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c -- 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("xargs -I{} bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("find . -maxdepth 0 -exec bash -c 'awf save-run approve r' \\;", DEV, BLOCK, Sh::Bash),
+    ("flock /tmp/l bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("caffeinate bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("script -q /dev/null bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("nice -n 5 sh -c 'awf publish --branch feature/x'", DEV, BLOCK, Sh::Bash),
+    ("while true; do zsh -c 'awf next r'; done", DEV, BLOCK, Sh::Bash),
+    ("bash -x -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c -x 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("sudo -u root pwsh -Command \"awf save-run approve r\"", DEV, BLOCK, Sh::Bash),
+    ("sudo -u root eval 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("sudo -u root bash -c 'X=$(awf save-run approve r)'", DEV, BLOCK, Sh::Bash),
+    ("if ($true) { bash -c 'awf save-run approve r' }", DEV, BLOCK, Sh::Ps),
+    // 同樣的寫法跑唯讀子指令或別的指令：放行
+    ("sudo -u root bash -c 'awf kb query x'", DEV, ALLOW, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'awf save-run status r'", DEV, ALLOW, Sh::Bash),
+    ("if true; then bash -c 'awf kg locate x'; fi", DEV, ALLOW, Sh::Bash),
+    ("xargs -I{} bash -c 'awf kb query {}'", DEV, ALLOW, Sh::Bash),
+    ("find . -name '*.md' -exec bash -c 'wc -l \"$1\"' _ {} \\;", DEV, ALLOW, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'cargo test'", DEV, ALLOW, Sh::Bash),
+    ("if ($true) { bash -c 'awf kb lint' }", DEV, ALLOW, Sh::Ps),
+    // 只是提到：放行
+    ("echo bash -c 'awf save-run approve r'", DEV, ALLOW, Sh::Bash),
+    ("grep -rn \"bash -c 'awf save-run approve r'\" docs", DEV, ALLOW, Sh::Bash),
+    // 唯讀角色的「不能用 shell 寫檔」也看得到藏起來的內層
+    ("sudo -u root bash -c 'rm -rf src'", REV, BLOCK, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'touch x'", REV, BLOCK, Sh::Bash),
+    ("if true; then bash -c 'rm -rf src'; fi", REV, BLOCK, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'git status'", REV, ALLOW, Sh::Bash),
+    ("if true; then bash -c 'ls src | wc -l'; fi", REV, ALLOW, Sh::Bash),
+    ("echo bash -c 'rm -rf src'", REV, ALLOW, Sh::Bash),
+    // 主 session：照舊
+    ("sudo -u root bash -c 'awf save-run approve r plan --by human'", MAIN, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn shell_hidden_behind_wrappers_is_expanded() {
+    check("hidden", HIDDEN_SHELL);
+}

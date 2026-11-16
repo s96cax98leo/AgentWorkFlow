@@ -993,6 +993,15 @@ impl Guard {
         if let Some((s, e)) = RECORD_WRITE_CMD.find(&probe) {
             return Ok(Some(py::strip(&probe[s..e]).to_string()));
         }
+        // shell 不在開頭的（sudo -u root bash -c …、if …; then bash -c …）：內層照同一套規則
+        for (ic, nested_ps) in awf_cli::hidden_shells(&all) {
+            let inner = if nested_ps { ps_segments(&ic) } else { segments(&ic) };
+            for s in inner {
+                if let Some(why) = self.record_shell_write(&s, base, depth + 1)? {
+                    return Ok(Some(why));
+                }
+            }
+        }
         // find -exec／xargs 帶的指令可能在引號裡：連引號內容一起看
         if matches!(name.as_str(), "find" | "xargs" | "parallel" | "watch") {
             let p2 = strip_harmless(&QUOTE_CHARS.replace_all(seg, " "));
