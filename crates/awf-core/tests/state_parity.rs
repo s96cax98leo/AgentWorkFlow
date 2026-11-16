@@ -15,10 +15,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// 這裡比 Python 嚴的步驟：標籤、原因。只要求這裡 exit 1（不產生腳本、不存檔）。
+/// 例外是 output-nan：讀不懂的結果要把該段標成 invalid（只准改到該段的結果檔與 run.json）。
 const STRICTER: [(&str, &str); 4] = [
     ("set-huge-int", "--set 給超出 64 位元的整數：Python 照整數放進 args；這裡放不下，當成寫錯的 --set 拒絕"),
     ("set-nan", "--set-json 給 NaN：Python 讀得進來（之後在摘要那一步才丟 TypeError）；這裡當成寫錯的 --set-json，一開始就拒絕"),
-    ("output-nan", "done --output 的檔有 NaN：Python 讀得進來、照存；這裡整份當成讀不懂，拒絕存檔"),
+    ("output-nan", "done --output 的檔有 NaN：Python 讀得進來、照內容存（這一例判 invalid）；這裡整份讀不懂，該段標 invalid、清掉舊核准、舊結果檔換成說明（1.0 審查 M3：原本是什麼都不改，舊的結果與核准會留著）"),
     ("runjson-nan", "run.json 有 NaN：Python 讀得進來、照常往下；這裡整份不接受（ValueError），next、done、handoff、approve 都拒絕"),
 ];
 
@@ -309,13 +310,21 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
                 let (out, err) = (st.norm(&out), st.norm(&err));
                 let is = |k: &str| step.get(k).is_some();
                 let mut diff = Vec::new();
+                let mut got_files = Value::Null;
                 if stricter {
                     // Python 放行或晚一步才出錯；這裡一開始就拒絕
                     if code != 1 {
                         diff.push(format!("要拒絕（exit 1），得 {code}"));
                     }
-                    if let Some(d) = files_diff(&json!({}), &st.changed(&before, &mut kept)) {
-                        diff.push(format!("拒絕時不該改到檔案\n    {d}"));
+                    let changed = st.changed(&before, &mut kept);
+                    // 讀不懂的結果：該段標 invalid，只准改到該段的結果檔與 run.json
+                    let marks_invalid = label == Some("output-nan")
+                        && changed.as_object().is_some_and(|o| !o.is_empty() && o.keys().all(|k| k.ends_with("/run.json") || k.ends_with("/plan.json")))
+                        && changed.to_string().contains("invalid");
+                    if !marks_invalid {
+                        if let Some(d) = files_diff(&json!({}), &changed) {
+                            diff.push(format!("拒絕時不該改到檔案\n    {d}"));
+                        }
                     }
                 } else {
                     if Some(i64::from(code)) != step["code"].as_i64() {
@@ -339,9 +348,21 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
                                 }
                             }
                         }
-                        if let Some(d) = files_diff(&step["files"], &st.changed(&before, &mut kept)) {
+                        let changed = st.changed(&before, &mut kept);
+                        if let Some(d) = files_diff(&step["files"], &changed) {
                             diff.push(format!("改到的檔\n    {d}"));
                         }
+                        got_files = changed;
+                    }
+                }
+                // 基準確實該變的時候：AWF_STATE_RECORD=<輸出檔> 把「和基準不同、沒有列名」的指令這次實際的結果附加到輸出檔
+                // （一行一筆：第幾步、exit code、stdout、stderr、改到的檔），逐筆確認後抄回 tests/parity/state.expected.json。測試照樣失敗。
+                if !diff.is_empty() && !stricter && !known && !is("usage") && !is("raises") {
+                    if let Ok(path) = std::env::var("AWF_STATE_RECORD") {
+                        use std::io::Write;
+                        let line = json!({"i": i, "code": code, "stdout": out, "stderr": err, "files": got_files});
+                        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).unwrap_or_else(|e| panic!("開不了 {path}：{e}"));
+                        writeln!(f, "{line}").unwrap_or_else(|e| panic!("寫不了 {path}：{e}"));
                     }
                 }
                 if !diff.is_empty() {

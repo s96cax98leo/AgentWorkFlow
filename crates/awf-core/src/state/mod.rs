@@ -553,7 +553,19 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if !src.is_empty() {
         match load_json(env, &py::pp(src))? {
             Some(v) if !v.is_null() => result = v,
-            _ => return awf_err(format!("{src} 讀不到或不是 JSON")),
+            Some(_) => return awf_err(format!("{src} 讀不到或不是 JSON")),
+            None => {
+                // 檔在、但不是讀得懂的 JSON：和 awf save-run stage 一樣，這一段不能留著舊的結果與舊核准（1.0 審查 M3）。
+                // 檔不存在（路徑打錯）不算，什麼都不改。記進 run.json 的說明不帶路徑
+                let p = py::pp(src);
+                let abs = if pyish::is_abs(&p) { p } else { pyish::pjoin(&env.cwd, &p) };
+                if std::path::Path::new(&abs).is_file() {
+                    let (mut o, mut e) = (String::new(), String::new());
+                    sr::stage_unreadable(&ctx, run, &stage, "--output 的檔不是讀得懂的 JSON", &mut o, &mut e)?;
+                    return awf_err(format!("{src} 不是讀得懂的 JSON：{stage} 段已標成 invalid、舊核准失效；修正檔案後重新 awf done，或重跑這一段"));
+                }
+                return awf_err(format!("{src} 讀不到或不是 JSON"));
+            }
         }
     } else {
         let script_v = py::get(&pend, "script")?;

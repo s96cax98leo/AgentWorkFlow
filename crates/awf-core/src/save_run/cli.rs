@@ -181,8 +181,11 @@ fn dispatch(ctx: &Ctx, argv: &[String], stdin: &mut dyn FnMut() -> R<String>, ou
                 line(out, USAGE);
                 return Ok(2);
             };
-            let result = py::loads(&stdin()?)?;
-            stage_cmd(ctx, run, stage, &result, opt(argv, "--profile", ""), data, out, err)
+            match py::loads(&stdin()?) {
+                Ok(result) => stage_cmd(ctx, run, stage, &result, opt(argv, "--profile", ""), data, out, err),
+                // 回傳讀不懂：不能當成「這次沒存」而留下舊的結果與舊核准（1.0 審查 M3）
+                Err(e) => unreadable_cmd(ctx, run, stage, &format!("{}：{}", e.class, e.msg), data, out, err),
+            }
         }
         "decide" => decide_cmd(ctx, run, argv, out, err),
         "approve" => {
@@ -221,6 +224,42 @@ pub fn stage(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile: &str, o
     let run = py::pp(run);
     let data = load(ctx, &run)?;
     stage_cmd(ctx, &run, stage, result, profile, data, out, err)
+}
+
+/// 這一段 workflow 的回傳不是工具讀得懂的 JSON（NaN、超出範圍的整數、巢狀太深、寫壞）。
+/// 讀不懂不等於沒有重跑：這一段標成 invalid、舊核准失效、舊的結果檔換成一份說明，回傳 1。
+/// 之後這一段不能核准（狀態不是 done），後面各段的核准也因為閘門鏈過不了；重跑或修正回傳後再存一次才會恢復。
+/// run.json 沒有這一段時什麼都不改（不因為讀不懂的輸入多出一段）。
+pub fn stage_unreadable(ctx: &Ctx, run: &str, stage: &str, why: &str, out: &mut String, err: &mut String) -> R<i32> {
+    let run = py::pp(run);
+    let data = load(ctx, &run)?;
+    unreadable_cmd(ctx, &run, stage, why, data, out, err)
+}
+
+fn unreadable_cmd(ctx: &Ctx, run: &str, stage: &str, why: &str, mut data: Value, out: &mut String, err: &mut String) -> R<i32> {
+    let known = matches!(get_opt(&data, "stages")?, Some(st) if st.get(stage).is_some_and(Value::is_object));
+    if !known {
+        line(err, format!("{stage}：workflow 的回傳讀不懂：{why}。run.json 沒有 {stage} 段，沒有存"));
+        return Ok(1);
+    }
+    let note = format!("workflow 的回傳讀不懂：{why}");
+    let placeholder = json!({"halted": true, "halt_reason": note, "unreadable": true});
+    ctx.write_text(&pj(run, &format!("{stage}.json")), &format!("{}\n", py::dumps(&placeholder, Some(2))))?;
+    let old = {
+        let st = st_mut(&mut data, stage)?;
+        st.insert("status".into(), json!("invalid"));
+        st.insert("envelopes".into(), json!(0));
+        st.insert("unreadable".into(), json!(note));
+        st.shift_remove("halted");
+        st.shift_remove("approved").unwrap_or(Value::Null)
+    };
+    dump(ctx, run, &data)?;
+    line(err, format!("{stage}：{note}。不採用：這一段標成 invalid，舊的結果不再算數；重跑這一段，或修正回傳後再存一次"));
+    if truthy(&old) {
+        line(out, format!("{stage}：舊核准（{} @ {}）已失效，要重新核准", s(get(&old, "by")?), s(get(&old, "at")?)));
+    }
+    line(out, format!("{stage}：0 份信封，狀態 invalid"));
+    Ok(1)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -389,6 +428,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         let st = st_mut(&mut data, stage)?;
         st.insert("status".into(), json!(status));
         st.insert("envelopes".into(), json!(envs.len()));
+        st.shift_remove("unreadable");
         let old = st.shift_remove("approved");
         if truthy(&halted) {
             let reason = get(result, "halt_reason")?;

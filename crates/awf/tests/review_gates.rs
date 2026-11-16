@@ -397,3 +397,79 @@ fn h1_save_run_without_a_project_root_refuses() {
     assert_ne!(o.code, 0, "{}{}", o.out, o.err);
     assert!(o.err.contains("找不到專案根"), "{}", o.err);
 }
+
+// ------------------------------------------------------------------ M3：save-run stage 的回傳讀不懂
+
+/// M3 重現：test 段已經通過並核准；重跑後的結果是 fail，但回傳裡有工具讀不懂的值（超大整數、NaN、巢狀太深）。
+/// 不能留下舊的 pass 與舊核准：該段要標 invalid、核准清掉，之後的核准（這一段與後面的段）都過不了。
+#[test]
+fn m3_unreadable_stage_result_invalidates_the_stage() {
+    let fail = r#"{"v": {"status": "done", "summary": "s", "artifacts": [], "evidence": [], "confidence": 0.9, "open_questions": [], "derived_work": [],
+        "payload": {"commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "scope_covered": "x", "scope_skipped": "none", "anti_cheat": [],
+        "criteria": [{"id": "C1", "criterion": "c", "command": "x", "result": "fail", "evidence": "e"}]}}, "extra": @X@}"#;
+    let deep = format!("{}1{}", "[".repeat(300), "]".repeat(300));
+    for (tag, bad) in [("huge", "100000000000000000000"), ("nan", "NaN"), ("deep", deep.as_str()), ("cut", "{\"a\": ")] {
+        let t = Tmp::new(&format!("m3-{tag}"));
+        let root = t.path().join("proj");
+        mk_run_project(&root, &builtin_profile());
+        baseline(&root, "deliver");
+        assert!(approved(&root, "test"), "前提：test 已核准");
+        let before = std::fs::read_to_string(root.join(RUN).join("test.json")).expect("test.json");
+        let o = sr(&root, &["stage", RUN, "test"], Some(&fail.replace("@X@", bad)));
+        assert_ne!(o.code, 0, "{tag}：回傳讀不懂要失敗：{}{}", o.out, o.err);
+        assert!(o.err.contains("讀不懂"), "{tag}：要說明是回傳讀不懂：{}", o.err);
+        let run = read_json(&root.join(RUN).join("run.json"));
+        assert_eq!(run["stages"]["test"]["status"], "invalid", "{tag}：該段要標 invalid");
+        assert!(!approved(&root, "test"), "{tag}：舊核准要清掉");
+        // 舊的結果檔不能原封不動留著當成這一段的結果
+        let after = std::fs::read_to_string(root.join(RUN).join("test.json")).unwrap_or_default();
+        assert_ne!(after, before, "{tag}：舊的 test.json 不能留著");
+        for by in ["policy", "human"] {
+            let o = sr(&root, &["approve", RUN, "test", "--by", by, "--note", "p", "--at", "t"], None);
+            assert_ne!(o.code, 0, "{tag}：test 不能再核准（{by}）：{}{}", o.out, o.err);
+        }
+        // 後面的 deliver 也核准不了（閘門鏈）
+        let o = sr(&root, &["approve", RUN, "deliver", "--by", "policy", "--note", "p", "--at", "t"], None);
+        assert_ne!(o.code, 0, "{tag}：deliver 的政策核准要被擋：{}{}", o.out, o.err);
+        assert!(!approved(&root, "deliver"));
+    }
+}
+
+/// M3：run.json 沒有那一段時，讀不懂的回傳不能讓 run.json 多出一段。
+#[test]
+fn m3_run_json_is_untouched_when_the_stage_is_unknown() {
+    // 段名不是這個 run 有的段、或 run.json 本身讀不到：不能因為回傳讀不懂就憑空多出一段
+    let t = Tmp::new("m3-unknown");
+    let root = t.path().join("proj");
+    mk_run_project(&root, &builtin_profile());
+    baseline(&root, "plan");
+    let before = std::fs::read_to_string(root.join(RUN).join("run.json")).expect("run.json");
+    let o = sr(&root, &["stage", RUN, "no-such-stage"], Some("{\"a\": NaN}"));
+    assert_ne!(o.code, 0);
+    assert_eq!(std::fs::read_to_string(root.join(RUN).join("run.json")).expect("run.json"), before);
+}
+
+
+/// M3：`awf done --output <檔>` 給的結果檔在、但讀不懂時也一樣（走的是狀態機，不經過 save-run 的命令列）。
+#[test]
+fn m3_awf_done_with_an_unreadable_output_file_invalidates_the_stage() {
+    let t = Tmp::new("m3-done");
+    let root = t.path().join("proj");
+    mk_run_project(&root, &builtin_profile());
+    baseline(&root, "deliver");
+    assert!(approved(&root, "test"), "前提：test 已核准");
+    write(&root.join("bad.json"), "{\"v\": {\"status\": \"done\"}, \"n\": 100000000000000000000}");
+    let o = awf(&["done", "--run", RUN, "--stage", "test", "--output", "bad.json"], &root, None, &[]);
+    assert_ne!(o.code, 0, "{}{}", o.out, o.err);
+    let run = read_json(&root.join(RUN).join("run.json"));
+    assert_eq!(run["stages"]["test"]["status"], "invalid", "該段要標 invalid：{}{}", o.out, o.err);
+    assert!(!approved(&root, "test"), "舊核准要清掉");
+    // 檔不存在（打錯路徑）不算「結果讀不懂」：什麼都不改
+    let t2 = Tmp::new("m3-done-typo");
+    let root2 = t2.path().join("proj");
+    mk_run_project(&root2, &builtin_profile());
+    baseline(&root2, "deliver");
+    let o = awf(&["done", "--run", RUN, "--stage", "test", "--output", "no-such.json"], &root2, None, &[]);
+    assert_ne!(o.code, 0, "{}{}", o.out, o.err);
+    assert!(approved(&root2, "test"), "路徑打錯不該讓核准失效");
+}

@@ -42,4 +42,5 @@ hook 的案例不在這裡：在 `tests/hooks/`（`cases.jsonl`、`fixtures.json
 | hook 案例（`tests/hooks/cases.jsonl`） | `AWF_HOOKS_RECORD=<輸出檔> cargo test -p awf --test hooks_cases`：把這次實際的結果照同樣的格式寫到輸出檔，確認後把要改的那幾行抄回 `cases.jsonl` |
 | `plugin/legacy-tools.json`（0.x 工具檔的指紋，不在這個目錄） | `AWF_GEN_LEGACY=1 cargo test -p awf-core --test init_v1 legacy_tools_json`，或 `cargo xtask gen-legacy --write` |
 | `save_run.expected.json` | `AWF_SAVE_RUN_RECORD=<輸出檔> cargo test -p awf-core --test save_run_parity replay_script`：把「和基準不同、沒有列在 `STRICTER`／`KNOWN`」的指令這次實際的結果寫到輸出檔（一行一筆：第幾步、exit code、stdout、stderr、改到的檔）。逐筆確認是該變的之後，把那幾步的這四個欄位抄回基準（一步一行，格式照原樣） |
+| `state.expected.json` | `AWF_STATE_RECORD=<輸出檔> cargo test -p awf-core --test state_parity`：同上，把和基準不同、沒有列名的指令這次實際的結果附加到輸出檔，逐筆確認後抄回基準 |
 | 其他 | 沒有重錄的指令：行為確實該變時手動改對應案例的預期值（測試失敗時會印出案例名稱與實際結果），並在 commit 說明 |
