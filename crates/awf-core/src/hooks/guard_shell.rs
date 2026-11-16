@@ -106,6 +106,10 @@ re!(MULTI_SLASH, r"(?<![:/])[/\\\\]{2,}");
 re!(TEAMS_REL, r#"(?:^|[\s"'=])\.?[/\\\\]?(?:teams|workflows)(?:[/\\\\]|\s|$)"#);
 re!(CI_TARGET, r#"(?:^|[/\\\s"'=])\.github[/\\]workflows(?:[/\\"']|\s|$)"#, "i");
 re!(CI_REL, r#"(?:^|[\s"'=])\.?[/\\]?workflows(?:[/\\"']|\s|$)"#, "i");
+re!(PROJECT_ENV_SET, concat!(
+    r#"(?:^|[\s;&|('"])(?:\$env:)?CLAUDE_PROJECT_DIR\s*=(?!=)"#,
+    r#"|(?:set-item|si|new-item|ni)\s+(?:-path\s+)?["']?env:CLAUDE_PROJECT_DIR"#,
+    r#"|SetEnvironmentVariable\s*\(\s*["']CLAUDE_PROJECT_DIR"#), "i");
 re!(PUSH_RE, r"\bgit\b.*\b(?:push|send-pack)\b");
 re!(GIT_WORD, r"\bgit\b");
 re!(NO_VERIFY, r"(?:^|\s)--no-verify\b");
@@ -123,7 +127,7 @@ pub fn all_patterns() -> Vec<&'static Re> {
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
-         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &PUSH_RE, &GIT_WORD,
+         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
 }
 
@@ -1201,6 +1205,11 @@ impl Guard {
         if subst_over && team {
             return Err(self.block(&format!("{agent} 的指令裡指令替換（$(…)、反引號、<(…)）太多或巢狀太深，無法逐一確認內層的指令；請拆成幾條較短的指令")));
         }
+        // 換專案根：awf（與它代為執行的通知指令、hook 的輔助功能）靠 CLAUDE_PROJECT_DIR 認專案，team agent 沒有理由改它
+        if team && fold(&cmd).contains("claude_project_dir") && PROJECT_ENV_SET.is_match(&cmd) {
+            return Err(self.block(&format!("{agent} 不能設定 CLAUDE_PROJECT_DIR（awf 靠它認專案根：換掉之後工具會去讀別的目錄的設定，包括會被執行的通知指令）；\
+要對別的目錄跑工具，用該子指令自己的 --root／--repo")));
+        }
         let (fpaths, fslugs) = self.forbidden_entries();
         let who_main = |a: &str| if a.is_empty() { "主 session".to_string() } else { a.to_string() };
         if (gh_rules || am_on) && is_interp_review(&cmd) {
@@ -1314,6 +1323,8 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                         Deny::Kg(x) => format!("不能跑 awf kg {x}（圖與 vault 只由主 session 建與匯出；team agent 只能跑 awf kg locate／trace／impact／check／neighbors）"),
                         Deny::Program(x) => format!("不能跑 awf program {x}（多需求排程的開工建議給主 session 與人看；team agent 只能跑唯讀的 awf program status）"),
                         Deny::Ci(x) => format!("不能跑 awf ci {x}（CI 檔與 required checks 只由主 session 或人寫；team agent 只能跑不帶 --write 的 awf ci render 與 awf ci check）"),
+                        Deny::Script(x) => format!("不能跑 awf script {x}（組裝自訂腳本會寫檔，只由主 session 經 awf next --script 做；team agent 只能跑 awf script --selftest 與不帶 --out 的靜態檢查）"),
+                        Deny::WriteFlag(x) => format!("不能跑 awf {x}（這個旗標會寫檔或把選項轉給 git；team agent 只能跑不帶它的唯讀形式，要寫入由主 session 或人執行）"),
                         Deny::Watch => "只能跑 awf watch --once（持續監看會一直寫進度事件，由主 session 或人執行）".to_string(),
                         Deny::Unknown(x) => format!("不能跑 awf {x}（看不出是哪個子指令，無法確認是否允許；請直接寫 awf <子指令> <參數>）"),
                         Deny::Opaque(x) => format!("不能這樣呼叫 awf{x}；請直接寫 awf <子指令> <參數>"),

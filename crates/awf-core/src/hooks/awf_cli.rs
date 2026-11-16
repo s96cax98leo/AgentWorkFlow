@@ -39,6 +39,14 @@ pub const SUBCOMMANDS: &[&str] = &[
 const KG_QUERIES: &[&str] = &["locate", "trace", "impact", "check", "neighbors"];
 const KG_VALUE_FLAGS: &[&str] = &["--root", "--profile", "--dir", "--diff", "--run", "--budget", "--top", "--depth"];
 const KG_BARE_FLAGS: &[&str] = &["--json", "--"];
+/// 會寫檔的旗標（各子指令實際的 parser 對過一遍）：放行的唯讀子指令帶了其中一個就不算唯讀。
+/// `awf checklist check --write` 改寫指定的檔、`awf script … --out` 寫組裝結果；其餘是「之後哪個子指令加了也一樣擋」。
+const WRITE_FLAGS: &[&str] = &["--write", "--out", "--output", "-o", "--log", "--update", "--record", "--save", "--fix", "--reviewed"];
+/// 會被原樣轉給 git 的參數裡不該出現的 git 選項：`--output=<檔>` 讓 git 把輸出寫成檔，`--upload-pack=<指令>`、`--exec=<指令>` 會執行指令。
+/// （`awf check-rules --git <repo> <範圍>`、`awf recipe check-diff --base <ref>`、`awf sync-branch plan --remote <名>` 的值沒有擋 `-` 開頭。）
+const GIT_INJECT: &[&str] = &["--output", "--upload-pack", "--receive-pack", "--exec", "--ext-diff", "--textconv", "--open-files-in-pager"];
+/// 參數會轉給 git 的子指令。
+const GIT_PASSING: &[&str] = &["recipe", "check-rules", "sync-branch", "locate", "cost", "deliverables", "kb"];
 const STATE_VERBS: &[&str] = &["start", "next", "done", "approve", "render", "handoff"];
 const HELP: &[&str] = &["-h", "--help"];
 
@@ -844,6 +852,10 @@ pub enum Deny {
     Spec(String),
     Watch,
     Ci(String),
+    /// 唯讀的子指令帶了會寫檔的旗標，或參數裡塞了 git 的選項（內容＝子指令與旗標）。
+    WriteFlag(String),
+    /// `awf script` 的組裝（會寫 `--out`）。
+    Script(String),
     Unknown(String),
     Opaque(&'static str),
 }
@@ -921,6 +933,40 @@ impl Call {
         None
     }
 
+    /// 參數裡第一個會寫檔的旗標（`--write`、`--out=x`…）；`--` 之後的不看。
+    fn write_flag(&self) -> Option<&str> {
+        self.args.iter().take_while(|a| a.as_str() != "--").map(|a| a.split('=').next().unwrap_or(a)).find(|n| has(WRITE_FLAGS, n))
+    }
+
+    /// 參數裡塞了 git 的選項（見 [`GIT_INJECT`]）；回那個選項的名字。
+    fn git_inject(&self) -> Option<&'static str> {
+        self.args.iter().find_map(|a| GIT_INJECT.iter().copied().find(|g| a.contains(g)))
+    }
+
+    /// 放行的唯讀子指令另外要過的兩關：不能帶會寫檔的旗標、不能把 git 的選項塞進參數。
+    fn flag_deny(&self) -> Option<Deny> {
+        let sub = self.sub.as_str();
+        if has(GIT_PASSING, sub) {
+            if let Some(g) = self.git_inject() {
+                return Some(Deny::WriteFlag(format!("{sub} …{g}")));
+            }
+        }
+        if matches!(sub, "deliverables" | "checklist") {
+            if let Some(f) = self.write_flag() {
+                return Some(Deny::WriteFlag(format!("{sub} {} {f}", self.first()).replace("  ", " ")));
+            }
+        }
+        None
+    }
+
+    /// `awf script`：team agent 只能跑 `--selftest` 與不寫檔的靜態檢查；`assemble`、任何 `--out` 都擋。
+    fn script_deny(&self) -> Option<String> {
+        if self.first() == "assemble" {
+            return Some("assemble".into());
+        }
+        self.write_flag().map(|f| format!("{} {f}", self.first()).trim().to_string())
+    }
+
     /// `awf spec ids` 只准唯讀的旗標。
     fn spec_ids_writes(&self) -> bool {
         let mut i = 1;
@@ -945,6 +991,10 @@ impl Call {
             }
             return if self.forwarded { Some(Deny::Unknown(NOTE_FORWARD.to_string())) } else { None };
         }
+        self.sub_deny(steward).or_else(|| self.flag_deny())
+    }
+
+    fn sub_deny(&self, steward: bool) -> Option<Deny> {
         match self.sub.as_str() {
             "--version" | "-V" | "-h" | "--help" => None,
             "pack" => self.write_sub(&["--selftest"]).map(|_| Deny::Pack),
@@ -974,7 +1024,10 @@ impl Call {
                 let ok = self.args.iter().any(|a| a == "--once" || a == "--selftest") || has(HELP, self.first());
                 if ok { None } else { Some(Deny::Watch) }
             }
-            "statusline" | "doctor" | "hook" | "checklist" | "recipe" | "sync-branch" | "locate" | "cost" | "script" | "check-agents"
+            // 自訂腳本的組裝會寫檔（--out）：只由主 session 經 awf next --script 做
+            "script" => self.script_deny().map(Deny::Script),
+            // checklist check 的 --write、轉給 git 的參數另外在 flag_deny 看
+            "statusline" | "doctor" | "hook" | "checklist" | "recipe" | "sync-branch" | "locate" | "cost" | "check-agents"
             | "run-brief" | "check-envelope" | "check-rules" => None,
             // 兩支都只讀檔（golden：跑 golden-set；tokens：check／verify 掃色碼與比對正本），沒有會寫檔的子指令或選項
             "golden" | "tokens" => None,
@@ -1058,6 +1111,19 @@ mod tests {
         for ok in ["awf ci render", "awf ci render --root . --profile p.json", "awf ci check", "awf ci --selftest", "awf ci", "awf ci --help"] {
             assert_eq!(d(ok), None, "{ok}");
         }
+        // 唯讀子指令帶寫入旗標、組裝腳本、塞 git 選項
+        assert_eq!(d("awf script assemble a.js --out b.js"), Some(Deny::Script("assemble".into())));
+        assert_eq!(d("awf script check a.js --out=b.js"), Some(Deny::Script("check --out".into())));
+        assert_eq!(d("awf script check a.js"), None);
+        assert_eq!(d("awf script --selftest"), None);
+        assert_eq!(d("awf checklist check x.md --write"), Some(Deny::WriteFlag("checklist check --write".into())));
+        assert_eq!(d("awf checklist check x.md --id A"), None);
+        assert_eq!(d("awf deliverables status --write"), Some(Deny::WriteFlag("deliverables status --write".into())));
+        assert_eq!(d("awf deliverables affected --base main --json"), None);
+        assert_eq!(d("awf check-rules --git . --output=/tmp/x"), Some(Deny::WriteFlag("check-rules …--output".into())));
+        assert_eq!(d("awf sync-branch plan --remote=--upload-pack=x"), Some(Deny::WriteFlag("sync-branch …--upload-pack".into())));
+        assert_eq!(d("awf check-rules --git . main..HEAD"), None);
+        assert_eq!(d("awf run-brief --log a.log -- ctest --output-on-failure"), None);
         assert_eq!(d("awf save-run close r"), Some(Deny::SaveRun("close".into())));
         assert_eq!(d("awf next r"), Some(Deny::State("next".into())));
         assert_eq!(d("awf state next"), Some(Deny::State("state next".into())));

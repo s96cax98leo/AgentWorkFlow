@@ -237,3 +237,58 @@ fn program_json_is_not_writable_by_team_agents() {
         ("@WS@/src/program.json", DEV, ALLOW),
     ]);
 }
+
+// ───────── 「唯讀所以放行」的子指令裡會寫檔的旗標 ─────────
+
+const WRITE_FLAGS: &[Case] = &[
+    // awf script：組裝會寫 --out 指定的檔（自訂腳本只由主 session 經 awf next --script 組裝）
+    ("awf script assemble custom.js --stage design --out .claude/workflows/sdlc-design.js", DEV, BLOCK, Sh::Both),
+    ("awf script assemble custom.js --out=_tpm/runs/r/.wf/sdlc-design.js", RES, BLOCK, Sh::Both),
+    ("awf script check custom.js --out x.js", DEV, BLOCK, Sh::Both),
+    ("awf script assemble custom.js", REV, BLOCK, Sh::Both),
+    ("bash -c 'awf script assemble a.js --out b.js'", DEV, BLOCK, Sh::Both),
+    ("awf script check custom.js", DEV, ALLOW, Sh::Both),
+    ("awf script --selftest", REV, ALLOW, Sh::Both),
+    ("awf script assemble custom.js --out x.js", MAIN, ALLOW, Sh::Both),
+    // awf deliverables status／check／affected：不能帶寫入的旗標
+    ("awf deliverables status --write", DEV, BLOCK, Sh::Both),
+    ("awf deliverables status --json --write", RES, BLOCK, Sh::Both),
+    ("awf deliverables check --write=1", DEV, BLOCK, Sh::Both),
+    ("awf deliverables affected --base main --out x.json", DEV, BLOCK, Sh::Both),
+    ("awf deliverables status --json", DEV, ALLOW, Sh::Both),
+    ("awf deliverables affected --base main --json", REV, ALLOW, Sh::Both),
+    ("awf deliverables status --write", MAIN, ALLOW, Sh::Both),
+    // awf checklist check --write：改寫指定的檔
+    ("awf checklist check plans/x.md --write", DEV, BLOCK, Sh::Both),
+    ("awf checklist check --write .claude/teams/rules.md", RES, BLOCK, Sh::Both),
+    ("awf checklist check specs/a/progress.md --id A1 --write --cwd .", REV, BLOCK, Sh::Both),
+    ("awf checklist check plans/x.md --id A1", DEV, ALLOW, Sh::Both),
+    ("awf checklist status plans/x.md", REV, ALLOW, Sh::Both),
+    ("awf checklist check plans/x.md --write", MAIN, ALLOW, Sh::Both),
+    // 轉給 git 的參數被塞進 git 的選項（--output=<檔> 會讓 git 寫檔，--upload-pack=<指令> 會執行）
+    ("awf check-rules --git . --output=/tmp/pwn.txt", RES, BLOCK, Sh::Both),
+    ("awf check-rules --git . --output /tmp/pwn.txt", REV, BLOCK, Sh::Both),
+    ("awf recipe check-diff --run _tpm/runs/r --base --output=/tmp/pwn", DEV, BLOCK, Sh::Both),
+    ("awf sync-branch plan --base main --remote=--upload-pack=/tmp/x.sh", DEV, BLOCK, Sh::Both),
+    ("awf sync-branch plan --base main --remote --upload-pack=/tmp/x.sh", DEV, BLOCK, Sh::Both),
+    ("awf check-rules --audience owner docs/x.md", RES, ALLOW, Sh::Both),
+    ("awf check-rules --git . main..HEAD", RES, ALLOW, Sh::Both),
+    ("awf recipe check-diff --run _tpm/runs/r --base main", DEV, ALLOW, Sh::Both),
+    ("awf sync-branch plan --base main --remote origin", DEV, ALLOW, Sh::Both),
+    ("awf sync-branch apply --base main --strategy merge", DEV, ALLOW, Sh::Both),
+    ("awf check-rules --git . --output=/tmp/log.txt", MAIN, ALLOW, Sh::Both),
+    // 換一個專案根給 awf：工具會去讀那裡的設定（通知指令、知識圖的位置）
+    ("CLAUDE_PROJECT_DIR=/tmp/fake awf watch --once --run _tpm/runs/r", DEV, BLOCK, Sh::Bash),
+    ("env CLAUDE_PROJECT_DIR=/tmp/fake awf hook mark-dirty", RES, BLOCK, Sh::Bash),
+    ("export CLAUDE_PROJECT_DIR=/tmp/fake; awf watch --once", DEV, BLOCK, Sh::Bash),
+    ("$env:CLAUDE_PROJECT_DIR = 'C:\\fake'; awf watch --once", DEV, BLOCK, Sh::Ps),
+    ("awf watch --once --run _tpm/runs/r", DEV, ALLOW, Sh::Both),
+    ("echo $CLAUDE_PROJECT_DIR", DEV, ALLOW, Sh::Bash),
+    ("Write-Output $env:CLAUDE_PROJECT_DIR", DEV, ALLOW, Sh::Ps),
+    ("CLAUDE_PROJECT_DIR=/tmp/other awf watch --once", MAIN, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn readonly_subcommands_cannot_carry_write_flags() {
+    check("wflags", WRITE_FLAGS);
+}
