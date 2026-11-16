@@ -736,6 +736,9 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     }
     let hooks = match interview::hooks_answer(&ans)? {
         Some(h) if !a.hooks_given => h,
+        // 升級而且沒有指定（指令列、答案檔、問答都沒有）：專案的 settings.json 已經有 1.0 寫法的註冊，就照 project 模式升級
+        //（補上這一版多的註冊、更新執行檔複本），不然它會停在舊的那幾筆。只有 0.x 寫法的照舊：等使用者明確加 --hooks project。
+        None if a.upgrade && !a.hooks_given && awf_hooks_in(&target.join(".claude").join("settings.json")).1 => "project".to_string(),
         _ => a.hooks.clone(),
     };
     let methodology = profile::finish_methodology(&site, &mut vals, &name, &ans)?;

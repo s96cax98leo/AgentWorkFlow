@@ -286,7 +286,7 @@ fn check_plugin(env: &Env, plugin: Option<&str>, notes: &[String]) -> Part {
 /// 專案 settings 裡註冊的是不是這套 hook：舊的 `awf_hook.py`，或執行檔的 `awf hook <種類>`（路徑可以加引號）。
 fn project_hook_re() -> &'static regex::Regex {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r#"awf_hook\.py|awf(?:\.exe)?[\\"']*\s+hook\s+(?:guard-shell|guard-paths|envelope|session-start)\b"#).expect("固定的正規式"))
+    R.get_or_init(|| regex::Regex::new(r#"awf_hook\.py|awf(?:\.exe)?[\\"']*\s+hook\s+(?:guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context)\b"#).expect("固定的正規式"))
 }
 
 fn check_hooks(env: &Env, plugin: Option<&str>, has_install: bool) -> Part {
@@ -844,6 +844,11 @@ fn selftest_in(root: &Path) -> i32 {
     check("hook：專案 settings 與 plugin 都註冊 → 注意（重複註冊），修法是擇一", ids(&doctor(), Some(WARN)).contains(&"hooks-double".to_string()), format!("{:?}", doctor()));
     rm("home/plugins/installed_plugins.json");
     check("hook：只有專案註冊（沒有 plugin 安裝紀錄）→ 不算重複", !ids(&doctor(), None).contains(&"hooks-double".to_string()), String::new());
+    w("proj/.claude/settings.json", &json!({"hooks": {"PostToolUse": [{"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "\"/opt/acme/bin/awf\" hook mark-dirty"}]}],
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "\"/opt/acme/bin/awf\" hook prompt-context"}]}]}}).to_string());
+    installed(json!({"agent-workflow@agentworkflow": [{"scope": "user", "installPath": inst_dir, "version": "0.5.0"}]}));
+    check("hook：專案只註冊了 mark-dirty／prompt-context，plugin 也在 → 一樣算重複註冊", ids(&doctor(), Some(WARN)).contains(&"hooks-double".to_string()), format!("{:?}", doctor()));
+    rm("home/plugins/installed_plugins.json");
     rm("proj/.claude/settings.json");
 
     // ── 設定

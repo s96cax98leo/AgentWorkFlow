@@ -51,10 +51,11 @@ fn old_hook_rx() -> &'static Regex {
 }
 
 /// 1.0 的註冊：`<路徑>/awf hook <種類>`（執行檔；路徑可以加引號，Windows 是 `awf.exe`）。
+/// 種類＝專案 settings 範本會註冊的那幾種（守門、交件，加上輔助的 `mark-dirty`、`prompt-context`）。
 /// `awf` 前面要是開頭、空白、路徑分隔或引號，才不會把使用者自己叫 `my-awf` 之類的指令認成我們的。
 fn new_hook_rx() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(&format!(r#"(?:^|[{WS_CLASS}/\\"'&])awf(?:\.exe)?["']?[{WS_CLASS}]+hook[{WS_CLASS}]+(guard-shell|guard-paths|envelope)\b"#)).expect("固定的正規式"))
+    R.get_or_init(|| Regex::new(&format!(r#"(?:^|[{WS_CLASS}/\\"'&])awf(?:\.exe)?["']?[{WS_CLASS}]+hook[{WS_CLASS}]+(guard-shell|guard-paths|envelope|mark-dirty|prompt-context)\b"#)).expect("固定的正規式"))
 }
 
 /// 這段文字（一個指令，或整份 hooks 的 JSON）裡有沒有（0.x 的註冊, 1.0 的註冊）。
@@ -260,6 +261,8 @@ mod tests {
         assert_eq!(mode("\"/p/.claude/hooks/bin/awf\" hook guard-paths").as_deref(), Some("guard-paths"));
         assert_eq!(mode("& \"C:\\p\\.claude\\hooks\\bin\\awf.exe\" hook guard-shell").as_deref(), Some("guard-shell"));
         assert_eq!(mode("awf hook envelope").as_deref(), Some("envelope"));
+        assert_eq!(mode("\"/p/.claude/hooks/bin/awf\" hook mark-dirty").as_deref(), Some("mark-dirty"));
+        assert_eq!(mode("& \"C:\\p\\.claude\\hooks\\bin\\awf.exe\" hook prompt-context").as_deref(), Some("prompt-context"));
         // 使用者自己的
         for cmd in ["echo hi", "my-awf hook envelope", "awfx hook envelope", "awf hooks envelope", "awf hook session-start", "awf kb query hook guard-shell", "python3 my_hook.py guard-shell"] {
             assert_eq!(mode(cmd), None, "{cmd}");
@@ -285,6 +288,25 @@ mod tests {
             "Stop": [{"hooks": [{"command": "echo done"}]}]}));
         // 再跑一次不變
         assert_eq!(merge_hooks(&got, &tmpl).ok(), Some(got));
+    }
+
+    #[test]
+    fn upgrade_adds_missing_auxiliary_hooks_once() {
+        let h = |kind: &str| json!({"type": "command", "command": format!("\"/p/.claude/hooks/bin/awf\" hook {kind}")});
+        let tmpl = m(json!({"PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [h("guard-shell")]}],
+            "PostToolUse": [{"matcher": "Edit|Write", "hooks": [h("mark-dirty")]}], "UserPromptSubmit": [{"hooks": [h("prompt-context")]}]}));
+        // 第 10 批以前用 --hooks project 套用的專案：沒有後兩種；使用者自己另有一個 PostToolUse
+        let user = m(json!({"PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [h("guard-shell")]}],
+            "PostToolUse": [{"matcher": "Write", "hooks": [{"command": "echo mine"}]}]}));
+        let got = merge_hooks(&user, &tmpl).ok().unwrap_or_default();
+        assert_eq!(Value::Object(got.clone()), json!({"PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [h("guard-shell")]}],
+            "PostToolUse": [{"matcher": "Write", "hooks": [{"command": "echo mine"}]}, {"matcher": "Edit|Write", "hooks": [h("mark-dirty")]}],
+            "UserPromptSubmit": [{"hooks": [h("prompt-context")]}]}));
+        // 再跑一次不變（不重複註冊）；手動加過（別的路徑、別的 matcher）的也只留一份
+        assert_eq!(merge_hooks(&got, &tmpl).ok(), Some(got));
+        let manual = m(json!({"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [{"command": "awf hook mark-dirty"}]}]}));
+        let got = merge_hooks(&manual, &tmpl).ok().unwrap_or_default();
+        assert_eq!(got["PostToolUse"], json!([{"matcher": "Edit|Write", "hooks": [h("mark-dirty")]}]));
     }
 
     #[test]

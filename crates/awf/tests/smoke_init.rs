@@ -630,8 +630,18 @@ fn hooks_project() {
         assert_eq!(shell["shell"], json!("powershell"));
     }
     let text = read(&t.join(".claude/settings.json"));
-    assert_eq!(text.matches(" hook ").count(), 5, "awf hook 要註冊五筆（guard-shell、guard-paths、envelope×2、session-start 之外的依範本）：\n{text}");
+    assert_eq!(text.matches(" hook ").count(), 7, "awf hook 要註冊七筆（guard-shell、guard-paths、envelope×3、mark-dirty、prompt-context）：\n{text}");
     assert!(!text.contains("awf_hook.py"), "不該再註冊 awf_hook.py");
+    // 輔助 hook（知識圖的待更新清單、提問時帶位置）：一樣寫絕對路徑，失敗放行
+    for (event, kind) in [("PostToolUse", "mark-dirty"), ("UserPromptSubmit", "prompt-context")] {
+        let h = &cfg["hooks"][event][0]["hooks"][0];
+        let cmd = h["command"].as_str().unwrap_or("");
+        assert!(cmd.trim_end().ends_with(&format!("hook {kind}")), "{event} 的指令不對：{h}");
+        assert_eq!(cmd_exe(cmd).canonicalize().unwrap(), bin.canonicalize().unwrap(), "{kind}：要指到專案裡的複本");
+        assert_eq!(h["onFailure"], json!("continue"), "{kind} 是輔助 hook，失敗要放行");
+        assert_eq!(h["timeout"], json!(5));
+    }
+    assert_eq!(cfg["hooks"]["PostToolUse"][0]["matcher"], json!("Edit|Write"));
 
     // 用複本跑代表性的 hook 案例（完整案例由 hooks_*.rs 對同一支執行檔跑）
     let write_ev = |f: &str, a: &str| json!({"hook_event_name": "PreToolUse", "tool_name": "Write", "tool_input": {"file_path": s(&t.join(f)), "content": "x"}, "agent_type": a});
@@ -644,6 +654,28 @@ fn hooks_project() {
     // doctor 認得這種註冊
     let d = awf(&["doctor"], &t);
     assert!(!d.all().contains("[錯誤]"), "awf doctor 有錯誤：\n{}", d.all());
+
+    // 第 10 批以前用 --hooks project 套用的專案沒有後兩種註冊：--upgrade（不用再帶 --hooks project）補上，再跑一次不重複；使用者自己的 hook 不動
+    let sp = t.join(".claude/settings.json");
+    let mut st = load(&sp);
+    let hooks = st["hooks"].as_object_mut().unwrap();
+    hooks.remove("UserPromptSubmit");
+    hooks.insert("PostToolUse".to_string(), json!([{"matcher": "Write", "hooks": [{"type": "command", "command": "echo user-post"}]}]));
+    dump(&sp, &st);
+    assert_eq!(read(&sp).matches(" hook ").count(), 5);
+    for round in 1..=2 {
+        let r = awf(&["init", "--target", s(&t), "--upgrade"], &w.0);
+        r.ok("awf init --upgrade（專案已經有 1.0 的 hook 註冊）");
+        let text = read(&sp);
+        assert_eq!(text.matches(" hook ").count(), 7, "第 {round} 次升級後要有七筆、不重複：\n{text}");
+        assert!(text.contains("echo user-post"), "使用者自己的 PostToolUse 要留著：\n{text}");
+        assert!(!r.all().contains("請擇一"), "已經是 project 模式的專案升級時不該再提示擇一：\n{}", r.all());
+    }
+    let cfg2 = load(&sp);
+    assert_eq!(cfg2["hooks"]["PostToolUse"].as_array().map(Vec::len), Some(2));
+    assert_eq!(cfg2["hooks"]["UserPromptSubmit"][0]["hooks"][0]["onFailure"], json!("continue"));
+    let d = awf(&["doctor"], &t);
+    assert!(!d.all().contains("[錯誤]"), "升級後 awf doctor 有錯誤：\n{}", d.all());
 
     // .gitignore 已經忽略時不再提示；AWF_BIN 指到別的檔時複製它
     let t2 = w.dir("project-hooks-2");
@@ -706,7 +738,7 @@ fn existing_project() {
     assert!(hooks.contains("echo user-hook") && hooks.contains("echo done"), "使用者的 hooks 要保留：{hooks}");
     assert_eq!(hooks.matches("guard-shell").count(), 1, "{hooks}");
     assert_eq!(hooks.matches("guard-paths").count(), 1, "{hooks}");
-    assert_eq!(hooks.matches(" hook ").count(), 5, "awf hook 各種類只註冊一次（共五筆）：{hooks}");
+    assert_eq!(hooks.matches(" hook ").count(), 7, "awf hook 各種類只註冊一次（共七筆）：{hooks}");
     assert!(!t.join(".github/workflows/agent-merge-gate.yml").exists(), "預設沒有 merge gate CI");
 
     let bin = cmd_exe(pre_hook(&st, "Bash|PowerShell")["command"].as_str().unwrap_or(""));
@@ -1149,7 +1181,7 @@ fn upgrade_real_06_project() {
     r.ok("awf init --upgrade --hooks project");
     let text = read(&sp);
     assert!(!text.contains("awf_hook.py"), "舊的 hook 註冊要換掉：\n{text}");
-    assert_eq!(text.matches(" hook ").count(), 5, "新的註冊五筆、不留兩份：\n{text}");
+    assert_eq!(text.matches(" hook ").count(), 7, "新的註冊七筆、不留兩份：\n{text}");
     assert!(text.contains("echo user-hook"), "使用者的 hook 不動");
     let left: Vec<String> = files(&t.join(".claude/hooks")).iter().map(|p| rel(&t, p)).collect();
     let name = if cfg!(windows) { "awf.exe" } else { "awf" };

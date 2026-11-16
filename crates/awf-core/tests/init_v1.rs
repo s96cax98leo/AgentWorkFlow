@@ -334,7 +334,11 @@ fn b_hooks_project_copies_the_binary_and_registers_its_absolute_path() {
     let st = json_of(&p.join(".claude/settings.json"));
     let cmds = hook_commands(&st);
     let want = |kind: &str| format!("\"{}\" hook {kind}", bin.display());
-    assert_eq!(cmds, vec![want("guard-shell"), want("guard-paths"), want("envelope"), want("envelope"), want("envelope")]);
+    assert_eq!(cmds, vec![want("guard-shell"), want("guard-paths"), want("envelope"), want("envelope"), want("envelope"), want("mark-dirty"), want("prompt-context")]);
+    // 輔助 hook（待更新清單、提問時帶位置）：失敗放行，不像守門那樣 block
+    assert_eq!(st["hooks"]["PostToolUse"][0]["matcher"], "Edit|Write");
+    assert_eq!(st["hooks"]["PostToolUse"][0]["hooks"][0]["onFailure"], "continue");
+    assert_eq!(st["hooks"]["UserPromptSubmit"][0]["hooks"][0]["onFailure"], "continue");
     let pre = st["hooks"]["PreToolUse"].as_array().expect("PreToolUse");
     assert_eq!(pre[0]["matcher"], "Bash|PowerShell");
     assert_eq!(pre[0]["hooks"][0]["onFailure"], "block");
@@ -457,7 +461,7 @@ fn b_upgrade_replaces_old_registration_and_allow_but_not_the_users() {
     let cmds = hook_commands(&st);
     let bin = p.join(".claude/hooks/bin/awf");
     let ours: Vec<&String> = cmds.iter().filter(|c| c.contains(&bin.display().to_string())).collect();
-    assert_eq!(ours.len(), 5, "新的註冊五筆：{cmds:?}");
+    assert_eq!(ours.len(), 7, "新的註冊七筆：{cmds:?}");
     assert!(!cmds.iter().any(|c| c.contains("awf_hook.py")), "舊的註冊要換掉，不留兩份：{cmds:?}");
     for mine in ["echo 使用者的 hook", "my-awf hook guard-paths", "echo done"] {
         assert_eq!(cmds.iter().filter(|c| c.as_str() == mine).count(), 1, "使用者的 hook「{mine}」要原樣留著：{cmds:?}");
@@ -665,7 +669,7 @@ fn c_upgrade_of_a_hooks_project_install() {
     let st = json_of(&p.join(".claude/settings.json"));
     let cmds = hook_commands(&st);
     assert!(!cmds.iter().any(|c| c.contains("awf_hook.py") || c.contains("python")), "{cmds:?}");
-    assert_eq!(cmds.iter().filter(|c| c.contains("/.claude/hooks/bin/awf\" hook ")).count(), 5, "{cmds:?}");
+    assert_eq!(cmds.iter().filter(|c| c.contains("/.claude/hooks/bin/awf\" hook ")).count(), 7, "{cmds:?}");
     assert!(cmds.contains(&"echo 使用者的 hook".to_string()) && cmds.contains(&"my-awf hook guard-paths".to_string()) && cmds.contains(&"echo done".to_string()));
     assert_eq!(files_under(&hooks), vec!["bin/awf", "my-hook.sh"], "舊腳本與它的快取、空的 tests/ 都清掉，使用者的腳本與新的執行檔留著");
     assert!(r.out.contains(&format!("移除 {n_hooks} 個 0.x 複製進專案、沒改過的工具檔")), "{}", r.out);

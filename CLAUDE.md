@@ -306,7 +306,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **沒有設定檔時**：採安全預設，只套用 `tpm-`／`dev-` 的角色規則，不擋主 session，所以還沒 init 的專案不會被誤擋。
 - **註冊方式**：兩種只能擇一。
   - plugin 註冊：`awf init --hooks plugin`，預設。
-  - 註冊在專案的 `.claude/settings.json`：`--hooks project`，Windows 建議用這個，init 會寫入執行檔的絕對路徑。
+  - 註冊在專案的 `.claude/settings.json`：`--hooks project`，Windows 建議用這個，init 會寫入執行檔的絕對路徑。範本（`settings.project-hooks.json.tmpl`）註冊七筆：守門兩筆 `onFailure: block`，交件三筆，加上輔助的 `mark-dirty`（PostToolUse）與 `prompt-context`（UserPromptSubmit）兩筆 `onFailure: continue`。`--upgrade` 時 settings.json 已經有 1.0 寫法的註冊就自動照 project 模式升級（補缺的註冊、更新執行檔複本）；`init::merge::merge_hooks` 讓每個種類在每個事件只留一份。`awf doctor` 的重複註冊檢查（`project_hook_re`）認得全部六個種類。
 
 ### Slash commands 與 skills
 

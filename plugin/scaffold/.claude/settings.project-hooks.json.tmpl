@@ -31,6 +31,12 @@
     ],
     "TaskCompleted": [
       {"hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} envelope"{{AWF_HOOK_SHELL}}}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} mark-dirty", "timeout": 5, "onFailure": "continue"{{AWF_HOOK_SHELL}}}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "{{AWF_HOOK_CMD}} prompt-context", "timeout": 5, "onFailure": "continue"{{AWF_HOOK_SHELL}}}]}
     ]
   }
 }

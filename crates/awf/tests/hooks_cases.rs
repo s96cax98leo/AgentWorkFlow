@@ -559,6 +559,7 @@ impl<'a> Runner<'a> {
                 let cmd = s(&cfg["hooks"][s(&st["event"])][0]["hooks"][0]["command"]).to_string();
                 runs_hook(&cmd, mode).then_some(()).ok_or(format!("{} 跑的是「{cmd}」，不是 awf hook {mode}", s(&st["event"])))
             }
+            "event_on_failure" => on_failure(cfg["hooks"][s(&st["event"])].get(0), &st["values"]),
             other => Err(format!("不認得的 rule：{other}")),
         }
     }
