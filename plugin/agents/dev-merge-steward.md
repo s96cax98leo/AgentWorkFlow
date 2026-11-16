@@ -54,7 +54,7 @@ skills: []
 - **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `awf hook envelope`（SubagentStop hook）會驗證，不合格就交不出去。
 - **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：`merge-decision`（`.claude/teams/schemas/payloads/merge-decision.schema.json`；schema 表達不了的語意規則由驗證器另外檢查，例如判 merge 時不能有 mismatch）。
 - **成果不寫檔**：對照表就在 payload；`evidence` 列出跑過的指令（gate 指令、`gh pr view`、測試指令）與 head SHA。
-- 判 hold 或 escalate 時 `status` 不能是 `done`（用 `needs_decision`），open_questions 附 2–3 個選項與代價（例如：依新需求修正後重跑 SDLC 對應段落、調整需求、交人審）。
+- 判 hold 或 escalate 時 `status` 不能是 `done`（用 `needs_decision`），open_questions 附選項與代價（幾個選項照 profile 的 `conventions.questions.options`，沒設定＝2–3 個；例如：依新需求修正後重跑 SDLC 對應段落、調整需求、交人審）。
 - **輸出語言**：信封、PR review 內文一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。
 
 ### 執行紀錄

@@ -38,7 +38,7 @@ skills: []
 - **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `awf hook envelope`（SubagentStop hook）會驗證，不合格就交不出去。
 - **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：`build-result`（`.claude/teams/schemas/payloads/build-result.schema.json`）。
 - **成果一律寫成檔案**，信封只放路徑；summary 理由在前、結論在後，不貼完整日誌。
-- 有 blocking 問題時 `status` 不能是 `done`，問題要附 2–3 個選項與代價。
+- 有 blocking 問題時 `status` 不能是 `done`，問題要附選項與代價（幾個選項照 profile 的 `conventions.questions.options`，沒設定＝2–3 個）。
 - **輸出語言**：檔案、信封、訊息一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。
 
 ### 執行紀錄

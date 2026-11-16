@@ -28,7 +28,7 @@ skills: []
 - 只能寫目標 repo 的 `specs/<epic>/`；`intent.md` 核准後不再改，要改就回報。
 - 契約不夠用時不自己設計新端點塞進 spec，改以 `needs_decision` 回報。
 - 不寫人天；不寫程式與測試。
-- 不自編任務編號；編號由上層系統（rules.md〈專案規則〉的 `{{TASK_AUTHORITY}}`）給。
+- 不自編任務編號；編號由上層系統給（是哪個系統或角色，見 rules.md 的任務編號規則）。
 
 ## 工作方式
 - **依開發規範 profile 工作**：做法與慣例（產出文件、需求寫法、測試時機、commit 格式、code style、PR 大小、文件格式）以派工單帶來的 profile 為準，原文在專案的 `.claude/teams/methodology.json`（init 時依使用者的習慣產生）。本檔提到的特定做法都只是預設 profile 的範例；派工單與 profile 不一致時以派工單為準，沒有 profile 時照目標 repo 既有慣例。
@@ -41,7 +41,7 @@ skills: []
 - **用 Agent 工具派出時**：回報最後附一個 ```json 區塊，裡面是信封。plugin 的 `awf hook envelope`（SubagentStop hook）會驗證，不合格就交不出去。
 - **信封格式**：`.claude/teams/schemas/envelope.schema.json`（status、summary、artifacts、evidence、confidence、open_questions、derived_work、payload）。本角色的 payload：Plan 段是 `docs`、Design 段是 `subtasks`、大綱是 `plan-outline`（`.claude/teams/schemas/payloads/docs.schema.json`、`subtasks.schema.json`、`plan-outline.schema.json`）；派工單會寫明用哪一個。
 - **成果一律寫成檔案**，信封只放路徑；summary 理由在前、結論在後，不貼完整日誌。
-- 有 blocking 問題時 `status` 不能是 `done`，問題要附 2–3 個選項與代價。
+- 有 blocking 問題時 `status` 不能是 `done`，問題要附選項與代價（幾個選項照 profile 的 `conventions.questions.options`，沒設定＝2–3 個）。
 - **輸出語言**：檔案、信封、訊息一律用 `.claude/teams/rules.md` 設定的輸出語言（預設繁體中文），技術名詞保留原文。
 
 ### 執行紀錄
