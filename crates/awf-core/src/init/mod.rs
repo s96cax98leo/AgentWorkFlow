@@ -54,6 +54,8 @@ const DOC: &str = include_str!("usage.txt");
 pub const VERSION_FILE: &str = ".claude/teams/VERSION";
 /// 這次用的佔位符值（`--upgrade` 沒給 `--config` 時沿用）。
 pub const RECORD_FILE: &str = ".claude/teams/workflow.config";
+/// `NOTIFY_HOW` 留空時寫進 rules.md 的說法。
+pub const NOTIFY_NONE: &str = "在對話中提問即可，不另外通知";
 
 /// 停下來：在 stderr 印「awf init：<訊息>」，exit 1。
 #[derive(Debug)]
@@ -336,7 +338,8 @@ impl<'a> Console<'a> {
 }
 
 /// 決定每個佔位符的值：設定檔 > 互動詢問 > workflow.config.example 的預設值。
-fn collect_values(con: &mut Console, site: &Site, config: Option<&Shown>, defaults: bool) -> R<Kv> {
+/// `guard_later`＝後面的訪談會問守門設定：互動模式不在這裡重複問那幾個佔位符（`interview::GUARD_PLACEHOLDERS`）。
+fn collect_values(con: &mut Console, site: &Site, config: Option<&Shown>, defaults: bool, guard_later: bool) -> R<Kv> {
     let example = site.example();
     let example_text = match read_text_sig(&example) {
         Ok(t) => t,
@@ -356,8 +359,8 @@ fn collect_values(con: &mut Console, site: &Site, config: Option<&Shown>, defaul
         let mut val = default.to_string();
         if config.is_some() {
             val = cf.get(k).unwrap_or(default).to_string();
-        } else if interactive && k != "METHODOLOGY" {
-            // 開發規範 profile 在後面的開發規範問答一起問
+        } else if interactive && k != "METHODOLOGY" && !(guard_later && interview::GUARD_PLACEHOLDERS.contains(&k)) {
+            // 開發規範 profile 在後面的開發規範問答一起問；守門的兩個清單在訪談的守門主題問
             con.say(&format!("\n{}", hint_for(&example_text, k)));
             let ans = con.input(&format!("{k} [{default}]: ")).unwrap_or_default();
             if ans == "-" {
@@ -367,6 +370,14 @@ fn collect_values(con: &mut Console, site: &Site, config: Option<&Shown>, defaul
             }
         }
         vals.set(k, &val);
+    }
+    // 通知方式留空：規則 11 的句子不能缺一塊，改成「不另外通知」的寫法
+    if vals.get("NOTIFY_HOW").is_some_and(|s| pyutil::strip(s).is_empty()) {
+        vals.set("NOTIFY_HOW", NOTIFY_NONE);
+    }
+    // 文件目錄會變成 tpm-writer 的寫入範圍：只收工作區裡的相對路徑
+    if let Some(bad) = vals.get("DOCS_DIRS").unwrap_or_default().split(',').map(pyutil::strip).filter(|d| !d.is_empty()).find(|d| !interview::writer_dir_ok(d)) {
+        return die(format!("DOCS_DIRS 要是工作區裡的相對路徑（逗號分隔），不能是絕對路徑、含 ..，也不能在 .claude、.github、.git 底下（收到 {}）", pyfmt::repr_str(bad)));
     }
     Ok(vals)
 }
@@ -699,7 +710,7 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     }
 
     let defaults = a.defaults || a.upgrade; // 升級不詢問
-    let mut vals = collect_values(con, &site, config.as_ref(), defaults)?;
+    let mut vals = collect_values(con, &site, config.as_ref(), defaults, answers.is_none())?;
     let interactive = config.is_none() && !defaults && con.tty;
     // 這次的答案會不會寫成 methodology.json（已經有的專案保留它自己的，--overwrite-user-files 才換）
     let meth = target.join(".claude").join("teams").join("methodology.json");
@@ -732,7 +743,7 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
         }
         let base = profile::load_profile(&site, &name)?;
         let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
-        interview::ask_more(con, &mut ans, base, &topics, a.hooks_given, None)?;
+        interview::ask_more(con, &mut ans, base, &topics, &vals, a.hooks_given, None)?;
     }
     let hooks = match interview::hooks_answer(&ans)? {
         Some(h) if !a.hooks_given => h,
@@ -1128,7 +1139,7 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
             let name = saved.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
             let base = profile::load_profile(site, &name)?;
             let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
-            interview::ask_more(con, &mut new_ans, base, &topics, false, Some(t.id))?;
+            interview::ask_more(con, &mut new_ans, base, &topics, &vals, false, Some(t.id))?;
         }
     } else if asked {
         con.say("重新設定：每題的預設值是上次的答案（沒有的用偵測到的現況），Enter＝不改。");
@@ -1152,7 +1163,7 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
         }
         let base = profile::load_profile(site, &name)?;
         let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
-        interview::ask_more(con, &mut new_ans, base, &topics, false, None)?;
+        interview::ask_more(con, &mut new_ans, base, &topics, &vals, false, None)?;
     }
 
     let name_of = |ans: &Map<String, Value>| ans.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();

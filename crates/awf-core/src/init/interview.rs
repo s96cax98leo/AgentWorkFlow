@@ -11,7 +11,7 @@
 
 use super::detect::{self, Topic};
 use super::merge::{deep_merge, short};
-use super::{crash, die, read_text_sig, Console, R};
+use super::{crash, die, read_text_sig, Console, Kv, R};
 use crate::merge_gate::pyjson;
 use crate::merge_gate::pyutil::{self, ReadErr};
 use crate::pyfmt;
@@ -153,6 +153,20 @@ pub fn single_topics() -> Vec<&'static str> {
     v
 }
 
+/// 守門主題會問、所以互動模式不在佔位符那一輪重複問的佔位符。
+pub const GUARD_PLACEHOLDERS: &[&str] = &["PROTECTED_BRANCHES", "DOCS_DIRS"];
+/// `DOCS_DIRS` 沒有紀錄時的值（同 workflow.config.example 的預設）。
+pub const GUARD_DOCS: &[&str] = &["docs"];
+
+/// tpm-writer 可以寫的文件目錄：工作區裡的相對路徑，不能是絕對路徑、含 `..`，也不能是模版設定、CI 或 git 的目錄。
+pub fn writer_dir_ok(d: &str) -> bool {
+    let p = d.replace('\\', "/");
+    let p = p.trim_end_matches('/');
+    let first = p.split('/').next().unwrap_or_default().to_lowercase();
+    !(p.is_empty() || p.starts_with('/') || p.starts_with('~') || p.contains(':') || p.split('/').any(|s| s == ".." || s == "." || s.is_empty())
+        || [".claude", ".github", ".git"].contains(&first.as_str()))
+}
+
 /// `knowledge.repos` 的上限（同 methodology.schema.json 的 maxItems）。
 const MAX_REPOS: usize = 16;
 
@@ -197,7 +211,7 @@ fn found_list(topics: &[Topic], topic: &str, key: &str) -> Vec<String> {
 
 /// 互動模式：問 1.0 新增的主題（接在既有的題目後面）。預設值的來源：存下來的答案（`ans` 裡已有的）＞偵測＞profile。
 /// 回答和預設相同、而且預設來自 profile 時不寫進答案。`only`＝只問這一個主題（`--reconfigure <主題>`）。
-pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<String, Value>, topics: &[Topic], hooks_given: bool, only: Option<&str>) -> R<()> {
+pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<String, Value>, topics: &[Topic], vals: &Kv, hooks_given: bool, only: Option<&str>) -> R<()> {
     let sug = detect::suggested(topics);
     let want = |id: &str| only.is_none_or(|o| o == id);
     if only.is_none() {
@@ -471,16 +485,22 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
         }
     }
 
-    // 守門設定：受保護分支、驗收測試目錄（其餘的寫在答案檔的 guard 或直接改 guard.config.json）
+    // 守門設定：受保護分支、驗收測試目錄、文件目錄（其餘的寫在答案檔的 guard 或直接改 guard.config.json）
     if want("guard") {
         let seed = ans.get("guard").and_then(Value::as_object).cloned().unwrap_or_default();
         let sug_guard = sug.get("guard").and_then(Value::as_object).cloned().unwrap_or_default();
         let mut out = seed.clone();
+        // 範本會寫成什麼＝佔位符的值（workflow.config 或 init 記下的）；沒有或留空就是範本原本的預設
+        let from_vals = |k: &str, dflt: &[&str]| -> Vec<String> {
+            match vals.get(k).map(comma_list) {
+                Some(l) if !l.is_empty() => l,
+                _ => dflt.iter().map(|s| s.to_string()).collect(),
+            }
+        };
         for (key, base, prompt) in [
-            ("protected_branches", detect::GUARD_PROTECTED, "受保護分支（逗號分隔；agent 與主 session 都不能直接 push，合併走 PR）"),
-            ("acceptance_test_dirs", detect::GUARD_ACCEPTANCE, "驗收測試目錄（逗號分隔；dev-implementer 不能改裡面的檔）"),
+            ("protected_branches", from_vals("PROTECTED_BRANCHES", detect::GUARD_PROTECTED), "受保護分支（逗號分隔；agent 與主 session 都不能直接 push，合併走 PR）"),
+            ("acceptance_test_dirs", from_vals("", detect::GUARD_ACCEPTANCE), "驗收測試目錄（逗號分隔；dev-implementer 不能改裡面的檔）"),
         ] {
-            let base: Vec<String> = base.iter().map(|s| s.to_string()).collect();
             let now = str_list(seed.get(key)).or_else(|| str_list(sug_guard.get(key))).unwrap_or_else(|| base.clone());
             let list = comma_list(&con.ask(prompt, &now.join(",")));
             if list.is_empty() {
@@ -489,6 +509,27 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
             if list != base || seed.contains_key(key) {
                 out.insert(key.to_string(), json!(list));
             }
+        }
+        // 文件目錄：writer_dirs＝run 目錄＋簡報目錄＋這裡回答的目錄（前兩個一律保留）
+        let fixed: Vec<String> = [vals.get("RUNS_DIR").filter(|s| !s.is_empty()).unwrap_or("_tpm/runs"), vals.get("BRIEFS_DIR").unwrap_or_default()]
+            .iter().map(|d| d.trim_matches('/').to_string()).filter(|d| !d.is_empty()).collect();
+        let base: Vec<String> = match vals.get("DOCS_DIRS") {
+            Some(s) => comma_list(s),
+            None => GUARD_DOCS.iter().map(|s| s.to_string()).collect(),
+        };
+        let now = match str_list(seed.get("writer_dirs")) {
+            Some(l) => l.into_iter().filter(|d| !fixed.contains(&d.trim_matches('/').to_string())).collect(),
+            None => base.clone(),
+        };
+        let shown = if now.is_empty() { "-".to_string() } else { now.join(",") };
+        let list = comma_list(&con.ask("tpm-writer 可以寫的文件目錄（逗號分隔，相對工作區；- ＝沒有；run 目錄與簡報目錄一律可以寫）", &shown));
+        if let Some(bad) = list.iter().find(|d| !writer_dir_ok(d)) {
+            return die(format!("文件目錄要是工作區裡的相對路徑，不能是絕對路徑、含 ..，也不能在 .claude、.github、.git 底下（收到 {}）", pyfmt::repr_str(bad)));
+        }
+        if list != base || seed.contains_key("writer_dirs") {
+            let mut all = fixed.clone();
+            all.extend(list.into_iter().filter(|d| !fixed.contains(&d.trim_matches('/').to_string())));
+            out.insert("writer_dirs".to_string(), json!(all));
         }
         if !out.is_empty() {
             ans.insert("guard".to_string(), Value::Object(out));
@@ -749,6 +790,12 @@ mod tests {
         let long = repo_id(&format!("../{}", "a".repeat(80)), &[]);
         assert!(long.len() <= 32 && long.starts_with('a'), "{long}");
         assert_eq!(comma_list(" a , -, ,b，c "), vec!["a", "b", "c"]);
+        for ok in ["docs", "docs/handbook/", "handbook", "文件"] {
+            assert!(writer_dir_ok(ok), "{ok}");
+        }
+        for bad in ["", "/etc", "~/docs", "C:\\docs", "docs/../x", "..", ".", ".claude/teams", ".GitHub/workflows", ".git", "a//b"] {
+            assert!(!writer_dir_ok(bad), "{bad}");
+        }
         assert!(single_topics().contains(&"knowledge") && single_topics().contains(&"main_session") && !single_topics().contains(&"conventions"));
     }
 

@@ -643,6 +643,12 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             errs.push(format!("conventions.sync.backup_ref 要在 refs/backup/ 底下，<branch> 與 <date> 各出現一次，其餘只能是英數與 . _ - /（收到 {p}）"));
         }
     }
+    // 安全文件目錄（stages.test.security_review.docs_dir）：目標 repo 裡的相對路徑
+    if let Some(d) = get(doc, "stages").and_then(|s| get(s, "test")).and_then(|t| get(t, "security_review")).and_then(|r| get(r, "docs_dir")).and_then(Value::as_str) {
+        if outside(d) {
+            errs.push(format!("stages.test.security_review.docs_dir 要是目標 repo 裡的相對路徑，不能是絕對路徑或含 ..（收到 {d}）"));
+        }
+    }
     // 清單不能有重複的項目（schema 的檢查器沒有 uniqueItems）
     // 以下幾個清單欄位：型別不對記錯誤（閘門讀 profile 時只跑這裡，沒有 JSON Schema 先擋；當成沒寫就什麼都沒檢查到）
     let record_sections: Vec<Option<&Value>> =

@@ -346,7 +346,7 @@ pub fn render_custom(env: &Env, src: &str, stage: &str, args: &Value) -> A<(Stri
     ));
     pre.push("const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages, summary: recipeSummary(R) }".to_string());
     pre.push(format!(
-        "awfInit({{ run_dir: A.run_dir, stage: {s_js}, lang: {}, rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, {s_js}) }})",
+        "awfInit({{ run_dir: A.run_dir, stage: {s_js}, lang: {}, rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, {s_js}), kg: A.kg === true, tune: awfTune(MP) }})",
         js(&json!(cfg_str(&cfg, "OUTPUT_LANGUAGE", "")))
     ));
     pre.push(format!(

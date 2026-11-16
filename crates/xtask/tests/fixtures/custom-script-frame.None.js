@@ -18,7 +18,7 @@ const MP = METHODOLOGY || {}
 const R = resolveRecipe(METHODOLOGY, A.recipe, [].concat(A.modifiers || []), A.size)
 if (R.errors.length) return { stage: "build", halted: true, halt_reason: 'recipe 解析有錯：' + R.errors.join('；'), missing: [], recipe: { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages }, trace: [] }
 const RECIPE = { name: R.name, requested: R.requested, modifiers: R.modifiers, size: R.size, stages: R.stages, summary: recipeSummary(R) }
-awfInit({ run_dir: A.run_dir, stage: "build", lang: "繁體中文", rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, "build") })
+awfInit({ run_dir: A.run_dir, stage: "build", lang: "繁體中文", rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, "build"), kg: A.kg === true, tune: awfTune(MP) })
 awfKernelInit({ profile: METHODOLOGY, stage: "build", modifiers: [].concat(A.modifiers || []), max_agents: 40, roles: ["agent-workflow:tpm-planner","agent-workflow:tpm-researcher","agent-workflow:tpm-reviewer","agent-workflow:tpm-skeptic","agent-workflow:tpm-writer","agent-workflow:dev-spec-author","agent-workflow:dev-acceptance-tester","agent-workflow:dev-implementer","agent-workflow:dev-integrator","agent-workflow:dev-verifier","agent-workflow:dev-design-reviewer","agent-workflow:dev-security-reviewer","agent-workflow:dev-release-watcher"] })
 
 // ── 自訂腳本的內容（包成函式：遮蔽 agent 等名字；回傳的 trace 由外層取自執行核心）──

@@ -61,7 +61,25 @@
           "required": ["verification", "guidance"],
           "properties": {
             "verification": {"type": "string", "minLength": 1, "description": "怎麼驗證需求（逐條驗收、手動清單、指令…）"},
-            "guidance": {"type": "string"}
+            "guidance": {"type": "string"},
+            "design_review": {
+              "type": "object",
+              "description": "選填：設計審查（dev-design-reviewer）的做法。派工單有寫的以派工單為準；沒寫＝照 agent 檔的預設",
+              "properties": {
+                "standard": {"type": "string", "minLength": 1, "maxLength": 80, "description": "無障礙標準，預設 WCAG 2.1 AA"},
+                "guidance": {"type": "string", "maxLength": 2000, "description": "補充做法（階段、驗收寬度、要看的重點…）"}
+              },
+              "additionalProperties": false
+            },
+            "security_review": {
+              "type": "object",
+              "description": "選填：安全審查（dev-security-reviewer）的做法。派工單有寫的以派工單為準；沒寫＝照 agent 檔的預設",
+              "properties": {
+                "guidance": {"type": "string", "maxLength": 2000, "description": "補充做法（要查的種類、步驟、不用回報的類別…）"},
+                "docs_dir": {"type": "string", "minLength": 1, "maxLength": 200, "description": "threat model 與安全文件的目錄（相對目標 repo，不能是絕對路徑或含 ..；審查者只讀），預設 docs/security"}
+              },
+              "additionalProperties": false
+            }
           }
         },
         "deliver": {
@@ -659,8 +677,17 @@
           "required": ["prefix"],
           "properties": {
             "prefix": {"type": "string", "minLength": 1, "description": "epic 與子任務分支的前綴（同 BRANCH_PREFIX）"},
-            "naming": {"type": "string"}
+            "naming": {"type": "string"},
+            "integrate": {"enum": ["merge --no-ff", "merge"], "description": "選填：子任務分支合進整合分支的方式（dev-integrator 讀）。merge --no-ff＝一律留 merge commit（預設）；merge＝可以 fast-forward。只開放保留各子任務 commit 的合併方式"}
           }
+        },
+        "questions": {
+          "type": "object",
+          "description": "選填：提問的格式",
+          "properties": {
+            "options": {"type": "string", "minLength": 1, "maxLength": 20, "description": "blocking 問題要附幾個選項（寫給 agent 看的文字，例如 2–3、至少 2），預設 2–3"}
+          },
+          "additionalProperties": false
         },
         "pr_size": {
           "type": "object",

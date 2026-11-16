@@ -36,17 +36,26 @@ DECISION_OWNER=使用者
 # 需求方（泛稱）。預設：需求方
 STAKEHOLDER=需求方
 
+# 需要人決策時怎麼通知（寫進 rules.md 規則 11，給主 session 與 agent 看的一句話；留空＝在對話中提問即可）。進度事件要送到外部指令是另一件事：設開發規範 profile 的 progress.notify。預設：推播到手機（PushNotification）
+NOTIFY_HOW=推播到手機（PushNotification）
+
 # 開發分支前綴（epic 與子任務分支）。預設：feature/
 BRANCH_PREFIX=feature/
 
 # 允許的新分支前綴，逗號分隔（要包含 BRANCH_PREFIX）。預設：feature/,bugfix/,hotfix/,release/,merge/
 ALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/
 
+# 受保護分支（agent 與主 session 都不能直接 push，合併走 PR），逗號分隔；留空＝main、master。預設：main,master
+PROTECTED_BRANCHES=main,master
+
 # run 目錄（執行紀錄、信封、閘門核准，相對工作區）。預設：_tpm/runs
 RUNS_DIR=_tpm/runs
 
 # 簡報目錄（上層系統發來的任務簡報，相對工作區）。預設：_tpm/briefs
 BRIEFS_DIR=_tpm/briefs
+
+# tpm-writer 可以寫的文件目錄（相對工作區），逗號分隔；run 目錄與簡報目錄一律可以寫，不用列。預設：docs
+DOCS_DIRS=docs
 
 # commit 結尾的署名行。預設：Assisted-by: Claude
 ATTRIBUTION_LINE=Assisted-by: Claude
