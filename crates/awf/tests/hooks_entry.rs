@@ -180,9 +180,12 @@ fn fallback_rules_when_guard_is_broken() {
         for (c, agent) in FB_BLOCK {
             expect(&format!("{fault}：擋 {c}（{agent}）"), &fh("guard-shell", sh(&repo, c, agent).to_string().as_bytes()), 2);
         }
-        let r = fh("guard-shell", sh(&repo, "git push origin HEAD:feature/x", AGENT).to_string().as_bytes());
+        let r = fh("guard-shell", sh(&repo, "git push origin HEAD:feature/x", "").to_string().as_bytes());
         assert!(err_of(&r).contains("最小規則"), "{fault}：stderr 要有最小規則提示：{}", err_of(&r));
-        expect(&format!("{fault}：guard-paths 一般寫檔放行"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), AGENT).to_string().as_bytes()), 0);
+        // 載入失敗時還不知道身分：一律照最小規則。規則開始跑之後才 panic 的，team agent 一律擋（下一個測試）
+        let team_write = if fault == "load" { 0 } else { 2 };
+        expect(&format!("{fault}：guard-paths team agent 寫檔"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), AGENT).to_string().as_bytes()), team_write);
+        expect(&format!("{fault}：guard-paths 使用者自己的 agent 寫檔放行"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), "my-helper").to_string().as_bytes()), 0);
         expect(&format!("{fault}：guard-paths 主 session 寫檔放行"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), "").to_string().as_bytes()), 0);
         expect(&format!("{fault}：壞輸入仍擋"), &fh("guard-shell", b"not json"), 2);
     }
@@ -194,9 +197,46 @@ fn fallback_rules_when_guard_is_broken() {
     assert!(err_of(&r).contains("意外錯誤"), "{}", err_of(&r));
 }
 
+/// 審查 M5：規則開始跑之後才 panic，team agent 一律擋；主 session 與使用者自己的 agent 照最小規則。
+#[test]
+fn panic_blocks_team_agents_and_keeps_minimal_rules_for_others() {
+    if !cfg!(debug_assertions) {
+        eprintln!("略過 panic 測試（release 版沒有故障注入）");
+        return;
+    }
+    let tmp = Tmp::new("panicid");
+    let mut cfg = default_config();
+    cfg["extension_agents"] = json!({"my:auditor": "tpm-reviewer"});
+    let (ws, repo) = init_ws(tmp.path(), cfg);
+    let fh = |mode: &str, v: Value| {
+        let mut c = base_cmd(&[mode], &ws);
+        c.env("AWF_HOOK_TEST_FAULT", "panic");
+        run(c, v.to_string().as_bytes())
+    };
+    // team agent：寫檔擋、一般指令也擋（已經無法確認任何規則）
+    let r = fh("guard-paths", write(&repo, &repo.join("a.txt"), AGENT));
+    expect("panic：team agent 寫檔擋", &r, 2);
+    assert!(err_of(&r).contains("意外錯誤") && err_of(&r).contains("主 session"), "{}", err_of(&r));
+    expect("panic：team agent 一般指令擋", &fh("guard-shell", sh(&repo, "echo x > a.txt", AGENT)), 2);
+    expect("panic：team agent 唯讀指令也擋", &fh("guard-shell", sh(&repo, "ls -la", AGENT)), 2);
+    expect("panic：唯讀角色寫檔擋", &fh("guard-paths", write(&repo, &repo.join("a.txt"), "agent-workflow:tpm-reviewer")), 2);
+    expect("panic：登記的擴充 agent 擋", &fh("guard-shell", sh(&repo, "echo x > a.txt", "my:auditor")), 2);
+    expect("panic：和模版角色同名的 agent 擋", &fh("guard-shell", sh(&repo, "echo x > a.txt", "dev-implementer")), 2);
+    // 主 session：寫檔放行、push 擋
+    expect("panic：主 session 寫檔放行", &fh("guard-paths", write(&repo, &repo.join("a.txt"), "")), 0);
+    expect("panic：主 session 一般指令放行", &fh("guard-shell", sh(&repo, "echo x > a.txt", "")), 0);
+    let r = fh("guard-shell", sh(&repo, "git push origin HEAD:feature/x", ""));
+    expect("panic：主 session push 擋", &r, 2);
+    assert!(err_of(&r).contains("最小規則"), "{}", err_of(&r));
+    // 使用者自己的 agent：同主 session
+    expect("panic：使用者自己的 agent 寫檔放行", &fh("guard-paths", write(&repo, &repo.join("a.txt"), "my-helper")), 0);
+    expect("panic：使用者自己的 agent 一般指令放行", &fh("guard-shell", sh(&repo, "npm test", "my-helper")), 0);
+    expect("panic：使用者自己的 agent 合併擋", &fh("guard-shell", sh(&repo, "gh pr merge 3 --squash", "my-helper")), 2);
+}
+
 #[test]
 fn config_with_wrong_types_never_opens_the_gate() {
-    // 設定檔的欄位型別不對：守門類擋下（不會因為讀不懂設定就放行），交件類放行
+    // 設定檔的欄位型別不對：守門類擋下（不會因為讀不懂設定就放行），交件檢查連設定都載不進來時放行（和 0.x 相同）
     let tmp = Tmp::new("badcfg");
     let mut cfg = default_config();
     cfg["runs_dir"] = json!(7);
@@ -205,6 +245,93 @@ fn config_with_wrong_types_never_opens_the_gate() {
     expect("型別錯誤：gh pr merge 擋", &hook_json("guard-shell", &ws, &sh(&repo, "gh pr merge 3 --squash", "")), 2);
     let r = hook_json("envelope", &ws, &json!({"hook_event_name": "SubagentStop", "agent_type": AGENT, "last_assistant_message": "x"}));
     expect("型別錯誤：交件放行", &r, 0);
+}
+
+/// 交件檢查用不到的欄位型別不對（守門會擋）：交件照驗，和設定正常時同一個結果，不能整個跳過。
+#[test]
+fn envelope_still_checks_when_an_unrelated_field_has_the_wrong_type() {
+    let tmp = Tmp::new("badcfg2");
+    let mut cfg = default_config();
+    cfg["fork_repo"] = json!(7);
+    cfg["forbidden_paths"] = json!(7);
+    let (ws, repo) = init_ws(tmp.path(), cfg);
+    expect("型別錯誤：agent push 擋", &hook_json("guard-shell", &ws, &sh(&repo, "git push origin HEAD:feature/x", AGENT)), 2);
+    expect("型別錯誤：gh pr merge 擋", &hook_json("guard-shell", &ws, &sh(&repo, "gh pr merge 3 --squash", "")), 2);
+    let tmp2 = Tmp::new("goodcfg");
+    let (ws_ok, _) = init_ws(tmp2.path(), default_config());
+    let good = json!({"status": "done", "summary": "完成", "artifacts": [], "evidence": [], "confidence": 0.9, "open_questions": [], "derived_work": [], "payload": {}});
+    let fenced = format!("```json\n{good}\n```");
+    for (name, msg) in [("不是信封", "x".to_string()), ("合格的信封", fenced)] {
+        let input = json!({"hook_event_name": "SubagentStop", "agent_type": AGENT, "last_assistant_message": msg});
+        let normal = hook_json("envelope", &ws_ok, &input);
+        let faulty = hook_json("envelope", &ws, &input);
+        assert_eq!(faulty.status.code(), normal.status.code(), "［型別錯誤：{name}］要和設定正常時一樣：{}", err_of(&faulty));
+        assert!(!err_of(&faulty).contains("略過檢查"), "［型別錯誤：{name}］不能整個跳過：{}", err_of(&faulty));
+    }
+    // 信封的 schema 在專案裡才會驗
+    let schema = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/scaffold/.claude/teams/schemas/envelope.schema.json");
+    for w in [&ws, &ws_ok] {
+        std::fs::create_dir_all(w.join(".claude/teams/schemas")).unwrap();
+        std::fs::copy(&schema, w.join(".claude/teams/schemas/envelope.schema.json")).unwrap();
+    }
+    let handback = json!({"hook_event_name": "PreToolUse", "tool_name": "SubagentHandback", "agent_type": AGENT, "tool_input": {"message": "做完了"}});
+    expect("設定正常：沒附信封的交件擋", &hook_json("envelope", &ws_ok, &handback), 2);
+    let r = hook_json("envelope", &ws, &handback);
+    expect("型別錯誤：沒附信封的交件照擋", &r, 2);
+    assert!(err_of(&r).contains("交件信封不合格"), "{}", err_of(&r));
+    // 使用者自己的 agent 不交信封：照舊放行
+    let r = hook_json("envelope", &ws, &json!({"hook_event_name": "SubagentStop", "agent_type": "my-helper", "last_assistant_message": "x"}));
+    expect("型別錯誤：使用者自己的 agent 放行", &r, 0);
+}
+
+/// 白名單樣式沒有忽略大小寫時，ı（U+0131）、İ（U+0130）不能當成 i。
+#[test]
+fn dotless_i_is_not_i_in_case_sensitive_allowlists() {
+    let tmp = Tmp::new("dotless");
+    let (ws, repo) = init_ws(tmp.path(), default_config());
+    let verifier = "agent-workflow:dev-verifier";
+    for (name, rel, want) in [
+        ("verifier.md 放行", "specs/e1/verifier.md", 0),
+        ("verifier-api.md 放行", "specs/e1/verifier-api.md", 0),
+        ("verıfier.md（U+0131）擋", "specs/e1/ver\u{131}fier.md", 2),
+        ("src/verıfier.md 擋", "src/ver\u{131}fier.md", 2),
+        ("verİfier.md（U+0130）擋", "specs/e1/ver\u{130}fier.md", 2),
+    ] {
+        expect(name, &hook_json("guard-paths", &ws, &write(&repo, &repo.join(rel), verifier)), want);
+    }
+    // 忽略大小寫的規則照舊把它們當 i（Python 的 re.I 也配）：機敏檔名
+    let r = hook_json("guard-paths", &ws, &json!({"hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": s(&repo), "agent_type": verifier,
+        "tool_input": {"file_path": s(&repo.join(".env"))}}));
+    expect("讀 .env 擋", &r, 2);
+}
+
+/// scratchpad 的根：暫存目錄要「存在而且寫得進去」（Python 的 tempfile.gettempdir()），不是第一個存在的。
+#[cfg(unix)]
+#[test]
+fn scratchpad_root_must_be_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Tmp::new("tmpdir");
+    let (ws, repo) = init_ws(tmp.path(), default_config());
+    let locked = tmp.path().join("locked-tmp");
+    let open = tmp.path().join("open-tmp");
+    for d in [&locked, &open] {
+        std::fs::create_dir_all(d.join("sess-12345678/scratchpad")).unwrap();
+    }
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let writable_anyway = std::fs::write(locked.join("probe"), "x").is_ok(); // root 身分下權限不生效
+    let _ = std::fs::remove_file(locked.join("probe"));
+    let call = |tmpdir: &Path, target: &Path| {
+        let mut c = base_cmd(&["guard-paths"], &ws);
+        c.env("TMPDIR", tmpdir).env_remove("TEMP").env_remove("TMP");
+        let mut d = write(&repo, target, AGENT);
+        d["session_id"] = json!("sess-12345678");
+        run(c, d.to_string().as_bytes())
+    };
+    expect("寫得進去的 TMPDIR：scratchpad 放行", &call(&open, &open.join("sess-12345678/scratchpad/a.txt")), 0);
+    if !writable_anyway {
+        expect("寫不進去的 TMPDIR：不當 scratchpad 的根", &call(&locked, &locked.join("sess-12345678/scratchpad/a.txt")), 2);
+    }
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 /// 對應 0.x 的 Python 版「envelope 模組壞掉：放行」：交件檢查自己跑不下去（這裡是設定檔讀不懂）時不能卡住 agent 交件。

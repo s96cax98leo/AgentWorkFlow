@@ -13,6 +13,7 @@ use super::guard_shell::INTERP;
 use super::ps::{ps_segments, segments, PS_NESTED_SHELLS};
 use super::py::{self, shlex_tokens};
 use super::re::Re;
+use super::subst;
 
 static ENV_ASSIGN: Re = Re::new(r"^[A-Za-z_]\w*=", "");
 /// 內嵌程式碼裡把 awf 當成一個詞（`['awf', 'save-run', …]`、`"…/bin/awf save-run"`）。
@@ -62,6 +63,14 @@ const HARMLESS: &[&str] = &[
     "install", "sed", "awk", "sort", "uniq", "cut", "tr", "jq", "tee", "hexdump", "xxd", "od", "export", "set", "unset",
     "get-content", "gc", "get-item", "gi", "get-childitem", "gci", "test-path", "get-command", "gcm", "select-string", "sls",
     "write-host", "write-output", "get-filehash", "resolve-path",
+];
+
+/// 建置、套件與檔案工具：`awf` 在它們的參數裡是 crate、目標或檔案的名字（`cargo build -p awf $FLAGS`、`rsync bin/awf "$DEST"`），
+/// 不是被執行的指令。只用在「子指令看不到」的保守判斷；後面明寫 awf 子指令的照樣算（`cargo run -p awf -- save-run …`）。
+const BUILDERS: &[&str] = &[
+    "cargo", "rustup", "go", "npm", "npx", "pnpm", "yarn", "node", "pip", "pip3", "uv", "brew", "apt", "apt-get", "docker", "podman",
+    "kubectl", "bazel", "cmake", "ninja", "gcc", "clang", "cc", "ld", "ar", "code", "open", "rsync", "scp", "sftp", "shellcheck", "bat",
+    "vim", "vi", "nano", "emacs",
 ];
 
 fn has(list: &[&str], s: &str) -> bool {
@@ -128,6 +137,7 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
     let mut forwarder = false;
     let mut transparent = true;
     let mut consumed = false; // 已經進到某次 awf 呼叫的參數裡
+    let mut builder = false; // 前面有建置工具：awf 多半是它的參數
     for (k, t) in toks.iter().enumerate() {
         let (core, opened) = clean_head(t);
         if opened {
@@ -135,6 +145,7 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
             forwarder = false;
             transparent = true;
             consumed = false;
+            builder = false;
             first.clear();
         }
         if ENV_ASSIGN.is_match(t) {
@@ -154,7 +165,8 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
             } else if has(HARMLESS, &first) {
                 false
             } else {
-                has(SUBCOMMANDS, &sub) // 前面是不認得的指令：後面接的是 awf 的子指令才算
+                // 前面是不認得的指令：後面接的是 awf 的子指令才算；子指令是變數（看不到）而且前面不是建置工具時，保守地也算
+                has(SUBCOMMANDS, &sub) || (!builder && sub.contains(['$', '`']))
             };
             if take {
                 let from = (k + 2 + skip).min(toks.len());
@@ -206,6 +218,9 @@ fn scan_tokens(toks: &[String], out: &mut Vec<Call>, depth: usize) {
         if has(FORWARDERS, &name) {
             forwarder = true;
         }
+        if has(BUILDERS, &name) {
+            builder = true;
+        }
         if !has(TRANSPARENT, &name) {
             transparent = false;
         }
@@ -244,6 +259,14 @@ fn calls_at(seg: &str, depth: usize, out: &mut Vec<Call>) {
     if !maybe(seg) {
         return;
     }
+    // ANSI-C 引號（$'save-run'）與大括號展開（{awf,save-run,approve}）：照 shell 會展開的樣子再看一次
+    if let Some(nz) = normalize(seg) {
+        calls_raw(&nz, depth, out);
+    }
+    calls_raw(seg, depth, out);
+}
+
+fn calls_raw(seg: &str, depth: usize, out: &mut Vec<Call>) {
     let toks = shlex_tokens(seg);
     let mut found: Vec<Call> = Vec::new();
     scan_tokens(&toks, &mut found, 0);
@@ -257,30 +280,70 @@ fn calls_at(seg: &str, depth: usize, out: &mut Vec<Call>) {
             }
         }
     }
-    out.append(&mut found);
-
-    let mut head: Vec<&String> = toks.iter().filter(|x| !ENV_ASSIGN.is_match(x)).collect();
-    while !head.is_empty() && has(CMD_WRAPPERS, &cmd_name(head[0])) {
-        head.remove(0);
-        while !head.is_empty() && (head[0].starts_with('-') || is_number(head[0])) {
-            head.remove(0);
+    // 指令替換與 process substitution：內層各自當一段再看一次；另外把內層換成替身再掃一次原字串，
+    // 認得出「路徑中段是指令替換」的執行檔（$(git rev-parse --show-toplevel)/plugin/bin/awf）
+    let mut inner_segs: Vec<String> = Vec::new();
+    if subst::has_subst(seg) {
+        let sc = subst::scan(seg);
+        if !sc.inner.is_empty() {
+            let mut alt = Vec::new();
+            scan_tokens(&shlex_tokens(&sc.flat), &mut alt, 0);
+            for c in alt {
+                if !found.contains(&c) {
+                    found.push(c);
+                }
+            }
+            let mut raw = sc.inner;
+            let mut k = 0;
+            while k < raw.len() && raw.len() <= subst::MAX_INNER {
+                let (cmd, bodies) = subst::split_heredocs(&raw[k]);
+                for b in bodies {
+                    raw.extend(subst::scan(&b).inner);
+                }
+                raw[k] = cmd;
+                k += 1;
+            }
+            if sc.over || raw.len() > subst::MAX_INNER {
+                found.push(Call { sub: String::new(), args: Vec::new(), forwarded: false, direct: false, note: Some(NOTE_DEEP) });
+            } else {
+                for cmd in &raw {
+                    inner_segs.extend(segments(cmd));
+                }
+            }
         }
     }
-    let name = head.first().map(|h| cmd_name(h)).unwrap_or_default();
-    let args: Vec<&String> = head.iter().skip(1).copied().collect();
-    let nested_ps = has(PS_NESTED_SHELLS, &name) || name == "cmd";
-    let mut inner_cmds: Vec<String> = Vec::new();
-    if has(SHELL_NAMES, &name) {
-        if let Some(k) = args.iter().enumerate().position(|(k, t)| is_dash_c(t) && k + 1 < args.len()) {
-            inner_cmds.push(args[k + 1].clone());
+    out.append(&mut found);
+
+    // 段落開頭（去掉環境變數與包裝）是 shell、eval 時的內層指令。兩種去法都看：
+    // 所有長得像賦值的 token 都丟（原本的做法），以及只丟指令前面的（`bash -c 'X=$(awf …)'` 的內層指令本身就是「X=…」開頭）
+    let old_head: Vec<&String> = toks.iter().filter(|x| !ENV_ASSIGN.is_match(x)).collect();
+    let (name, mut inner_cmds) = head_inner(strip_wrappers(old_head));
+    let lead: Vec<&String> = toks.iter().skip_while(|x| ENV_ASSIGN.is_match(x)).collect();
+    for ic in head_inner(strip_wrappers(lead)).1 {
+        if !inner_cmds.contains(&ic) {
+            inner_cmds.push(ic);
         }
-    } else if nested_ps {
-        if let Some(k) = args.iter().enumerate().position(|(k, t)| matches!(py::lower(t).as_str(), "-c" | "-command" | "/c" | "/k") && k + 1 < args.len()) {
-            inner_cmds.push(args[k + 1..].iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "));
+    }
+    // shell 不在開頭的（sudo -u root bash -c …、if …; then bash -c …、xargs -I{} bash -c …、find -exec bash -c …）：
+    // 任何位置的 shell 名稱後面有 -c 就把它的指令字串展開。開頭是只把參數當文字的指令（echo、grep…）時不看
+    for ic in hidden_shells(&toks) {
+        if !inner_cmds.contains(&ic) {
+            inner_cmds.push(ic);
         }
-    } else if matches!(name.as_str(), "eval" | "invoke-expression" | "iex") {
-        inner_cmds.push(args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "));
-    } else if INTERP.is_match(seg) {
+    }
+    // 會執行參數的指令（trap、watch、git bisect run、awk 的 system()、osascript…）
+    let (run_shell, run_text) = exec_args(&toks);
+    for a in run_shell {
+        let ic = (a, false);
+        if !inner_cmds.contains(&ic) {
+            inner_cmds.push(ic);
+        }
+    }
+    for t in &run_text {
+        textual_calls(t, out);
+    }
+    let shellish = has(SHELL_NAMES, &name) || has(PS_NESTED_SHELLS, &name) || name == "cmd" || matches!(name.as_str(), "eval" | "invoke-expression" | "iex");
+    if !shellish && INTERP.is_match(seg) {
         // python -c、node -e 這類內嵌程式裡提到 awf：看不到它怎麼呼叫
         let inline = toks.windows(2).any(|w| CODE_FLAG.is_match(&w[0]) && INLINE_AWF.is_match(&w[1]));
         if inline {
@@ -288,17 +351,461 @@ fn calls_at(seg: &str, depth: usize, out: &mut Vec<Call>) {
         }
     }
     if depth >= 4 {
-        if !inner_cmds.is_empty() && inner_cmds.iter().any(|ic| maybe(ic)) {
+        if inner_cmds.iter().map(|(ic, _)| ic).chain(inner_segs.iter()).any(|ic| maybe(ic)) {
             out.push(Call { sub: String::new(), args: Vec::new(), forwarded: false, direct: false, note: Some(NOTE_DEEP) });
         }
         return;
     }
-    for ic in inner_cmds {
+    for s in &inner_segs {
+        calls_at(s, depth + 1, out);
+    }
+    for (ic, nested_ps) in inner_cmds {
         let inner = if nested_ps { ps_segments(&ic) } else { segments(&ic) };
         for s in inner {
             calls_at(&s, depth + 1, out);
         }
     }
+}
+
+/// 把字串參數交給 shell 執行的指令（`watch 'cmd'`、`su -c 'cmd'`、`ssh host 'cmd'`、`parallel 'cmd' ::: x`）。
+const STRING_RUNNERS: &[&str] = &[
+    "watch", "su", "ssh", "sshpass", "parallel", "entr", "flock", "script", "setsid", "unbuffer", "chronic", "doas", "runuser", "nohup",
+    "xargs", "find", "fd", "tmux", "screen", "expect", "at",
+];
+const AWK_NAMES: &[&str] = &["awk", "gawk", "mawk", "nawk"];
+/// 一段裡最多看幾個「會被執行的參數」。
+const MAX_EXEC_ARGS: usize = 16;
+
+/// 會執行參數的指令帶的內容。回（照 shell 語法執行的字串, 別的語言的程式文字）；只收提得到 awf 的。
+/// 開頭是只把參數當文字的指令時，只認開頭那個指令自己（`git bisect run …`、`awk '…'`），後面的字不算。
+fn exec_args(toks: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut shell: Vec<String> = Vec::new();
+    let mut text: Vec<String> = Vec::new();
+    let Some(first_at) = toks.iter().position(|x| !ENV_ASSIGN.is_match(x)) else { return (shell, text) };
+    let first_harmless = has(HARMLESS, &cmd_name(clean_head(&toks[first_at]).0));
+    for (k, t) in toks.iter().enumerate().skip(first_at) {
+        if shell.len() + text.len() >= MAX_EXEC_ARGS || (first_harmless && k > first_at) {
+            break;
+        }
+        let name = cmd_name(clean_head(t).0);
+        let rest = &toks[k + 1..];
+        let mut sh = |a: &str| {
+            if maybe(a) {
+                shell.push(a.to_string());
+            }
+        };
+        match name.as_str() {
+            // trap '<指令>' <訊號…>
+            "trap" => {
+                if let Some(a) = rest.iter().find(|x| !x.starts_with('-')) {
+                    sh(a);
+                }
+            }
+            // env -S '<指令>'
+            "env" => {
+                for (j, a) in rest.iter().enumerate() {
+                    if a == "-S" || a == "--split-string" {
+                        if let Some(v) = rest.get(j + 1) {
+                            sh(v);
+                        }
+                    } else if let Some(v) = a.strip_prefix("--split-string=") {
+                        sh(v);
+                    } else if let Some(v) = a.strip_prefix("-S").filter(|v| !v.is_empty()) {
+                        sh(v);
+                    }
+                }
+            }
+            // git bisect run <指令…>、git rebase -x／--exec '<指令>'、git submodule foreach '<指令>'、alias.x='!<指令>'
+            "git" => {
+                if let Some(b) = rest.iter().position(|x| x == "bisect") {
+                    if let Some(r) = rest[b..].iter().position(|x| x == "run") {
+                        let cmd = &rest[b + r + 1..];
+                        if !cmd.is_empty() {
+                            sh(&super::ps::join(cmd));
+                        }
+                    }
+                }
+                for (j, a) in rest.iter().enumerate() {
+                    if a == "-x" || a == "--exec" {
+                        if let Some(v) = rest.get(j + 1) {
+                            sh(v);
+                        }
+                    } else if let Some(v) = a.strip_prefix("--exec=") {
+                        sh(v);
+                    } else if a == "foreach" {
+                        let cmd: Vec<String> = rest[j + 1..].iter().filter(|x| !x.starts_with('-')).cloned().collect();
+                        sh(&cmd.join(" "));
+                    } else if a.starts_with("alias.") {
+                        if let Some(c) = a.split_once('=').and_then(|(_, v)| v.strip_prefix('!')) {
+                            sh(c);
+                        }
+                    }
+                }
+            }
+            // awk 的 system()、"cmd" | getline
+            n if has(AWK_NAMES, n) => {
+                for a in rest {
+                    if (a.contains("system") || a.contains("getline")) && maybe(a) {
+                        text.push(a.clone());
+                    }
+                }
+            }
+            "osascript" => {
+                for a in rest {
+                    if a.contains("do shell script") && maybe(a) {
+                        text.push(a.clone());
+                    }
+                }
+            }
+            n if has(STRING_RUNNERS, n) => {
+                for a in rest {
+                    if a.chars().any(py::is_space) {
+                        sh(a);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (shell, text)
+}
+
+/// 別的語言的程式文字裡看得到的 `awf <子指令> <參數…>`（`system("awf save-run approve r")`）：照字面當成一次呼叫。
+fn textual_calls(text: &str, out: &mut Vec<Call>) {
+    for (_, end) in INLINE_AWF.find_all(text).into_iter().take(8) {
+        let mut words: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for c in text[end..].chars() {
+            let wordy = c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '=' | ':' | '$' | '{' | '}' | '*');
+            if wordy {
+                cur.push(c);
+                continue;
+            }
+            if !cur.is_empty() {
+                words.push(std::mem::take(&mut cur));
+            }
+            if matches!(c, ';' | '|' | '&' | ')' | '\n') || words.len() >= 12 {
+                break;
+            }
+        }
+        if !cur.is_empty() {
+            words.push(cur);
+        }
+        let Some(sub) = words.first().cloned() else { continue };
+        if has(SUBCOMMANDS, &sub) {
+            out.push(Call { sub, args: words[1..].to_vec(), forwarded: false, direct: false, note: None });
+        }
+    }
+}
+
+/// shell 選項裡自己帶一個值的（`bash -o pipefail -c …`）。
+const SHELL_VALUE_FLAGS: &[&str] = &["-o", "+o", "-O", "+O", "--rcfile", "--init-file"];
+
+/// `bash [選項] -c [選項] <指令字串> [參數…]`：選項裡有 -c 時，第一個不是選項的參數就是指令字串。
+fn shell_command_arg(args: &[String]) -> Option<&String> {
+    let mut saw_c = false;
+    let mut k = 0;
+    while k < args.len() {
+        let a = args[k].as_str();
+        if a == "--" {
+            return if saw_c { args.get(k + 1) } else { None };
+        }
+        if a.len() > 1 && (a.starts_with('-') || a.starts_with('+')) {
+            if is_dash_c(a) {
+                saw_c = true;
+            }
+            k += if has(SHELL_VALUE_FLAGS, a) { 2 } else { 1 };
+            continue;
+        }
+        return if saw_c { Some(&args[k]) } else { None };
+    }
+    None
+}
+
+/// 段落裡任何位置的 shell（`bash -c`、`pwsh -Command`、`cmd /c`、`eval`）帶的內層指令。回 [(內層指令, 是不是 PowerShell 語法)]。
+/// 開頭是只把參數當文字的指令（echo、grep、git…）時回空的。
+pub(crate) fn hidden_shells(toks: &[String]) -> Vec<(String, bool)> {
+    let mut out: Vec<(String, bool)> = Vec::new();
+    let first = toks.iter().find(|x| !ENV_ASSIGN.is_match(x)).map(|t| cmd_name(clean_head(t).0)).unwrap_or_default();
+    if has(HARMLESS, &first) {
+        return out;
+    }
+    for (k, t) in toks.iter().enumerate() {
+        if out.len() >= 8 {
+            break;
+        }
+        let name = cmd_name(clean_head(t).0);
+        let rest = &toks[k + 1..];
+        if has(SHELL_NAMES, &name) {
+            if let Some(ic) = shell_command_arg(rest) {
+                out.push((ic.clone(), false));
+            }
+            if let Some(j) = rest.iter().position(|x| is_dash_c(x)) {
+                if let Some(ic) = rest.get(j + 1).filter(|x| x.as_str() != "--") {
+                    out.push((ic.clone(), false));
+                }
+            }
+        } else if has(PS_NESTED_SHELLS, &name) || name == "cmd" {
+            if let Some(j) = rest.iter().position(|x| matches!(py::lower(x).as_str(), "-c" | "-command" | "/c" | "/k")) {
+                if j + 1 < rest.len() {
+                    out.push((rest[j + 1..].join(" "), true));
+                }
+            }
+        } else if matches!(name.as_str(), "eval" | "invoke-expression" | "iex") && !rest.is_empty() {
+            out.push((rest.join(" "), false));
+        }
+    }
+    out
+}
+
+/// 去掉開頭的包裝指令（sudo、env、timeout…）和它們的旗標、數字、環境變數設定。
+fn strip_wrappers(mut head: Vec<&String>) -> Vec<&String> {
+    while !head.is_empty() && has(CMD_WRAPPERS, &cmd_name(head[0])) {
+        head.remove(0);
+        while !head.is_empty() && (head[0].starts_with('-') || is_number(head[0]) || ENV_ASSIGN.is_match(head[0])) {
+            head.remove(0);
+        }
+    }
+    head
+}
+
+/// 開頭是 shell（`bash -c`）、PowerShell／cmd（`-Command`、`/c`）、eval 時的內層指令。回（指令名, [(內層指令, 是不是 PowerShell 語法)]）。
+fn head_inner(head: Vec<&String>) -> (String, Vec<(String, bool)>) {
+    let name = head.first().map(|h| cmd_name(h)).unwrap_or_default();
+    let args: Vec<&String> = head.iter().skip(1).copied().collect();
+    let nested_ps = has(PS_NESTED_SHELLS, &name) || name == "cmd";
+    let mut inner: Vec<(String, bool)> = Vec::new();
+    if has(SHELL_NAMES, &name) {
+        if let Some(k) = args.iter().enumerate().position(|(k, t)| is_dash_c(t) && k + 1 < args.len()) {
+            inner.push((args[k + 1].clone(), false));
+        }
+    } else if nested_ps {
+        if let Some(k) = args.iter().enumerate().position(|(k, t)| matches!(py::lower(t).as_str(), "-c" | "-command" | "/c" | "/k") && k + 1 < args.len()) {
+            inner.push((args[k + 1..].iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "), true));
+        }
+    } else if matches!(name.as_str(), "eval" | "invoke-expression" | "iex") {
+        inner.push((args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "), false));
+    }
+    (name, inner)
+}
+
+/// 大括號展開的數量上限（超過就不展開，照原字串判）。
+const MAX_BRACE_WORDS: usize = 64;
+
+/// 解 `$'…'` 的跳脫（`\n`、`\x2d`、`\055`、`-`…）。
+fn ansi_c(body: &[char]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    let num = |from: usize, max: usize, radix: u32| -> (Option<char>, usize) {
+        let mut j = from;
+        let mut v: u32 = 0;
+        while j < body.len() && j - from < max {
+            let Some(d) = body[j].to_digit(radix) else { break };
+            v = v * radix + d;
+            j += 1;
+        }
+        (if j > from { char::from_u32(v) } else { None }, j)
+    };
+    while i < body.len() {
+        let c = body[i];
+        if c != '\\' || i + 1 >= body.len() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let e = body[i + 1];
+        i += 2;
+        let (ch, next) = match e {
+            'n' => (Some('\n'), i),
+            't' => (Some('\t'), i),
+            'r' => (Some('\r'), i),
+            'a' => (Some('\x07'), i),
+            'b' => (Some('\x08'), i),
+            'e' | 'E' => (Some('\x1b'), i),
+            'f' => (Some('\x0c'), i),
+            'v' => (Some('\x0b'), i),
+            'x' => num(i, 2, 16),
+            'u' => num(i, 4, 16),
+            'U' => num(i, 8, 16),
+            '0'..='7' => num(i - 1, 3, 8),
+            other => (Some(other), i),
+        };
+        match ch {
+            Some(x) => out.push(x),
+            None => {
+                out.push('\\');
+                out.push(e);
+            }
+        }
+        i = next;
+    }
+    out
+}
+
+/// 展開一個字裡沒加引號的 `{a,b,c}`（巢狀也展開）。`${VAR}` 不是。超過上限回 None。
+fn brace_expand(word: &str, depth: usize, budget: &mut usize) -> Option<Vec<String>> {
+    let ch: Vec<char> = word.chars().collect();
+    let n = ch.len();
+    let mut i = 0;
+    while i < n {
+        match ch[i] {
+            '\\' => i += 2,
+            '\'' => {
+                i += 1;
+                while i < n && ch[i] != '\'' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            '"' => {
+                i += 1;
+                while i < n && ch[i] != '"' {
+                    i += if ch[i] == '\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            '$' if ch.get(i + 1) == Some(&'{') => {
+                while i < n && ch[i] != '}' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            '{' => {
+                // 找配對的 }，記下最外層的逗號
+                let mut level = 0usize;
+                let mut commas: Vec<usize> = Vec::new();
+                let mut j = i + 1;
+                let mut close = None;
+                while j < n {
+                    match ch[j] {
+                        '\\' => j += 1,
+                        '{' => level += 1,
+                        '}' if level == 0 => {
+                            close = Some(j);
+                            break;
+                        }
+                        '}' => level -= 1,
+                        ',' if level == 0 => commas.push(j),
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                let Some(close) = close.filter(|_| !commas.is_empty()) else {
+                    i += 1;
+                    continue;
+                };
+                if depth >= 4 {
+                    return None;
+                }
+                let prefix: String = ch[..i].iter().collect();
+                let suffix: String = ch[close + 1..].iter().collect();
+                let mut cuts = vec![i];
+                cuts.extend(commas);
+                cuts.push(close);
+                let mut out = Vec::new();
+                for w in cuts.windows(2) {
+                    let alt: String = ch[w[0] + 1..w[1]].iter().collect();
+                    out.extend(brace_expand(&format!("{prefix}{alt}{suffix}"), depth + 1, budget)?);
+                }
+                return Some(out);
+            }
+            _ => i += 1,
+        }
+    }
+    if *budget == 0 {
+        return None;
+    }
+    *budget -= 1;
+    Some(vec![word.to_string()])
+}
+
+/// 一個字（引號照留）：有沒加引號的大括號就展開，接到 `out`。
+fn push_word(word: &mut String, out: &mut String, changed: &mut bool, budget: &mut usize) {
+    if word.contains('{') && word.contains(',') {
+        if let Some(ws) = brace_expand(word, 0, budget) {
+            if ws.len() > 1 {
+                *changed = true;
+            }
+            out.push_str(&ws.join(" "));
+            word.clear();
+            return;
+        }
+    }
+    out.push_str(word);
+    word.clear();
+}
+
+/// 照 bash 會展開的樣子改寫：`$'…'` 解成一般的引號字串、`$"…"` 去掉 `$`、沒加引號的 `{a,b}` 展開成多個字。
+/// 沒有這些寫法（或展開超過上限）回 None。
+fn normalize(seg: &str) -> Option<String> {
+    let brace = seg.contains('{') && seg.contains(',');
+    if !(seg.contains("$'") || seg.contains("$\"") || brace) {
+        return None;
+    }
+    let ch: Vec<char> = seg.chars().collect();
+    let n = ch.len();
+    let mut out = String::with_capacity(seg.len());
+    let mut word = String::new();
+    let mut budget = MAX_BRACE_WORDS;
+    let mut changed = false;
+    let mut i = 0;
+    while i < n {
+        let c = ch[i];
+        if c == '\\' {
+            word.push(c);
+            if let Some(x) = ch.get(i + 1) {
+                word.push(*x);
+            }
+            i += 2;
+            continue;
+        }
+        if c == '$' && ch.get(i + 1) == Some(&'\'') {
+            let mut j = i + 2;
+            while j < n && ch[j] != '\'' {
+                j += if ch[j] == '\\' { 2 } else { 1 };
+            }
+            let j = j.min(n);
+            word.push_str(&py::shlex_quote(&ansi_c(&ch[i + 2..j])));
+            changed = true;
+            i = j + 1;
+            continue;
+        }
+        if c == '$' && ch.get(i + 1) == Some(&'"') {
+            changed = true;
+            i += 1;
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            word.push(c);
+            i += 1;
+            while i < n {
+                let x = ch[i];
+                word.push(x);
+                i += 1;
+                if x == '\\' && c == '"' {
+                    if let Some(y) = ch.get(i) {
+                        word.push(*y);
+                        i += 1;
+                    }
+                    continue;
+                }
+                if x == c {
+                    break;
+                }
+            }
+            continue;
+        }
+        if py::is_space(c) {
+            push_word(&mut word, &mut out, &mut changed, &mut budget);
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        word.push(c);
+        i += 1;
+    }
+    push_word(&mut word, &mut out, &mut changed, &mut budget);
+    if changed { Some(out) } else { None }
 }
 
 /// 這一段裡所有的 awf 呼叫（含 `bash -c`、`eval`、`pwsh -Command`、`cmd /c` 的內層）。

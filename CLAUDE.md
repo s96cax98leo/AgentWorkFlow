@@ -288,7 +288,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **失敗語意**（`crates/awf-core/src/hooks/mod.rs` 開頭的說明為準）：
   - hook 跑不起來（找不到執行檔、逾時）：plugin 的 `hooks.json` 設 `onFailure: continue`、timeout 10 秒，放行，不鎖死使用者。要更嚴就用 `--hooks project`。
   - 跑得起來但輸入壞掉（空、不是 JSON、缺欄位、shell 指令超過 128KB）：守門類擋（exit 2），交件類放行。128KB 上限是因為 guard 規則耗時隨指令長度約平方成長，拖到逾時就等於放行。
-  - 守門設定載入失敗，或程式內部 panic：改用 `awf hook` 內建的最小規則（`fallback_shell`）（擋 push、`gh pr merge`、`--approve`、GitHub API 寫入），其他放行。
+  - 守門設定載入失敗，或程式內部 panic：主 session、使用者自己的 agent、還不知道是誰（設定沒載入完）時，改用 `awf hook` 內建的最小規則（`fallback_shell`）（擋 push、`gh pr merge`、`--approve`、GitHub API 寫入），其他放行；規則開始跑之後才 panic 而且是 team agent 時一律擋（exit 2）。
+  - `guard.config.json` 讀不懂（不是 JSON；NaN、Infinity、超大數字照 Python 的 `json.loads` 讀得懂）：模版角色的寫入全擋，主 session 照預設值的規則（要能修設定檔）。
   - 交件 hook（`envelope`）自己出錯時刻意放行，避免卡住所有 subagent；信封仍由 workflow 的 `schema` 與 `awf save-run stage` 驗證。
 - **`session-start`（0.5）**：SessionStart 時比對 plugin 版本與專案 `.claude/teams/VERSION`，不一致印一行 JSON（`systemMessage` 與 `additionalContext`）。只是提示：永遠 exit 0，沒套用、讀不到、輸入壞掉、任何例外都不印；版本字串只收單純的版本格式（會進對話）。找不到 plugin.json 時不提示。測試在 `crates/awf/tests/hooks_entry.rs` 的第 6 段。
 - **`guard-paths` 的範圍**：Edit、Write、NotebookEdit、Read、Grep。`guard.config.json` 的 `linked_repos`（工作區以外的我方 repo，`hooks::guard::linked_rel`）讓 dev-* 可以改裡面的檔、tpm-writer 可以寫它的 specs，其餘規則照舊；模版角色可以寫這個 session 的 scratchpad（`hooks::guard::in_scratchpad`：系統暫存目錄底下的 `<session_id>/scratchpad/`）。Read、Grep 讀機敏檔（`.env`、金鑰、憑證）一律擋，主 session 也擋；`acceptance_test_dirs` 裡的檔案 dev-implementer 不能寫。

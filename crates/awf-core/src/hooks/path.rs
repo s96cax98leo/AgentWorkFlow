@@ -381,8 +381,32 @@ pub fn expanduser(p: &str) -> String {
     if out.is_empty() { "/".into() } else { out }
 }
 
-/// `tempfile.gettempdir()`：TMPDIR、TEMP、TMP，再來是平台預設；取第一個存在的目錄。
+/// 目錄寫得進去（`tempfile._get_default_tempdir` 的做法：真的建一個檔再刪掉）。
+fn dir_writable(dir: &str) -> bool {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    for n in 0..4u32 {
+        let probe = std::path::Path::new(dir).join(format!("awf-probe-{}-{nanos}-{n}", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&probe);
+                return true;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+/// `tempfile.gettempdir()`：TMPDIR、TEMP、TMP，再來是平台預設；取第一個「存在而且寫得進去」的目錄
+/// （只取存在的話，TMPDIR 指到寫不進去的目錄時 scratchpad 的根會和 Python、和實際放暫存檔的地方不同）。
+/// 一個行程只算一次。
 pub fn gettempdir() -> String {
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(gettempdir_uncached).clone()
+}
+
+fn gettempdir_uncached() -> String {
     let mut cands: Vec<String> = ["TMPDIR", "TEMP", "TMP"].iter().filter_map(|k| env_nonempty(k)).collect();
     if cfg!(windows) {
         cands.push(std::env::temp_dir().to_string_lossy().into_owned());
@@ -390,7 +414,7 @@ pub fn gettempdir() -> String {
         cands.extend(["/tmp", "/var/tmp", "/usr/tmp"].iter().map(|s| s.to_string()));
     }
     for c in cands {
-        if is_dir(&c) {
+        if is_dir(&c) && dir_writable(&c) {
             let c = if cfg!(windows) { c.replace('\\', "/") } else { c };
             // os.path.abspath：去掉結尾斜線
             let n = pp(&c);

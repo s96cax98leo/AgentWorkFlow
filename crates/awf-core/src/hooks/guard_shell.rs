@@ -8,6 +8,7 @@ use super::path;
 use super::ps::{self, ps_segments, segments, PS_NESTED_SHELLS};
 use super::py::{self, shlex_tokens};
 use super::re::{group, Re};
+use super::subst;
 use crate::config;
 use crate::pyfmt;
 use serde_json::Value;
@@ -539,9 +540,16 @@ impl Guard {
 
     /// 每一段實際作用的目錄：依序套用 cd／pushd／Set-Location，git 段落再套 -C、--git-dir、--work-tree。
     fn seg_dirs(&self, segs: &[String], cwd: &str) -> R<Vec<String>> {
+        Ok(self.seg_dirs_base(segs, cwd)?.0)
+    }
+
+    /// 同 [`Self::seg_dirs`]，另外回每一段開始前的目錄（只套 cd，不含這一段自己的 git -C）。
+    fn seg_dirs_base(&self, segs: &[String], cwd: &str) -> R<(Vec<String>, Vec<String>)> {
         let mut out = Vec::new();
+        let mut bases = Vec::new();
         let mut d = cwd.to_string();
         for seg in segs {
+            bases.push(d.clone());
             let mut toks = shlex_tokens(seg);
             while !toks.is_empty() && ENV_ASSIGN.is_match(&toks[0]) {
                 toks.remove(0);
@@ -581,7 +589,7 @@ impl Guard {
             }
             out.push(g);
         }
-        Ok(out)
+        Ok((out, bases))
     }
 
     fn git_out(&self, d: &str, args: &[&str]) -> String {
@@ -901,6 +909,33 @@ impl Guard {
         }
     }
 
+    /// `awf run-brief` 會把指令輸出寫進 `--log` 指定的檔（或 `AWF_LOG_DIR` 底下）：這一段裡每一次呼叫的寫入目標，
+    /// 解析成絕對路徑。變數、指令替換這類看不到實際路徑的不收（和 shell 重導一樣只能盡力而為）。
+    fn run_brief_log_targets(&self, calls: &[awf_cli::Call], seg: &str, base: &str) -> R<Vec<(String, String)>> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        let mut any = false;
+        for c in calls.iter().filter(|c| c.sub == "run-brief") {
+            any = true;
+            let end = c.args.iter().position(|t| t == "--").unwrap_or(c.args.len());
+            let opts = &c.args[..end];
+            for (j, t) in opts.iter().enumerate() {
+                if t != "--log" {
+                    continue;
+                }
+                let Some(raw) = opts.get(j + 1).filter(|r| !r.is_empty() && !r.contains(['$', '`', '\0'])) else { continue };
+                out.push((raw.clone(), self.resolve_arg(base, raw)?));
+            }
+        }
+        if any {
+            for t in shlex_tokens(seg) {
+                if let Some(dir) = t.strip_prefix("AWF_LOG_DIR=").filter(|r| !r.is_empty() && !r.contains(['$', '`', '\0'])) {
+                    out.push((format!("AWF_LOG_DIR={dir}"), self.resolve_arg(base, &format!("{}/x.log", dir.trim_end_matches('/')))?));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// 只寫執行紀錄的角色：這段 shell 有沒有寫檔；有就回傳理由。巢狀的指令遞迴檢查。
     fn record_shell_write(&self, seg: &str, base: &str, depth: usize) -> R<Option<String>> {
         if depth > 4 {
@@ -984,6 +1019,15 @@ impl Guard {
         }
         if let Some((s, e)) = RECORD_WRITE_CMD.find(&probe) {
             return Ok(Some(py::strip(&probe[s..e]).to_string()));
+        }
+        // shell 不在開頭的（sudo -u root bash -c …、if …; then bash -c …）：內層照同一套規則
+        for (ic, nested_ps) in awf_cli::hidden_shells(&all) {
+            let inner = if nested_ps { ps_segments(&ic) } else { segments(&ic) };
+            for s in inner {
+                if let Some(why) = self.record_shell_write(&s, base, depth + 1)? {
+                    return Ok(Some(why));
+                }
+            }
         }
         // find -exec／xargs 帶的指令可能在引號裡：連引號內容一起看
         if matches!(name.as_str(), "find" | "xargs" | "parallel" | "watch") {
@@ -1116,7 +1160,8 @@ impl Guard {
         } else {
             segments(&cmd)
         };
-        let segs: Vec<String> = segs.iter().map(|s| canon_gh(s)).collect();
+        let mut segs: Vec<String> = segs.iter().map(|s| canon_gh(s)).collect();
+        let outer = segs.len();
         let cfg = &self.cfg;
         let am = &self.am;
         let raw_agent = str_or_empty(data, "agent_type")?;
@@ -1131,9 +1176,31 @@ impl Guard {
             Some(v) if pyfmt::truthy(v) => return err("TypeError", "cwd 不是字串"),
             _ => self.ws.clone(),
         };
-        let dirs = self.seg_dirs(&segs, &cwd)?;
+        let (mut dirs, bases) = self.seg_dirs_base(&segs, &cwd)?;
         let fdir = segs.iter().enumerate().filter(|(_, s)| GIT_WORD.is_match(s)).last().and_then(|(i, _)| dirs.get(i).cloned())
             .or_else(|| dirs.last().cloned()).unwrap_or_else(|| cwd.clone());
+        // 指令替換（$(…)、反引號）與 process substitution（<(…)、>(…)）的內層會另外執行：各自當一段，接在原本的段落後面，
+        // 套同一套規則（比對 token 的規則在切詞後看不到它們）。內層的 cd 不影響外層；PowerShell 的 $(…) 在拆段時已經展開。
+        let mut subst_over = false;
+        if !is_ps {
+            for i in 0..outer {
+                if !subst::has_subst(&segs[i]) {
+                    continue;
+                }
+                let (inner, over) = subst::inner_segments(&segs[i]);
+                subst_over |= over;
+                if segs.len() - outer + inner.len() > subst::MAX_INNER {
+                    subst_over = true;
+                    break;
+                }
+                let inner: Vec<String> = inner.iter().map(|s| canon_gh(s)).collect();
+                dirs.extend(self.seg_dirs(&inner, &bases[i])?);
+                segs.extend(inner);
+            }
+        }
+        if subst_over && team {
+            return Err(self.block(&format!("{agent} 的指令裡指令替換（$(…)、反引號、<(…)）太多或巢狀太深，無法逐一確認內層的指令；請拆成幾條較短的指令")));
+        }
         let (fpaths, fslugs) = self.forbidden_entries();
         let who_main = |a: &str| if a.is_empty() { "主 session".to_string() } else { a.to_string() };
         if (gh_rules || am_on) && is_interp_review(&cmd) {
@@ -1153,6 +1220,11 @@ impl Guard {
         let rest_merge = std::cell::OnceCell::new();
         let record_only = team && config::RECORD_ONLY_ROLES.contains(&config::team_role(&raw_agent, cfg).as_str());
 
+        // 設定讀不懂：模版角色的寫入先全部擋（判法和唯讀角色的「不能用 shell 寫檔」同一套；唯讀的指令照常）
+        let broken_ro = team && !record_only && !cfg.broken.is_empty();
+        if broken_ro && !is_ps && INTERP.is_match(&cmd) && HEREDOC.is_match(&cmd) && INTERP_WRITE.is_match(&cmd) {
+            return Err(self.block(&format!("{agent} 的寫入先全部擋下（heredoc／stdin 餵給直譯器的程式會寫檔或開子程序）：守門設定讀不懂時，不知道哪些路徑可以寫")));
+        }
         if record_only && !is_ps && INTERP.is_match(&cmd) && HEREDOC.is_match(&cmd) && INTERP_WRITE.is_match(&cmd) {
             // heredoc／stdin 餵給直譯器的程式碼被換行切成好幾段，整條一起看
             return Err(self.block(&format!("{agent} 是唯讀角色，不能用 heredoc／stdin 餵給直譯器的程式寫檔或開子程序")));
@@ -1250,10 +1322,32 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                     return Err(self.block(&format!("{agent} {why}")));
                 }
             }
+            // awf run-brief --log：工具代寫的檔照寫檔的規則看（team agent 不能藉它寫閘門資料與設定；主 session 不能藉它改稽核紀錄）
+            if (team || configured) && awf.iter().any(|c| c.sub == "run-brief") {
+                for (raw, full) in self.run_brief_log_targets(&awf, seg, d)? {
+                    if team {
+                        if let Some(hit) = self.gate_file_hit(&full)? {
+                            return Err(self.block(&format!("{agent} 不能用 awf run-brief 把輸出寫到 {hit}（{raw}）；守門設定、稽核紀錄、run 狀態與共用背景只由人、主 session 或確定性工具寫，\
+log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
+                        }
+                    } else if let Some(prot) = self.protected_target(&full, true)? {
+                        if prot == am.freeze_file || AUDIT_FILES.contains(&prot.as_str()) || (prot == "guard.config.json" && am.enabled) {
+                            return Err(self.block(&format!("主 session 不用 awf run-brief 把輸出寫到 {prot}（{raw}）；稽核紀錄只由 awf merge-gate、awf publish 寫，\
+凍結檔與 auto_merge 啟用時的 guard.config.json 由人改")));
+                        }
+                    }
+                }
+            }
             if record_only {
                 if let Some(why) = self.record_shell_write(seg, d, 0)? {
                     return Err(self.block(&format!("{agent} 是唯讀角色（只有 Write 能寫 {runs_label}<run>/<段>/<label>.md 的執行紀錄），不能用 shell 寫檔\
 （{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 awf run-brief --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
+                }
+            }
+            if broken_ro {
+                if let Some(why) = self.record_shell_write(seg, d, 0)? {
+                    return Err(self.block(&format!("{agent} 的寫入先全部擋下（{why}）：守門設定讀不懂時，不知道哪些路徑可以寫；唯讀的指令照常，\
+長輸出用 awf run-brief --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
                 }
             }
             if team && self.agent_writes_state(seg, d)? {

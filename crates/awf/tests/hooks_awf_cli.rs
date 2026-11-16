@@ -481,6 +481,20 @@ fn long_chained_command_stays_fast() {
             assert!(ms < limit_ms, "［{tool}］{unit} × {n} 花了 {ms}ms，超過 {limit_ms}ms");
         }
     }
+    // 上萬個指令替換：超過展開上限，team agent 往嚴走（擋），主 session 照舊；兩邊都不能拖過時限
+    for (unit, glue) in [("echo $(awf kb lint)", " && "), ("\"$(awf kb lint)\"", " "), ("$(echo $(echo $(echo $(echo $(date)))))", " ")] {
+        let n = (127 * 1024) / (unit.len() + glue.len());
+        let cmd = format!("echo {}", vec![unit; n].join(glue));
+        for (agent, want) in [(DEV, BLOCK), (MAIN, ALLOW)] {
+            let t0 = Instant::now();
+            let r = hook(&ws, "Bash", agent, &cmd);
+            let ms = t0.elapsed().as_millis();
+            let err = String::from_utf8_lossy(&r.stderr);
+            println!("長指令（{unit} × {n}，Bash，{}）：{ms}ms", if agent.is_empty() { "主 session" } else { agent });
+            assert_eq!(r.status.code(), Some(want), "{unit} × {n}：{err}");
+            assert!(ms < limit_ms, "{unit} × {n} 花了 {ms}ms，超過 {limit_ms}ms");
+        }
+    }
     // 最後一段才是不允許的：也要擋得到
     let n = (120 * 1024) / 6;
     let cmd = format!("{} && awf save-run approve r", vec!["ls"; n].join(" && "));
@@ -536,6 +550,407 @@ fn graph_and_vault_are_not_writable_by_team_agents() {
             if want == BLOCK && agent == DEV {
                 assert!(err.contains("知識圖"), "［{tool}］{rel} 的訊息：{err}");
             }
+        }
+    }
+}
+
+// ───────── 8. 指令替換、process substitution 裡的指令（審查 H2） ─────────
+
+/// 使用者自己的 agent（不是模版角色）。
+const MINE: &str = "my-helper";
+
+/// 一般的 commit 寫法：訊息放在加引號的 heredoc 裡，內文不是指令。
+const COMMIT_HEREDOC: &str = "git commit -m \"$(cat <<'EOF'\nfix: awf save-run approve r 的守門說明\n\n不要 cat .env\nEOF\n)\"";
+
+const SUBSTITUTED: &[Case] = &[
+    // 回歸（0.x 對同寫法的 .py 會擋）
+    ("X=$(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("X=`awf save-run approve r`", DEV, BLOCK, Sh::Bash),
+    ("out=$(awf publish --pr 3)", DEV, BLOCK, Sh::Bash),
+    ("x=$(awf build)", DEV, BLOCK, Sh::Bash),
+    ("x=$(awf kg build)", DEV, BLOCK, Sh::Bash),
+    ("x=$(awf ci render --write)", DEV, BLOCK, Sh::Bash),
+    // 兩版都放行過、字面看得到 awf 與子指令
+    ("echo \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("test -n \"$(awf save-run approve r plan)\"", DEV, BLOCK, Sh::Bash),
+    ("git commit -m \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("$(git rev-parse --show-toplevel)/plugin/bin/awf save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("echo x > >(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    // 同一類的其他寫法
+    ("`git rev-parse --show-toplevel`/plugin/bin/awf save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("${CLAUDE_PLUGIN_ROOT}/bin/awf-$(uname -s)-arm64 save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("export X=$(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("local x=$(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("out=\"$(awf publish)\"", DEV, BLOCK, Sh::Bash),
+    ("result=`awf next r`", DEV, BLOCK, Sh::Bash),
+    ("echo \"`awf save-run approve r`\"", DEV, BLOCK, Sh::Bash),
+    ("[ \"$(awf done r)\" ]", DEV, BLOCK, Sh::Bash),
+    ("echo ${x:-$(awf save-run approve r)}", DEV, BLOCK, Sh::Bash),
+    (": \"${x:=$(awf save-run approve r)}\"", DEV, BLOCK, Sh::Bash),
+    ("printf '%s' \"$(awf init --target .)\"", DEV, BLOCK, Sh::Bash),
+    ("echo \"$(cd x && awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("echo \"x$( awf save-run approve r )\"", DEV, BLOCK, Sh::Bash),
+    ("cat <(awf save-run approve r)", DEV, BLOCK, Sh::Bash),
+    ("tee >(awf save-run approve r) < /dev/null", DEV, BLOCK, Sh::Bash),
+    ("awf kb query \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("echo \"$(echo \"$(awf save-run approve r)\")\"", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'X=$(awf save-run approve r)'", DEV, BLOCK, Sh::Both),
+    ("eval 'echo \"$(awf deliverables sync)\"'", DEV, BLOCK, Sh::Bash),
+    // 內層指令本身以賦值開頭（整個是一個長得像賦值的 token）
+    ("bash -c 'X=1 awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'X=1 awf kb query x'", DEV, ALLOW, Sh::Bash),
+    ("cat <<EOF\n$(awf save-run approve r)\nEOF", DEV, BLOCK, Sh::Bash),
+    ("X=$(cat <<EOF\n$(awf save-run approve r)\nEOF\n)", DEV, BLOCK, Sh::Bash),
+    // 巢狀超過上限：看不清楚就不允許
+    ("echo $(echo $(echo $(echo $(echo $(awf save-run approve r)))))", DEV, BLOCK, Sh::Bash),
+    // 舊的 .py 規則也一樣
+    ("echo \"$(python3 .claude/teams/tools/save_run.py approve r)\"", DEV, BLOCK, Sh::Bash),
+    ("cat <(python3 .claude/teams/tools/pack.py plan r)", DEV, BLOCK, Sh::Bash),
+    // 其他比對 token 的規則：內層照樣檢查
+    ("echo \"$(git push origin main)\"", MAIN, BLOCK, Sh::Bash),
+    ("X=$(git push origin main)", MAIN, BLOCK, Sh::Bash),
+    ("echo \"$(git push --force origin feature/x)\"", MAIN, BLOCK, Sh::Bash),
+    ("X=$(cat .env)", MAIN, BLOCK, Sh::Bash),
+    ("echo \"$(cat .env)\"", DEV, BLOCK, Sh::Bash),
+    ("cat <(cat .env)", DEV, BLOCK, Sh::Bash),
+    ("echo \"$(git checkout -b wrongname)\"", MAIN, BLOCK, Sh::Bash),
+    ("out=$(awf publish --project-dir /tmp/other)", MAIN, BLOCK, Sh::Bash),
+    ("echo \"$(rm -rf src)\"", REV, BLOCK, Sh::Bash),
+    // PowerShell 的對應寫法
+    ("$x = $(awf save-run approve r)", DEV, BLOCK, Sh::Ps),
+    ("$x = (awf save-run approve r)", DEV, BLOCK, Sh::Ps),
+    ("Write-Host \"$(awf save-run approve r)\"", DEV, BLOCK, Sh::Ps),
+    // 唯讀查詢的結果存進變數、放進字串：放行
+    ("X=$(awf kg locate \"匯出 發票\")", DEV, ALLOW, Sh::Bash),
+    ("HITS=\"$(awf kg locate export --json)\"", DEV, ALLOW, Sh::Bash),
+    ("X=`awf kb query 發票`", DEV, ALLOW, Sh::Bash),
+    ("echo \"$(awf save-run status r)\"", DEV, ALLOW, Sh::Bash),
+    ("out=$(awf deliverables status)", DEV, ALLOW, Sh::Bash),
+    ("test -n \"$(awf kb query x)\"", DEV, ALLOW, Sh::Bash),
+    ("x=$(awf state --selftest)", DEV, ALLOW, Sh::Bash),
+    ("$(git rev-parse --show-toplevel)/plugin/bin/awf save-run status r", DEV, ALLOW, Sh::Bash),
+    ("diff <(awf kg trace a) <(awf kg trace b)", DEV, ALLOW, Sh::Bash),
+    ("X=$(awf kg locate \"$(basename \"$PWD\")\")", DEV, ALLOW, Sh::Bash),
+    ("X=$(date +%s); echo \"$X $(git status --short | wc -l)\"", DEV, ALLOW, Sh::Bash),
+    ("X=$(cat .env.example)", DEV, ALLOW, Sh::Bash),
+    ("echo '$(awf save-run approve r)'", DEV, ALLOW, Sh::Bash),
+    ("grep -n 'X=$(awf save-run approve r)' docs/a.md", DEV, ALLOW, Sh::Bash),
+    (COMMIT_HEREDOC, DEV, ALLOW, Sh::Bash),
+    (COMMIT_HEREDOC, MAIN, ALLOW, Sh::Bash),
+    ("$x = $(awf kg locate export)", DEV, ALLOW, Sh::Ps),
+    ("Write-Host \"$(awf save-run status r)\"", DEV, ALLOW, Sh::Ps),
+    // 主 session：照舊
+    ("X=$(awf save-run approve r plan --by human)", MAIN, ALLOW, Sh::Bash),
+    ("echo \"$(awf build --check)\"", MAIN, ALLOW, Sh::Bash),
+    ("X=$(git push origin feature/x)", MAIN, ALLOW, Sh::Bash),
+    ("echo \"$(git status)\" \"$(cat README.md)\"", MAIN, ALLOW, Sh::Bash),
+    // 使用者自己的 agent：不套 team agent 的規則
+    ("X=$(awf save-run approve r)", MINE, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn substituted_commands_are_checked() {
+    check("subst", SUBSTITUTED);
+}
+
+// ───────── 9. 不認得的包裝加子指令改寫（ANSI-C 引號、大括號展開） ─────────
+
+const REWRITTEN: &[Case] = &[
+    ("caffeinate awf $'save-run' approve r", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 awf {save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("{awf,save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf {save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 awf $'save-run' approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf $'save\\x2drun' approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf $'\\163ave-run' approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf $\"save-run\" approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate $'\\x61wf' save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate {plugin/bin/awf,save-run,approve,r}", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf {publish,--branch,feature/x}", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf save-{run,} approve r", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf {save-run,{approve,r}}", DEV, BLOCK, Sh::Bash),
+    ("bash -c $'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c '{awf,save-run,approve,r}'", DEV, BLOCK, Sh::Both),
+    // 不認得的包裝後面的 awf，子指令是變數：看不到就不允許
+    ("caffeinate awf $SUB approve r", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 plugin/bin/awf \"$1\" r", DEV, BLOCK, Sh::Bash),
+    // 同樣的寫法跑唯讀子指令：放行
+    // 子指令寫成 $'…' 的，唯讀的也不放（和直接寫 awf $'kb' query x 原本就擋一致：請直接寫子指令）
+    ("caffeinate awf $'kb' query x", DEV, BLOCK, Sh::Bash),
+    ("awf $'kb' query x", DEV, BLOCK, Sh::Bash),
+    ("caffeinate awf kb query $'發票\\t匯出'", DEV, ALLOW, Sh::Bash),
+    ("arch -arm64 awf {kb,query,x}", DEV, ALLOW, Sh::Bash),
+    ("{awf,kb,query,x}", DEV, ALLOW, Sh::Bash),
+    ("caffeinate awf {save-run,status,r}", DEV, ALLOW, Sh::Bash),
+    ("caffeinate awf save-run status \"$RUN\"", DEV, ALLOW, Sh::Bash),
+    // 只是提到 awf：放行
+    ("echo {awf,save-run,approve,r}", DEV, ALLOW, Sh::Bash),
+    ("ls plugin/bin/{awf,awf.cmd}", DEV, ALLOW, Sh::Bash),
+    ("mkdir -p docs/{awf,save-run}", DEV, ALLOW, Sh::Bash),
+    ("git commit -m $'awf save-run approve r 的說明'", DEV, ALLOW, Sh::Bash),
+    ("grep -rn $'awf\\tsave-run' docs", DEV, ALLOW, Sh::Bash),
+    ("echo \"${AWF_BIN:-awf} save-run approve\"", DEV, ALLOW, Sh::Bash),
+    ("cargo build -p awf", DEV, ALLOW, Sh::Bash),
+    ("cargo test -p awf \"$FILTER\"", DEV, ALLOW, Sh::Bash),
+    ("cargo build -p awf $CARGO_FLAGS", DEV, ALLOW, Sh::Bash),
+    ("caffeinate -i cargo test -p awf --test hooks_entry", DEV, ALLOW, Sh::Bash),
+    // 主 session 與使用者自己的 agent：照舊
+    ("caffeinate awf $'save-run' approve r plan --by human", MAIN, ALLOW, Sh::Bash),
+    ("{awf,save-run,approve,r}", MINE, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn rewritten_subcommands_are_recognised() {
+    check("rewrite", REWRITTEN);
+}
+
+// ───────── 10. bash -c 藏在帶值旗標的包裝或關鍵字後面 ─────────
+
+const HIDDEN_SHELL: &[Case] = &[
+    ("sudo -u root bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("env -u FOO bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("if true; then bash -c 'awf save-run approve r'; fi", DEV, BLOCK, Sh::Bash),
+    ("! bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c -- 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("xargs -I{} bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("find . -maxdepth 0 -exec bash -c 'awf save-run approve r' \\;", DEV, BLOCK, Sh::Bash),
+    ("flock /tmp/l bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("caffeinate bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("arch -arm64 bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("script -q /dev/null bash -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("nice -n 5 sh -c 'awf publish --branch feature/x'", DEV, BLOCK, Sh::Bash),
+    ("while true; do zsh -c 'awf next r'; done", DEV, BLOCK, Sh::Bash),
+    ("bash -x -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("bash -c -x 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("sudo -u root pwsh -Command \"awf save-run approve r\"", DEV, BLOCK, Sh::Bash),
+    ("sudo -u root eval 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("sudo -u root bash -c 'X=$(awf save-run approve r)'", DEV, BLOCK, Sh::Bash),
+    ("if ($true) { bash -c 'awf save-run approve r' }", DEV, BLOCK, Sh::Ps),
+    // 同樣的寫法跑唯讀子指令或別的指令：放行
+    ("sudo -u root bash -c 'awf kb query x'", DEV, ALLOW, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'awf save-run status r'", DEV, ALLOW, Sh::Bash),
+    ("if true; then bash -c 'awf kg locate x'; fi", DEV, ALLOW, Sh::Bash),
+    ("xargs -I{} bash -c 'awf kb query {}'", DEV, ALLOW, Sh::Bash),
+    ("find . -name '*.md' -exec bash -c 'wc -l \"$1\"' _ {} \\;", DEV, ALLOW, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'cargo test'", DEV, ALLOW, Sh::Bash),
+    ("if ($true) { bash -c 'awf kb lint' }", DEV, ALLOW, Sh::Ps),
+    // 只是提到：放行
+    ("echo bash -c 'awf save-run approve r'", DEV, ALLOW, Sh::Bash),
+    ("grep -rn \"bash -c 'awf save-run approve r'\" docs", DEV, ALLOW, Sh::Bash),
+    // 唯讀角色的「不能用 shell 寫檔」也看得到藏起來的內層
+    ("sudo -u root bash -c 'rm -rf src'", REV, BLOCK, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'touch x'", REV, BLOCK, Sh::Bash),
+    ("if true; then bash -c 'rm -rf src'; fi", REV, BLOCK, Sh::Bash),
+    ("timeout -s KILL 5 bash -c 'git status'", REV, ALLOW, Sh::Bash),
+    ("if true; then bash -c 'ls src | wc -l'; fi", REV, ALLOW, Sh::Bash),
+    ("echo bash -c 'rm -rf src'", REV, ALLOW, Sh::Bash),
+    // 主 session：照舊
+    ("sudo -u root bash -c 'awf save-run approve r plan --by human'", MAIN, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn shell_hidden_behind_wrappers_is_expanded() {
+    check("hidden", HIDDEN_SHELL);
+}
+
+// ───────── 11. 會執行參數的指令 ─────────
+
+const EXEC_ARGS: &[Case] = &[
+    ("git bisect run awf save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("awk 'BEGIN{system(\"awf save-run approve r\")}'", DEV, BLOCK, Sh::Bash),
+    ("trap 'awf save-run approve r' EXIT", DEV, BLOCK, Sh::Bash),
+    ("osascript -e 'do shell script \"awf save-run approve r\"'", DEV, BLOCK, Sh::Bash),
+    ("git bisect run sh -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("git rebase -x 'awf save-run approve r' main", DEV, BLOCK, Sh::Bash),
+    ("git rebase --exec='awf publish --branch feature/x' main", DEV, BLOCK, Sh::Bash),
+    ("git submodule foreach 'awf build'", DEV, BLOCK, Sh::Bash),
+    ("git -c alias.x='!awf save-run approve r' x", DEV, BLOCK, Sh::Bash),
+    ("gawk 'BEGIN { \"awf save-run approve r\" | getline }'", DEV, BLOCK, Sh::Bash),
+    ("timeout 5 awk 'BEGIN{system(\"awf next r\")}'", DEV, BLOCK, Sh::Bash),
+    ("trap \"awf deliverables sync\" ERR", DEV, BLOCK, Sh::Bash),
+    ("watch 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("watch -n 5 'cd x && awf next r'", DEV, BLOCK, Sh::Bash),
+    ("su -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("env -S \"awf save-run approve r\"", DEV, BLOCK, Sh::Bash),
+    ("ssh localhost 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("parallel 'awf save-run approve {}' ::: r", DEV, BLOCK, Sh::Bash),
+    ("Invoke-Command -ScriptBlock { awf save-run approve r }", DEV, BLOCK, Sh::Ps),
+    ("Register-EngineEvent PowerShell.Exiting -Action { awf save-run approve r }", DEV, BLOCK, Sh::Ps),
+    // 同樣的寫法跑唯讀子指令或別的指令：放行
+    ("git bisect run awf kb query x", DEV, ALLOW, Sh::Bash),
+    ("git bisect run cargo test", DEV, ALLOW, Sh::Bash),
+    ("awk 'BEGIN{system(\"awf kb query x\")}'", DEV, ALLOW, Sh::Bash),
+    ("trap 'awf save-run status r' EXIT", DEV, ALLOW, Sh::Bash),
+    ("trap 'rm -f \"$TMP\"' EXIT", DEV, ALLOW, Sh::Bash),
+    ("git rebase -x 'cargo test' main", DEV, ALLOW, Sh::Bash),
+    ("watch -n 5 'awf watch --once'", DEV, ALLOW, Sh::Bash),
+    ("ssh build-host 'awf doctor'", DEV, ALLOW, Sh::Bash),
+    ("Invoke-Command -ScriptBlock { awf kb query x }", DEV, ALLOW, Sh::Ps),
+    // 只是提到（文字、樣式、訊息）：放行
+    ("awk '/awf save-run approve/ {print $2}' docs/a.md", DEV, ALLOW, Sh::Bash),
+    ("awk -F'|' '{print $1}' docs/awf-save-run.md", DEV, ALLOW, Sh::Bash),
+    ("osascript -e 'display notification \"awf save-run approve r 完成\"'", DEV, ALLOW, Sh::Bash),
+    ("git log --grep 'awf save-run approve'", DEV, ALLOW, Sh::Bash),
+    ("git commit -m \"trap 'awf save-run approve r' EXIT 要擋\"", DEV, ALLOW, Sh::Bash),
+    ("sed -n 's/awf save-run approve/x/p' docs/a.md", DEV, ALLOW, Sh::Bash),
+    // 主 session：照舊
+    ("git bisect run awf save-run approve r", MAIN, ALLOW, Sh::Bash),
+    ("trap 'awf save-run approve r plan --by human' EXIT", MAIN, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn commands_that_run_their_arguments() {
+    check("execarg", EXEC_ARGS);
+}
+
+// ───────── 12. awf run-brief --log 的目標 ─────────
+
+const BRIEF_LOG: &[Case] = &[
+    // team agent 不能藉 --log 寫守門設定、稽核紀錄、run 狀態、共用背景、CI 檔
+    ("awf run-brief --log .claude/teams/guard.config.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/merge-audit.jsonl -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log .claude/teams/methodology.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/context.md -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log .github/workflows/ci.yml -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/auto-merge.freeze.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log ./_tpm/runs/../runs/r/run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --name x --log @WS@/_tpm/runs/publish-audit.jsonl -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log --log _tpm/runs/r/run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("plugin/bin/awf.cmd run-brief --log _tpm/runs/r/run.json -- echo hi", "agent-workflow:tpm-writer", BLOCK, Sh::Both),
+    ("AWF_LOG_DIR=.claude/teams awf run-brief --name guard -- echo hi", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'awf run-brief --log _tpm/runs/r/run.json -- echo hi'", DEV, BLOCK, Sh::Both),
+    ("X=$(awf run-brief --log _tpm/runs/r/run.json -- echo hi)", DEV, BLOCK, Sh::Bash),
+    ("cd _tpm/runs/r && awf run-brief --log run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    // 主 session：稽核紀錄、凍結檔、（auto_merge 啟用時的）guard.config.json 本來就不能直接改
+    ("awf run-brief --log _tpm/runs/merge-audit.jsonl -- echo hi", MAIN, BLOCK, Sh::Both),
+    ("awf run-brief --log .claude/teams/guard.config.json -- echo hi", MAIN, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/auto-merge.freeze.json -- echo hi", MAIN, BLOCK, Sh::Both),
+    // 一般用法：放行
+    ("awf run-brief --log _tpm/runs/r/test/logs/unit.log -- cargo test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log \"$RUN/test/logs/unit.log\" -- npm test", DEV, ALLOW, Sh::Bash),
+    ("awf run-brief -- npm test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --name unit --tail 50 -- npm test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log build/out.log -- npm test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log build/out.log -- grep -c --log docs/run.json.md", DEV, ALLOW, Sh::Both),
+    ("AWF_LOG_DIR=build/logs awf run-brief --name unit -- npm test", DEV, ALLOW, Sh::Bash),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log -- npm test", REV, ALLOW, Sh::Both),
+    ("awf run-brief --log out.log -- npm test", MAIN, ALLOW, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/test/logs/unit.log -- npm test", MAIN, ALLOW, Sh::Both),
+    ("awf run-brief --log out.log -- npm test", MINE, ALLOW, Sh::Both),
+];
+
+#[test]
+fn run_brief_log_target_is_guarded() {
+    check("brieflog", BRIEF_LOG);
+}
+
+// ───────── 13. guard.config.json 讀得懂與讀不懂（審查 M4） ─────────
+
+/// 專案的設定檔換成指定的內容。
+fn workspace_with(root: &Path, config: &str) -> PathBuf {
+    let ws = workspace(root);
+    std::fs::write(ws.join(".claude/teams/guard.config.json"), config).unwrap();
+    ws
+}
+
+/// Python 的 `json.loads` 讀得懂、嚴格的 JSON 解析器不收的寫法：設定照樣要生效。
+const ODD_BUT_VALID: &str = r#"{
+  "runs_dir": "work/runs",
+  "forbidden_paths": ["repos/readonly-ref"],
+  "extension_agents": {"my:auditor": "tpm-reviewer"},
+  "team_agent_namespaces": ["acme:"],
+  "_note": {"ratio": NaN, "limit": Infinity, "low": -Infinity, "big": 1e999,
+            "id": 123456789012345678901234567890123456789012345678901234567890, "half": "\ud800"}
+}"#;
+
+const ODD_CONFIG: &[Case] = &[
+    // forbidden_paths 生效
+    ("rm -rf repos/readonly-ref/src", MAIN, BLOCK, Sh::Both),
+    // extension_agents 生效：登記的擴充 agent 套唯讀角色的規則
+    ("awf save-run approve r", "my:auditor", BLOCK, Sh::Both),
+    ("echo x > src/a.txt", "my:auditor", BLOCK, Sh::Bash),
+    // team_agent_namespaces 生效
+    ("awf save-run approve r", "acme:dev-helper", BLOCK, Sh::Both),
+    // 自訂的 runs_dir 生效（唯讀角色的 log 要在它底下）
+    ("awf run-brief --log work/runs/r/plan/logs/a.log -- npm test", REV, ALLOW, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log -- npm test", REV, BLOCK, Sh::Both),
+    // 其餘照常
+    ("echo x > src/a.txt", DEV, ALLOW, Sh::Bash),
+    ("rm -rf build", MAIN, ALLOW, Sh::Both),
+    ("awf save-run approve r", MINE, ALLOW, Sh::Both),
+];
+
+#[test]
+fn config_python_reads_stays_effective() {
+    let tmp = Tmp::new("oddcfg");
+    let ws = workspace_with(&tmp.0, ODD_BUT_VALID);
+    let bad = run_table(&ws, ODD_CONFIG);
+    assert!(bad.is_empty(), "{} 個案例不符：\n{}", bad.len(), bad.join("\n"));
+    // 沒有被當成讀不懂
+    let r = hook(&ws, "Bash", MAIN, "rm -rf repos/readonly-ref/src");
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("禁止路徑") && !err.contains("讀不懂"), "{err}");
+}
+
+/// 真的不是 JSON：模版角色的寫入全擋，主 session 與使用者自己的 agent 照舊。
+const BROKEN_CONFIG: &[Case] = &[
+    ("echo x > src/a.txt", DEV, BLOCK, Sh::Both),
+    ("touch src/a.txt", DEV, BLOCK, Sh::Bash),
+    ("git commit -m x", DEV, BLOCK, Sh::Both),
+    ("sed -i s/a/b/ src/a.txt", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'rm -rf src'", DEV, BLOCK, Sh::Bash),
+    ("X=$(touch src/a.txt)", DEV, BLOCK, Sh::Bash),
+    ("python3 -c \"open('src/a.txt', 'w').write('x')\"", DEV, BLOCK, Sh::Bash),
+    ("'x' | Out-File src/a.txt", DEV, BLOCK, Sh::Ps),
+    ("Remove-Item src/a.txt", "agent-workflow:tpm-writer", BLOCK, Sh::Ps),
+    // 唯讀的用法照常
+    ("git status", DEV, ALLOW, Sh::Both),
+    ("ls -la src", DEV, ALLOW, Sh::Bash),
+    ("cat README.md | head -5", DEV, ALLOW, Sh::Bash),
+    ("cargo test 2>&1 | tail -20", DEV, ALLOW, Sh::Bash),
+    ("awf kg locate export", DEV, ALLOW, Sh::Both),
+    ("X=$(awf kg locate export)", DEV, ALLOW, Sh::Bash),
+    ("awf save-run status r", DEV, ALLOW, Sh::Both),
+    ("awf deliverables status", DEV, ALLOW, Sh::Both),
+    ("awf state --selftest", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log -- npm test", DEV, ALLOW, Sh::Both),
+    ("Get-Content README.md", DEV, ALLOW, Sh::Ps),
+    // 主 session 與使用者自己的 agent：不鎖死
+    ("echo x > src/a.txt", MAIN, ALLOW, Sh::Both),
+    ("git commit -m x", MAIN, ALLOW, Sh::Both),
+    ("touch src/a.txt", MINE, ALLOW, Sh::Bash),
+    ("gh pr merge 3 --repo acme-fork/app", MAIN, BLOCK, Sh::Both),
+];
+
+#[test]
+fn broken_config_blocks_team_writes_only() {
+    let tmp = Tmp::new("badcfg");
+    let ws = workspace_with(&tmp.0, "{ 壞掉的 json");
+    let bad = run_table(&ws, BROKEN_CONFIG);
+    assert!(bad.is_empty(), "{} 個案例不符：\n{}", bad.len(), bad.join("\n"));
+    let r = hook(&ws, "Bash", DEV, "echo x > src/a.txt");
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("讀不懂") && err.contains("JSONDecodeError"), "{err}");
+    // Edit／Write：模版角色擋，讀照常；主 session 與使用者自己的 agent 照舊（主 session 要能修設定檔）
+    for (tool, rel, agent, want) in [
+        ("Write", "src/a.rs", DEV, BLOCK),
+        ("Edit", "src/a.rs", DEV, BLOCK),
+        ("Write", "_tpm/runs/r/plan/review.md", REV, BLOCK),
+        ("Write", "docs/a.md", "agent-workflow:tpm-writer", BLOCK),
+        ("Read", "src/a.rs", DEV, ALLOW),
+        ("Grep", "src", DEV, ALLOW),
+        ("Write", "src/a.rs", MAIN, ALLOW),
+        ("Edit", ".claude/teams/guard.config.json", MAIN, ALLOW),
+        ("Write", "src/a.rs", MINE, ALLOW),
+    ] {
+        let r = paths_hook(&ws, tool, agent, &ws.join(rel));
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert_eq!(r.status.code(), Some(want), "［{tool}／{agent}］{rel}：{err}");
+        if want == BLOCK {
+            assert!(err.contains("讀不懂"), "［{tool}／{agent}］{rel} 的訊息：{err}");
         }
     }
 }
