@@ -1,6 +1,6 @@
 export const meta = {
   name: 'event-pr-review',
-  description: '審一個 PR 或分支（不是自己 SDLC 開發的）：standards、spec、bugs、security、design、history 六個 lens 平行 → 去重 → 每批由 skeptic 反駁 → 只留信心 ≥0.8 且未被推翻的；只產報告、不留言',
+  description: '審一個 PR 或分支（不是自己 SDLC 開發的）：各 lens 平行（預設 standards、spec、bugs、security、design、history）→ 去重 → 每批由 skeptic 反駁 → 只留信心達到門檻且未被推翻的；只產報告、不留言',
   whenToUse: '要審 PR 或分支；args：target（PR 編號＋repo 或分支名）、repo（本機 clone 路徑）、run_dir、lenses（可省略）',
   phases: [{ title: 'Review', detail: '每個 lens 一個 tpm-reviewer' }, { title: 'Verify', detail: 'tpm-skeptic' }, { title: 'Write' }],
 }

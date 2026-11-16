@@ -1,11 +1,11 @@
 export const meta = {
   name: 'sdlc-test',
-  description: 'AI-native SDLC 第 4 段 Test：verifier 逐條驗收＋反作弊（有子計劃時每個子計劃一個 verifier 平行驗證，再彙整成 verifier.md），同時平行跑設計審查與安全審查；fail 時修正並重驗（最多 2 輪，多個子計劃都有失敗時平行修正再合併），停在驗證結果確認閘門',
+  description: 'AI-native SDLC 第 4 段 Test：verifier 逐條驗收＋反作弊（有子計劃時每個子計劃一個 verifier 平行驗證，再彙整成 verifier.md），同時平行跑設計審查與安全審查；fail 時修正並重驗（跑到上限輪數為止，多個子計劃都有失敗時平行修正再合併），停在驗證結果確認閘門',
   whenToUse: 'sdlc-build（與 sdlc-sync）完成後；args 加 has_ui、has_security（布林），有子計劃時加 sub_plans（sdlc-design 回傳的 sub_plans），sdlc-sync 走了中轉分支時加 branch（中轉分支名），可加 recipe／modifiers／size（沒給＝feature；決定設計／安全審查與驗證模式）',
   phases: [
     { title: 'Verify', detail: 'dev-verifier（有子計劃時分片平行）＋dev-design-reviewer＋dev-security-reviewer 平行' },
     { title: 'Consolidate', detail: '分片驗證時：dev-verifier 把各分片報告彙整成 verifier.md，workflow 確定性核對' },
-    { title: 'Fix', detail: 'fail 的驗收條件交 dev-implementer 修，最多 2 輪；多個分片都有失敗時各自 worktree 平行修' },
+    { title: 'Fix', detail: 'fail 的驗收條件交 dev-implementer 修，跑到上限輪數為止；多個分片都有失敗時各自 worktree 平行修' },
     { title: 'Integrate', detail: '平行修正後 dev-integrator 合併' },
   ],
 }
