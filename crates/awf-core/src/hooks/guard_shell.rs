@@ -64,10 +64,96 @@ re!(CONTEXT_FRAGMENT, r"(?:^|[^\w-])(?:context|pack)\W{0,16}\.md\b|\b(?:decision
 re!(RUN_INDEX_FRAGMENT, r"執行紀錄索引");
 re!(KG_TARGET, r"(?:^|[^\w.-])graph\.db(?![\w])|(?:^|[/\\\s'\x22=])vault[/\\](?:notes|能力|需求|決策|模組|hot\.md|index\.md)", "i");
 
+re!(GRAPH_DB, r"(?:^|[^\w.-])graph\.db(?![\w])", "i");
+re!(SQLITE_CLI, r"(?:^|[\s/\\(;&|`])sqlite3?(?:\.exe)?(?=\s|$)", "i");
+
 /// shell 寫知識圖的檔（graph.db、vault 的頁與 notes/；盡力而為，看不到實際路徑時只比對寫法）。
+/// `sqlite3 <graph.db>` 不分讀寫都算（SQL 在參數或 stdin 裡，看不出是不是查詢；要查用 awf kg）。
 fn shell_writes_kg(seg: &str) -> bool {
     let probe = NULL_REDIR.replace_all(&norm(seg), " ");
-    KG_TARGET.is_match(&probe) && (SHELL_WRITE.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    (KG_TARGET.is_match(&probe) && (SHELL_WRITE.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe))))
+        || (SQLITE_CLI.is_match(&probe) && GRAPH_DB.is_match(&probe))
+}
+
+/// 來源整個搬進受保護目錄的指令（複製、搬移、同步、連結）。
+#[derive(PartialEq)]
+enum TreeCmd {
+    Copy,
+    Move,
+}
+
+/// 受保護的目錄名，和它底下不能由 team agent 放東西的子目錄。
+const TREE_PROTECTED: &[(&str, &[&str])] = &[(".github", &["workflows"]), (".claude", &["teams", "workflows"])];
+
+/// 同一條指令裡的簡單賦值（`名=值`、`export 名=值`、PowerShell 的 `$名 = '值'`）展開一次後的指令；沒有可展開的回 None。
+/// 只收字面值（值裡沒有 `$`、反引號、指令替換），最多 16 個變數、每個值最多 256 字；不追第二層。
+/// 展開的結果只拿來多跑一次規則（原本的指令照樣跑），所以只會更嚴。
+pub fn expand_simple_vars(cmd: &str, is_ps: bool) -> Option<String> {
+    use std::sync::OnceLock;
+    static SH: OnceLock<regex::Regex> = OnceLock::new();
+    static PS: OnceLock<regex::Regex> = OnceLock::new();
+    if !cmd.contains('=') || !cmd.contains('$') {
+        return None;
+    }
+    let re = if is_ps {
+        PS.get_or_init(|| regex::Regex::new(r#"(?i)\$(?:env:)?([A-Za-z_]\w*)\s*=\s*(?:"([^"$`]{0,256})"|'([^']{0,256})'|([^\s;|&"'$`()]{1,256}))"#).expect("固定的正規式"))
+    } else {
+        SH.get_or_init(|| regex::Regex::new(r#"(?:^|[;&|\n(]|\b(?:export|local|declare|readonly|typeset)\s)\s*([A-Za-z_]\w*)=(?:"([^"$`\\]{0,256})"|'([^']{0,256})'|([^\s;&|()<>"'`$\\]{0,256}))(?:[\s;&|)]|$)"#).expect("固定的正規式"))
+    };
+    let mut vars: Vec<(String, String)> = Vec::new();
+    let mut at = 0;
+    while let Some(m) = re.captures_at(cmd, at) {
+        let whole = m.get(0)?;
+        let name = m.get(1)?.as_str().to_string();
+        let val = m.get(2).or_else(|| m.get(3)).or_else(|| m.get(4)).map(|v| v.as_str().to_string()).unwrap_or_default();
+        // 結尾的分隔字元留給下一個賦值當開頭
+        at = if whole.end() > whole.start() + 1 { whole.end() - 1 } else { whole.end() };
+        if !val.is_empty() && !vars.iter().any(|(n, _)| *n == name) {
+            vars.push((name, val));
+            if vars.len() >= 16 {
+                break;
+            }
+        }
+        if at >= cmd.len() {
+            break;
+        }
+    }
+    if vars.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(cmd.len());
+    let b = cmd.as_bytes();
+    let mut i = 0;
+    let mut changed = false;
+    while i < b.len() {
+        if b[i] == b'$' {
+            let rest = &cmd[i + 1..];
+            let (braced, body) = match rest.strip_prefix('{') {
+                Some(r) => (true, r),
+                None => (false, rest),
+            };
+            let body_lower = body.get(..4).map(str::to_ascii_lowercase);
+            let (skip_env, body) = if is_ps && body_lower.as_deref() == Some("env:") { (4, &body[4..]) } else { (0, body) };
+            let n = body.bytes().take_while(|c| c.is_ascii_alphanumeric() || *c == b'_').count();
+            let name = &body[..n];
+            let closed = !braced || body[n..].starts_with('}');
+            // 賦值本身（`$名 =`）不換
+            let assigning = is_ps && body[n..].trim_start().starts_with('=') && !body[n..].trim_start().starts_with("==");
+            if n > 0 && closed && !assigning {
+                let found = vars.iter().find(|(k, _)| if is_ps { k.eq_ignore_ascii_case(name) } else { k == name });
+                if let Some((_, v)) = found {
+                    out.push_str(v);
+                    i += 1 + usize::from(braced) + skip_env + n + usize::from(braced);
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        let ch = cmd[i..].chars().next()?;
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    if changed { Some(out) } else { None }
 }
 re!(NULL_REDIR, r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", "i");
 re!(HARMLESS, r"[\d&]?>>?\s*/dev/null\b|[\d&]?>>?\s*\$null\b|\d?>&\d", "i");
@@ -128,7 +214,7 @@ pub fn all_patterns() -> Vec<&'static Re> {
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
-         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &CLAUDE_PROJECTS_TARGET, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
+         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &GRAPH_DB, &SQLITE_CLI, &CLAUDE_PROJECTS_TARGET, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
 }
 
@@ -141,6 +227,10 @@ const SECRET_READERS: &[&str] = &[
     "grep", "egrep", "fgrep", "rg", "ag", "select-string", "sls", "findstr",
 ];
 const GREP_LIKE: &[&str] = &["grep", "egrep", "fgrep", "rg", "ag", "select-string", "sls", "findstr"];
+/// 變數展開只做在這個長度以內的指令（位元組）。
+const VAR_EXPAND_MAX: usize = 16 * 1024;
+/// 展開後多跑的那一次在輸入上的記號（只在行程內用）。
+const EXPANDED_MARK: &str = "_awf_expanded";
 const CD_CMDS: &[&str] = &["cd", "pushd", "chdir", "set-location", "sl", "push-location"];
 const EXEC_FORWARDERS: &[&str] = &["xargs", "parallel", "watch", "find", "fd", "entr", "flock", "chronic", "unbuffer", "script", "su", "doas", "runuser", "setsid"];
 
@@ -1101,6 +1191,85 @@ impl Guard {
         Ok(SHELL_WRITE.is_match(&probe) || RECORD_WRITE_CMD.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
     }
 
+    /// 作用目錄已經在知識圖的 vault 裡（`cd <knowledge.dir>/vault/notes && echo x > a.md`：指令裡看不到 vault 的路徑）。
+    fn shell_writes_in_vault(&self, seg: &str, cwd: &str) -> R<bool> {
+        let here = self.folded_here(cwd)?;
+        if !here.contains("/vault/") || !super::guard::kg_path(&format!("{}/x", cwd.trim_end_matches('/'))) {
+            return Ok(false);
+        }
+        let probe = NULL_REDIR.replace_all(&norm(seg), " ");
+        Ok(SHELL_WRITE.is_match(&probe) || RECORD_WRITE_CMD.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    }
+
+    /// 把整個目錄搬進受保護的位置（`cp -r … .github`、`mv x .github`、`rsync -a … .github/`、`cp -a tmpl/.github .`）：
+    /// 指令裡看不到 `.github/workflows` 這個路徑，但做完之後那裡會有檔。回受保護的目錄名。
+    fn shell_moves_tree(&self, seg: &str, cwd: &str) -> R<Option<&'static str>> {
+        let low = fold(seg);
+        let here = self.folded_here(cwd)?;
+        if !TREE_PROTECTED.iter().any(|(n, _)| low.contains(n) || here.ends_with(&format!("/{n}/"))) {
+            return Ok(None);
+        }
+        let mut toks = shlex_tokens(seg);
+        while !toks.is_empty() && ENV_ASSIGN.is_match(&toks[0]) {
+            toks.remove(0);
+        }
+        let Some(first) = toks.first() else { return Ok(None) };
+        let kind = match fold(&cmd_name(first)).trim_end_matches(".exe") {
+            "cp" | "copy-item" | "cpi" | "copy" | "xcopy" | "robocopy" | "install" => TreeCmd::Copy,
+            "mv" | "move-item" | "mi" | "move" | "rsync" | "ln" | "rename-item" | "ren" => TreeCmd::Move,
+            _ => return Ok(None),
+        };
+        let mut recursive = kind == TreeCmd::Move;
+        let (mut dest, mut pos): (Option<String>, Vec<String>) = (None, Vec::new());
+        let mut k = 1;
+        while k < toks.len() {
+            let t = toks[k].clone();
+            let tl = fold(&t);
+            k += 1;
+            if matches!(tl.as_str(), "-destination" | "-t" | "--target-directory" | "-newname") {
+                dest = toks.get(k).cloned();
+                k += 1;
+            } else if let Some(v) = tl.strip_prefix("--target-directory=") {
+                dest = Some(t[t.len() - v.len()..].to_string());
+            } else if matches!(tl.as_str(), "-path" | "-literalpath") {
+                if let Some(v) = toks.get(k) {
+                    pos.push(v.clone());
+                }
+                k += 1;
+            } else if t.starts_with('-') && t.len() > 1 {
+                if matches!(tl.as_str(), "-recurse" | "--recursive" | "--archive" | "/e" | "/s") || (!t.starts_with("--") && t[1..].chars().all(|c| c.is_ascii_alphabetic()) && t.contains(['r', 'R', 'a'])) {
+                    recursive = true;
+                }
+            } else {
+                pos.push(t);
+            }
+        }
+        if dest.is_none() {
+            dest = pos.pop();
+        }
+        let (Some(dest), false) = (dest, pos.is_empty()) else { return Ok(None) };
+        let last = |p: &str| -> String {
+            let n = norm(p.trim_matches(|c| c == '"' || c == '\''));
+            let n = n.trim_end_matches("/.").trim_end_matches('/');
+            fold(n.rsplit('/').next().unwrap_or(n))
+        };
+        let dest_full = self.resolve_arg(cwd, &dest)?;
+        let dest_name = fold(&path::name(&dest_full));
+        let dest_low = format!("{}/", fold(&dest_full).trim_end_matches('/'));
+        let tmp = [path::gettempdir(), "/tmp".to_string(), "/private/tmp".to_string()];
+        let dest_is_tmp = tmp.iter().any(|t| !t.is_empty() && dest_low.starts_with(&format!("{}/", fold(&norm(t)).trim_end_matches('/'))));
+        for (name, kids) in TREE_PROTECTED {
+            let into = dest_name == *name;
+            if into && (recursive || pos.iter().any(|s| kids.contains(&last(s).as_str()))) {
+                return Ok(Some(name));
+            }
+            if !dest_is_tmp && pos.iter().any(|s| last(s) == *name) {
+                return Ok(Some(name));
+            }
+        }
+        Ok(None)
+    }
+
     /// 作用目錄解析並摺疊後的路徑（前後帶 `/`）。同一個目錄連續問只解析一次。
     fn folded_here(&self, cwd: &str) -> R<String> {
         if let Ok(memo) = self.here_memo.lock() {
@@ -1163,6 +1332,23 @@ impl Guard {
 
     /// Bash 與 PowerShell 工具共用的 shell 守門規則。
     pub fn check_shell_rules(&self, data: &Value) -> R<()> {
+        // 同一條指令裡的簡單賦值展開一次再比對（`d=_tpm/runs; echo x >> $d/links.jsonl`）：展開後的指令先跑一次規則，
+        // 原本的指令照樣跑，所以只會更嚴。太長的指令不展開（規則要跑兩次；上限以內的時間在逾時之內）。
+        if let Some(Value::String(cmd)) = data.get("tool_input").and_then(|t| t.get("command")) {
+            if cmd.len() <= VAR_EXPAND_MAX {
+                let is_ps = data.get("tool_name").and_then(Value::as_str) == Some("PowerShell");
+                if let Some(x) = expand_simple_vars(cmd, is_ps) {
+                    let mut d = data.clone();
+                    d["tool_input"]["command"] = Value::String(x);
+                    d[EXPANDED_MARK] = Value::Bool(true);
+                    self.check_shell_rules_once(&d)?;
+                }
+            }
+        }
+        self.check_shell_rules_once(data)
+    }
+
+    fn check_shell_rules_once(&self, data: &Value) -> R<()> {
         let ti = tool_input(data)?;
         let mut cmd = match ti.get("command") {
             Some(Value::String(s)) => s.clone(),
@@ -1381,7 +1567,7 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
             if team && self.agent_writes_state(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 run.json、<段>.json、稽核紀錄、凍結檔或守門設定（含拆開檔名的寫法）；run 狀態只由 awf save-run 在主 session 寫")));
             }
-            if team && shell_writes_kg(seg) {
+            if team && (shell_writes_kg(seg) || self.shell_writes_in_vault(seg, d)?) {
                 return Err(self.block(&format!("{agent} 不能寫知識圖的檔（graph.db 與 vault，含 vault/notes/；圖只由主 session 跑 awf kg build／export 產生，筆記是人寫的）")));
             }
             if team && self.shell_writes_team_config(seg, d)? {
@@ -1397,6 +1583,12 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
             if team && self.shell_writes_ci(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（CI 檔決定哪些檢查會跑，只由人或主 session 改，\
 例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）")));
+            }
+            if team {
+                if let Some(name) = self.shell_moves_tree(seg, d)? {
+                    return Err(self.block(&format!("{agent} 不能把整個目錄搬進或搬成 {name}（複製、搬移、同步、連結：做完之後 {name} 底下會多出指令裡看不到的檔，\
+包括 CI 檔與守門設定）；要放單一檔就直接寫那個檔的完整路徑，要動 {name} 的結構由人或主 session 做")));
+                }
             }
             if team && self.shell_writes_claude_projects(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 ~/.claude/projects/ 底下的檔（Claude Code 的記憶與對話紀錄：下一個 session 會自動載入，只由人或主 session 寫；\
@@ -1502,6 +1694,9 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
                     return Err(self.block(&format!("不動 {e}（禁止路徑，只能讀）")));
                 }
             }
+        }
+        if data.get(EXPANDED_MARK).is_some() {
+            return Ok(()); // 展開後的那一次只跑自己的規則；轉給別的 repo 的 guard 由原本的指令那一次做
         }
         self.forward(super::guard::git_toplevel(&fdir), "guard-git", data)
     }
