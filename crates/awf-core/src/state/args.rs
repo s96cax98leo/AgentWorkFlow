@@ -385,6 +385,39 @@ pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, Str
     Ok(hits.pop().map(|(_, m, f)| (m, f)))
 }
 
+/// 這次 next 之後有沒有「讀不懂、但內容提到這支腳本」的 workflow 紀錄檔：
+/// [`find_wf_meta`] 只採用讀得懂的紀錄，整份讀不懂（NaN、超大整數、沒寫完）的會被當成沒有。
+/// 這裡把它找出來，讓 `awf done` 分得出「找不到」與「找到但讀不懂」。任何錯誤都回 false。
+pub fn unreadable_wf_meta(env: &Env, script: &str, since: f64) -> bool {
+    if script.is_empty() {
+        return false;
+    }
+    let abs = env.abs(script);
+    let mut needles: Vec<String> = vec![abs.clone()];
+    needles.extend(pyish::resolve(&abs).ok());
+    // 紀錄檔裡的路徑是 JSON 字串：原樣與跳脫過的都找
+    let escaped: Vec<String> = needles.iter().filter_map(|n| serde_json::to_string(n).ok()).map(|q| q.trim_matches('"').to_string()).collect();
+    needles.extend(escaped);
+    let Ok(root) = transcripts_root(env) else { return false };
+    let now = env.now_ts();
+    for sess in names_in(&root) {
+        let wf_dir = pj(&pj(&root, &sess), "workflows");
+        for name in names_in(&wf_dir).into_iter().filter(|n| n.starts_with("wf_") && n.ends_with(".json")) {
+            let f = pj(&wf_dir, &name);
+            let Some(mt) = mtime(std::path::Path::new(&f)) else { continue };
+            if mt + 1.0 < since || mt > now + 120.0 || !matches!(load_json(env, &f), Ok(None)) {
+                continue;
+            }
+            let Ok(raw) = std::fs::read(&f) else { continue };
+            let text = String::from_utf8_lossy(&raw);
+            if needles.iter().any(|n| text.contains(n.as_str())) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// 目前這個 session 的 id（猜的：專案 transcript 目錄裡最近寫過的那個）。猜不到回空字串。
 pub fn current_session(env: &Env) -> R<String> {
     let root = transcripts_root(env)?;

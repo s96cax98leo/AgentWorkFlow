@@ -90,7 +90,7 @@ impl T {
     fn test(&mut self, with_intent: bool, subs: Value, rows: &[(&str, &str)]) -> (String, i32, String) {
         let (d, _, _) = self.design(with_intent, subs);
         self.call(&["approve", &d, "design", "--by", "human", "--at", "t"], None);
-        let build = json!({"x": env(json!({"task_id": "t1", "branch": "b", "commits": [], "files_changed": ["src/refund.py"], "tests": []}))});
+        let build = json!({"x": env(json!({"task_id": "t1", "branch": "b", "commits": [], "files_changed": ["src/refund.py", "src/export.py"], "tests": []}))});
         self.call(&["stage", &d, "build"], Some(&build));
         self.call(&["stage", &d, "sync"], Some(&build));
         let (c, o) = self.call(&["stage", &d, "test"], Some(&test_of(rows)));

@@ -39,13 +39,19 @@ pub use archive::{archive_text, clip, next_stage, recipe_summary, status_snapsho
 pub use checks::{ac_ids, constraint_file, constraint_issues, constraint_rows, intent_errors, intent_file_errors, intent_paths, plan_check_for, plan_check_issues, result_subtasks, CONSTRAINT_CHECK_TIMEOUT, CONSTRAINT_VERDICTS};
 pub use cli::{approve, run, stage, stage_unreadable, USAGE};
 pub use decisions::{decision_errors, record_decisions, split_answer};
-pub use links::{ac_tokens, active_links, decision_id, decision_links, link_gaps, link_gaps_of, links_setting, stage_links, test_targets, write_links, GAP_STAGES, LEDGER, LINK_KINDS, LINK_SCHEMA_VERSION};
+pub use links::{
+    ac_tokens, active_links, decision_id, decision_links, full_sha, link_gaps, link_gaps_of, links_setting, noop_command, safe as ledger_safe, stage_links, test_targets, write_links, GapInput, GAP_STAGES, LEDGER,
+    LEDGER_TEXT_MAX, LINK_KINDS, LINK_SCHEMA_VERSION,
+};
 pub use policy::{
     abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors,
     required_roles_missing, REVIEW_ROLES,
 };
 pub use selftest::selftest;
-pub use speccheck::{criteria_rows, intent_errors_spec, lead_token, open_spec, spec_issues, spec_setting, SpecCtx};
+pub use speccheck::{
+    baseline_diff, baseline_drift, baseline_of, baseline_stage, criteria_rows, intent_errors_spec, lead_token, open_spec, spec_baseline, spec_issues, spec_setting, spec_snapshot, SpecCtx, BASELINE_KEY,
+    BASELINE_VERSION,
+};
 pub use trace::{envelope_of, envelopes, ghostwrite, is_envelope, md_cell, md_cell_str, missing_agents, model_errors, process_trace, record_candidates, retried_ok, Row};
 
 use crate::kb::pyish;

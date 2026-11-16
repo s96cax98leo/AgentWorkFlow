@@ -4,7 +4,10 @@
 //! 只追加。重存同一段時不重複寫：內容和目前有效的一樣就不寫；不一樣先寫一筆 `op: "supersede"`
 //! （這個 run 這一段先前的連結全部作廢），再寫新的。讀帳本用 [`active_links`]。寫失敗只警告。
 //!
-//! 連結檢查不讀帳本：每條 AC 有沒有 spec 小節、檔案、測試、commit，一律從各段存下來的結果（design.json、test.json）重算。
+//! 連結檢查不讀帳本：每條 AC 有沒有 spec 小節、檔案、測試、commit，一律從各段存下來的結果（design.json、build.json、test.json）重算。
+//! 不只看「有沒有宣告」，還看宣告的東西是不是真的（[`link_gaps`] 的說明列了保證什麼、不保證什麼）。
+//!
+//! 帳本的內容之後會被知識圖顯示給主 session：每個 id、目標、出處寫入前都過 [`safe`]。
 
 use super::checks::{ac_ids, result_subtasks};
 use super::py::{self, pj, pname, pparent, R};
@@ -31,8 +34,18 @@ pub fn links_setting(profile: &Value) -> Option<bool> {
     Some(l.get("enforce") == Some(&Value::Bool(true)))
 }
 
+/// 帳本裡一個字串最多幾個字。
+pub const LEDGER_TEXT_MAX: usize = 200;
+
+/// 寫進帳本的字串（id、目標、出處、run 名稱）：這些字出自 agent 交的結果，之後會被顯示給主 session。
+/// 控制字元（含換行）換成空白，反引號與角括號拿掉，去頭尾空白，超過 [`LEDGER_TEXT_MAX`] 字截短。
+pub fn safe(text: &str) -> String {
+    let cleaned: String = text.chars().filter(|c| !matches!(c, '`' | '<' | '>')).map(|c| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect();
+    cleaned.trim().chars().take(LEDGER_TEXT_MAX).collect::<String>().trim_end().to_string()
+}
+
 fn node(kind: &str, id: &str) -> Value {
-    json!({"type": kind, "id": id})
+    json!({"type": kind, "id": safe(id)})
 }
 
 fn link(kind: &str, from: Value, to: Value, run: &str, stage: &str, source: &str) -> Value {
@@ -42,9 +55,9 @@ fn link(kind: &str, from: Value, to: Value, run: &str, stage: &str, source: &str
     m.insert("kind".into(), json!(kind));
     m.insert("from".into(), from);
     m.insert("to".into(), to);
-    m.insert("run".into(), json!(run));
+    m.insert("run".into(), json!(safe(run)));
     m.insert("stage".into(), json!(stage));
-    m.insert("source".into(), json!(source));
+    m.insert("source".into(), json!(safe(source)));
     m.insert("strength".into(), json!("strong"));
     Value::Object(m)
 }
@@ -286,7 +299,7 @@ pub fn write_links(ctx: &Ctx, run: &str, stage: &str, links: &[Value], replace: 
     use std::io::Write;
     let resolved = ctx.resolve(run)?;
     let file = pj(&pparent(&resolved), LEDGER);
-    let name = pname(&resolved);
+    let name = safe(&pname(&resolved));
     let old_text = match std::fs::read(&file) {
         Ok(raw) => String::from_utf8_lossy(&raw).into_owned(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -324,23 +337,96 @@ pub fn write_links(ctx: &Ctx, run: &str, stage: &str, links: &[Value], replace: 
     Ok(lines.len())
 }
 
+/// 驗證指令是不是空操作：`true`、`:`、`echo …`、`printf …`、`exit …`、`sleep …`、空字串（與它們用 `&&`、`;`、`|` 接起來的），
+/// 或結尾是 `|| <空操作>`（不管前面過不過都算過）。只擋最明顯的寫法，不是「這個指令真的驗了東西」的保證。
+pub fn noop_command(command: &str) -> bool {
+    fn seg_noop(seg: &str) -> bool {
+        let t = seg.trim().trim_start_matches(['(', '{']).trim();
+        if t.is_empty() || t.starts_with('#') {
+            return true;
+        }
+        let word = t.split_whitespace().next().unwrap_or_default();
+        let base = word.rsplit('/').next().unwrap_or(word).trim_end_matches([')', '}']);
+        matches!(base, "true" | ":" | "echo" | "printf" | "exit" | "sleep")
+    }
+    let c = command.trim();
+    if !real(c) {
+        return true;
+    }
+    if c.rsplit_once("||").is_some_and(|(_, tail)| seg_noop(tail)) {
+        return true;
+    }
+    c.split([';', '\n', '|', '&']).all(seg_noop)
+}
+
+/// 40 碼十六進位（完整的 commit SHA）。
+pub fn full_sha(v: &str) -> bool {
+    v.len() == 40 && v.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// 一段結果裡每個信封回報的實際改動檔（`payload.files_changed`）。
+fn files_changed(result: &Value) -> Vec<String> {
+    envelopes(result).into_iter().filter_map(|e| e.get("payload")).flat_map(|p| strs(p.get("files_changed"))).collect()
+}
+
+/// test 段結果裡每一份逐條結果（彙整的與各分片的）記的 commit。
+fn verified_heads(test: &Value) -> BTreeSet<String> {
+    envelopes(test).into_iter().filter_map(|e| e.get("payload")).filter(|p| p.get("criteria").is_some_and(Value::is_array)).map(|p| p.get("commit").and_then(Value::as_str).unwrap_or_default().trim().to_string()).collect()
+}
+
+/// `owns` 的一筆是不是 repo 裡真的有的檔或目錄。絕對路徑、有 `..`、有萬用字元的不算（不拿它去碰檔案系統）。
+fn exists_in_repo(repo: Option<&str>, own: &str) -> bool {
+    let o = own.trim().replace('\\', "/");
+    let bad = o.is_empty() || o.starts_with('/') || o.contains('\0') || o.contains(['*', '?', ':']) || o.split('/').any(|c| c == "..");
+    match repo {
+        Some(r) if !bad => std::path::Path::new(r).join(&o).exists(),
+        _ => false,
+    }
+}
+
+/// [`link_gaps_of`] 要的資料。
+pub struct GapInput<'a> {
+    /// design 段的回傳。
+    pub design: &'a Value,
+    /// test 段的回傳；None＝這個 run 沒有 test 段的結果（recipe 沒有 test 段），只看 spec 小節與檔案。
+    pub test: Option<&'a Value>,
+    /// build（與 test 段修正）實際改動的檔；None＝recipe 沒有 build 段，這一項只看有沒有宣告。
+    pub built: Option<&'a [String]>,
+    /// 目標 repo（絕對路徑）：`owns` 的檔不在改動清單時，repo 裡有也算。
+    pub repo: Option<&'a str>,
+}
+
 /// 連結檢查：design 段宣告的每條 AC 有沒有 spec 小節、檔案（design 起），測試、commit（test 起）。
-/// 只讀各段存下來的結果（`design` 是 design 段的回傳，`test` 是 test 段的回傳），不讀帳本。回傳缺的環節（空＝齊）。
-pub fn link_gaps_of(stage: &str, design: &Value, test: Option<&Value>, sc: Option<&SpecCtx>) -> Vec<String> {
+/// 只讀各段存下來的結果，不讀帳本。回傳缺的環節（空＝齊）。design 段只看宣告（還沒有東西可以對）；test 起核對真假：
+/// - 檔案：子任務 `owns` 的檔要在 build 實際改動的清單裡，或在 repo 裡存在。
+/// - 測試：驗證指令不能是空操作（[`noop_command`]）。
+/// - commit：要是 40 碼十六進位，而且 test 段每一份逐條結果（彙整與各分片）記的是同一個。
+/// - 子任務沒有 `acceptance`：需求來源是 openspec 而變更有條目時算缺；整份 design 一條可辨識的驗收條件都沒有也算缺。
+pub fn link_gaps_of(stage: &str, inp: &GapInput, sc: Option<&SpecCtx>) -> Vec<String> {
     if !GAP_STAGES.contains(&stage) {
         return Vec::new();
     }
     let known = sc.map(SpecCtx::known);
     let known = known.as_ref();
-    let subs = result_subtasks(design);
+    let spec_items = sc.map(|s| s.items().len()).unwrap_or(0);
+    let subs = result_subtasks(inp.design);
+    let later = stage != "design";
     let mut out: Vec<String> = Vec::new();
     let mut acs: Vec<(String, bool, bool)> = Vec::new();
     for t in &subs {
         let ids = task_acs(t, known);
-        if ids.is_empty() && !strs(t.get("acceptance")).is_empty() {
+        let declared = strs(t.get("acceptance"));
+        if declared.is_empty() && spec_items > 0 {
+            out.push(format!("子任務 {} 沒有 acceptance，而變更的規格有 {spec_items} 條要驗：寫明它負責哪幾條（或可判定的完成條件）", py::take(&task_id(t), 80)));
+        } else if ids.is_empty() && !declared.is_empty() {
             out.push(format!("子任務 {} 的驗收條件沒有可辨識的 id（「AC-…」編號或規格 id），連不到 spec、測試與 commit", task_id(t)));
         }
-        let (has_spec, has_file) = (!strs(t.get("spec_refs")).is_empty(), !strs(t.get("owns")).is_empty());
+        let owns = strs(t.get("owns"));
+        let has_spec = !strs(t.get("spec_refs")).is_empty();
+        let has_file = match inp.built {
+            Some(built) if later => owns.iter().any(|o| built.iter().any(|b| crate::pack::path_overlap(o, b)) || exists_in_repo(inp.repo, o)),
+            _ => !owns.is_empty(),
+        };
         for id in ids {
             let in_spec = known.is_some_and(|k| k.contains(&id));
             match acs.iter_mut().find(|(x, _, _)| *x == id) {
@@ -352,24 +438,32 @@ pub fn link_gaps_of(stage: &str, design: &Value, test: Option<&Value>, sc: Optio
             }
         }
     }
+    if !subs.is_empty() && acs.is_empty() && out.is_empty() {
+        out.push("design 的子任務沒有任何可辨識的驗收條件 id（「AC-…」編號或規格 id）：沒有東西可以連，不能當成連結齊全".to_string());
+    }
     // 沒有 test 段的結果（recipe 沒有 test 段）時只看 spec 小節與檔案
-    let with_test = stage != "design" && test.is_some();
-    let rows = if with_test { test.map(criteria_rows).unwrap_or_default() } else { Vec::new() };
+    let with_test = later && inp.test.is_some();
+    let rows = if with_test { inp.test.map(criteria_rows).unwrap_or_default() } else { Vec::new() };
+    let heads = if with_test { inp.test.map(verified_heads).unwrap_or_default() } else { BTreeSet::new() };
+    if heads.len() > 1 {
+        let list: Vec<String> = heads.iter().map(|h| py::take(h, 40).to_string()).collect();
+        out.push(format!("test 段各份逐條結果記的 commit 不一樣（{}）：不是同一個 HEAD，commit 連結不算數", list.join("、")));
+    }
     for (ac, has_spec, has_file) in &acs {
         let mut lack: Vec<&str> = Vec::new();
         if !has_spec {
             lack.push("spec 小節");
         }
         if !has_file {
-            lack.push("檔案");
+            lack.push(if later && inp.built.is_some() { "檔案（owns 的檔不在 build 的改動清單、repo 裡也沒有）" } else { "檔案" });
         }
         if with_test {
             let mine: Vec<&(String, String, String, String)> = rows.iter().filter(|(id, bare, _, _)| row_matches(ac, id, bare)).collect();
-            if !mine.iter().any(|(_, _, command, _)| real(command)) {
-                lack.push("測試");
+            if !mine.iter().any(|(_, _, command, _)| !noop_command(command)) {
+                lack.push(if mine.iter().any(|(_, _, command, _)| real(command)) { "測試（驗證指令是空操作）" } else { "測試" });
             }
-            if !mine.iter().any(|(_, _, _, commit)| real(commit)) {
-                lack.push("commit");
+            if !mine.iter().any(|(_, _, _, commit)| full_sha(commit)) || heads.len() > 1 {
+                lack.push(if mine.iter().any(|(_, _, _, commit)| real(commit)) { "commit（要是 40 碼的完整 SHA，各份結果一致）" } else { "commit" });
             }
         }
         if !lack.is_empty() {
@@ -379,12 +473,38 @@ pub fn link_gaps_of(stage: &str, design: &Value, test: Option<&Value>, sc: Optio
     out
 }
 
-/// [`link_gaps_of`]，資料取自 run 目錄的 `design.json`、`test.json`（政策核准時重算用）。
-pub fn link_gaps(ctx: &Ctx, run: &str, stage: &str, sc: Option<&SpecCtx>) -> Vec<String> {
+/// [`link_gaps_of`]，資料取自 run 目錄的 `design.json`、`build.json`、`test.json`（政策核准時重算用）；`data` 是 run.json。
+/// recipe 有 design／build／test 段而結果檔讀不到（或不是物件）時回問題：讀不到不等於沒有缺口。
+/// 這個 run 沒有 design 段時沒有宣告可以檢查，回空的；沒有 build 段時「檔案」只看有沒有宣告。
+///
+/// 保證的：通過時，每條 AC 在 design 有對到 spec 小節、`owns` 至少有一個檔是 build 回報改過的或 repo 裡真的有、
+/// test 段有一條不是空操作的驗證指令、test 段記的是同一個 40 碼的 commit。
+/// 不保證的：那個檔的內容真的實作了這條 AC、那條指令真的驗了這條 AC（只擋 `true`、`echo` 這類最明顯的空操作）、
+/// 那個 commit 存在或就是分支的 HEAD（合併前由 merge gate 的 `--reviewed-sha` 對 PR 的 head 把關）。
+/// build 與 test 的結果是 agent 交的，這裡核對的是它們彼此一致，不是替代驗證。
+pub fn link_gaps(ctx: &Ctx, run: &str, stage: &str, sc: Option<&SpecCtx>, data: &Value) -> Vec<String> {
     if !GAP_STAGES.contains(&stage) {
         return Vec::new();
     }
-    let Ok(design) = ctx.load_json(&pj(run, "design.json")) else { return Vec::new() };
-    let test = ctx.load_json(&pj(run, "test.json")).ok();
-    link_gaps_of(stage, &design, test.as_ref(), sc)
+    let has = |st: &str| data.get("stages").and_then(|s| s.get(st)).is_some_and(|d| d.is_object() && d.get("status").and_then(Value::as_str) != Some("skipped"));
+    let read = |name: &str| ctx.load_json(&pj(run, name)).ok().filter(Value::is_object);
+    let unreadable = |st: &str, what: &str| format!("讀不到 {st}.json（這個 run 有 {st} 段）：{what}；讀不到不算沒有缺口");
+    let Some(design) = read("design.json") else {
+        return if has("design") { vec![unreadable("design", "不知道有哪些驗收條件")] } else { Vec::new() };
+    };
+    let later = stage != "design";
+    let mut out: Vec<String> = Vec::new();
+    let test = if later { read("test.json") } else { None };
+    if later && test.is_none() && has("test") {
+        out.push(unreadable("test", "測試與 commit 無法核對"));
+    }
+    let build = if later { read("build.json") } else { None };
+    if later && build.is_none() && has("build") {
+        out.push(unreadable("build", "檔案無法核對"));
+    }
+    // 實際改動的檔：build 回報的，加上 test 段修正時回報的。recipe 沒有 build 段時是 None（只看宣告）
+    let built: Option<Vec<String>> = (later && has("build")).then(|| build.iter().chain(test.iter()).flat_map(files_changed).collect());
+    let repo = data.get("target_repo").and_then(Value::as_str).filter(|r| !r.trim().is_empty()).map(|r| ctx.abs(&py::pp(r)));
+    out.extend(link_gaps_of(stage, &GapInput { design: &design, test: test.as_ref(), built: built.as_deref(), repo: repo.as_deref() }, sc));
+    out
 }

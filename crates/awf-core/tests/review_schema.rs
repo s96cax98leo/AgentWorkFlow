@@ -198,3 +198,114 @@ fn low_task_id_pattern_treats_combining_marks_like_python() {
     assert!(check("另開 XT-12 處理").is_empty());
     assert!(check("另開 T-12a 處理").is_empty());
 }
+
+/// 有 JSON Schema 先擋的路（`check_doc`：awf build、awf doctor、交付設定）：同一個型別錯誤 schema 已經報了，語意規則不重複報。
+/// 這也證明這些欄位 schema 都擋得到——`check_doc` 不靠語意規則報型別。
+#[test]
+fn m1_check_doc_reports_each_type_error_once() {
+    let s = Schemas::new(teams());
+    let doc = |doc: Value| s.check_doc(&doc, "methodology").expect("schema 讀得到");
+    let cases = [
+        ("extensions", json!({"extensions": {"a": 1}})),
+        ("knowledge.repos", json!({"knowledge": {"repos": "x"}})),
+        ("code_tools", json!({"knowledge": {"code_tools": "graft"}})),
+        ("record_sections", json!({"stages": {"deliver": {"record_sections": "a"}}})),
+        ("events", json!({"events": {"mine": {"context": "c", "gather": {"angles": "x"}, "challenge": {}, "write": {}}}})),
+        ("events", json!({"events": {"mine": {"context": "c", "gather": {"angles": []}, "challenge": {}, "write": {}, "before": "x"}}})),
+        ("deliverables", json!({"deliverables": {"documents": "x"}})),
+        ("deliverables", json!({"deliverables": {"privacy_allow": "x"}})),
+    ];
+    for (field, d) in cases {
+        let e = doc(d.clone());
+        assert!(e.iter().any(|m| m.starts_with("$.") && m.contains(field.split('.').next().unwrap())), "{field}：schema 要報：{e:?}");
+        assert!(!e.iter().any(|m| m.contains("要是陣列（收到") || m.contains("要是物件（收到")), "{field}：語意規則不重複報型別：{e:?}");
+        // 只跑語意規則（閘門讀 profile 的路）時由語意規則報
+        assert!(!schema::methodology_errors(&d).is_empty(), "{field}：只跑語意規則時也要有錯誤");
+    }
+    let dv = |doc: Value| s.check_doc(&doc, "deliverables").expect("schema 讀得到");
+    for d in [json!({"documents": "x"}), json!({"documents": [{"id": "d", "sources": "x"}]}), json!({"privacy_allow": "x"})] {
+        let e = dv(d.clone());
+        assert!(e.iter().any(|m| m.starts_with("$.")), "交付設定：schema 要報：{d} → {e:?}");
+        assert!(!e.iter().any(|m| m.contains("要是陣列（收到") || m.contains("要是物件（收到")), "{e:?}");
+        assert!(!schema::deliverables_errors(Some(&d), "交付設定").is_empty(), "只跑語意規則時也要有錯誤：{d}");
+    }
+}
+
+/// `task_id_prefix` 自己帶結合符號（例如「É」寫成 E＋U+0301）：照樣認得出編號。
+#[test]
+fn low_task_id_prefix_with_combining_marks_still_matches() {
+    for prefix in ["TE\u{301}-", "\u{301}T-", "T\u{301}", "任務\u{301}-", "T-\u{301}"] {
+        let mut s = Schemas::new(teams());
+        s.config_override = json!({"task_id_prefix": prefix}).as_object().cloned();
+        let check = |w: &str| s.semantic_errors(&json!({"derived_work": [w]}));
+        assert!(has(&check(&format!("另開 {prefix}12 處理")), "不可自編任務編號"), "前綴 {prefix:?}：前面是空白");
+        assert!(has(&check(&format!("{prefix}12")), "不可自編任務編號"), "前綴 {prefix:?}：整段就是編號");
+        assert!(has(&check(&format!("另開（{prefix}7）")), "不可自編任務編號"), "前綴 {prefix:?}：前後是標點");
+        // 不是編號的照舊不擋
+        assert!(check(&format!("另開 {prefix}處理")).is_empty(), "前綴 {prefix:?}：後面沒有數字");
+        assert!(check(&format!("另開 {prefix}12a 處理")).is_empty(), "前綴 {prefix:?}：數字後面接字母");
+        assert!(check(&format!("另開 X-{prefix}12 處理")).is_empty(), "前綴 {prefix:?}：前面緊接連字號");
+    }
+}
+
+// ------------------------------------------------------------------ 第一次審查沒做完的：其餘「不是陣列／物件就當空」
+
+/// 信封的 `open_questions`、`options`、`derived_work`：語意規則把型別不對的當成空的，但信封的 JSON Schema 先擋掉了
+/// （`check` 兩個都跑）。這裡證明擋得到，所以語意規則不重複報。
+#[test]
+fn m1_envelope_lists_of_wrong_type_are_rejected_by_the_schema() {
+    let s = Schemas::new(teams());
+    let with = |k: &str, v: Value| {
+        let mut e = envelope(json!({}));
+        e[k] = v;
+        s.check(&e, None).expect("schema 讀得到")
+    };
+    for bad in [json!("x"), json!({"blocking": true}), json!(5), json!(true)] {
+        assert!(has(&with("open_questions", bad.clone()), "open_questions"), "open_questions={bad}");
+        assert!(has(&with("derived_work", bad.clone()), "derived_work"), "derived_work={bad}");
+        let q = json!([{"question": "q", "blocking": true, "options": bad, "recommendation": "r", "default_applied": "d"}]);
+        let mut e = envelope(json!({}));
+        e["status"] = json!("needs_decision");
+        e["open_questions"] = q;
+        assert!(has(&s.check(&e, None).expect("schema 讀得到"), "options"), "options={bad}");
+    }
+    assert!(has(&with("open_questions", json!(["不是物件"])), "open_questions"));
+    assert!(has(&with("derived_work", json!([{"x": 1}])), "derived_work"));
+}
+
+/// profile 的其餘清單欄位：閘門讀 profile 時只跑語意規則（沒有 JSON Schema 先擋），型別不對不能當成沒寫。
+#[test]
+fn m1_methodology_other_lists_of_wrong_type_are_errors() {
+    let e = |doc: Value| schema::methodology_errors(&doc);
+    for bad in [json!("x"), json!({"a": 1}), json!(5), json!(true)] {
+        assert!(has(&e(json!({"stages": {"deliver": {"record_sections": bad}}})), "record_sections"), "record_sections={bad}");
+        assert!(has(&e(json!({"knowledge": {"code_tools": bad}})), "code_tools"), "code_tools={bad}");
+        assert!(has(&e(json!({"knowledge": {"repos": bad}})), "knowledge.repos"), "repos={bad}");
+        assert!(has(&e(json!({"knowledge": {"repos": [{"id": "a", "path": "../a", "sources": bad}]}})), "sources"), "repos.sources={bad}");
+        assert!(has(&e(json!({"extensions": bad})), "extensions"), "extensions={bad}");
+        let ev = |part: Value| json!({"events": {"mine": part}});
+        assert!(has(&e(ev(json!({"gather": {"angles": bad}}))), "gather.angles"), "angles={bad}");
+        assert!(has(&e(ev(json!({"before": bad}))), "before"), "before={bad}");
+        assert!(has(&e(ev(json!({"after": bad}))), "after"), "after={bad}");
+        assert!(has(&e(ev(json!({"gather": {"angles": [], "data": bad}}))), "gather.data"), "gather.data={bad}");
+        assert!(has(&e(ev(json!({"write": {"data": bad}}))), "write.data"), "write.data={bad}");
+        assert!(has(&e(json!({"deliverables": {"enabled": true, "documents": bad}})), "documents"), "documents={bad}");
+        assert!(has(&e(json!({"deliverables": {"enabled": true, "documents": [{"id": "d", "sources": bad}]}})), "sources"), "documents.sources={bad}");
+        assert!(has(&e(json!({"deliverables": {"enabled": true, "privacy_allow": bad}})), "privacy_allow"), "privacy_allow={bad}");
+    }
+    // 元素型別不對
+    assert!(has(&e(json!({"knowledge": {"repos": ["a"]}})), "knowledge.repos[0]"));
+    assert!(has(&e(json!({"knowledge": {"repos": [{"id": "a", "path": "../a", "sources": [5]}]}})), "sources"));
+    assert!(has(&e(json!({"extensions": ["a"]})), "extensions[0]"));
+    assert!(has(&e(json!({"events": {"mine": {"gather": {"angles": ["a"]}}}})), "gather.angles[0]"));
+    assert!(has(&e(json!({"events": {"mine": {"before": ["a"]}}})), "before[0]"));
+    assert!(has(&e(json!({"events": {"mine": {"write": {"data": ["a"]}}}})), "write.data[0]"));
+    assert!(has(&e(json!({"events": {"mine": "不是物件"}})), "events"));
+    assert!(has(&e(json!({"deliverables": {"enabled": true, "documents": ["a"]}})), "documents[0]"));
+    // 沒寫、null、正確的型別：沒有多的錯誤
+    let ok = json!({"stages": {"deliver": {"record_sections": ["a", "b"]}}, "knowledge": {"code_tools": ["graft"], "repos": [{"id": "a", "path": "../a", "sources": ["src/**"]}]},
+        "extensions": [{"name": "x", "agent": "me:x", "stage": "test", "instructions": "i"}], "events": {"mine": {"gather": {"angles": [{"key": "a", "ask": "q"}], "data": []}, "before": [], "after": null, "write": {"data": []}}},
+        "deliverables": {"enabled": false, "documents": [{"id": "d", "sources": ["docs/**"]}], "privacy_allow": ["ACME"]}});
+    assert_eq!(e(ok), Vec::<String>::new());
+    assert_eq!(e(json!({"knowledge": null, "extensions": null, "events": null, "deliverables": null})), Vec::<String>::new());
+}

@@ -508,6 +508,24 @@ fn adapter_spec_md(path: &str, id_pattern: &Value) -> Result<Vec<Req>, Fail> {
 /// 回傳（需求清單、來源標籤）。`save_run` 的規格檢查讀同一份設定（[`crate::spec::source_cfg`]）。
 pub fn adapter_openspec(rc: &Value, proj: &str, change_override: Option<&str>) -> Result<(Vec<Req>, String), Fail> {
     use crate::spec;
+    let (conf, opened, change) = openspec_pick(rc, proj, change_override)?;
+    let Some(items) = spec::change_items(&opened.tree, &change) else {
+        return Err(Fail::Input(format!("規格目錄 {} 沒有進行中的變更「{change}」", conf.display)));
+    };
+    let problems = spec::validate(&opened.tree, &opened.ids, Some(&change));
+    if let Some(first) = problems.first() {
+        return Err(Fail::Input(format!("變更「{change}」的規格檢查有 {} 項問題（awf spec validate --change {change}）：{}", problems.len(), spec::format_problem(&conf.display, first))));
+    }
+    if items.is_empty() {
+        return Err(Fail::Input(format!("變更「{change}」的規格差異沒有任何要驗的需求或情境（ADDED／MODIFIED 是空的）")));
+    }
+    let reqs = items.into_iter().map(|i| Req { source: format!("{}/{}:{}", conf.display, i.file, i.line), id: i.id, text: i.title }).collect();
+    Ok((reqs, format!("openspec:{}#{change}", conf.display)))
+}
+
+/// 讀規格目錄並決定這次對照哪一個變更（規則見 [`adapter_openspec`]）。回傳（設定、讀好的規格、變更名稱）。
+fn openspec_pick(rc: &Value, proj: &str, change_override: Option<&str>) -> Result<(crate::spec::SourceCfg, crate::spec::Opened, String), Fail> {
+    use crate::spec;
     let conf = spec::source_cfg(rc, proj).map_err(|e| Fail::Input(format!("需求來源 openspec 的設定不對：{e}")))?;
     let opened = spec::open_source(&conf).map_err(|e| Fail::Input(format!("讀不到規格目錄 {}：{e}", conf.display)))?;
     let active = spec::active_changes(&opened.tree);
@@ -523,18 +541,25 @@ pub fn adapter_openspec(rc: &Value, proj: &str, change_override: Option<&str>) -
             many => return Err(Fail::Input(format!("規格目錄 {} 有 {} 個進行中的變更（{}），用 --requirements-change 或 requirements.change 指定這次是哪一個", conf.display, many.len(), many.join("、")))),
         },
     };
-    let Some(items) = spec::change_items(&opened.tree, &change) else {
-        return Err(Fail::Input(format!("規格目錄 {} 沒有進行中的變更「{change}」", conf.display)));
-    };
-    let problems = spec::validate(&opened.tree, &opened.ids, Some(&change));
-    if let Some(first) = problems.first() {
-        return Err(Fail::Input(format!("變更「{change}」的規格檢查有 {} 項問題（awf spec validate --change {change}）：{}", problems.len(), spec::format_problem(&conf.display, first))));
+    Ok((conf, opened, change))
+}
+
+/// 需求來源 `openspec` 實際用的設定：`--requirements` 有給時蓋掉 `path`。
+fn openspec_conf(rc: &Value, path_override: Option<&str>) -> Value {
+    let mut conf = if rc.is_object() { rc.clone() } else { json!({}) };
+    if let (Some(p), Some(o)) = (path_override, conf.as_object_mut()) {
+        o.insert("path".into(), json!(p));
     }
-    if items.is_empty() {
-        return Err(Fail::Input(format!("變更「{change}」的規格差異沒有任何要驗的需求或情境（ADDED／MODIFIED 是空的）")));
-    }
-    let reqs = items.into_iter().map(|i| Req { source: format!("{}/{}:{}", conf.display, i.file, i.line), id: i.id, text: i.title }).collect();
-    Ok((reqs, format!("openspec:{}#{change}", conf.display)))
+    conf
+}
+
+/// 需求來源是 `openspec`、又帶了 `--recipe <run.json>` 時：規格現在的樣子要和 run.json 記下的基準一樣
+/// （design 核准時記的；沒有 design 段的 recipe 用 plan 的）。需求清單取自專案工作目錄的差異檔，team agent 改得到：
+/// 核准之後把沒過的條目刪掉，清單就變短、對照也跟著過。條目變少、差異檔變了、沒有基準都回問題（hold）。
+/// 沒有 run.json（CI）時沒有東西可以比：那邊的需求清單取自受保護的 base 分支，見 docs/自動合併信任模型.md。
+fn openspec_baseline_errors(rc: &Value, proj: &str, path_override: Option<&str>, change_override: Option<&str>, run: &Value) -> Result<Vec<String>, Fail> {
+    let (conf, opened, change) = openspec_pick(&openspec_conf(rc, path_override), proj, change_override)?;
+    Ok(crate::save_run::baseline_drift("merge", run, &conf, &opened, &change))
 }
 
 /// 需求設定「有設」＝path 或 command 不是空的（還沒替換的佔位符當成空）。
@@ -596,10 +621,7 @@ fn load_requirements(ctx: &Ctx, cfg: &Value, proj: &str, path_override: Option<&
     };
     let path = if raw.is_empty() { None } else { Some(pyutil::join(proj, &raw)) };
     if source == "openspec" {
-        let mut conf = if rc.is_object() { rc.clone() } else { json!({}) };
-        if let (Some(p), Some(o)) = (path_override, conf.as_object_mut()) {
-            o.insert("path".into(), json!(p));
-        }
+        let conf = openspec_conf(&rc, path_override);
         let (reqs, label) = adapter_openspec(&conf, proj, change_override)?;
         return Ok((reqs, if origin == "methodology.json" && path_override.is_none() { format!("{label}（methodology.json）") } else { label }));
     }
@@ -1604,6 +1626,11 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
         let tamper = recipe_tamper_errors(&teams, &data, Some(meth.as_str())).map_err(Fail::Crash)?;
         if !tamper.is_empty() { return Err(Fail::Input(first(&tamper, 3).join("；"))); }
         inp.recipe = Some(r.clone());
+        if inp.requirements_source.starts_with("openspec:") {
+            let (rc, _) = requirements_config(cfg, proj)?;
+            let drift = openspec_baseline_errors(&rc, proj, a.get("--requirements").filter(|p| !p.is_empty()), a.get("--requirements-change"), &data)?;
+            if !drift.is_empty() { return Err(Fail::Input(format!("規格和 run.json 核准時記下的基準不同：{}", first(&drift, 3).join("；")))); }
+        }
         Ok(())
     })())?;
 
