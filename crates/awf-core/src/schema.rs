@@ -108,6 +108,42 @@ impl Schemas {
         re.compiles().then_some(re)
     }
 
+    /// `text` 裡長得像上層系統任務編號的區間（位元組位移）；沒設定前綴回空的。
+    ///
+    /// 前綴是純 ASCII 時就是 [`Self::task_id_regex`]。前綴自己帶非 ASCII 字元時不能用那個樣式：
+    /// `hooks::re` 比對前會把「Python 與 Rust 對是不是字看法不同」的字元（例如結合符號）換成替身，
+    /// 樣式裡的前綴卻還是原字，永遠對不上——設了這種前綴，「不可自編任務編號」就等於沒檢查。
+    /// 這裡改成照同一個樣式的意思逐處核對：前綴原樣出現、前一個字元不是字也不是連字號、後面接一個以上的數字、
+    /// 數字後面不是字（「字」「數字」用 `hooks::re` 判斷，和樣式的 `\w`、`\d` 同一套）。
+    pub fn task_id_spans(&self, text: &str) -> Vec<(usize, usize)> {
+        use crate::hooks::re::Re;
+        let prefix = self.config_str("task_id_prefix");
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        if prefix.is_ascii() {
+            return self.task_id_regex().map(|re| re.find_all(text)).unwrap_or_default();
+        }
+        static WORD: Re = Re::new(r"\A\w", "");
+        static DIGITS: Re = Re::new(r"\A\d+", "");
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(at) = text[from..].find(prefix.as_str()).map(|i| i + from) {
+            // 下一輪從這次開頭的下一個字元找起（沒對上的位置後面可能還有）
+            let step = text[at..].chars().next().map_or(1, char::len_utf8);
+            from = at + step;
+            let before_ok = text[..at].chars().next_back().is_none_or(|c| c != '-' && !WORD.is_match(c.encode_utf8(&mut [0u8; 4])));
+            let digits_at = at + prefix.len();
+            let Some((_, n)) = DIGITS.find(&text[digits_at..]) else { continue };
+            let end = digits_at + n;
+            if before_ok && !WORD.is_match(&text[end..]) {
+                out.push((at, end));
+                from = end;
+            }
+        }
+        out
+    }
+
     pub fn task_authority(&self) -> String {
         let s = self.config_str("task_authority");
         if s.is_empty() { "上層系統".into() } else { s }
@@ -177,10 +213,9 @@ impl Schemas {
                 errs.push(format!("open_questions[{i}]：blocking 問題要附 2–3 個選項與代價"));
             }
         }
-        let tid = self.task_id_regex();
         for (i, w) in items(get(env, "derived_work")).iter().enumerate() {
-            if let (Some(re), Some(s)) = (&tid, w.as_str()) {
-                if re.is_match(s) {
+            if let Some(s) = w.as_str() {
+                if !self.task_id_spans(s).is_empty() {
                     errs.push(format!("derived_work[{i}]：不可自編任務編號（交 {} 編）：{s}", self.task_authority()));
                 }
             }

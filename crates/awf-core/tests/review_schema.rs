@@ -231,6 +231,23 @@ fn m1_check_doc_reports_each_type_error_once() {
     }
 }
 
+/// `task_id_prefix` 自己帶結合符號（例如「É」寫成 E＋U+0301）：照樣認得出編號。
+#[test]
+fn low_task_id_prefix_with_combining_marks_still_matches() {
+    for prefix in ["TE\u{301}-", "\u{301}T-", "T\u{301}", "任務\u{301}-", "T-\u{301}"] {
+        let mut s = Schemas::new(teams());
+        s.config_override = json!({"task_id_prefix": prefix}).as_object().cloned();
+        let check = |w: &str| s.semantic_errors(&json!({"derived_work": [w]}));
+        assert!(has(&check(&format!("另開 {prefix}12 處理")), "不可自編任務編號"), "前綴 {prefix:?}：前面是空白");
+        assert!(has(&check(&format!("{prefix}12")), "不可自編任務編號"), "前綴 {prefix:?}：整段就是編號");
+        assert!(has(&check(&format!("另開（{prefix}7）")), "不可自編任務編號"), "前綴 {prefix:?}：前後是標點");
+        // 不是編號的照舊不擋
+        assert!(check(&format!("另開 {prefix}處理")).is_empty(), "前綴 {prefix:?}：後面沒有數字");
+        assert!(check(&format!("另開 {prefix}12a 處理")).is_empty(), "前綴 {prefix:?}：數字後面接字母");
+        assert!(check(&format!("另開 X-{prefix}12 處理")).is_empty(), "前綴 {prefix:?}：前面緊接連字號");
+    }
+}
+
 // ------------------------------------------------------------------ 第一次審查沒做完的：其餘「不是陣列／物件就當空」
 
 /// 信封的 `open_questions`、`options`、`derived_work`：語意規則把型別不對的當成空的，但信封的 JSON Schema 先擋掉了
