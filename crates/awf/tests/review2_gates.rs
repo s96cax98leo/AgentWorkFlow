@@ -85,6 +85,10 @@ impl Out {
 }
 
 fn awf(args: &[&str], cwd: &Path, stdin: Option<&str>) -> Out {
+    awf_env(args, cwd, stdin, &[])
+}
+
+fn awf_env(args: &[&str], cwd: &Path, stdin: Option<&str>, env: &[(&str, &str)]) -> Out {
     let mut c = Command::new(EXE);
     c.args(args).current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, _) in std::env::vars_os() {
@@ -92,6 +96,9 @@ fn awf(args: &[&str], cwd: &Path, stdin: Option<&str>) -> Out {
         if k.starts_with("CLAUDE_") || k.starts_with("AWF_") {
             c.env_remove(k);
         }
+    }
+    for (k, v) in env {
+        c.env(k, v);
     }
     let mut child = c.spawn().expect("執行 awf");
     {
@@ -575,4 +582,125 @@ fn r3_ledger_ids_are_sanitized() {
         seen_test = seen_test || v["kind"] == "ac_test";
     }
     assert!(seen_test, "前提：有 ac_test 連結：{ledger}");
+}
+
+// ------------------------------------------------------------------ 第一次審查沒做完的
+
+/// 走到 deliver 存檔、test 與 deliver 都核准（沒有 openspec、沒有 links）。
+fn approved_run(root: &Path) {
+    mk(root, &builtin_profile(json!({})), false);
+    upto_sync(root, false, ac_design(&["src/export.py"]), &["src/export.py"]);
+    must(save(root, "test", test_of(SHA, &[("AC-1", "pytest tests/test_export.py")]), VERIFIER), "stage test");
+    must(approve(root, "test", "human"), "approve test");
+}
+
+/// 把「這一段已經交出去」寫進 run.json（等同主 session 跑過 `awf next`），回腳本的絕對路徑。
+fn pend(root: &Path, stage: &str) -> PathBuf {
+    let script = format!("{RUN}/.wf/sdlc-{stage}.js");
+    write(&root.join(&script), "// 腳本\n");
+    let f = root.join(RUN).join("run.json");
+    let mut d = read_json(&f);
+    d["awf"] = json!({"pending": {"stage": stage, "workflow": format!("sdlc-{stage}"), "script": script, "at": "t", "since": 1.0}});
+    write(&f, &format!("{}\n", serde_json::to_string_pretty(&d).expect("JSON")));
+    root.join(script)
+}
+
+fn done(root: &Path, tr: &Path) -> Out {
+    awf_env(&["done", "--run", RUN, "--no-next"], root, None, &[("AWF_TRANSCRIPTS_DIR", &s(tr)), ("CLAUDE_PROJECT_DIR", &s(root))])
+}
+
+/// `awf done` 自己找 workflow 紀錄的回傳時「找到但讀不懂」：和 `--output` 讀不懂走同一條路（該段標 invalid、舊核准清掉）。
+/// 之前：只報錯，舊的 pass 與舊核准原封不動。
+#[test]
+fn done_with_an_unreadable_workflow_record_invalidates_the_stage() {
+    // 回傳是字串形式的 JSON、但讀不懂（NaN、超大整數、沒寫完）
+    for (tag, result) in [("nan", r#"{"v": {"status": "done"}, "n": NaN}"#), ("huge", r#"{"v": {"status": "done"}, "n": 100000000000000000000}"#), ("cut", r#"{"v": {"status": "#), ("list", "[1, 2,")] {
+        let t = Tmp::new(&format!("done-unreadable-{tag}"));
+        let (root, tr) = (t.path().join("proj"), t.path().join("tr"));
+        approved_run(&root);
+        let script = pend(&root, "test");
+        write_json(&tr.join("sess-1/workflows/wf_x.json"), &json!({"runId": "wf_x", "scriptPath": s(&script), "status": "completed", "result": result}));
+        let o = done(&root, &tr);
+        assert_ne!(o.code, 0, "{tag}：{}", o.all());
+        assert!(o.all().contains("不是讀得懂的 JSON"), "{tag}：要說明是回傳讀不懂：{}", o.all());
+        assert_eq!(run_json(&root)["stages"]["test"]["status"], "invalid", "{tag}：該段要標 invalid：{}", o.all());
+        assert!(!approved(&root, "test"), "{tag}：舊核准要清掉");
+    }
+    // 整份紀錄檔讀不懂，但看得出是這支腳本的
+    let t = Tmp::new("done-unreadable-file");
+    let (root, tr) = (t.path().join("proj"), t.path().join("tr"));
+    approved_run(&root);
+    let script = pend(&root, "test");
+    write(&tr.join("sess-1/workflows/wf_x.json"), &format!(r#"{{"runId": "wf_x", "scriptPath": {}, "status": "completed", "result": {{"n": 100000000000000000000}}}}"#, json!(s(&script))));
+    let o = done(&root, &tr);
+    assert_ne!(o.code, 0, "{}", o.all());
+    assert_eq!(run_json(&root)["stages"]["test"]["status"], "invalid", "{}", o.all());
+    assert!(!approved(&root, "test"));
+}
+
+/// 找不到紀錄、還在跑（沒有回傳）、讀不懂的紀錄是別支腳本的：維持只報錯，什麼都不改。
+#[test]
+fn done_without_a_workflow_record_changes_nothing() {
+    type Put = fn(&Path, &Path);
+    let cases: [(&str, Put); 4] = [
+        ("找不到", |_, _| {}),
+        ("還在跑", |tr, script| write_json(&tr.join("sess-1/workflows/wf_x.json"), &json!({"runId": "wf_x", "scriptPath": s(script), "status": "running", "result": null}))),
+        ("回傳是一般字串", |tr, script| write_json(&tr.join("sess-1/workflows/wf_x.json"), &json!({"runId": "wf_x", "scriptPath": s(script), "status": "completed", "result": "還在跑"}))),
+        ("別支腳本的紀錄讀不懂", |tr, script| write(&tr.join("sess-1/workflows/wf_x.json"), &format!(r#"{{"scriptPath": {}, "result": {{"n": NaN}}}}"#, json!(s(&script.with_file_name("other.js")))))),
+    ];
+    for (name, put) in cases {
+        let t = Tmp::new("done-none");
+        let (root, tr) = (t.path().join("proj"), t.path().join("tr"));
+        approved_run(&root);
+        let script = pend(&root, "test");
+        std::fs::create_dir_all(&tr).expect("建目錄");
+        put(&tr, &script);
+        let before = std::fs::read_to_string(root.join(RUN).join("test.json")).expect("test.json");
+        let o = done(&root, &tr);
+        assert_ne!(o.code, 0, "{name}：{}", o.all());
+        assert_eq!(run_json(&root)["stages"]["test"]["status"], "done", "{name}：{}", o.all());
+        assert!(approved(&root, "test"), "{name}：核准不該失效");
+        assert_eq!(std::fs::read_to_string(root.join(RUN).join("test.json")).expect("test.json"), before, "{name}");
+    }
+}
+
+/// run.json 已有 recipe、專案的 profile 不見了（或不合規則）：非 plan 段存檔當下就要拒絕。
+/// 之前：存檔照過（規格檢查、連結檢查、限制文件都因為讀不到 profile 而沒做），要等到核准才發現。
+#[test]
+fn stage_refuses_when_the_run_has_a_recipe_but_the_profile_is_unusable() {
+    let t = Tmp::new("stage-noprofile");
+    let root = t.path().join("proj");
+    mk(&root, &builtin_profile(json!({})), false);
+    plan(&root, false);
+    must(approve(&root, "plan", "human"), "approve plan");
+    let pf = root.join(".claude/teams/methodology.json");
+    let keep = std::fs::read_to_string(&pf).expect("profile");
+    std::fs::remove_file(&pf).expect("刪 profile");
+    let o = save(&root, "design", ac_design(&["src/export.py"]), &[]);
+    assert_ne!(o.code, 0, "profile 不見了：{}", o.all());
+    assert!(o.err.contains("profile"), "{}", o.err);
+    assert_eq!(run_json(&root)["stages"]["design"]["status"], "invalid", "{}", o.all());
+    // 在、但不合規則
+    write_json(&pf, &builtin_profile(json!({"constraints": ["不是物件"]})));
+    let o = save(&root, "design", ac_design(&["src/export.py"]), &[]);
+    assert_ne!(o.code, 0, "profile 不合規則：{}", o.all());
+    assert!(o.err.contains("不合規則"), "{}", o.err);
+    assert_eq!(run_json(&root)["stages"]["design"]["status"], "invalid");
+    // 放回去就能存
+    write(&pf, &keep);
+    must(save(&root, "design", ac_design(&["src/export.py"]), &[]), "profile 放回去之後");
+    // 用 --profile 指定也可以（專案的檔不在）
+    std::fs::remove_file(&pf).expect("刪 profile");
+    write(&root.join("alt.json"), &keep);
+    let r = traced(&root, "design", ac_design(&["src/export.py"]), &[]);
+    must(sr(&root, &["stage", RUN, "design", "--profile", "alt.json"], Some(&r.to_string())), "--profile 指定");
+    // 沒有 recipe 的舊 run 不受影響
+    let t = Tmp::new("stage-noprofile-old");
+    let root = t.path().join("proj");
+    mk(&root, &builtin_profile(json!({})), false);
+    must(sr(&root, &["init", RUN, "--event", "sdlc", "--target", "repo", "--requirement", "r"], None), "init");
+    std::fs::remove_file(root.join(".claude/teams/methodology.json")).expect("刪 profile");
+    assert!(run_json(&root).get("recipe").is_none(), "前提：這個 run 沒有 recipe");
+    let o = sr(&root, &["stage", RUN, "design"], Some(&ac_design(&["src/export.py"]).to_string()));
+    assert!(!o.err.contains("profile"), "沒有 recipe 的 run 照舊：{}", o.all());
 }

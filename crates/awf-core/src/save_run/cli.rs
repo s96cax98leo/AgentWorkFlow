@@ -6,7 +6,7 @@ use super::checks::{constraint_issues, intent_errors, plan_check_for};
 use super::decisions::{decision_errors, record_decisions, split_answer};
 use super::links::{decision_links, link_gaps, links_setting, stage_links, write_links, LEDGER};
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
-use super::policy::{abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, mods, policy_violations, recipe_mismatch, recipe_tamper_errors};
+use super::policy::{abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
 use super::trace::{envelopes, model_errors, process_trace};
 use super::{dump, load, opt, opts, Ctx, GATED, HUMAN_ONLY, INDEX_NAME, NO_ENVELOPE, SDLC};
@@ -282,6 +282,18 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         None => false,
     };
     let in_sdlc = SDLC.contains(&stage);
+    // run.json 已有 recipe 的非 plan 段：專案的 profile 找不到或不能用，當下就拒絕。
+    // recipe 是用那份 profile 解析的；沒有它，這一段的規格檢查、連結檢查、限制文件都做不了，不能等到核准才發現
+    if in_sdlc && sdlc_run && stage != "plan" && has_recipe(&data)? {
+        if profile_arg.is_empty() && !ctx.is_file(&ctx.profile) {
+            errs.push(profile_missing(&ctx.profile));
+        } else {
+            let (_, perr) = load_profile(ctx, profile_arg);
+            if !perr.is_empty() {
+                errs.push(perr);
+            }
+        }
+    }
     // 規格層（需求來源是 openspec）與連結（profile 有 links）：沒設定就都是 None，後面完全不做事
     let (sprof, _) = if in_sdlc && sdlc_run { load_profile(ctx, profile_arg) } else { (Value::Null, String::new()) };
     let sc = if sprof.is_object() { open_spec(ctx, run, &data, &sprof) } else { None };

@@ -27,7 +27,7 @@ mod plugin;
 mod selftest;
 
 pub use crate::kb::PyErr;
-pub use args::{apply_sets, current_session, deliverables_sync, find_wf_meta, run_pack, stage_args, transcripts_root};
+pub use args::{apply_sets, current_session, deliverables_sync, find_wf_meta, run_pack, stage_args, transcripts_root, unreadable_wf_meta};
 pub use machine::{carry, custom_action, decide, envelopes, gate_action, halted_action, handoff_text, highlights, provisional, text_of, try_policy, workflow_action};
 pub(crate) use plugin::{override_re, unregistered, version as plugin_version};
 pub use plugin::{custom_roles, find_plugin, find_template, plugin_candidates, read_config, render, render_custom, workflow_names, Candidate};
@@ -583,13 +583,26 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
             other => return Err(Fail::Py(py::type_err(format!("expected str, bytes or os.PathLike object, not {}", py::tname(other))))),
         };
         let want = if !script.is_empty() && !pyish::is_abs(&script) { pyish::pjoin(&env.project, &script) } else { script };
-        let Some((m, mf)) = find_wf_meta(env, &want, py_float(py::get(&pend, "since")?)?)? else {
+        // 找到紀錄、但回傳讀不懂：和 --output 的檔讀不懂走同一條路（這一段不能留著舊的結果與舊核准）。找不到紀錄則什麼都不改
+        let unreadable = |why: &str| -> A<i32> {
+            let (mut o, mut e) = (String::new(), String::new());
+            sr::stage_unreadable(&ctx, run, &stage, why, &mut o, &mut e)?;
+            awf_err(format!("找到這一段的 workflow 紀錄，但{why}：{stage} 段已標成 invalid、舊核准失效；重跑這一段，或把正確的回傳存成 JSON 檔，用 --output <檔> 指定"))
+        };
+        let since = py_float(py::get(&pend, "since")?)?;
+        let Some((m, mf)) = find_wf_meta(env, &want, since)? else {
+            if unreadable_wf_meta(env, &want, since) {
+                return unreadable("紀錄檔不是讀得懂的 JSON");
+            }
             return awf_err("找不到這一段 workflow 的回傳（它還沒跑完，或這版 Claude Code 的存放位置變了）。把 Workflow 的回傳存成 JSON 檔，用 --output <檔> 指定");
         };
         let mut r = py::get(&m, "result")?.clone();
         if let Value::String(t) = &r {
+            // 字串形式的 JSON（以 { 或 [ 開頭）讀不懂就是回傳讀不懂；一般的字串照舊當成「沒有回傳物件」
+            let looks_json = t.trim_start().starts_with(['{', '[']);
             match py::loads(t) {
                 Ok(v) => r = v,
+                Err(_) if looks_json => return unreadable("回傳不是讀得懂的 JSON"),
                 Err(e) if py::os_or_value(&e) => {}
                 Err(e) => return Err(Fail::Py(e)),
             }
