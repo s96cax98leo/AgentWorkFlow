@@ -85,6 +85,49 @@ impl Guard {
         Ok(cands.iter().any(|c| format!("/{}", fold(c)).contains("/.github/workflows/")))
     }
 
+    /// 模版角色不論寫入範圍都不能寫的檔（守門設定、稽核紀錄、凍結檔、profile 與 workflow 腳本、CI 檔、知識圖、
+    /// run 狀態與共用背景）：回碰到的是哪一種。給「請工具代寫」的路徑用（`awf run-brief --log <路徑>`），
+    /// 判法和 [`Self::check_paths_rules`] 對 Write／Edit 的同一批規則一致。
+    pub fn gate_file_hit(&self, p: &str) -> R<Option<String>> {
+        if let Some(hit) = self.under_forbidden(p)? {
+            return Ok(Some(format!("{hit}（禁止路徑）")));
+        }
+        if let Some(pt) = self.protected_target(p, true)? {
+            return Ok(Some(pt));
+        }
+        if self.team_config_path(p)? {
+            return Ok(Some(".claude/teams/、.claude/workflows/、.wf/ 底下的檔、methodology.json 或 guard.config.json".into()));
+        }
+        if self.ci_workflow_path(p)? {
+            return Ok(Some(".github/workflows/ 底下的檔".into()));
+        }
+        if super::guard::kg_path(p) {
+            return Ok(Some("知識圖的檔（graph.db 與 vault）".into()));
+        }
+        if let Some(repo) = self.kg_repo_hit(p)? {
+            return Ok(Some(format!("{repo} 底下的檔（knowledge.repos 列的 repo 對 team agent 唯讀）")));
+        }
+        let runs = self.runs.as_str();
+        let frel = fold(self.rel_to_workspace(p)?.as_deref().unwrap_or(""));
+        let pname = path::name(p);
+        let fname = fold(&pname);
+        let in_runs = !runs.is_empty() && frel.starts_with(&fold(runs));
+        if fname == "run.json" && (runs.is_empty() || in_runs) {
+            return Ok(Some("run.json".into()));
+        }
+        let state = fname.strip_suffix(".json").is_some_and(|s| self.run_stages.iter().any(|x| x == s) || PACK_STATE.contains(&s));
+        if in_runs && state {
+            return Ok(Some(format!("{pname}（閘門資料）")));
+        }
+        if (in_runs && SHARED_CONTEXT_NAMES.contains(&fname.as_str())) || fname == fold("執行紀錄索引.md") {
+            return Ok(Some(format!("{pname}（共用背景或閘門核對用的索引）")));
+        }
+        if in_runs && format!("/{frel}").contains("/archive/") {
+            return Ok(Some("run 目錄的 archive/".into()));
+        }
+        Ok(None)
+    }
+
     fn spec_doc_match(&self, rel: &str) -> bool {
         let repo = if self.repos.is_empty() { String::new() } else { format!("{}[^/]+/", regex::escape(&self.repos)) };
         Re::dynamic(format!(r"^{repo}(?:\.worktrees/[^/]+/)?specs/[^/]+/[^/]+\.md$"), "").is_match(rel)

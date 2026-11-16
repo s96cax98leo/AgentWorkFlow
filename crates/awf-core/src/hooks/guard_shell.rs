@@ -909,6 +909,33 @@ impl Guard {
         }
     }
 
+    /// `awf run-brief` 會把指令輸出寫進 `--log` 指定的檔（或 `AWF_LOG_DIR` 底下）：這一段裡每一次呼叫的寫入目標，
+    /// 解析成絕對路徑。變數、指令替換這類看不到實際路徑的不收（和 shell 重導一樣只能盡力而為）。
+    fn run_brief_log_targets(&self, calls: &[awf_cli::Call], seg: &str, base: &str) -> R<Vec<(String, String)>> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        let mut any = false;
+        for c in calls.iter().filter(|c| c.sub == "run-brief") {
+            any = true;
+            let end = c.args.iter().position(|t| t == "--").unwrap_or(c.args.len());
+            let opts = &c.args[..end];
+            for (j, t) in opts.iter().enumerate() {
+                if t != "--log" {
+                    continue;
+                }
+                let Some(raw) = opts.get(j + 1).filter(|r| !r.is_empty() && !r.contains(['$', '`', '\0'])) else { continue };
+                out.push((raw.clone(), self.resolve_arg(base, raw)?));
+            }
+        }
+        if any {
+            for t in shlex_tokens(seg) {
+                if let Some(dir) = t.strip_prefix("AWF_LOG_DIR=").filter(|r| !r.is_empty() && !r.contains(['$', '`', '\0'])) {
+                    out.push((format!("AWF_LOG_DIR={dir}"), self.resolve_arg(base, &format!("{}/x.log", dir.trim_end_matches('/')))?));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// 只寫執行紀錄的角色：這段 shell 有沒有寫檔；有就回傳理由。巢狀的指令遞迴檢查。
     fn record_shell_write(&self, seg: &str, base: &str, depth: usize) -> R<Option<String>> {
         if depth > 4 {
@@ -1288,6 +1315,22 @@ run 狀態、核准、放棄、升級、後續、結案一律由主 session（�
                         _ => continue,
                     };
                     return Err(self.block(&format!("{agent} {why}")));
+                }
+            }
+            // awf run-brief --log：工具代寫的檔照寫檔的規則看（team agent 不能藉它寫閘門資料與設定；主 session 不能藉它改稽核紀錄）
+            if (team || configured) && awf.iter().any(|c| c.sub == "run-brief") {
+                for (raw, full) in self.run_brief_log_targets(&awf, seg, d)? {
+                    if team {
+                        if let Some(hit) = self.gate_file_hit(&full)? {
+                            return Err(self.block(&format!("{agent} 不能用 awf run-brief 把輸出寫到 {hit}（{raw}）；守門設定、稽核紀錄、run 狀態與共用背景只由人、主 session 或確定性工具寫，\
+log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
+                        }
+                    } else if let Some(prot) = self.protected_target(&full, true)? {
+                        if prot == am.freeze_file || AUDIT_FILES.contains(&prot.as_str()) || (prot == "guard.config.json" && am.enabled) {
+                            return Err(self.block(&format!("主 session 不用 awf run-brief 把輸出寫到 {prot}（{raw}）；稽核紀錄只由 awf merge-gate、awf publish 寫，\
+凍結檔與 auto_merge 啟用時的 guard.config.json 由人改")));
+                        }
+                    }
                 }
             }
             if record_only {

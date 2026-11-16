@@ -803,3 +803,46 @@ const EXEC_ARGS: &[Case] = &[
 fn commands_that_run_their_arguments() {
     check("execarg", EXEC_ARGS);
 }
+
+// ───────── 12. awf run-brief --log 的目標 ─────────
+
+const BRIEF_LOG: &[Case] = &[
+    // team agent 不能藉 --log 寫守門設定、稽核紀錄、run 狀態、共用背景、CI 檔
+    ("awf run-brief --log .claude/teams/guard.config.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/merge-audit.jsonl -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log .claude/teams/methodology.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/context.md -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log .github/workflows/ci.yml -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/auto-merge.freeze.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log ./_tpm/runs/../runs/r/run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --name x --log @WS@/_tpm/runs/publish-audit.jsonl -- echo hi", DEV, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log --log _tpm/runs/r/run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    ("plugin/bin/awf.cmd run-brief --log _tpm/runs/r/run.json -- echo hi", "agent-workflow:tpm-writer", BLOCK, Sh::Both),
+    ("AWF_LOG_DIR=.claude/teams awf run-brief --name guard -- echo hi", DEV, BLOCK, Sh::Bash),
+    ("bash -c 'awf run-brief --log _tpm/runs/r/run.json -- echo hi'", DEV, BLOCK, Sh::Both),
+    ("X=$(awf run-brief --log _tpm/runs/r/run.json -- echo hi)", DEV, BLOCK, Sh::Bash),
+    ("cd _tpm/runs/r && awf run-brief --log run.json -- echo hi", DEV, BLOCK, Sh::Both),
+    // 主 session：稽核紀錄、凍結檔、（auto_merge 啟用時的）guard.config.json 本來就不能直接改
+    ("awf run-brief --log _tpm/runs/merge-audit.jsonl -- echo hi", MAIN, BLOCK, Sh::Both),
+    ("awf run-brief --log .claude/teams/guard.config.json -- echo hi", MAIN, BLOCK, Sh::Both),
+    ("awf run-brief --log _tpm/runs/auto-merge.freeze.json -- echo hi", MAIN, BLOCK, Sh::Both),
+    // 一般用法：放行
+    ("awf run-brief --log _tpm/runs/r/test/logs/unit.log -- cargo test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log \"$RUN/test/logs/unit.log\" -- npm test", DEV, ALLOW, Sh::Bash),
+    ("awf run-brief -- npm test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --name unit --tail 50 -- npm test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log build/out.log -- npm test", DEV, ALLOW, Sh::Both),
+    ("awf run-brief --log build/out.log -- grep -c --log docs/run.json.md", DEV, ALLOW, Sh::Both),
+    ("AWF_LOG_DIR=build/logs awf run-brief --name unit -- npm test", DEV, ALLOW, Sh::Bash),
+    ("awf run-brief --log _tpm/runs/r/plan/logs/a.log -- npm test", REV, ALLOW, Sh::Both),
+    ("awf run-brief --log out.log -- npm test", MAIN, ALLOW, Sh::Both),
+    ("awf run-brief --log _tpm/runs/r/test/logs/unit.log -- npm test", MAIN, ALLOW, Sh::Both),
+    ("awf run-brief --log out.log -- npm test", MINE, ALLOW, Sh::Both),
+];
+
+#[test]
+fn run_brief_log_target_is_guarded() {
+    check("brieflog", BRIEF_LOG);
+}
