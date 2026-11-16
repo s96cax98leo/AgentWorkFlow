@@ -1,5 +1,5 @@
 // sdlc-test.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { CRIT, SUB_PLANS, crit, extScenario, recipeScenarios, kgScenarios } from './_helpers.mjs'
+import { CRIT, SUB_PLANS, crit, extScenario, recipeScenarios, kgScenarios, withFeature } from './_helpers.mjs'
 
 // 三個分片都驗 abc（CRIT 一律填 abc）、彙整照抄：B-1／B-5 的情境以它為基礎只改一處
 const SHARD1 = {
@@ -213,6 +213,47 @@ export default [
       name: '可設定：沒設 limits.rounds 時驗證 fail 會派修正（預設 2 輪）',
       fakes: { 'verify#1': CRIT([crit('C1', 'fail')]) },
       expect: (r) => (r.labels.includes('fix#1') ? [] : [`預設要派修正：${r.labels.join(' → ')}`]),
+    },
+    {
+      // 驗證模式的說明（profile 的 test_modes）：同名的換掉內建說明，新名稱讓 recipe 選用
+      name: '模式定義：test_modes 改寫 regression、新增 load-test（recipe 選用）→ 驗證的派工單照設定寫',
+      profile: (p) => ({ test_modes: { regression: { note: '示範客戶 ACME 的回歸範圍：跑 smoke 清單全部項目。' }, 'load-test': { note: '加跑壓力測試：同時 50 人送單，回應時間列成一則 criteria。' } }, ...withFeature(p, { test: { design_review: 'auto', security_review: 'auto', modes: ['verify', 'regression', 'load-test'] } }) }),
+      expect: (r) => [
+        ...(r.out && r.out.halted ? [`不該 halted：${r.out.halt_reason}`] : []),
+        ...(/- 示範客戶 ACME 的回歸範圍：跑 smoke 清單全部項目。\n- 加跑壓力測試：同時 50 人送單/.test(r.prompts['verify#1'] || '') && !/id 以「regression:」開頭/.test(r.prompts['verify#1'] || '') ? [] : ['驗證的派工單沒有照 test_modes 寫']),
+      ],
+    },
+    {
+      name: '模式定義不合法（note 不是字串）→ 內建的照內建；verify 不能被改寫',
+      profile: (p) => ({ test_modes: { regression: { note: ['x'] }, verify: { note: '不能改 verify' } }, ...withFeature(p, { test: { design_review: 'auto', security_review: 'auto', modes: ['verify', 'regression'] } }) }),
+      expect: (r) => [
+        ...(r.out && r.out.halted ? [`不該 halted：${r.out.halt_reason}`] : []),
+        ...(/id 以「regression:」開頭/.test(r.prompts['verify#1'] || '') && !/不能改 verify/.test(r.prompts['verify#1'] || '') ? [] : ['不合法的定義要退回內建的說明，verify 不能被改寫']),
+      ],
+    },
+    {
+      // 變嚴：以前不認得的模式被默默丟掉（少跑一種驗證也不說）
+      name: '模式定義：recipe 指到沒有定義的模式 → halted，不派任何 agent',
+      profile: (p) => withFeature(p, { test: { design_review: 'auto', security_review: 'auto', modes: ['verify', 'load-test'] } }),
+      expect: (r) => [
+        ...(r.out && r.out.halted && /不認得的測試模式：load-test/.test(r.out.halt_reason || '') && /test_modes/.test(r.out.next || '') ? [] : [`要 halted 並說明：${JSON.stringify(r.out && { halted: r.out.halted, why: r.out.halt_reason, next: r.out.next })}`]),
+        ...(r.calls.length ? [`不該派任何 agent：${r.labels.join(',')}`] : []),
+      ],
+    },
+    {
+      // 修正分支的命名（profile 的 conventions.branch.patterns.fix）
+      name: '分支樣式：conventions.branch.patterns.fix → 平行修正的分支照樣式，worktree 目錄名不變',
+      args: { sub_plans: SUB_PLANS },
+      profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), patterns: { fix: '<prefix><epic>.fix-<group>.r<round>' } } } }),
+      fakes: { 'verify:api#1': CRIT([crit('A1', 'fail')]), 'verify:ui#1': CRIT([crit('U1', 'fail')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'fail'), crit('ui:U1', 'fail'), crit('integration:I1', 'pass')]) },
+      expect: (r) => (/worktree add \.worktrees\/demo-999-sample--fix1-api -b \S*demo-999-sample\.fix-api\.r1 /.test(r.prompts['fix:api#1'] || '') && /branch=\S*demo-999-sample\.fix-api\.r1、/.test(r.prompts['fix:api#1'] || '') ? [] : [`修正分支沒有照樣式：${(r.prompts['fix:api#1'] || '').match(/worktree add[^\n]*/)}`]),
+    },
+    {
+      name: '分支樣式不合法（<epic> 後面接 /、少了 <round>）→ 照內建的 --fix<輪>-<子計劃>',
+      args: { sub_plans: SUB_PLANS },
+      profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), patterns: { fix: '<prefix><epic>/fix-<group>' } } } }),
+      fakes: { 'verify:api#1': CRIT([crit('A1', 'fail')]), 'verify:ui#1': CRIT([crit('U1', 'fail')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'fail'), crit('ui:U1', 'fail'), crit('integration:I1', 'pass')]) },
+      expect: (r) => (/ -b \S*demo-999-sample--fix1-api /.test(r.prompts['fix:api#1'] || '') ? [] : [`不合法的樣式要退回內建：${(r.prompts['fix:api#1'] || '').match(/worktree add[^\n]*/)}`]),
     },
   ...kgScenarios(),
 ]

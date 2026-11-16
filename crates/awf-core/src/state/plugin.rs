@@ -203,10 +203,18 @@ fn methodology(env: &Env) -> A<Option<Value>> {
     Ok(m)
 }
 
-/// profile 的 extensions 裡、沒有登記在 guard.config.json `extension_agents` 的 agent。
+/// profile 的 extensions（加進某一段的 agent）與 roles（換掉某一步的 agent）裡、沒有登記在 guard.config.json `extension_agents` 的 agent。
 pub(crate) fn unregistered(env: &Env, methodology: Option<&Value>) -> R<Vec<String>> {
-    let Some(Value::Array(ext)) = methodology.and_then(|m| m.as_object()).and_then(|m| m.get("extensions")) else { return Ok(Vec::new()) };
-    if ext.is_empty() {
+    let prof = methodology.and_then(|m| m.as_object());
+    let no_ext: Vec<Value> = Vec::new();
+    let ext = match prof.and_then(|m| m.get("extensions")) {
+        Some(Value::Array(a)) => a,
+        _ => &no_ext,
+    };
+    // roles 的值：不是字串的由 profile 的語意規則擋，這裡只看字串
+    let swapped: Vec<&str> = prof.and_then(|m| m.get("roles")).and_then(Value::as_object)
+        .map(|r| r.values().filter_map(Value::as_str).filter(|a| !a.is_empty()).collect()).unwrap_or_default();
+    if ext.is_empty() && swapped.is_empty() {
         return Ok(Vec::new());
     }
     let g = load_json_or(env, &pj(&env.teams(), "guard.config.json"))?;
@@ -217,6 +225,11 @@ pub(crate) fn unregistered(env: &Env, methodology: Option<&Value>) -> R<Vec<Stri
         py::hashable(agent)?;
         if !reg.as_object().is_some_and(|r| agent.as_str().is_some_and(|a| r.contains_key(a))) {
             out.insert(py::s(agent));
+        }
+    }
+    for a in swapped {
+        if !reg.as_object().is_some_and(|r| r.contains_key(a)) {
+            out.insert(format!("{a}（roles 換上去的）"));
         }
     }
     Ok(out.into_iter().collect())

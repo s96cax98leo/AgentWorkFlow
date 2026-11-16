@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extScenario, ENV, kgScenarios, tuneScenarios } from './_helpers.mjs'
+import { extScenario, ENV, kgScenarios, tuneScenarios, roleScenarios } from './_helpers.mjs'
 
 const SD_PROFILE = { stages: { design: { system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設'], feature_scope: 'x', system_scope: 'x' } } } }
 
@@ -541,6 +541,56 @@ export default [
       ...(/最多再補 4 段/.test(r.prompts['research:specs-adr'] || '') && /最多 15 輪工具呼叫；連續 3 次查詢沒有新發現/.test(r.prompts['research:specs-adr'] || '') ? [] : ['分析的上限要退回預設']),
     ],
   },
+  {
+    // 調研角度的定義（profile 的 research_angles）：同名的換 ask、modes 逐個 plan_mode 蓋過內建；新角度帶自己的問法；locate=false 的不分兩段
+    name: '角度定義：research_angles 改寫 specs-adr、新增 data-model 與不查檔案的 vendor-status（recipe 選用）→ 照設定的問法派',
+    profile: { ...RP, research_angles: {
+      'specs-adr': { ask: '在目標 repo 找 docs/decisions/ 與 docs/rfcs/ 底下相關的既有決策，列出必須遵守的與可能衝突的。' },
+      'data-model': { ask: '找出這次需求會碰到的資料表與欄位（schema/ 底下），列出要改的與受影響的查詢。', modes: { feature: '新功能：另外列出需要新增的資料表與索引。' } },
+      'vendor-status': { ask: '唯讀查供應商的狀態頁與 changelog，列出和這次需求有關的公告。', locate: false },
+    }, recipes: { ...RP.recipes, feature: { ...RP.recipes.feature, research_angles: ['specs-adr', 'code-contracts', 'data-model', 'vendor-status'] } } },
+    args: { recipe: 'feature' },
+    expect: (r) => [
+      ...(r.out && r.out.halted ? [`不該 halted：${r.out.halt_reason}`] : []),
+      ...(/要回答的問題：在目標 repo 找 docs\/decisions\/ 與 docs\/rfcs\/ 底下/.test(r.prompts['locate:specs-adr'] || '') && !/docs\/adr\//.test(r.prompts['research:specs-adr'] || '') ? [] : ['specs-adr 應該換成 profile 的問法（定位與分析都是）']),
+      ...(/新功能：另外列出需要新增的資料表與索引。/.test(r.prompts['research:data-model'] || '') && r.labels.includes('locate:data-model') ? [] : [`自訂角度要兩段式、用 plan_mode 專屬的問法：${r.labels.join(',')}`]),
+      ...(/唯讀查供應商的狀態頁/.test(r.prompts['research:vendor-status'] || '') && /這個角度不查本機檔案/.test(r.prompts['research:vendor-status'] || '') && !r.labels.includes('locate:vendor-status') ? [] : ['locate=false 的自訂角度不該派定位']),
+      ...(/contracts\/ 端點與事件/.test(r.prompts['research:code-contracts'] || '') ? [] : ['沒改寫的 code-contracts 要照內建的問法']),
+    ],
+  },
+  {
+    name: '角度定義：改寫內建角度的 ask，沒寫到的 plan_mode 專屬問法照內建',
+    profile: { ...RP, research_angles: { 'code-contracts': { ask: '示範客戶 ACME 的影響範圍問法。' } } },
+    args: { recipe: 'bugfix' },
+    expect: (r) => (/找出錯誤行為的程式路徑與最近的相關改動/.test(r.prompts['research:code-contracts'] || '') ? [] : ['bugfix（plan_mode=diagnose）應該照內建的 diagnose 問法']),
+  },
+  {
+    name: '角度定義不合法（ask 不是字串、modes 的值不是字串、locate 不是布林）→ 內建的照內建，沒定義的用通用問法',
+    profile: { ...RP, research_angles: { 'specs-adr': { ask: 42 }, upstream: { ask: '改寫的上游問法。', locate: 'yes', modes: { feature: 7 } }, 'data-model': 'x' },
+      recipes: { ...RP.recipes, feature: { ...RP.recipes.feature, research_angles: ['specs-adr', 'upstream', 'data-model'] } } },
+    args: { recipe: 'feature' },
+    expect: (r) => [
+      ...(/docs\/adr\//.test(r.prompts['research:specs-adr'] || '') ? [] : ['ask 不合法的 specs-adr 要照內建']),
+      ...(/改寫的上游問法。/.test(r.prompts['research:upstream'] || '') && !r.labels.includes('locate:upstream') ? [] : ['upstream 的 locate 不是布林時照內建（不查檔案），不合法的 modes 略過']),
+      ...(/依角度「data-model」調研需求與目標 repo 的現況/.test(r.prompts['research:data-model'] || '') ? [] : ['沒有合法定義的角度照舊用通用問法']),
+    ],
+  },
+  {
+    // plan_mode 的反駁重點（profile 的 plan_modes.<mode>.refute）
+    name: '可設定：plan_modes.feature.refute → skeptic 的反駁重點照設定；不合法照內建',
+    profile: { ...RP, plan_modes: { feature: { sections: [], refute: '示範客戶 ACME 的反駁重點：有沒有漏掉法遵條款。' } } },
+    args: { recipe: 'feature' },
+    expect: (r) => (/intent\.md（plan_mode=feature）：示範客戶 ACME 的反駁重點：有沒有漏掉法遵條款。另外每一份 intent 都要檢查/.test(r.prompts['challenge:intent'] || '') ? [] : ['skeptic 的派工單沒有照 refute']),
+  },
+  {
+    name: '可設定：plan_modes.feature.refute 不合法（空白、不是字串）→ 照內建的反駁重點',
+    profile: { ...RP, plan_modes: { feature: { sections: [], refute: '   ' } } },
+    args: { recipe: 'feature' },
+    expect: (r) => (/（plan_mode=feature）：有沒有偷渡需求原文沒有的範圍、漏掉原文的驗收要點、把解法寫進問題。/.test(r.prompts['challenge:intent'] || '') ? [] : ['不合法的 refute 要退回內建']),
+  },
+  ...roleScenarios('plan.locate', 'tpm-researcher', /^locate:/, { profile: RP, args: { recipe: 'feature' } }),
+  ...roleScenarios('plan.research', 'tpm-researcher', /^research:/, { profile: RP, args: { recipe: 'feature' } }),
+  ...roleScenarios('plan.challenge', 'tpm-skeptic', /^challenge:intent$/, { profile: RP, args: { recipe: 'feature' } }),
   ...tuneScenarios({ fakes: FEATURE_TRIAGE }),
   ...kgScenarios({ fakes: FEATURE_TRIAGE }),
 ]

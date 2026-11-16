@@ -18,11 +18,11 @@ function takeFindings(r, label, o = {}) {
 }
 
 // 派一個 skeptic 反駁一批發現；fs 是空的就不派。回 Promise<{ kept, dropped, missing }>，missing 是缺件的 label（沒缺件為 null）。
-// o：{ prompt, label, phase='Verify', agentType, schema, unansweredKept（見 judgeVerdicts）, keepOnMissing }
+// o：{ prompt, label, phase='Verify', agentType, schema, unansweredKept（見 judgeVerdicts）, keepOnMissing, roleAs（見 challenge 片段的 awfStep） }
 // keepOnMissing＝true：反駁缺件時發現全部留在 kept（不能當成被推翻）；否則 kept 為空。兩種都要由呼叫端依 missing 停下。
 function verifyFindings(fs, o) {
   if (!fs.length) return Promise.resolve({ kept: [], dropped: [], missing: null })
-  return awfDispatch(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema })
+  return awfDispatch(o.prompt, { label: o.label, phase: o.phase || 'Verify', agentType: o.agentType, schema: o.schema, ...(o.roleAs ? { roleAs: o.roleAs } : {}) })
     .then((v) => {
       if (!v || !v.payload) return { kept: o.keepOnMissing ? fs : [], dropped: [], missing: o.label }
       const j = judgeVerdicts(fs, v, { unansweredKept: o.unansweredKept })

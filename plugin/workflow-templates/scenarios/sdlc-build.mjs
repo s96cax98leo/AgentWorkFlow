@@ -307,5 +307,16 @@ export default [
     fakes: { 'Implement:t1': { status: 'blocked', summary: '卡住' }, 'Implement:t1#2': { status: 'blocked', summary: '卡住' }, 'Implement:t1#3': { status: 'blocked', summary: '卡住' } },
     expect: (r) => (r.labels.includes('Implement:t1#3') && !r.labels.includes('Implement:t1#4') ? [] : [`預設要派到第 3 次為止：${r.labels.join(' → ')}`]),
   },
+  {
+    // 子任務分支的命名（profile 的 conventions.branch.patterns.task）
+    name: '分支樣式：conventions.branch.patterns.task → 子任務分支照樣式，worktree 目錄名不變',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), patterns: { task: '<prefix><epic>.task-<task>' } } } }),
+    expect: (r) => (/worktree add \.worktrees\/demo-999-sample--t1 -b \S*demo-999-sample\.task-t1 /.test(r.prompts['Implement:t1'] || '') && /branch=\S*demo-999-sample\.task-t1、/.test(r.prompts['Implement:t1'] || '') ? [] : [`子任務分支沒有照樣式：${(r.prompts['Implement:t1'] || '').match(/worktree add[^\n]*/)}`]),
+  },
+  {
+    name: '分支樣式不合法（<epic> 後面接 /、沒有 <task>、有 ..）→ 照內建的 <epic>--<子任務>',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), patterns: { task: '<prefix><epic>/<task>' } } } }),
+    expect: (r) => (/ -b \S*demo-999-sample--t1 /.test(r.prompts['Implement:t1'] || '') && /branch=\S*demo-999-sample--t1、/.test(r.prompts['Implement:t1'] || '') ? [] : [`不合法的樣式要退回內建：${(r.prompts['Implement:t1'] || '').match(/worktree add[^\n]*/)}`]),
+  },
   ...kgScenarios(),
 ]

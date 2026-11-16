@@ -35,7 +35,10 @@ function awfSetModelPlan(list) {
 // 建議的來源依序：AI 的 model_plan（鍵是 planKey 或角色名）、workflow 給的 tier（例如定位用 light）。下限一律由 resolveModel 守。
 function awfModelFor(o) {
   const k = awfKernel()
-  const role = awfRole(o.agentType)
+  // roleAs：這一步被換成使用者自己的 agent（profile 的 roles）時，被換掉的模版角色。模型分級與下限照它算（換 agent 不會讓下限消失）
+  // 只有派的不是模版角色時才採用 roleAs（模版角色一律照自己的角色名算，不能用 roleAs 換成下限較低的角色）
+  const self = awfRole(o.agentType)
+  const role = !/^(tpm|dev)-/.test(self) && typeof o.roleAs === 'string' && o.roleAs ? awfRole(o.roleAs) : self
   // 使用者自己的 agent（擴充 agent，不是 tpm-／dev- 模版角色）不指定模型：尊重它 frontmatter 自己的設定
   if (!/^(tpm|dev)-/.test(role)) return { mode: 'inherit', tier: '', model: '', floor: '', reason: '使用者自己的 agent：不指定模型' }
   const own = (key) => (Object.prototype.hasOwnProperty.call(k.plan, key) ? k.plan[key] : undefined)
@@ -49,7 +52,8 @@ function awfCapped() { return [...awfKernel().capped] }
 function awfModelsUsed() { return Object.values(awfKernel().used).map((x) => ({ ...x })) }
 
 // 派一個 agent。opts 同 tryAgent，另可帶 tier（workflow 建議的等級）、planKey（對 model_plan 的鍵，預設角色名）、stage、
-// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）。回傳交件或 null（缺件）。
+// valid（(回傳) => boolean，交件算不算有效，預設「有回傳而且有 payload」）、retry（false＝失敗不升級重派）、
+// roleAs（這一步換成使用者自己的 agent 時，被換掉的模版角色；challenge 片段的 awfStep 會給，trace 記成 role_as）。回傳交件或 null（缺件）。
 async function awfAgent(prompt, opts) {
   const k = awfKernel()
   // 先把 opts 複製成普通物件：agentType 等欄位只讀一次（getter 不能第一次回白名單裡的角色、第二次回別的）
@@ -75,7 +79,8 @@ async function awfAgent(prompt, opts) {
   const key = o.planKey || awfRole(o.agentType)
   const note = (x) => { k.used[key] = { key, role: awfRole(o.agentType), tier: x.tier, model: x.model || 'inherit', reason: x.reason } }
   note(m)
-  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...meta })
+  const swap = typeof o.roleAs === 'string' && o.roleAs && !/^(tpm|dev)-/.test(awfRole(o.agentType)) ? { role_as: awfRole(o.roleAs) } : {}
+  const run = (x, meta) => tryAgent(prompt, x.model ? { ...base, model: x.model } : base, { model: x.model || 'inherit', tier: x.tier, reason: x.reason, ...swap, ...meta })
   const first = await run(m, { attempt: 1 })
   if (valid(first)) return first
   // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷

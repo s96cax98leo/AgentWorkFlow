@@ -43,4 +43,14 @@ export default [
       return errs
     },
   },
+  {
+    name: '可設定：conventions.repo_docs.review → 各 lens 照設定的審查規範分級；不合法照 REVIEW.md',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), repo_docs: { review: 'docs/CODE_REVIEW.md' } } }),
+    expect: (r) => { const ps = Object.entries(r.prompts).filter(([l]) => l.startsWith('review:')); return [...(ps.length ? [] : ['沒有派出審查']), ...ps.filter(([, p]) => !/依目標 repo 的 docs\/CODE_REVIEW\.md 分級/.test(p)).map(([l]) => `${l} 沒有照設定的審查規範`)] },
+  },
+  {
+    name: '可設定：conventions.repo_docs.review 不合法（含 ..）→ 照 REVIEW.md',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), repo_docs: { review: '../REVIEW.md' } } }),
+    expect: (r) => Object.entries(r.prompts).filter(([l, p]) => l.startsWith('review:') && !/依目標 repo 的 REVIEW\.md 分級/.test(p)).map(([l]) => `${l} 要退回 REVIEW.md`),
+  },
 ]

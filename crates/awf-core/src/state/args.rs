@@ -103,6 +103,34 @@ fn blank(v: &Value) -> bool {
     v.is_null() || v.as_str() == Some("")
 }
 
+/// sdlc-merge 要跟著 guard.config.json 走的兩個值：`auto_merge.merger_role`、`auto_merge.freeze_file`。
+/// 範本讀不到設定檔，所以由這裡帶進 args。只在設定檔有明寫、而且正規化後和範本的預設
+/// （`<AGENT_NS>dev-merge-steward`、`<RUNS_DIR>/auto-merge.freeze.json`）不同時才帶：沒寫時 args 和以前逐字相同。
+/// 設定檔讀不懂時不帶（hook 那邊照它自己的失敗語意擋），正規化用 hook 的同一個函式（`config::auto_merge`）。
+fn merge_guard_args(env: &Env) -> R<Vec<(String, String)>> {
+    let raw = super::load_json_or(env, &pj(&env.teams(), "guard.config.json"))?;
+    let am = raw.get("auto_merge").filter(|v| v.is_object());
+    let set = |k: &str| am.and_then(|a| a.get(k)).and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty());
+    if !set("merger_role") && !set("freeze_file") {
+        return Ok(Vec::new());
+    }
+    let Ok(cfg) = crate::config::load(&env.project) else { return Ok(Vec::new()) };
+    let norm = crate::config::auto_merge(&cfg);
+    let wc = read_config(env)?;
+    let wc_str = |k: &str, d: &str| wc.get(k).and_then(Value::as_str).unwrap_or(d).to_string();
+    let single_line = |s: &str| !s.is_empty() && !s.contains(['\n', '\r', '`']);
+    let mut out = Vec::new();
+    let default_merger = format!("{}dev-merge-steward", wc_str("AGENT_NS", "agent-workflow:"));
+    if set("merger_role") && single_line(&norm.merger_role) && norm.merger_role != default_merger {
+        out.push(("merger_role".to_string(), norm.merger_role.clone()));
+    }
+    let default_freeze = format!("{}/auto-merge.freeze.json", wc_str("RUNS_DIR", "_tpm/runs").trim_end_matches('/'));
+    if set("freeze_file") && single_line(&norm.freeze_file) && norm.freeze_file != default_freeze {
+        out.push(("freeze_file".to_string(), norm.freeze_file.clone()));
+    }
+    Ok(out)
+}
+
 /// 這一段 workflow 的 args：（args, 缺的必要參數, 說明）。來源：run.json（需求、recipe、--set 記的值）與前面各段的結果。
 pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &str) -> R<(Map<String, Value>, Vec<String>, Vec<String>)> {
     let store = py::get(data, "args")?;
@@ -160,6 +188,13 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
     }
     if workflow == "sdlc-merge" {
         a.shift_remove("branch"); // merge 用 PR 號，不帶 branch
+        // 合併角色與凍結檔跟 guard.config.json 的 auto_merge（hook 與 awf merge-gate 讀的同一份）：--set 給的不採用
+        a.shift_remove("merger_role");
+        a.shift_remove("freeze_file");
+        for (k, v) in merge_guard_args(env)? {
+            notes.push(format!("guard.config.json 的 auto_merge 有設 {k}：這一段帶 {k}={v}"));
+            a.insert(k, json!(v));
+        }
     }
     if workflow == "sdlc-build" {
         let prev = stage_result(env, run, "build")?;

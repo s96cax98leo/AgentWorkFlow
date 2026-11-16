@@ -30,6 +30,62 @@ function awfRecordSections(profile, dflt) {
   const ok = Array.isArray(v) && v.length >= 1 && v.length <= 12 && v.every((x) => typeof x === 'string' && x.trim() === x && x.length >= 1 && x.length <= 40 && !/[\r\n`]/.test(x)) && new Set(v).size === v.length
   return ok ? v.join('、') : dflt
 }
+// 名稱表（profile 的 lenses.design／design_revise／deliver、test_modes、research_angles：使用者自己定義或改寫 lens、審查軸、驗證模式、調研角度）。
+// awfDefs(table, field[, max])：回合法的項目（沒有原型的物件，鍵＝名稱）。鍵是小寫英數與連字號（40 字以內），值是物件，
+// field 是 1–2000 字的字串；最多收 max 個（預設 24）。不合法的項目略過：內建有同名的照內建，沒有的等於沒定義
+// （recipe 指到沒定義的名稱時由範本 halted，不默默略過）。
+function awfDefs(table, field, max) {
+  const out = Object.create(null)
+  if (!table || typeof table !== 'object' || Array.isArray(table)) return out
+  let n = 0
+  for (const k of Object.keys(table)) {
+    if (n >= (max || 24)) break
+    const v = table[k]
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(k) || !v || typeof v !== 'object' || Array.isArray(v)) continue
+    if (typeof v[field] !== 'string' || !v[field].trim() || v[field].length > 2000) continue
+    out[k] = v; n++
+  }
+  return out
+}
+// profile 裡的一行短字：1–max 字、前後沒有空白、沒有換行與反引號才採用，否則用 d（預設＝原本寫死的字）
+function awfLine(v, max, d) { return typeof v === 'string' && v.trim() === v && v.length >= 1 && v.length <= max && !/[\r\n`]/.test(v) ? v : d }
+// 分支命名樣式（profile 的 conventions.branch.patterns）：kind＝task（子任務分支）或 fix（test 段平行修正的分支）。
+// 樣式一定以 <prefix><epic> 開頭（前綴照 BRANCH_PREFIX，守門的 allowed_branch_prefixes 才對得上），後面先接一個 . _ - 再寫其餘
+// （不能接 /：<prefix><epic> 這個分支已經存在，git 不允許它底下再開分支）；task 要有 <task>，fix 要有 <round> 與 <group>，
+// 各出現一次、彼此不相鄰；其餘只能是英數與 . _ -，不能有 ..、不能以 . 或 .lock 結尾。沒寫或不合法用內建樣式。
+function awfBranchPattern(profile, kind) {
+  const dflt = { task: '<prefix><epic>--<task>', fix: '<prefix><epic>--fix<round>-<group>' }[kind]
+  const need = { task: ['<task>'], fix: ['<round>', '<group>'] }[kind]
+  const pats = (((profile || {}).conventions || {}).branch || {}).patterns
+  const v = pats && typeof pats === 'object' && !Array.isArray(pats) ? pats[kind] : undefined
+  const head = '<prefix><epic>'
+  if (!dflt || typeof v !== 'string' || v.length > 120 || !v.startsWith(head)) return dflt
+  const rest = v.slice(head.length)
+  const toks = rest.match(/<[^>]*>/g) || []
+  const lit = rest.replace(/<[^>]*>/g, '\u0000')
+  const ok = /^[._-]/.test(rest) && toks.length === need.length && need.every((t) => toks.includes(t)) &&
+    /^[A-Za-z0-9._\u0000-]+$/.test(lit) && !lit.includes('\u0000\u0000') && !rest.includes('..') && !/(\.|\.lock)$/.test(rest)
+  return ok ? v : dflt
+}
+// vars：{ prefix, epic, task } 或 { prefix, epic, round, group }
+function awfBranch(profile, kind, vars) { return awfBranchPattern(profile, kind).replace(/<([a-z]+)>/g, (m, k) => String((vars || {})[k])) }
+// 把某一步換成使用者自己的 agent（profile 的 roles：{ "<段>.<步驟>": "<agent_type>" }）。
+// 只開放唯讀類的步驟（下表；值是那一步原本的模版角色）。merge 段（信任邊界）、build 段（檔案所有權）、test 段的驗證與審查
+// （閘門依角色名核對 dev-verifier、dev-design-reviewer、dev-security-reviewer 有沒有交件）不開放。
+// 換上去的 agent 要登記在 guard.config.json 的 extension_agents（awf 產生腳本時核對，沒登記就拒絕），不能是模版角色。
+function awfSwappable() {
+  return { 'plan.locate': 'tpm-researcher', 'plan.research': 'tpm-researcher', 'plan.challenge': 'tpm-skeptic', 'design.analyze': 'tpm-skeptic', 'design.recheck': 'tpm-skeptic', 'deliver.review': 'tpm-reviewer', 'deliver.verify': 'tpm-skeptic' }
+}
+// awfStep(profile, step, ns)：回這一步的 { agentType[, roleAs] }，展開進派工的 opts。沒設定或值不合法＝原本的模版角色。
+// roleAs＝被換掉的模版角色：執行核心照它套模型分級與下限（換了 agent，下限不會因此消失）。
+function awfStep(profile, step, ns) {
+  const role = awfSwappable()[step]
+  if (!role) throw new Error(`awfStep：${step} 不是可以換角色的步驟`)
+  const t = (profile || {}).roles
+  const v = t && typeof t === 'object' && !Array.isArray(t) && Object.prototype.hasOwnProperty.call(t, step) ? t[step] : undefined
+  const ok = typeof v === 'string' && /^([A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v) && !/^(tpm|dev)-/.test(v.split(':').pop())
+  return ok ? { agentType: v, roleAs: role } : { agentType: String(ns || '') + role }
+}
 function awfState() { return awfState.s || (awfState.s = { cfg: null, trace: [] }) }
 function awfInit(cfg) { const s = awfState(); s.cfg = { ...cfg }; s.trace = []; s.dispatch = null; return s.cfg }
 function awfTrace() { return awfState().trace.map((t) => ({ ...t })) }
