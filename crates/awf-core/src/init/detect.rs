@@ -489,6 +489,13 @@ pub fn detect(root: &Path, windows: bool) -> Vec<Topic> {
             t.detected.push(finding("base_branch", json!(d), "遠端 origin 的預設分支不是 main：建議 base_branch 設成它（沒帶 base 時的比對基準與 PR 的目標分支）"));
             sug.insert("base_branch".to_string(), json!(d));
         }
+        // spec 目錄：沒有 specs/ 而有常見的別名時，建議照既有的目錄
+        if !is_dir(root, "specs") {
+            if let Some(d) = ["docs/specs", "doc/specs", "spec"].into_iter().find(|d| is_dir(root, d)) {
+                t.detected.push(finding("specs_dir", json!(d), "專案沒有 specs/、有這個目錄：建議 specs_dir 設成它（每個需求的 intent、spec、plan 放在 <specs_dir>/<epic>/）"));
+                sug.insert("specs_dir".to_string(), json!(d));
+            }
+        }
         let dirs: Vec<&str> = ["tests/acceptance", "e2e", "tests/e2e", "test/acceptance", "test/e2e", "acceptance"].into_iter().filter(|d| is_dir(root, d)).collect();
         if !dirs.is_empty() {
             t.detected.push(finding("acceptance_dirs", json!(dirs), "看起來像驗收測試的目錄（acceptance_test_dirs 的候選；dev-implementer 不能改裡面的檔）"));

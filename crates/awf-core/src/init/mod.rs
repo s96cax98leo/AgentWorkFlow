@@ -386,6 +386,32 @@ fn collect_values(con: &mut Console, site: &Site, config: Option<&Shown>, defaul
             return die(format!("{k} 不合規則（{rule}；收到 {}）", pyfmt::repr_str(&v)));
         }
     }
+    // spec 目錄、worktree 目錄、範本目錄：相對於目標 repo；留空＝預設。範本目錄沒另外指定（還是預設值）時跟著 spec 目錄
+    {
+        use crate::layout::{dir_norm, dir_ok, worktrees_ok, DEFAULT_SPECS_DIR, DEFAULT_WORKTREES_DIR, DIR_RULE};
+        let get = |vals: &Kv, k: &str| dir_norm(vals.get(k).unwrap_or_default());
+        for (k, ok, rule, default) in [("SPECS_DIR", dir_ok as fn(&str) -> bool, DIR_RULE, DEFAULT_SPECS_DIR),
+            ("WORKTREES_DIR", worktrees_ok, "目標 repo 底下的一層目錄名，只收英數與 . _ -，不能是 .claude、.github、.git", DEFAULT_WORKTREES_DIR)] {
+            if vals.get(k).is_none() {
+                continue; // 舊的 workflow.config.example 沒有這個鍵：不補，範本與工具照預設
+            }
+            let v = get(&vals, k);
+            if !v.is_empty() && !ok(&v) {
+                return die(format!("{k} 不合規則（{rule}；收到 {}）", pyfmt::repr_str(&v)));
+            }
+            vals.set(k, if v.is_empty() { default } else { &v });
+        }
+        if vals.get("SPEC_TEMPLATES_DIR").is_some() {
+            let specs = get(&vals, "SPECS_DIR");
+            let specs = if specs.is_empty() { DEFAULT_SPECS_DIR.to_string() } else { specs };
+            let v = get(&vals, "SPEC_TEMPLATES_DIR");
+            if !v.is_empty() && !dir_ok(&v) {
+                return die(format!("SPEC_TEMPLATES_DIR 不合規則（{DIR_RULE}；收到 {}）", pyfmt::repr_str(&v)));
+            }
+            let follow = v.is_empty() || (v == format!("{DEFAULT_SPECS_DIR}/_templates") && specs != DEFAULT_SPECS_DIR);
+            vals.set("SPEC_TEMPLATES_DIR", &if follow { format!("{specs}/_templates") } else { v });
+        }
+    }
     Ok(vals)
 }
 
@@ -1237,6 +1263,21 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
                 l.insert(0, Value::String(bp_new.clone()));
                 guard_changed = true;
                 lines.push(format!("  - guard.config.json：allowed_branch_prefixes 加上 {bp_new}"));
+            }
+        }
+    }
+    // spec 目錄改了、範本目錄原本是跟著它的（<舊 spec 目錄>/_templates）：一起跟上
+    if guard_changed && gchanges.iter().any(|c| c.0.first().map(String::as_str) == Some("specs_dir")) {
+        let old = guard_cur.as_ref().map(|g| crate::layout::Layout::of(&Value::Object(g.clone())));
+        let new_specs = crate::layout::Layout::of(&Value::Object(guard_next.clone())).specs_dir;
+        if old.is_some_and(|o| o.spec_templates_dir == format!("{}/_templates", o.specs_dir) && o.specs_dir != new_specs) {
+            let follow = format!("{new_specs}/_templates");
+            if guard_next.get("spec_templates_dir").and_then(Value::as_str).is_some_and(|v| v != follow) {
+                guard_next.insert("spec_templates_dir".to_string(), Value::String(follow.clone()));
+                lines.push(format!("  - guard.config.json：spec_templates_dir 跟著改成 {follow}"));
+                if vals_new.get("SPEC_TEMPLATES_DIR").is_some() {
+                    vals_new.set("SPEC_TEMPLATES_DIR", &follow);
+                }
             }
         }
     }

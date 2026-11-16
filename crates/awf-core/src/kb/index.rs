@@ -151,6 +151,15 @@ pub fn load_config(root: Option<&str>, profile: Option<&str>, sources: Option<&[
     }
     let given = list_value(sources);
     let mut src = str_list(given.as_ref().or(know.get("sources")), &DEFAULT_SOURCES);
+    let lay = crate::layout::for_project(&root_p);
+    if given.is_none() && lay.specs_dir != crate::layout::DEFAULT_SPECS_DIR {
+        // 來源裡有預設的 spec 目錄（`specs/**/*.md`，內建 profile 與沒設定時都有）而專案改了 spec 目錄（guard.config.json 的
+        // specs_dir）：新目錄也算來源。只加不換：profile 是使用者的，舊目錄可能還有文件。
+        let add = format!("{}/**/*.md", lay.specs_dir);
+        if src.iter().any(|s| s == "specs/**/*.md") && !src.contains(&add) {
+            src.push(add);
+        }
+    }
     if given.is_none() {
         // 工作區底下放目標 repo（guard.config.json 的 repos_dir）時，同一組來源也套到每個 repo：
         // 不然 docs/**/*.md 只會索引工作區自己的文件，目標 repo 的文件查不到。
@@ -163,7 +172,14 @@ pub fn load_config(root: Option<&str>, profile: Option<&str>, sources: Option<&[
         src.extend(add);
     }
     let given = list_value(exclude);
-    let exc = str_list(given.as_ref().or(know.get("exclude")), &[]);
+    let mut exc = str_list(given.as_ref().or(know.get("exclude")), &[]);
+    if given.is_none() && lay.worktrees_dir != crate::layout::DEFAULT_WORKTREES_DIR {
+        // 同理：排除了預設的 worktree 目錄時，改名後的 worktree 目錄也排除
+        let add = format!("**/{}/**", lay.worktrees_dir);
+        if exc.iter().any(|s| s == "**/.worktrees/**") && !exc.contains(&add) {
+            exc.push(add);
+        }
+    }
     let d = match (kb_dir.filter(|d| !d.is_empty()), know.get("dir").filter(|v| pyfmt::truthy(v))) {
         (Some(d), _) => d.to_string(),
         (None, Some(Value::String(s))) => s.clone(),

@@ -515,9 +515,9 @@ awfInit({ run_dir: A.run_dir, stage: 'design', lang: '{{OUTPUT_LANGUAGE}}', rule
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40)
 awfKernelInit({ profile: METHODOLOGY, stage: 'design', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
 const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>，執行紀錄附它印出的完整 log 路徑。'
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
 const SUBS = (A.sub_plans || []).filter((x) => x && x.id)
-const SPEC = `${EPIC_DIR}/specs/${A.epic}`
+const SPEC = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：${A.run_dir}\nintent.md 已核准，不得修改。\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 

@@ -314,7 +314,7 @@ awfInit({ run_dir: A.run_dir, stage: 'deliver', lang: '{{OUTPUT_LANGUAGE}}', rul
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40)
 awfKernelInit({ profile: METHODOLOGY, stage: 'deliver', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
 const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>，執行紀錄附它印出的完整 log 路徑。'
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
 // sdlc-sync 走中轉分支後 head 換成中轉分支，用 args.branch 帶進來
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const BASE = A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'
@@ -333,8 +333,8 @@ const AXIS_DEFS = [
       : 'profile 沒有設 PR 大小上限，不檢查 PR 大小。') +
     ((STAGE.review_axes || []).length ? `\nprofile 補充的審查重點：${STAGE.review_axes.join('；')}` : '') },
   { key: 'spec', ask: HAS_DESIGN
-      ? `Spec：對照 specs/${A.epic}/spec.md 的驗收條件與影響系統表，找缺漏、多做、做錯；每則引用 spec 原文（quote）。`
-      : `Spec：這個 recipe 沒有 design 段，對照 specs/${A.epic}/intent.md 的驗收條件與範圍，找缺漏、多做、做錯；每則引用 intent 原文（quote）。` },
+      ? `Spec：對照 {{SPECS_DIR}}/${A.epic}/spec.md 的驗收條件與影響系統表，找缺漏、多做、做錯；每則引用 spec 原文（quote）。`
+      : `Spec：這個 recipe 沒有 design 段，對照 {{SPECS_DIR}}/${A.epic}/intent.md 的驗收條件與範圍，找缺漏、多做、做錯；每則引用 intent 原文（quote）。` },
   { key: 'bugs', ask: '只看這次改動引入的邏輯、邊界、回歸、併發與錯誤處理問題。' },
   { key: 'history', ask: '對改動處 git log -L／git blame，找出破壞原本設計意圖的改動。' },
 ]
@@ -638,7 +638,7 @@ if (missing.length) return { stage: 'deliver', halted: true, halt_reason: `審�
 
 phase('Write')
 const docs = await awfAgent(
-  `${CTX}\n\n## 派工單\n1. 照目標 repo 的 ${PR_TEMPLATE} 寫 PR 說明草稿到 ${A.run_dir}/pr-description.md（${R.stages.includes('test') ? `驗證欄引用 specs/${A.epic}/verifier.md` : `這個 recipe 沒有 test 段：驗證欄寫 build 段跑過的檢查與結果，並寫明沒有逐條驗收`}）。\n2. 寫執行紀錄到 ${A.run_dir}/執行紀錄.md（${awfRecordSections(MP, '產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作（不編號）')}）。\n3. 審查發現（已通過 skeptic）：${JSON.stringify(kept)}\n4. 兩份都跑 awf check-rules，並對 ${A.repo} 跑 --git ${A.repo} ${BASE}..${BRANCH} 檢查 commit（署名行${COMMIT.check_regex ? '，以及 profile 的 commit 標題格式' : ''}），修到通過；commit 不符時只回報，不改寫歷史。payload 用 docs，rule_check 填結果。`,
+  `${CTX}\n\n## 派工單\n1. 照目標 repo 的 ${PR_TEMPLATE} 寫 PR 說明草稿到 ${A.run_dir}/pr-description.md（${R.stages.includes('test') ? `驗證欄引用 {{SPECS_DIR}}/${A.epic}/verifier.md` : `這個 recipe 沒有 test 段：驗證欄寫 build 段跑過的檢查與結果，並寫明沒有逐條驗收`}）。\n2. 寫執行紀錄到 ${A.run_dir}/執行紀錄.md（${awfRecordSections(MP, '產出、驗證、跟計畫不同的地方、刻意沒做的事、未能確認、衍生工作（不編號）')}）。\n3. 審查發現（已通過 skeptic）：${JSON.stringify(kept)}\n4. 兩份都跑 awf check-rules，並對 ${A.repo} 跑 --git ${A.repo} ${BASE}..${BRANCH} 檢查 commit（署名行${COMMIT.check_regex ? '，以及 profile 的 commit 標題格式' : ''}），修到通過；commit 不符時只回報，不改寫歷史。payload 用 docs，rule_check 填結果。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
 )
 
@@ -658,7 +658,7 @@ if (DELIV_SUMMARY || DELIV_DOCS.length) {
   delivDocs = await awfAgent(
     `${CTX}\n\n## 派工單（交付文件）\n交付文件是給客戶看的正式文件，路徑相對於專案根目錄。` +
     (DELIV_DOCS.length ? `這次的改動影響下列文件，只改列出的小節，其他小節與其他文件不動：\n${list}\n` : '這次沒有受影響的文件小節，只寫交付摘要。\n') +
-    `規則：\n1. 內容依原料寫（specs/${A.epic}/ 的 intent、design、spec、verifier，以及 git diff ${BASE}...HEAD 的實際改動）；找不到依據的寫「待確認」，不要編。\n` +
+    `規則：\n1. 內容依原料寫（{{SPECS_DIR}}/${A.epic}/ 的 intent、design、spec、verifier，以及 git diff ${BASE}...HEAD 的實際改動）；找不到依據的寫「待確認」，不要編。\n` +
     `2. 小節標題下一行的來源標記（awf:source 開頭的註解）要保留；用到標記以外的檔時，把它的路徑加進標記（分號分隔，相對 repo 根目錄）。不要改檔頭。\n` +
     `3. 不寫內部編號、run 目錄、agent 名稱、個人信箱、本機路徑、內部網址與任何金鑰；用客戶讀得懂的話。\n` +
     (DELIV_SUMMARY ? `4. 另寫交付摘要到 ${DELIV_SUMMARY}：三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」，同樣遵守第 3 點。\n` : '') +

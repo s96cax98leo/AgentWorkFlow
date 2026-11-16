@@ -520,8 +520,8 @@ awfInit({ run_dir: A.run_dir, stage: 'build', lang: '{{OUTPUT_LANGUAGE}}', rules
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40) + 4 * (Array.isArray(A.subtasks) ? A.subtasks.length : 0)
 awfKernelInit({ profile: METHODOLOGY, stage: 'build', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
 const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>，執行紀錄附它印出的完整 log 路徑。'
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
-const SPEC = `${EPIC_DIR}/specs/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
+const SPEC = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 // 整合分支：sdlc-sync 走過中轉分支後 epic worktree 停在中轉分支，merge 退回 build 時要用 args.branch 帶進來，
 // 子任務分支從它開、integrator 合回它；否則會合回舊的 epic 分支、弄丟中轉分支解好的衝突
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
@@ -611,7 +611,7 @@ const TASK_PACKS = (A.task_packs && typeof A.task_packs === 'object' && !Array.i
 const taskPack = (s) => { const p = TASK_PACKS[s.id]; return (typeof p === 'string' && p.replace(/\\/g, '/').endsWith(`/build/${s.id}/pack.md`) && !p.split(/[\\/]/).includes('..')) ? p : '' }
 const taskBrief = (s) => `子任務 ${s.id}「${s.title}」\n擁有（只能改）：${(s.owns || []).join('、')}\n完成條件：${(s.acceptance || []).join('；')}\nStory：${(s.story_ids || []).join('、') || '見 spec'}${taskConstraints(s)}` +
   (taskPack(s) ? `\n子任務資料包（開工先讀這份；spec 與限制文件只讀它列的行段，不夠再找）：${taskPack(s)}` : '')
-const wtFor = (s) => `${A.repo}/.worktrees/${A.epic}--${s.id}`
+const wtFor = (s) => `${A.repo}/{{WORKTREES_DIR}}/${A.epic}--${s.id}`
 // 子任務分支的命名：profile 的 conventions.branch.patterns.task（沒寫或不合法用 <prefix><epic>--<task>）；worktree 目錄名不變
 const brFor = (s) => awfBranch(MP, 'task', { prefix: '{{BRANCH_PREFIX}}', epic: A.epic, task: s.id })
 
@@ -621,7 +621,7 @@ function runTask(s, role, phaseName, extra) {
     for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
       res = await awfAgent(
         `${CTX}\n\n## 派工單（${phaseName}，第 ${attempt} 次）\n${taskBrief(s)}\n` +
-        `在自己的 worktree 做：git -C "${A.repo}" worktree add .worktrees/${A.epic}--${s.id} -b ${brFor(s)} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
+        `在自己的 worktree 做：git -C "${A.repo}" worktree add {{WORKTREES_DIR}}/${A.epic}--${s.id} -b ${brFor(s)} ${BRANCH}（從整合分支 ${BRANCH} 開；已存在就沿用）。worktree：${wtFor(s)}。\n${extra}\n` +
         (attempt > 1 ? AFFECTED_ONLY : '') +
         (attempt > 1 && res ? `上一次的結果（請修正）：${JSON.stringify({ status: res.status, summary: res.summary, open_questions: res.open_questions })}\n` : '') +
         `${RUN_BRIEF}\npayload 用 build-result（task_id=${s.id}、branch=${brFor(s)}、worktree=${wtFor(s)}）。`,

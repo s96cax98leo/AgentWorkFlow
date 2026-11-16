@@ -515,7 +515,7 @@ const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>
 // 腳本裡不能取時間：日期由主 session 給（args.date），或從 run_dir 名稱裡的 YYYYMMDD 取
 const DATE = A.date || ((String(A.run_dir).match(/(20\d{6})/) || [])[1])
 if (!DATE) throw new Error('缺 args.date（YYYYMMDD），run_dir 名稱裡也找不到日期')
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
 const BASE = A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
 const TOOL = 'awf sync-branch'

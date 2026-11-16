@@ -425,6 +425,7 @@ init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`
 | `{{BRANCH_PREFIX}}`、`{{ALLOWED_BRANCH_PREFIXES}}` | 開發分支前綴、允許的新分支前綴 | `feature/`；`feature/,bugfix/,hotfix/,release/,merge/` |
 | `{{PROTECTED_BRANCHES}}` | 受保護分支（`guard.config.json` 的 `protected_branches`；不能直接 push，合併走 PR），逗號分隔；留空＝`main,master` | `main,master` |
 | `{{BASE_BRANCH}}`、`{{BASE_REMOTE}}` | 主線分支與它所在的 remote（`guard.config.json` 的 `base_branch`、`base_remote`）：沒帶 `base` 時各段的比對基準是 `<remote>/<分支>`，PR 的目標分支是主線分支。它和受保護分支是兩件事 | `main`、`origin` |
+| `{{SPECS_DIR}}`、`{{WORKTREES_DIR}}`、`{{SPEC_TEMPLATES_DIR}}` | 目標 repo 裡的 spec 目錄（`<SPECS_DIR>/<epic>/` 放 intent、spec、plan、驗證報告）、worktree 目錄（一層目錄名）與文件範本目錄，寫進 `guard.config.json` 的 `specs_dir`、`worktrees_dir`、`spec_templates_dir`；範本、工具與 hook 都讀它。不能是絕對路徑、含 `..`，也不能在 `.claude`、`.github`、`.git` 底下；範本目錄還是預設值時跟著 spec 目錄 | `specs`、`.worktrees`、`specs/_templates` |
 | `{{RUNS_DIR}}`、`{{BRIEFS_DIR}}` | run 目錄、簡報目錄 | `_tpm/runs`、`_tpm/briefs` |
 | `{{DOCS_DIRS}}` | tpm-writer 可以寫的文件目錄（和 run 目錄、簡報目錄一起寫成 `guard.config.json` 的 `writer_dirs`），逗號分隔；只收工作區裡的相對路徑 | `docs` |
 | `{{ATTRIBUTION_LINE}}` | commit 結尾的署名行 | `Assisted-by: Claude` |
@@ -432,7 +433,7 @@ init 會產生：`.claude/teams/`（含 `guard.config.json`、`methodology.json`
 | `{{AGENT_NS}}` | 呼叫 agent 時的命名空間前綴 | `agent-workflow:` |
 | `{{METHODOLOGY}}` | 開發規範 profile：內建名稱或自己的 JSON 路徑 | `default` |
 
-互動模式下，`PROTECTED_BRANCHES`、`DOCS_DIRS`、`BASE_BRANCH` 在訪談的守門主題一起問（不在佔位符那一輪重複問；`BASE_REMOTE` 不問，要改就寫在 `workflow.config` 或答案檔的 `guard.base_remote`）；之後要改用 `awf init --reconfigure guard`。`awf init --detect` 會從遠端 `origin` 的預設分支看主線分支，不是 `main` 就建議 `guard.base_branch`。
+互動模式下，`PROTECTED_BRANCHES`、`DOCS_DIRS`、`BASE_BRANCH` 在訪談的守門主題一起問（不在佔位符那一輪重複問；`BASE_REMOTE` 不問，要改就寫在 `workflow.config` 或答案檔的 `guard.base_remote`）；之後要改用 `awf init --reconfigure guard`。`awf init --detect` 會從遠端 `origin` 的預設分支看主線分支，不是 `main` 就建議 `guard.base_branch`。`SPECS_DIR` 也在守門主題問（專案沒有 `specs/`、有 `docs/specs/` 這類目錄時，`--detect` 建議 `guard.specs_dir`）；`WORKTREES_DIR`、`SPEC_TEMPLATES_DIR` 不問，要改就寫在 `workflow.config` 或答案檔的 `guard.worktrees_dir`、`guard.spec_templates_dir`。
 
 另有 `AWF_HOOK_CMD`、`AWF_HOOK_SHELL` 兩個佔位符，是 `--hooks project` 的啟動指令與 shell，由 init 自動計算，不用填。
 

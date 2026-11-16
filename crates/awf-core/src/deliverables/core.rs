@@ -214,7 +214,7 @@ fn walk_files(dir: &std::path::Path, rel: &str, out: &mut Vec<String>) -> bool {
         if path.is_dir() {
             // os.walk 不跟著符號連結往下走
             let link = std::fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
-            if !link && !SKIP_DIRS.contains(&name.as_str()) {
+            if !link && !SKIP_DIRS.contains(&name.as_str()) && !crate::layout::is_worktrees_name(&name) {
                 dirs.push(name);
             }
         } else {
@@ -274,6 +274,26 @@ fn is_catalog(v: &Value) -> bool {
 
 /// 型錄：專案的 `.claude/teams/deliverables/catalog.json`，沒有就用執行檔內建的那一份。
 pub fn load_catalog(root: &str) -> Value {
+    let mut cat = load_catalog_raw(root);
+    // 型錄的來源寫的是預設的 spec 目錄（`specs/**/…`）；專案改了 spec 目錄（guard.config.json 的 specs_dir）就跟著換
+    let sd = crate::layout::for_project(root).specs_dir;
+    if sd != crate::layout::DEFAULT_SPECS_DIR {
+        if let Some(docs) = cat.get_mut("documents").and_then(Value::as_array_mut) {
+            for d in docs {
+                if let Some(srcs) = d.get_mut("sources").and_then(Value::as_array_mut) {
+                    for s in srcs {
+                        if let Some(rest) = s.as_str().and_then(|t| t.strip_prefix("specs/")) {
+                            *s = Value::String(format!("{sd}/{rest}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    cat
+}
+
+fn load_catalog_raw(root: &str) -> Value {
     if let Some(v) = load_json(&pyish::pjoin(root, &format!(".claude/teams/{CATALOG_REL}"))) {
         if is_catalog(&v) {
             return v;

@@ -246,7 +246,7 @@ export default [
       args: { sub_plans: SUB_PLANS },
       profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), patterns: { fix: '<prefix><epic>.fix-<group>.r<round>' } } } }),
       fakes: { 'verify:api#1': CRIT([crit('A1', 'fail')]), 'verify:ui#1': CRIT([crit('U1', 'fail')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'fail'), crit('ui:U1', 'fail'), crit('integration:I1', 'pass')]) },
-      expect: (r) => (/worktree add \.worktrees\/demo-999-sample--fix1-api -b \S*demo-999-sample\.fix-api\.r1 /.test(r.prompts['fix:api#1'] || '') && /branch=\S*demo-999-sample\.fix-api\.r1、/.test(r.prompts['fix:api#1'] || '') ? [] : [`修正分支沒有照樣式：${(r.prompts['fix:api#1'] || '').match(/worktree add[^\n]*/)}`]),
+      expect: (r) => (/worktree add [\w.-]+\/demo-999-sample--fix1-api -b \S*demo-999-sample\.fix-api\.r1 /.test(r.prompts['fix:api#1'] || '') && /branch=\S*demo-999-sample\.fix-api\.r1、/.test(r.prompts['fix:api#1'] || '') ? [] : [`修正分支沒有照樣式：${(r.prompts['fix:api#1'] || '').match(/worktree add[^\n]*/)}`]),
     },
     {
       name: '分支樣式不合法（<epic> 後面接 /、少了 <round>）→ 照內建的 --fix<輪>-<子計劃>',

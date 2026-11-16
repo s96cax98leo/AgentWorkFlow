@@ -60,7 +60,7 @@ const BUILTIN_EVENTS = {
       label: 'find', heading: '派工單（{key}）', body: '{ask}\n每處一個 type=change 的事項：target_files 寫路徑:行號，text 寫建議怎麼改（附改後的文字草稿）。payload 用 items。',
       angles: [
         { key: 'tpm-docs', ask: '工作區文件：{{BRIEFS_DIR}}（待決事項）、docs/、run 紀錄與對外交付文件中提到這個待決事項或與它衝突的地方。' },
-        { key: 'repo-process', ask: '目標 repo 的共用層：CLAUDE.md、流程文件、REVIEW.md、.github/、specs/_templates/ 中「待決定」的段落。' },
+        { key: 'repo-process', ask: '目標 repo 的共用層：CLAUDE.md、流程文件、REVIEW.md、.github/、{{SPEC_TEMPLATES_DIR}}/ 中「待決定」的段落。' },
         { key: 'agents-skills', ask: '工作區與目標 repo 的 .claude/agents、.claude/skills、.claude/hooks、.claude/teams 中需要跟著改的規則。' },
         { key: 'code-backlog', ask: '程式（例如設計 token、圖示、分支設定）與 backlog（位置見 rules.md 的專案規則）中受影響的項目。' },
       ],
@@ -111,7 +111,7 @@ const BUILTIN_EVENTS = {
       label: 'impact', heading: '派工單（影響面：{key}）', body: '範圍：{ask}\n對每條變動找受影響的檔案與段落（target_files 寫路徑:行號），type=impact。',
       data: [{ label: '變動', from: 'changes' }], tail: 'payload 用 items。',
       angles: [
-        { key: 'specs', ask: '目標 repo 的 specs/、契約、測試（e2e/tests 的 Story ID）。' },
+        { key: 'specs', ask: '目標 repo 的 {{SPECS_DIR}}/、契約、測試（e2e/tests 的 Story ID）。' },
         { key: 'program', ask: 'backlog 與專案計畫文件（scope、roadmap、能力對照、風險）。' },
         { key: 'deliverables', ask: '對外交付的文件與表格（md／docx／xlsx 成對時兩邊都要改）。' },
         { key: 'capability', ask: 'WBS、能力矩陣或能力對照表；已排入的 demo 範圍。' },

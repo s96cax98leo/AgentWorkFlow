@@ -264,3 +264,191 @@ fn base_branch_answers_and_detect() {
         assert_eq!(doc["suggested_answers"]["guard"]["base_branch"], "develop", "{}", d.stdout);
     }
 }
+
+/// `awf hook <mode>`：回 exit code 與 stderr。
+fn hook(mode: &str, proj: &Path, stdin: &Value) -> (i32, String) {
+    use std::io::Write;
+    let mut c = Command::new(EXE);
+    c.args(["hook", mode]).current_dir(proj).env("CLAUDE_PROJECT_DIR", proj).env_remove("AWF_PLUGIN_DIR").env_remove("CLAUDE_PLUGIN_ROOT")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut ch = c.spawn().unwrap_or_else(|e| panic!("awf hook 跑不起來：{e}"));
+    ch.stdin.take().unwrap().write_all(stdin.to_string().as_bytes()).unwrap();
+    let o = ch.wait_with_output().unwrap();
+    (o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).into_owned())
+}
+
+fn write_as(proj: &Path, role: &str, tool: &str, file: &Path) -> (i32, String) {
+    hook("guard-paths", proj, &serde_json::json!({"hook_event_name": "PreToolUse", "tool_name": tool, "cwd": s(proj), "tool_input": {"file_path": s(file)}, "agent_type": format!("agent-workflow:{role}")}))
+}
+
+/// 報告裡每張派工單（腳本, 情境, label, 內容）。
+fn all_prompts(report: &Value) -> Vec<(String, String, String, String)> {
+    let mut out = Vec::new();
+    for (wf, v) in report.as_object().into_iter().flatten() {
+        for sc in v["scenarios"].as_array().into_iter().flatten() {
+            for (label, p) in sc["prompts"].as_object().into_iter().flatten() {
+                out.push((wf.clone(), sc["name"].as_str().unwrap_or_default().to_string(), label.clone(), p.as_str().unwrap_or_default().to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// W11：spec 目錄改成 design/specs、worktree 目錄改成 .wt。範本、工具、hook 都用新值；沒設定的專案照舊是 specs、.worktrees。
+#[test]
+fn spec_dirs_configured() {
+    let w = Work::new("dirs");
+    let t = init(&w, "proj", "PROJECT_NAME=acme-portal\nSPECS_DIR=design/specs/\nWORKTREES_DIR=.wt\n");
+    let guard = t.join(".claude/teams/guard.config.json");
+    let g = load(&guard);
+    assert_eq!((g["specs_dir"].as_str(), g["worktrees_dir"].as_str(), g["spec_templates_dir"].as_str()), (Some("design/specs"), Some(".wt"), Some("design/specs/_templates")),
+        "範本目錄沒另外指定時跟著 spec 目錄");
+    let readme = read(&t.join(".claude/teams/README.md"));
+    assert!(readme.contains("`<repo>/.wt/<epic>`") && readme.contains("`design/specs/<epic>/`") && readme.contains("`design/specs/_templates/`") && !readme.contains(".worktrees"), "teams/README.md 要帶設定的目錄");
+    let rec = read(&t.join(".claude/teams/workflow.config"));
+    assert!(rec.contains("SPECS_DIR=design/specs\n") && rec.contains("SPEC_TEMPLATES_DIR=design/specs/_templates\n"), "紀錄檔：\n{rec}");
+
+    // 1. 產生的腳本
+    let wf = render_all(&t);
+    for name in ["sdlc-plan", "sdlc-design", "sdlc-design-revise", "sdlc-build", "sdlc-sync", "sdlc-test", "sdlc-deliver"] {
+        let text = read(&wf.join(format!("{name}.js")));
+        assert!(text.contains("const EPIC_DIR = `${A.repo}/.wt/${A.epic}`\n"), "{name}.js 的 worktree 目錄沒有跟著設定");
+        assert!(!text.contains("${A.repo}/.worktrees/") && !text.contains("worktree add .worktrees/") && !text.contains("${EPIC_DIR}/specs/"), "{name}.js 還有寫死的目錄");
+    }
+    let plan = read(&wf.join("sdlc-plan.js"));
+    assert!(plan.contains("const SPEC_DIR = `${EPIC_DIR}/design/specs/${A.epic}`\n") && plan.contains("照 ${EPIC_DIR}/design/specs/_templates/intent.md"), "sdlc-plan.js 的 spec 目錄與範本目錄");
+    assert!(read(&wf.join("sdlc-merge.js")).contains("（spec 在 design/specs/${A.epic}/）"), "sdlc-merge.js");
+
+    // 2. 乾跑通過；派工單用新目錄，沒有任何一張還指到舊目錄
+    match dry_run(&t) {
+        Some(rep) => {
+            let all = all_prompts(&rep);
+            assert!(all.len() > 200, "派工單太少：{}", all.len());
+            for (wf, sc, label, p) in &all {
+                let rest = p.replace("design/specs/", "");
+                assert!(!p.contains(".worktrees/") && !rest.contains("specs/demo-999-sample") && !rest.contains("specs/_templates"), "{wf}［{sc}］{label} 還指到舊目錄：\n{p}");
+            }
+            let hit = |needle: &str| all.iter().filter(|x| x.3.contains(needle)).count();
+            assert!(hit("/.wt/demo-999-sample/design/specs/demo-999-sample") > 20, "spec 目錄沒有出現在派工單");
+            assert!(hit("worktree add .wt/demo-999-sample") > 3, "worktree 目錄沒有出現在派工單");
+            assert!(hit("/.wt/demo-999-sample/design/specs/_templates/") > 0, "範本目錄沒有出現在派工單");
+        }
+        None => eprintln!("[略過] 沒有 node，略過乾跑"),
+    }
+
+    // 3. 工具：spec 目錄的位置、型錄的來源、知識庫的預設來源
+    let repo = t.join("repos/app");
+    write(&repo.join(".wt/demo/design/specs/demo/spec.md"), "# Spec\n\n## 匯出 API\n\nzebraquokka 規則。\n");
+    write(&repo.join(".worktrees/demo/specs/demo/spec.md"), "# 舊位置\n");
+    write(&repo.join("specs/demo/spec.md"), "# 舊位置\n");
+    assert_eq!(awf_core::pack::spec_dir(Some(s(&repo)), "demo", "", s(&t)).as_deref(), Some(s(&repo.join(".wt/demo/design/specs/demo"))), "awf pack／save-run 找 spec 目錄");
+    std::fs::remove_dir_all(repo.join(".wt")).unwrap();
+    assert_eq!(awf_core::pack::spec_dir(Some(s(&repo)), "demo", "", s(&t)), None, "舊位置不再算");
+    write(&repo.join("design/specs/demo/spec.md"), "# Spec\n");
+    assert_eq!(awf_core::pack::spec_dir(Some(s(&repo)), "demo", "", s(&t)).as_deref(), Some(s(&repo.join("design/specs/demo"))));
+    let cat = awf_core::deliverables::load_catalog(s(&t)).to_string();
+    assert!(cat.contains("\"design/specs/**/spec.md\"") && !cat.contains("\"specs/**/"), "交付文件型錄的來源要跟著 spec 目錄");
+    write(&t.join("design/specs/demo/spec.md"), "# Spec\n\n## 匯出 API\n\nzebraquokka 規則。\n");
+    let kb = awf(&["kb", "build"], &t);
+    let q = awf(&["kb", "query", "zebraquokka"], &t);
+    assert!(kb.code == 0 && q.all().contains("design/specs/demo/spec.md"), "awf kb 的預設來源要含新的 spec 目錄：\n{}\n{}", kb.all(), q.all());
+
+    // 4. hook：規則跟著新目錄（放行範圍一樣大，只是換了位置）；主 session 不受影響
+    for tool in ["Write", "Edit"] {
+        assert_eq!(write_as(&t, "tpm-writer", tool, &repo.join("design/specs/demo/spec.md")).0, 0, "{tool}：writer 寫新 spec 目錄");
+        assert_eq!(write_as(&t, "tpm-writer", tool, &repo.join(".wt/demo/design/specs/demo/plan.md")).0, 0, "{tool}：writer 寫 worktree 裡的新 spec 目錄");
+        let (rc, err) = write_as(&t, "tpm-writer", tool, &repo.join("specs/demo/spec.md"));
+        assert!(rc == 2 && err.contains("design/specs/<epic>/*.md"), "{tool}：舊的 specs/ 要擋：{rc} {err}");
+        assert_eq!(write_as(&t, "tpm-writer", tool, &repo.join(".worktrees/demo/design/specs/demo/spec.md")).0, 2, "{tool}：舊的 worktree 目錄要擋");
+        assert_eq!(write_as(&t, "tpm-writer", tool, &repo.join("design/specs/demo/sub/a.md")).0, 2, "{tool}：更深一層照舊要擋");
+        assert_eq!(write_as(&t, "tpm-writer", tool, &repo.join("design/a.md")).0, 2, "{tool}：spec 目錄的上一層要擋");
+    }
+
+    // 5. 手改成不合規則的值：退回預設（hook 也是），awf doctor 列出來
+    let mut hand = g.clone();
+    hand["specs_dir"] = Value::String(".claude/specs".into());
+    hand["worktrees_dir"] = Value::String("../wt".into());
+    hand["spec_templates_dir"] = Value::String("/abs/tpl".into());
+    write(&guard, &serde_json::to_string_pretty(&hand).unwrap());
+    let plan = script(&t, "sdlc-plan");
+    assert!(plan.contains("const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`\n") && plan.contains("const SPEC_DIR = `${EPIC_DIR}/specs/${A.epic}`\n") && plan.contains("${EPIC_DIR}/specs/_templates/intent.md"), "不合規則的值要退回預設");
+    assert_eq!(write_as(&t, "tpm-writer", "Write", &repo.join("specs/demo/spec.md")).0, 0, "不合規則：hook 照預設的 specs");
+    assert_eq!(write_as(&t, "tpm-writer", "Write", &repo.join(".claude/specs/demo/spec.md")).0, 2, "不合規則的目錄不會被放行");
+    assert_eq!(write_as(&t, "tpm-writer", "Write", &repo.join("design/specs/demo/spec.md")).0, 2);
+    let d = awf(&["doctor", "--plugin-dir", s(&root().join("plugin"))], &t).all();
+    assert!(d.contains("specs_dir 不合規則") && d.contains("worktrees_dir 不合規則") && d.contains("spec_templates_dir 不合規則"), "awf doctor 要列出不合規則的值：\n{d}");
+    write(&guard, &serde_json::to_string_pretty(&g).unwrap());
+    assert!(!awf(&["doctor", "--plugin-dir", s(&root().join("plugin"))], &t).all().contains("不合規則"));
+
+    // 6. 沒設定：和以前一樣；舊專案（沒有這三個鍵）產生的腳本逐字相同
+    let t2 = init(&w, "dflt", "PROJECT_NAME=acme-portal\n");
+    let g2 = load(&t2.join(".claude/teams/guard.config.json"));
+    assert_eq!((g2["specs_dir"].as_str(), g2["worktrees_dir"].as_str(), g2["spec_templates_dir"].as_str()), (Some("specs"), Some(".worktrees"), Some("specs/_templates")));
+    let (plan2, build2) = (script(&t2, "sdlc-plan"), script(&t2, "sdlc-build"));
+    assert!(plan2.contains("const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`\nconst SPEC_DIR = `${EPIC_DIR}/specs/${A.epic}`\n"));
+    let mut old = g2.clone();
+    for k in ["specs_dir", "worktrees_dir", "spec_templates_dir"] {
+        old.as_object_mut().unwrap().remove(k);
+    }
+    write(&t2.join(".claude/teams/guard.config.json"), &serde_json::to_string_pretty(&old).unwrap());
+    let rec = t2.join(".claude/teams/workflow.config");
+    let kept: String = read(&rec).lines().filter(|l| !l.starts_with("SPEC") && !l.starts_with("WORKTREES_DIR")).map(|l| format!("{l}\n")).collect();
+    write(&rec, &kept);
+    assert_eq!((script(&t2, "sdlc-plan"), script(&t2, "sdlc-build")), (plan2, build2), "沒有新鍵的舊專案要產生一樣的腳本");
+    assert_eq!(write_as(&t2, "tpm-writer", "Write", &t2.join("repos/app/specs/demo/spec.md")).0, 0);
+
+    // 7. 不合規則的佔位符值：init 拒絕
+    let c = w.0.join("bad.workflow.config");
+    for bad in ["SPECS_DIR=../specs\n", "SPECS_DIR=/abs/specs\n", "SPECS_DIR=.claude/specs\n", "SPECS_DIR=.github/specs\n", "SPECS_DIR=a/.git/b\n", "SPECS_DIR=a b\n", "SPECS_DIR=x`;process.exit()//\n",
+        "WORKTREES_DIR=a/b\n", "WORKTREES_DIR=..\n", "WORKTREES_DIR=.git\n", "SPEC_TEMPLATES_DIR=/abs\n", "SPEC_TEMPLATES_DIR=a/../b\n"] {
+        write(&c, bad);
+        let r = awf(&["init", "--target", s(&w.0.join("bad")), "--config", s(&c)], &w.0);
+        assert!(r.code != 0 && r.all().contains("不合規則"), "{bad}：\n{}", r.all());
+        assert!(!w.0.join("bad/.claude/teams/guard.config.json").exists(), "{bad}");
+    }
+}
+
+/// W11：答案檔與 `--reconfigure` 改 spec 目錄（範本目錄跟著）；`--detect` 看既有的目錄。
+#[test]
+fn spec_dirs_answers_and_detect() {
+    let w = Work::new("dirs-ans");
+    let t = init(&w, "proj", "PROJECT_NAME=acme-portal\n");
+    let guard = t.join(".claude/teams/guard.config.json");
+    let ans = w.0.join("answers.json");
+    write(&ans, &serde_json::json!({"guard": {"specs_dir": "docs/specs", "worktrees_dir": ".wt"}}).to_string());
+    let r = awf(&["init", "--target", s(&t), "--reconfigure", "--answers", s(&ans)], &w.0);
+    assert_eq!(r.code, 0, "--reconfigure 失敗：\n{}", r.all());
+    let g = load(&guard);
+    assert_eq!((g["specs_dir"].as_str(), g["worktrees_dir"].as_str(), g["spec_templates_dir"].as_str()), (Some("docs/specs"), Some(".wt"), Some("docs/specs/_templates")), "{}", r.all());
+    let rec = read(&t.join(".claude/teams/workflow.config"));
+    assert!(rec.contains("SPECS_DIR=docs/specs\n") && rec.contains("WORKTREES_DIR=.wt\n") && rec.contains("SPEC_TEMPLATES_DIR=docs/specs/_templates\n"), "紀錄檔要跟上：\n{rec}");
+    assert!(script(&t, "sdlc-test").contains("const SPEC = `${EPIC_DIR}/docs/specs/${A.epic}`\n"));
+    for bad in [serde_json::json!({"specs_dir": "../x"}), serde_json::json!({"worktrees_dir": "a/b"}), serde_json::json!({"spec_templates_dir": ".git/x"}), serde_json::json!({"specs_dir": 3})] {
+        write(&ans, &serde_json::json!({"guard": bad}).to_string());
+        let r = awf(&["init", "--target", s(&t), "--reconfigure", "--answers", s(&ans)], &w.0);
+        assert!(r.code != 0 && r.all().contains("不合規則"), "不合規則的答案要拒絕（{bad}）：\n{}", r.all());
+    }
+    assert_eq!(load(&guard), g, "被拒絕的答案不能改到設定");
+
+    // init 時就給答案檔
+    write(&ans, &serde_json::json!({"guard": {"specs_dir": "design/specs"}}).to_string());
+    let c = w.0.join("p2.workflow.config");
+    write(&c, "PROJECT_NAME=acme-portal\n");
+    let t3 = w.0.join("p2");
+    let r = awf(&["init", "--target", s(&t3), "--config", s(&c), "--answers", s(&ans)], &w.0);
+    assert_eq!(r.code, 0, "{}", r.all());
+    assert_eq!(load(&t3.join(".claude/teams/guard.config.json"))["specs_dir"], "design/specs");
+    assert!(script(&t3, "sdlc-design").contains("const SPEC = `${EPIC_DIR}/design/specs/${A.epic}`\n"));
+
+    // --detect：沒有 specs/、有 docs/specs/ 時建議照既有的目錄；有 specs/ 就不建議
+    let p = w.0.join("existing");
+    std::fs::create_dir_all(p.join("docs/specs/orders")).unwrap();
+    let detect = |p: &Path| -> Value {
+        let d = awf(&["init", "--detect", "--target", s(p), "--json"], &w.0);
+        assert_eq!(d.code, 0, "{}", d.all());
+        serde_json::from_str(&d.stdout).unwrap_or_else(|e| panic!("--detect --json 不是 JSON：{e}\n{}", d.stdout))
+    };
+    assert_eq!(detect(&p)["suggested_answers"]["guard"]["specs_dir"], "docs/specs");
+    std::fs::create_dir_all(p.join("specs")).unwrap();
+    assert!(detect(&p)["suggested_answers"]["guard"]["specs_dir"].is_null());
+}

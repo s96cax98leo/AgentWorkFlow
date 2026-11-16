@@ -981,22 +981,34 @@ fn e_reconfigure_one_topic_only_asks_and_changes_that_topic() {
     assert_eq!(json_of(&meth), par);
 
     // 4. 守門設定：受保護分支多一個；不能清空
-    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "main, master, release\n\n\n\ny\n");
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "main, master, release\n\n\n\n\ny\n");
     assert_eq!(r.code, 0, "{}{}", r.out, r.err);
     let g = json_of(&guard);
     assert_eq!(g["protected_branches"], serde_json::json!(["main", "master", "release"]));
     assert_eq!(g["acceptance_test_dirs"], guard_before["acceptance_test_dirs"]);
     assert_eq!(g["writer_dirs"], guard_before["writer_dirs"], "文件目錄沒改就不動");
+    assert_eq!((&g["base_branch"], &g["specs_dir"], &g["spec_templates_dir"]), (&guard_before["base_branch"], &guard_before["specs_dir"], &guard_before["spec_templates_dir"]), "主線分支與 spec 目錄沒改就不動");
     assert_eq!(json_of(&meth), par, "守門主題不動 methodology.json");
     let bad = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "-\n");
     assert_ne!(bad.code, 0, "受保護分支不能清空");
     assert_eq!(json_of(&guard), g);
     // 文件目錄：多一個；run 目錄與簡報目錄一律保留。不能指到模版設定或工作區外
-    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "\n\ndocs, handbook\ny\n");
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "\n\ndocs, handbook\n\n\ny\n");
     assert_eq!(r.code, 0, "{}{}", r.out, r.err);
     let g = json_of(&guard);
     assert_eq!(g["writer_dirs"], serde_json::json!(["_tpm/runs", "_tpm/briefs", "docs", "handbook"]));
     assert_eq!(g["protected_branches"], serde_json::json!(["main", "master", "release"]));
+    assert_eq!((&g["base_branch"], &g["specs_dir"]), (&guard_before["base_branch"], &guard_before["specs_dir"]));
+    // spec 目錄：改了、範本目錄跟著；不合規則的拒絕
+    let r = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], "\n\n\n\ndocs/specs/\ny\n");
+    assert_eq!(r.code, 0, "{}{}", r.out, r.err);
+    let g = json_of(&guard);
+    assert_eq!((g["specs_dir"].as_str(), g["spec_templates_dir"].as_str(), g["worktrees_dir"].as_str()), (Some("docs/specs"), Some("docs/specs/_templates"), Some(".worktrees")));
+    for dir in [".claude/specs", "../outside", "/etc", ".dot/.git"] {
+        let bad = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], &format!("\n\n\n\n{dir}\ny\n"));
+        assert!(bad.code != 0 && bad.err.contains("spec 目錄不合規則"), "{dir}：{}{}", bad.out, bad.err);
+        assert_eq!(json_of(&guard), g);
+    }
     for dir in [".claude/teams", "../outside", "/etc"] {
         let bad = run_tty(&d, &["--target", &ps, "--reconfigure", "guard"], &format!("\n\n{dir}\ny\n"));
         assert!(bad.code != 0 && bad.err.contains("文件目錄"), "{dir}：{}{}", bad.out, bad.err);

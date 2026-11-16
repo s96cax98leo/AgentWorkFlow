@@ -158,7 +158,7 @@ pub fn single_topics() -> Vec<&'static str> {
 }
 
 /// 守門主題會問、所以互動模式不在佔位符那一輪重複問的佔位符。
-pub const GUARD_PLACEHOLDERS: &[&str] = &["PROTECTED_BRANCHES", "DOCS_DIRS", "BASE_BRANCH", "BASE_REMOTE"];
+pub const GUARD_PLACEHOLDERS: &[&str] = &["PROTECTED_BRANCHES", "DOCS_DIRS", "BASE_BRANCH", "BASE_REMOTE", "SPECS_DIR", "WORKTREES_DIR", "SPEC_TEMPLATES_DIR"];
 /// `DOCS_DIRS` 沒有紀錄時的值（同 workflow.config.example 的預設）。
 pub const GUARD_DOCS: &[&str] = &["docs"];
 
@@ -546,6 +546,25 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
             }
             if got != base || seed.contains_key("base_branch") {
                 out.insert("base_branch".to_string(), json!(got));
+            }
+        }
+        // spec 目錄：每個需求的 intent、spec、plan 放在目標 repo 的 <spec 目錄>/<epic>/（worktree 目錄與範本目錄用佔位符或答案檔的 guard）
+        {
+            use crate::layout::{dir_norm, dir_ok, DEFAULT_SPECS_DIR, DIR_RULE};
+            let base = vals.get("SPECS_DIR").map(|s| dir_norm(s)).filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_SPECS_DIR.to_string());
+            let pick = |m: &Map<String, Value>| m.get("specs_dir").and_then(Value::as_str).map(str::to_string);
+            let now = pick(&seed).or_else(|| pick(&sug_guard)).unwrap_or_else(|| base.clone());
+            let got = dir_norm(&con.ask("spec 目錄（每個需求的 intent、spec、plan 放在目標 repo 的 <這個目錄>/<epic>/；相對於目標 repo）", &now));
+            if !dir_ok(&got) {
+                return die(format!("spec 目錄不合規則（{DIR_RULE}；收到 {}）", pyfmt::repr_str(&got)));
+            }
+            if got != base || seed.contains_key("specs_dir") {
+                out.insert("specs_dir".to_string(), json!(got));
+                // 範本目錄沒另外指定時跟著 spec 目錄
+                let tpl = vals.get("SPEC_TEMPLATES_DIR").map(|s| dir_norm(s)).unwrap_or_default();
+                if !seed.contains_key("spec_templates_dir") && (tpl.is_empty() || tpl == format!("{base}/_templates")) && got != base {
+                    out.insert("spec_templates_dir".to_string(), json!(format!("{got}/_templates")));
+                }
             }
         }
         if !out.is_empty() {

@@ -29,7 +29,7 @@
 | 段 | workflow | 做什麼 | 結束時 |
 |---|---|---|---|
 | plan | `sdlc-plan` | 4 個 researcher 平行調研 → spec-author 寫 intent（需求能拆時附「範圍切分建議」）→ skeptic 挑錯 | 閘門：核准 intent |
-| design | `sdlc-design` | spec-author 出大綱（`plan-outline`）判斷規模。<br>・不拆：一人寫 spec、plan 與子任務。<br>・拆：每個子計劃一個 spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，再由一人彙整、核對介面與檔案所有權並 commit。<br>最後 skeptic 平行檢查一致性 | 閘門：核准 spec＋plan（要修改時跑 `sdlc-design-revise`） |
+| design | `sdlc-design` | spec-author 出大綱（`plan-outline`）判斷規模。<br>・不拆：一人寫 spec、plan 與子任務。<br>・拆：每個子計劃一個 spec-author 平行規劃，寫在 `{{SPECS_DIR}}/<epic>/sub/<id>/`，再由一人彙整、核對介面與檔案所有權並 commit。<br>最後 skeptic 平行檢查一致性 | 閘門：核准 spec＋plan（要修改時跑 `sdlc-design-revise`） |
 | build | `sdlc-build` | 依 profile 決定先寫測試或後補測試。<br>子任務依相依分層，同一層各自開 worktree 平行實作，每層由 integrator 合併（有衝突走中轉分支） | 中斷（halted）時交人，用剩下的子任務（`remaining_subtasks`）重跑 |
 | sync | `sdlc-sync` | dev-integrator 用 `awf sync-branch` 讓分支跟上 base：已跟上不動；沒推送且沒衝突 rebase；已推送且沒衝突 merge base；有衝突從 base 開中轉分支解衝突（命名依 profile 的 `conventions.sync.transit_naming`），之後用 `awf publish --supersedes` 開 PR 取代原 PR。merge 因 PR 落後或衝突判 hold（`needs_sync`）後也跑這一段 | 中斷時交人；head 變了一律重跑 `sdlc-test`，之後各段用 `branch` 帶中轉分支名 |
 | test | `sdlc-test` | verifier 逐條驗收並做反作弊檢查；有子計劃時每個子計劃一個 verifier，另加一個整合分片，平行驗證後彙整成 `verifier.md`。<br>設計審查、安全審查同時進行。<br>失敗就修正，最多 2 輪；失敗分散在多個子計劃時平行修正，再合併 | 閘門：確認驗證結果 |
@@ -48,11 +48,11 @@
 - **halted 時停下交人**：子計劃範圍重疊或相依循環、彙整後默默少了子任務、彙整時改了驗證結果或各分片驗的不是同一個 HEAD，workflow 都會回傳 `halted: true`。
 - **缺件不是「沒有發現」**：任何 agent 沒交件時記為 missing；審查、反駁、比對類的步驟缺件一律 halted（rules.md 規則 26）。各段閘門摘要要列出 missing。
 - **worktree**：
-  - epic：`<repo>/.worktrees/<epic>`，分支 `{{BRANCH_PREFIX}}<epic>`。
-  - 子任務：`<repo>/.worktrees/<epic>--<task>`，分支 `{{BRANCH_PREFIX}}<epic>--<task>`。
-  - 平行修正：`<repo>/.worktrees/<epic>--fix<輪>-<子計劃>`。
-  - `.worktrees/` 要加進目標 repo 的 `.gitignore`。
-- **產出**：寫在目標 repo 的 `specs/<epic>/`，有 `specs/_templates/` 就照範本。產出哪些文件照 profile 決定，例如 intent、spec、plan、progress、verifier、design-review、security-review；拆子計劃時另有 `outline.md` 和 `sub/<id>/`。
+  - epic：`<repo>/{{WORKTREES_DIR}}/<epic>`，分支 `{{BRANCH_PREFIX}}<epic>`。
+  - 子任務：`<repo>/{{WORKTREES_DIR}}/<epic>--<task>`，分支 `{{BRANCH_PREFIX}}<epic>--<task>`。
+  - 平行修正：`<repo>/{{WORKTREES_DIR}}/<epic>--fix<輪>-<子計劃>`。
+  - `{{WORKTREES_DIR}}/` 要加進目標 repo 的 `.gitignore`。目錄名取自 `guard.config.json` 的 `worktrees_dir`。
+- **產出**：寫在目標 repo 的 `{{SPECS_DIR}}/<epic>/`（`guard.config.json` 的 `specs_dir`），有 `{{SPEC_TEMPLATES_DIR}}/` 就照範本。產出哪些文件照 profile 決定，例如 intent、spec、plan、progress、verifier、design-review、security-review；拆子計劃時另有 `outline.md` 和 `sub/<id>/`。
 - **閘門紀錄**：`awf save-run init|stage|approve|abandon|status <run_dir> …`。
   - 重存某一段會清掉該段的核准；核准要整條閘門鏈都通過（test 不能跳過 design 的核准）。
   - 全自動流程用 `approve --by policy` 時，工具會讀該段的實際結果：有沒通過的條目、反作弊發現、阻擋性問題或 blocker／important 發現、skeptic 推翻、agent 缺件、halted，都不能自動核准。plan 段一律由人核准。
@@ -109,7 +109,7 @@
   - 凍結檔 `freeze_file` 由 tpm-writer 寫 `frozen=true`，解凍由人做。CI 看不到本機的凍結檔，要凍結時人要同時設 repo variable `AGENT_AUTOMERGE_FROZEN`。
   - 真正的信任邊界在伺服器端（ruleset、gate App 的 required check、CODEOWNERS）；hook 可以被繞過。
 - **角色寫入範圍**：
-  - tpm-writer：`writer_dirs` 與 repo 的 `specs/<epic>/*.md`。
+  - tpm-writer：`writer_dirs` 與 repo 的 `{{SPECS_DIR}}/<epic>/*.md`。
   - 其他 tpm-*：`runs_dir`。
   - dev-*：`repos_dir`（空字串＝工作區本身，`.claude/` 除外）與 `runs_dir`。
 - **轉呼叫目標 repo 的 guard**：目標 repo 或 worktree 有自己的 `guard-git`、`guard-paths` 時會轉呼叫，先找 `.py`，再找 bash 腳本。

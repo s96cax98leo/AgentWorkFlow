@@ -517,10 +517,10 @@ awfInit({ run_dir: A.run_dir, stage: 'test', lang: '{{OUTPUT_LANGUAGE}}', rules:
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40) + 4 * (Array.isArray(A.sub_plans) ? A.sub_plans.length : 0)
 awfKernelInit({ profile: METHODOLOGY, stage: 'test', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
 const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>，執行紀錄附它印出的完整 log 路徑。'
-const EPIC_DIR = `${A.repo}/.worktrees/${A.epic}`
+const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
 // sdlc-sync 走中轉分支後 head 換成中轉分支，用 args.branch 帶進來
 const BRANCH = A.branch || `{{BRANCH_PREFIX}}${A.epic}`
-const SPEC = `${EPIC_DIR}/specs/${A.epic}`
+const SPEC = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}（分支 ${BRANCH}，比對基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}）\nrun 目錄：${A.run_dir}\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 // 驗證沒過時最多修正幾輪：profile 的 limits.rounds.test_fix（0–5；沒寫或不合法用 2）。跑滿仍然交人
@@ -688,13 +688,13 @@ async function fixSerial(round, failed, cheats) {
 async function fixParallel(round, groups) {
   // 修正分支的命名：profile 的 conventions.branch.patterns.fix（沒寫或不合法用 <prefix><epic>--fix<round>-<group>）；worktree 目錄名不變
   const brOf = (g) => awfBranch(MP, 'fix', { prefix: '{{BRANCH_PREFIX}}', epic: A.epic, round, group: g.id })
-  const wtOf = (g) => `${A.repo}/.worktrees/${A.epic}--fix${round}-${g.id}`
+  const wtOf = (g) => `${A.repo}/{{WORKTREES_DIR}}/${A.epic}--fix${round}-${g.id}`
   const res = await parallel(groups.map((g) => () => {
     const br = brOf(g)
     const wt = wtOf(g)
     return awfAgent(
       `${CTX}\n\n## 派工單（修正第 ${round} 輪，子計劃 ${g.id}）\n其他子計劃的失敗由別的 agent 同時修，你只負責這一個。\n` +
-      `在自己的 worktree 修：git -C "${A.repo}" worktree add .worktrees/${A.epic}--fix${round}-${g.id} -b ${br} ${BRANCH}（已存在就沿用）。worktree：${wt}。\n` +
+      `在自己的 worktree 修：git -C "${A.repo}" worktree add {{WORKTREES_DIR}}/${A.epic}--fix${round}-${g.id} -b ${br} ${BRANCH}（已存在就沿用）。worktree：${wt}。\n` +
       `只能改這些範圍：${g.owns.join('、')}。修正需要改範圍外的檔案時不要改，以 needs_decision 回報。\n${fixBrief(g.failed, g.cheats)}\n` +
       `修完 commit（${commitFor('fix', A.epic)}）。${RUN_BRIEF}\npayload 用 build-result（task_id=fix${round}-${g.id}、branch=${br}、worktree=${wt}）。`,
       { label: `fix:${g.id}#${round}`, phase: 'Fix', agentType: NS + 'dev-implementer', schema: BUILD },

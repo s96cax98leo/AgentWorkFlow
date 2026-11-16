@@ -504,7 +504,7 @@ pub fn dir_listing_sha1(d: &str) -> Option<String> {
     for e in std::fs::read_dir(d).ok()? {
         let e = e.ok()?;
         let name = e.file_name().to_str()?.to_string();
-        if SKIP_LISTING.contains(&name.as_str()) {
+        if SKIP_LISTING.contains(&name.as_str()) || crate::layout::is_worktrees_name(&name) {
             continue;
         }
         names.push(if e.path().is_dir() { format!("{name}/") } else { name });
@@ -1218,13 +1218,16 @@ pub fn find_subtasks(run: &str, raw: &str) -> (Vec<Value>, String) {
     (Vec::new(), String::new())
 }
 
-/// spec 目錄：`raw`（--spec）有給就用它（相對於 root）；否則找 `<repo>/.worktrees/<epic>/specs/<epic>`、`<repo>/specs/<epic>`。
+/// spec 目錄：`raw`（--spec）有給就用它（相對於 root）；否則找 `<repo>/.worktrees/<epic>/specs/<epic>`、`<repo>/specs/<epic>`
+/// （worktree 目錄與 spec 目錄照專案 guard.config.json 的 `worktrees_dir`、`specs_dir`，見 [`crate::layout`]）。
 pub fn spec_dir(repo: Option<&str>, epic: &str, raw: &str, root: &str) -> Option<String> {
     if !raw.is_empty() {
         return Some(join(root, raw));
     }
     let repo = repo.filter(|_| !epic.is_empty())?;
-    [join(repo, &format!(".worktrees/{epic}/specs/{epic}")), join(repo, &format!("specs/{epic}"))].into_iter().find(|d| is_dir(d))
+    let l = crate::layout::for_project(root);
+    let (wt, sp) = (l.worktrees_dir.as_str(), l.specs_dir.as_str());
+    [join(repo, &format!("{wt}/{epic}/{sp}/{epic}")), join(repo, &format!("{sp}/{epic}"))].into_iter().find(|d| is_dir(d))
 }
 
 fn flat_list(v: Option<&Value>, limit: usize, sep: &str) -> PyResult<String> {
