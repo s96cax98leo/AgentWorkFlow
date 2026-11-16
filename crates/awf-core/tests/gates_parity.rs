@@ -23,6 +23,10 @@ const STRICTER: &[(&str, &str)] = &[
     ("merged-today '２'", "全形數字：Python 的 int() 收，這裡只收 ASCII 數字 → hold"),
     ("diff：hunk 標頭用全形數字（Python 收、另一個實作只會更嚴）", "hunk 標頭只收 ASCII 數字 → diff 解析不了、hold"),
     (
+        "decision：對照表的 requirement_id 是數字與 null",
+        "一樣 hold；理由多一條語意規則的「traceability[2].requirement_id 要是字串」（1.0 審查 M1：型別不對不再只靠 schema 擋）",
+    ),
+    (
         "recipe：專案沒有 methodology.json（用工具旁的，沒有就當內建節）",
         "run.json 已有 recipe 而專案沒有 profile 檔：Python 退回工具旁的 profile 或內建節重算（這一例重算後一樣 hold）；這裡不重算，直接當成輸入錯誤 → hold（1.0 審查 H1）",
     ),

@@ -1,0 +1,45 @@
+{
+ "payload": null,
+ "data": {
+  "status": "done",
+  "summary": "範例",
+  "artifacts": [
+   "_tpm/runs/x/a.md"
+  ],
+  "evidence": [
+   {
+    "claim": "c",
+    "source": "a.md:1",
+    "result": "ok"
+   }
+  ],
+  "confidence": 0.9,
+  "open_questions": [],
+  "derived_work": [],
+  "payload": {
+   "decision": "merge",
+   "traceability": [
+    {
+     "requirement_id": 1,
+     "requirement": "匯出按鈕下載 CSV",
+     "evidence": [
+      "results.json pass"
+     ],
+     "result": "match"
+    },
+    {
+     "requirement_id": 1.0,
+     "requirement": "匯出按鈕下載 CSV",
+     "evidence": [
+      "results.json pass"
+     ],
+     "result": "match"
+    }
+   ],
+   "followups": [],
+   "out_of_scope": []
+  }
+ },
+ "semantic": true,
+ "expect": "requirement_id 要是字串"
+}
