@@ -17,9 +17,13 @@
 //!   1. hook 跑不起來（找不到執行檔、逾時）：hooks.json 設 onFailure=continue，放行。
 //!   2. 跑得起來但輸入壞掉（空、不是 JSON、缺 tool_name／tool_input、shell 指令超過 [`MAX_SHELL_COMMAND`]）：
 //!      守門類一律擋（exit 2），交件類放行（exit 0）。
-//!   3. 設定載入失敗（0.x 的 Python 版是 guard.py／awf_config.py 載入失敗），或程式內部 panic：改用本檔內建的最小規則
-//!      （[`fallback_shell`]），只擋 push／send-pack、gh pr merge、--approve、gh api 寫入、curl 等打 merge／reviews；
-//!      其他放行，guard-paths 一律放行。stderr 印一行提示。最小規則刻意不依賴其他模組的狀態。
+//!   3. 設定載入失敗（0.x 的 Python 版是 guard.py／awf_config.py 載入失敗），或程式內部 panic：
+//!      - 還不知道這次是誰（設定還沒載入完）、主 session、使用者自己的 agent：改用本檔內建的最小規則
+//!        （[`fallback_shell`]），只擋 push／send-pack、gh pr merge、--approve、gh api 寫入、curl 等打 merge／reviews；
+//!        其他放行，guard-paths 一律放行。stderr 印一行提示。最小規則刻意不依賴其他模組的狀態。
+//!      - 規則已經開始跑才 panic，而且這次是 team agent（模版角色、登記的擴充 agent）：一律擋（exit 2）。
+//!        規則跑到一半就壞了，等於沒檢查過；team agent 的寫入範圍、awf 子指令這些限制最小規則都不管，放行就是繞過。
+//!        主 session 不受影響，所以使用者不會被鎖死。
 //!   4. 守門規則執行中出現意外錯誤（對應 Python 的例外）：守門類擋（exit 2），交件類放行（exit 0）。
 //!   5. 讀取預算是輔助功能：任何失敗都放行，不影響前面幾條既有檢查的結果。
 //!
@@ -151,12 +155,18 @@ fn fallback(mode: &str, data: &Value, class: &str) -> i32 {
 /// panic hook 要用的狀態：模式與已經讀進來的輸入。
 static PANIC_CTX: OnceLock<(String, Option<Value>)> = OnceLock::new();
 static PANIC_MODE: OnceLock<String> = OnceLock::new();
+/// 規則開始跑之前記下「這次是不是 team agent」；還沒記＝身分未知。
+static PANIC_TEAM: OnceLock<bool> = OnceLock::new();
 
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|_| {
         // 不印預設的 panic 訊息；照失敗語意第 3 條結束。這裡再 panic 會直接中止，所以只做最單純的事。
         let mode = PANIC_MODE.get().cloned().unwrap_or_default();
         let code = match PANIC_CTX.get() {
+            Some((m, Some(_))) if is_guard(m) && PANIC_TEAM.get() == Some(&true) => {
+                say("agent-workflow 守門：檢查時發生意外錯誤（InternalError），team agent 的操作先全部擋下；請回報這個指令，需要的操作改由主 session 或人執行。");
+                2
+            }
             Some((m, Some(data))) if is_guard(m) => fallback(m, data, "InternalError"),
             _ if mode == "guard-shell" || mode == "guard-paths" => {
                 say("agent-workflow 守門：檢查時發生意外錯誤（InternalError），為了安全先擋下。");
@@ -263,6 +273,8 @@ fn dispatch(mode: &str) -> i32 {
         Ok(g) => g,
         Err(e) => return fallback(mode, &data, &e.class),
     };
+    let who = data.get("agent_type").and_then(Value::as_str).unwrap_or_default();
+    let _ = PANIC_TEAM.set(crate::config::is_team_agent(who, &g.cfg));
     let code = match run_guard(mode, &g, &data) {
         Ok(()) => 0,
         Err(Stop::Exit(c)) => c,

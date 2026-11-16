@@ -180,9 +180,12 @@ fn fallback_rules_when_guard_is_broken() {
         for (c, agent) in FB_BLOCK {
             expect(&format!("{fault}：擋 {c}（{agent}）"), &fh("guard-shell", sh(&repo, c, agent).to_string().as_bytes()), 2);
         }
-        let r = fh("guard-shell", sh(&repo, "git push origin HEAD:feature/x", AGENT).to_string().as_bytes());
+        let r = fh("guard-shell", sh(&repo, "git push origin HEAD:feature/x", "").to_string().as_bytes());
         assert!(err_of(&r).contains("最小規則"), "{fault}：stderr 要有最小規則提示：{}", err_of(&r));
-        expect(&format!("{fault}：guard-paths 一般寫檔放行"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), AGENT).to_string().as_bytes()), 0);
+        // 載入失敗時還不知道身分：一律照最小規則。規則開始跑之後才 panic 的，team agent 一律擋（下一個測試）
+        let team_write = if fault == "load" { 0 } else { 2 };
+        expect(&format!("{fault}：guard-paths team agent 寫檔"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), AGENT).to_string().as_bytes()), team_write);
+        expect(&format!("{fault}：guard-paths 使用者自己的 agent 寫檔放行"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), "my-helper").to_string().as_bytes()), 0);
         expect(&format!("{fault}：guard-paths 主 session 寫檔放行"), &fh("guard-paths", write(&repo, &repo.join("a.txt"), "").to_string().as_bytes()), 0);
         expect(&format!("{fault}：壞輸入仍擋"), &fh("guard-shell", b"not json"), 2);
     }
@@ -192,6 +195,43 @@ fn fallback_rules_when_guard_is_broken() {
     let r = run(c, sh(&repo, "ls -la", "").to_string().as_bytes());
     expect("check：守門擋下", &r, 2);
     assert!(err_of(&r).contains("意外錯誤"), "{}", err_of(&r));
+}
+
+/// 審查 M5：規則開始跑之後才 panic，team agent 一律擋；主 session 與使用者自己的 agent 照最小規則。
+#[test]
+fn panic_blocks_team_agents_and_keeps_minimal_rules_for_others() {
+    if !cfg!(debug_assertions) {
+        eprintln!("略過 panic 測試（release 版沒有故障注入）");
+        return;
+    }
+    let tmp = Tmp::new("panicid");
+    let mut cfg = default_config();
+    cfg["extension_agents"] = json!({"my:auditor": "tpm-reviewer"});
+    let (ws, repo) = init_ws(tmp.path(), cfg);
+    let fh = |mode: &str, v: Value| {
+        let mut c = base_cmd(&[mode], &ws);
+        c.env("AWF_HOOK_TEST_FAULT", "panic");
+        run(c, v.to_string().as_bytes())
+    };
+    // team agent：寫檔擋、一般指令也擋（已經無法確認任何規則）
+    let r = fh("guard-paths", write(&repo, &repo.join("a.txt"), AGENT));
+    expect("panic：team agent 寫檔擋", &r, 2);
+    assert!(err_of(&r).contains("意外錯誤") && err_of(&r).contains("主 session"), "{}", err_of(&r));
+    expect("panic：team agent 一般指令擋", &fh("guard-shell", sh(&repo, "echo x > a.txt", AGENT)), 2);
+    expect("panic：team agent 唯讀指令也擋", &fh("guard-shell", sh(&repo, "ls -la", AGENT)), 2);
+    expect("panic：唯讀角色寫檔擋", &fh("guard-paths", write(&repo, &repo.join("a.txt"), "agent-workflow:tpm-reviewer")), 2);
+    expect("panic：登記的擴充 agent 擋", &fh("guard-shell", sh(&repo, "echo x > a.txt", "my:auditor")), 2);
+    expect("panic：和模版角色同名的 agent 擋", &fh("guard-shell", sh(&repo, "echo x > a.txt", "dev-implementer")), 2);
+    // 主 session：寫檔放行、push 擋
+    expect("panic：主 session 寫檔放行", &fh("guard-paths", write(&repo, &repo.join("a.txt"), "")), 0);
+    expect("panic：主 session 一般指令放行", &fh("guard-shell", sh(&repo, "echo x > a.txt", "")), 0);
+    let r = fh("guard-shell", sh(&repo, "git push origin HEAD:feature/x", ""));
+    expect("panic：主 session push 擋", &r, 2);
+    assert!(err_of(&r).contains("最小規則"), "{}", err_of(&r));
+    // 使用者自己的 agent：同主 session
+    expect("panic：使用者自己的 agent 寫檔放行", &fh("guard-paths", write(&repo, &repo.join("a.txt"), "my-helper")), 0);
+    expect("panic：使用者自己的 agent 一般指令放行", &fh("guard-shell", sh(&repo, "npm test", "my-helper")), 0);
+    expect("panic：使用者自己的 agent 合併擋", &fh("guard-shell", sh(&repo, "gh pr merge 3 --squash", "my-helper")), 2);
 }
 
 #[test]
