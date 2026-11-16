@@ -4,6 +4,8 @@
 use super::build::{build, layout, BuildOpts, Outcome};
 use super::query::{self, Answer};
 use super::{export, run_captured, store, update, UpdateStatus};
+use crate::save_run;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 struct Tally {
@@ -34,6 +36,68 @@ fn put(root: &Path, rel: &str, text: &str) {
 const RUN: &str = "2026-01-05-export";
 const REQ: &str = "billing/export-invoice";
 const SCN: &str = "billing/export-invoice#csv-download";
+const CHANGE: &str = "export-csv";
+/// 需求來源不是規格層的 run（需求是 epic 名、驗收條件是「AC-…」編號）。
+const OLD_RUN: &str = "2026-01-06-legacy";
+const SHA: &str = "1111111111111111111111111111111111111111";
+const MERGE_SHA: &str = "2222222222222222222222222222222222222222";
+const DECISION: &str = "{\"question\":\"匯出要不要含稅\",\"answer\":\"要\",\"scope\":\"project\",\"by\":\"pm\",\"at\":\"2026-01-05T00:00:00Z\",\"run\":\"2026-01-05-export\"}";
+
+fn env(payload: Value) -> Value {
+    json!({"status": "done", "summary": "s", "artifacts": [], "evidence": [], "confidence": 0.9, "open_questions": [], "derived_work": [], "payload": payload})
+}
+
+fn design_of(epic: &str, acc: &str, refs: &[&str], owns: &[&str]) -> Value {
+    json!({"design": env(json!({"epic": epic, "subtasks": [{"id": "t1", "title": "t1", "kind": "code", "owns": owns, "depends_on": [], "acceptance": [acc], "spec_refs": refs}]}))})
+}
+
+fn test_of(id: &str, command: &str, commit: &str) -> Value {
+    json!({"verifier": env(json!({"commit": commit, "scope_covered": "x", "scope_skipped": "none", "anti_cheat": [], "criteria": [{"id": id, "criterion": "c", "command": command, "result": "pass", "evidence": "e"}]}))})
+}
+
+/// 連結帳本：不手寫，用 `save_run` 的寫入端照各段的結果寫出來（和 `awf save-run stage` 存檔時走的是同一組函式）。
+/// 兩個 run：一個需求來源是規格層（穩定 id），一個不是（epic 名與「AC-…」編號）。design 存兩次，帳本裡會有一筆 supersede。
+fn write_ledger(root: &Path) -> Result<(), String> {
+    let rs = root.to_string_lossy().into_owned();
+    let ctx = save_run::Ctx::new(&rs, &rs);
+    let profile = json!({"requirements": {"source": "openspec", "path": "openspec"}, "links": {}});
+    let fail = |e: crate::kb::PyErr| format!("寫連結帳本失敗（{}）", e.msg);
+    let save = |run: &str, stage: &str, result: &Value, sc: Option<&save_run::SpecCtx>| -> Result<(), String> {
+        if stage == "design" {
+            put(root, &format!("{run}/design.json"), &result.to_string());
+        }
+        let links = save_run::stage_links(&ctx, run, stage, result, sc);
+        save_run::write_links(&ctx, run, stage, &links, true).map(|_| ()).map_err(fail)
+    };
+
+    let run = format!("_tpm/runs/{RUN}");
+    let data = json!({"epic": CHANGE, "args": {"change": CHANGE}});
+    put(root, &format!("{run}/run.json"), &data.to_string());
+    let sc = save_run::open_spec(&ctx, &run, &data, &profile).ok_or("需求來源沒有被當成 openspec")??;
+    if sc.change.as_deref() != Some(CHANGE) {
+        return Err(format!("找不到進行中的變更 {CHANGE}"));
+    }
+    let sc = Some(&sc);
+    let acc = format!("{SCN} 下載 CSV");
+    save(&run, "plan", &json!({}), sc)?;
+    save(&run, "design", &design_of(CHANGE, &acc, &[REQ], &["src/billing/export.ts", "src/billing/old.ts"]), sc)?;
+    // 重存 design：先前宣告的 old.ts 作廢
+    save(&run, "design", &design_of(CHANGE, &acc, &[REQ], &["src/billing/export.ts", "src/billing/gone.ts"]), sc)?;
+    save(&run, "build", &json!({"t1": env(json!({"task_id": "t1", "branch": "b", "commits": [], "files_changed": ["src/billing/format.ts"], "tests": []}))}), sc)?;
+    save(&run, "test", &test_of(SCN, "npx vitest src/billing/export.test.ts", SHA), sc)?;
+    save(&run, "deliver", &json!({"deliverables": {"docs": [], "updated": [{"id": "guide", "file": "docs/guide.md", "sections": ["匯出"]}], "summary": null}}), sc)?;
+    save(&run, "merge", &json!({"merged": true, "head_sha": MERGE_SHA}), sc)?;
+    put(root, "_tpm/runs/decisions.jsonl", &format!("{DECISION}\n"));
+    let links = save_run::decision_links(&ctx, &run, "decide", 1, sc);
+    save_run::write_links(&ctx, &run, "decide", &links, false).map_err(fail)?;
+
+    let old = format!("_tpm/runs/{OLD_RUN}");
+    put(root, &format!("{old}/run.json"), &json!({"epic": "legacy"}).to_string());
+    save(&old, "plan", &json!({}), None)?;
+    save(&old, "design", &design_of("legacy", "AC-1 匯出要有表頭", &["docs/guide.md#其他"], &["src/lib/money.ts"]), None)?;
+    save(&old, "test", &test_of("AC-1", "make check", ""), None)?;
+    Ok(())
+}
 
 fn project(root: &Path) {
     put(root, ".claude/teams/guard.config.json", "{\"runs_dir\": \"_tpm/runs\"}\n");
@@ -55,21 +119,21 @@ fn project(root: &Path) {
     );
     put(root, "docs/guide.md", "# 使用手冊\n\n## 匯出\n\n匯出的程式在 `src/billing/export.ts`，需求是 `billing/export-invoice`。\n另見 [格式](../src/billing/format.ts)。\n\n## 其他\n\n沒有內容。\n");
     put(root, "_tpm/kb/vault/notes/idea.md", "# 想法\n\n之後要看 [[billing/export-invoice]] 能不能支援別的格式，還有 [[billing/nothing-here]]。\n");
-    let l = |kind: &str, from: &str, to: &str, stage: &str| format!("{{\"kind\":\"{kind}\",\"from\":\"{from}\",\"to\":\"{to}\",\"run\":\"{RUN}\",\"stage\":\"{stage}\",\"note\":\"多的欄位會略過\"}}\n");
-    let ledger = [
-        l("req-run", REQ, RUN, "plan"),
-        l("ac-file", SCN, "src/billing/export.ts", "design"),
-        l("ac-test", SCN, "src/billing/export.test.ts::testCsv", "test"),
-        l("ac-file", REQ, "src/billing/gone.ts", "design"),
-        l("change-doc", "src/billing/export.ts", "docs/guide.md#匯出", "deliver"),
-        l("decision-req", "D1", REQ, "plan"),
-        "這一行不是 JSON\n".to_string(),
-        "{\"kind\":\"ac-file\"}\n".to_string(),
-    ]
-    .concat();
-    put(root, "_tpm/runs/links.jsonl", &ledger);
-    put(root, "_tpm/runs/decisions.jsonl", &format!("{{\"id\":\"D1\",\"question\":\"匯出要不要含稅\",\"answer\":\"要\",\"scope\":\"project\",\"by\":\"pm\",\"at\":\"2026-01-05T00:00:00Z\",\"run\":\"{RUN}\"}}\n"));
-    let _ = std::fs::create_dir_all(root.join("_tpm/runs").join(RUN));
+    put(
+        root,
+        &format!("openspec/changes/{CHANGE}/specs/billing/spec.md"),
+        "## MODIFIED Requirements\n\n### Requirement: Export invoice\nThe system SHALL export invoices as CSV.\n\n#### Scenario: CSV download\n- **WHEN** the user clicks export\n- **THEN** a CSV file with a header row is downloaded\n",
+    );
+    put(root, &format!("openspec/changes/{CHANGE}/proposal.md"), "# 匯出 CSV\n\n## Why\n示範客戶 ACME 要能下載 CSV。\n");
+    put(root, ".claude/teams/deliverables.json", "{\"dir\": \"docs\", \"documents\": [{\"id\": \"guide\", \"title\": \"使用手冊\", \"source\": \"assisted\", \"sections\": [\"匯出\"]}]}\n");
+}
+
+/// 帳本後面接兩行讀不懂的（一行不是 JSON，一行是定案前的舊格式）。
+fn append_bad_lines(root: &Path) {
+    let p = root.join("_tpm/runs/links.jsonl");
+    let mut text = std::fs::read_to_string(&p).unwrap_or_default();
+    text.push_str("這一行不是 JSON\n{\"kind\":\"ac-file\",\"from\":\"a\",\"to\":\"src/x.ts\"}\n");
+    let _ = std::fs::write(p, text);
 }
 
 fn has(ans: &Answer, group: &str, needle: &str) -> bool {
@@ -109,6 +173,11 @@ fn run_all(root: &Path, t: &mut Tally) -> Result<(), String> {
     t.check("沒有圖時查詢回非零並說明怎麼建", code == 1 && err.contains("awf kg build"), &err);
 
     println!("建圖");
+    write_ledger(root)?;
+    let ledger_text = std::fs::read_to_string(root.join("_tpm/runs/links.jsonl")).unwrap_or_default();
+    let written: std::collections::BTreeSet<String> = save_run::active_links(&ledger_text).iter().filter_map(|l| l["kind"].as_str().map(str::to_string)).collect();
+    t.check("帳本由 save_run 的寫入端寫出：七種連結都有、有一筆 supersede", written.len() == save_run::LINK_KINDS.len() && save_run::LINK_KINDS.iter().all(|k| written.contains(*k)) && ledger_text.contains("\"supersede\""), &format!("{written:?}"));
+    append_bad_lines(root);
     let r = build(&opts(root))?;
     let lay = layout(Some(&rs), None, None, None)?;
     let db = lay.db.clone();
@@ -134,26 +203,44 @@ fn run_all(root: &Path, t: &mut Tally) -> Result<(), String> {
     println!("查詢");
     let a = query::locate(&g, "export invoice csv", 12);
     t.check("locate：找到程式與規格", has(&a, "位置", "src/billing/export.ts") && has(&a, "位置", "openspec/specs/billing/spec.md"), &format!("{:?}", a.items));
+    let a = query::locate(&g, "money cents", 30);
+    // 第二層擴展出來的：理由寫的中間節點要真的和這個節點有邊
+    let second: Vec<(&str, &str)> = a.items.iter().filter_map(|i| Some((i.id.as_str(), i.reason.split_once("連到 ")?.1.split_once("（它連到命中的 ")?.0))).collect();
+    let linked = |id: &str, mid: &str| g.out_edges(id).iter().any(|e| e.dst.split_once(':').is_some_and(|x| x.1 == mid)) || g.in_edges(id).iter().any(|e| e.src.split_once(':').is_some_and(|x| x.1 == mid));
+    t.check("locate：第二層的理由寫實際經過的中間節點", !second.is_empty() && second.iter().all(|(id, mid)| linked(id, mid)), &format!("{:?}", a.items));
     let (code, out, _) = cli(&["locate", "export invoice csv"]);
     t.check("locate：輸出包在資料標籤裡、只有路徑與行號", code == 0 && out.starts_with(query::OPEN_TAG) && out.trim_end().ends_with(query::CLOSE_TAG) && out.contains("src/billing/export.ts:6-9"), &out);
     t.check("輸出不貼原文", !out.contains("BODY_TEXT_NOT_IN_OUTPUT") && !out.contains("SHALL") && !out.contains("含稅"), &out);
+    let dec = format!("dec:{}", save_run::decision_id(DECISION));
+    let kinds_in = |a: &Answer| -> Vec<&'static str> { save_run::LINK_KINDS.iter().copied().filter(|k| a.items.iter().any(|i| i.reason.starts_with(&format!("{k}・strong・ledger:")))).collect() };
     let a = query::trace(&g, REQ)?;
-    t.check("trace：規格、run、檔案、測試、決策、交付文件小節", has(&a, "規格", "openspec/specs/billing/spec.md") && has(&a, "run", &format!("_tpm/runs/{RUN}")) && has(&a, "檔案與符號", "src/billing/export.ts") && has(&a, "測試", "src/billing/export.test.ts") && has(&a, "決策", "_tpm/runs/decisions.jsonl") && has(&a, "交付文件小節", "docs/guide.md"), &format!("{:?}", a.items));
+    t.check("trace：規格、run、檔案、測試、commit、決策、交付文件小節", has(&a, "規格", "openspec/specs/billing/spec.md") && has(&a, "run", &format!("_tpm/runs/{RUN}")) && has(&a, "檔案與符號", "src/billing/export.ts") && has(&a, "測試", "src/billing/export.test.ts") && has(&a, "commit", &format!("commit:{SHA}")) && has(&a, "commit", &format!("commit:{MERGE_SHA}")) && has(&a, "決策", &dec) && has(&a, "交付文件小節", "docs/guide.md"), &format!("{:?}", a.items));
+    t.check("trace：帳本的七種連結每一種都走得到", kinds_in(&a).len() == save_run::LINK_KINDS.len(), &format!("{:?}", kinds_in(&a)));
+    t.check("trace：build 段實際改到的檔也連上", has(&a, "檔案與符號", "src/billing/format.ts"), &format!("{:?}", a.items));
+    t.check("trace：supersede 之前的連結不算", !a.items.iter().any(|i| i.id == "file:src/billing/old.ts") && has(&a, "檔案與符號", "file:src/billing/gone.ts"), &format!("{:?}", a.items));
+    let a = query::trace(&g, SCN)?;
+    t.check("trace：從情境也走得到決策（記在所屬的需求與變更上）與交付文件小節", has(&a, "決策", &dec) && has(&a, "交付文件小節", "docs/guide.md") && has(&a, "規格小節", "openspec/specs/billing/spec.md"), &format!("{:?}", a.items));
+    let a = query::trace(&g, CHANGE)?;
+    t.check("trace：變更名稱走得到 run 與它動到的需求", has(&a, "run", &format!("_tpm/runs/{RUN}")) && a.items.iter().any(|i| i.group == "規格" && i.id == format!("req:{REQ}")), &format!("{:?}", a.items));
+    let a = query::trace(&g, "legacy")?;
+    t.check("trace：需求來源不是規格層時，epic 走得到 run、AC、spec 小節、檔案、驗證指令", has(&a, "run", &format!("_tpm/runs/{OLD_RUN}")) && has(&a, "規格", "ac:AC-1") && has(&a, "規格小節", "docs/guide.md") && has(&a, "檔案與符號", "src/lib/money.ts") && has(&a, "測試", "cmd:make check"), &format!("{:?}", a.items));
     t.check("trace：說明缺 commit", a.notes.iter().any(|n| n.contains("commit")), &format!("{:?}", a.notes));
     t.check("trace：不認得的 id 回錯誤", query::trace(&g, "billing/nope").is_err(), "");
     let a = query::impact(&g, &["src/billing/format.ts".to_string()]);
     t.check("impact：引用它的程式", has(&a, "引用它的程式", "src/billing/export.ts"), &format!("{:?}", a.items));
     t.check("impact：間接匯入它的測試", has(&a, "受影響的測試", "src/billing/export.test.ts"), &format!("{:?}", a.items));
     let a = query::impact(&g, &["src/billing/export.ts".to_string()]);
-    t.check("impact：走回需求、決策、文件小節、交付文件小節", has(&a, "需求", "openspec/specs/billing/spec.md") && has(&a, "決策", "_tpm/runs/decisions.jsonl") && has(&a, "文件小節", "docs/guide.md") && has(&a, "交付文件小節", "docs/guide.md"), &format!("{:?}", a.items));
+    t.check("impact：走回需求、決策、文件小節、交付文件小節", has(&a, "需求", "openspec/specs/billing/spec.md") && has(&a, "決策", &dec) && has(&a, "文件小節", "docs/guide.md") && has(&a, "交付文件小節", "docs/guide.md"), &format!("{:?}", a.items));
     let a = query::impact(&g, &["formatRow".to_string()]);
     t.check("impact：可以給符號名", has(&a, "引用它的程式", "src/billing/export.ts"), &format!("{:?}", a.items));
     let a = query::check(&g, None);
     t.check("check：連到的檔案不見了", a.items.iter().any(|i| i.group == "斷掉的連結" && i.id == "file:src/billing/gone.ts"), &format!("{:?}", a.items));
     t.check("check：標記與筆記指到不存在的 id", a.items.iter().any(|i| i.reason.contains("billing/no-such-requirement")) && a.items.iter().any(|i| i.reason.contains("billing/nothing-here")), &format!("{:?}", a.items));
-    t.check("check：缺的環節", a.items.iter().any(|i| i.group == "缺的連結" && i.id == format!("scn:{SCN}") && i.reason.contains("commit") && !i.reason.contains("測試")), &format!("{:?}", a.items));
+    t.check("check：缺的環節", a.items.iter().any(|i| i.group == "缺的連結" && i.id == "ac:AC-1" && i.reason.contains("commit") && !i.reason.contains("測試")) && !a.items.iter().any(|i| i.group == "缺的連結" && i.id == format!("scn:{SCN}")), &format!("{:?}", a.items));
     let a = query::check(&g, Some("別的-run"));
     t.check("check --run：只看那個 run", a.items.is_empty(), &format!("{:?}", a.items));
+    let a = query::check(&g, Some(OLD_RUN));
+    t.check("check --run：另一個 run 斷掉的檔不算進來", a.items.iter().any(|i| i.id == "ac:AC-1") && !a.items.iter().any(|i| i.id == "file:src/billing/gone.ts"), &format!("{:?}", a.items));
     let a = query::neighbors(&g, "src/billing/format.ts#formatRow", 2)?;
     t.check("neighbors：兩層內的鄰居", has(&a, "距離 1", "src/billing/export.ts") && a.items.iter().any(|i| i.group == "距離 2" && i.id == format!("req:{REQ}")), &format!("{:?}", a.items));
     let (code, out, _) = cli(&["trace", SCN, "--json"]);
@@ -184,6 +271,18 @@ fn run_all(root: &Path, t: &mut Tally) -> Result<(), String> {
     put(root, "src/jobs/util.py", "def helper():\n    return 1\n");
     build(&opts(root))?;
     t.check("目標回來後未解析的 import 自動接上", edge(&db, "file:src/jobs/nightly.py", "file:src/jobs/util.py", "imports"), "");
+
+    println!("帳本的格式版本");
+    let ledger_path = root.join("_tpm/runs/links.jsonl");
+    let ledger_before = std::fs::read_to_string(&ledger_path).unwrap_or_default();
+    let newer = json!({"schema_version": save_run::LINK_SCHEMA_VERSION + 1, "op": "add", "run": RUN, "stage": "design"});
+    let _ = std::fs::write(&ledger_path, format!("{ledger_before}{newer}\n"));
+    let (code, out, _) = cli(&["build"]);
+    let ledger_edges = |db: &str| store::open_ro(db).ok().and_then(|c| c.query_row("SELECT COUNT(*) FROM edges WHERE owner='@ledger'", [], |r| r.get::<_, i64>(0)).ok()).unwrap_or(-1);
+    t.check("帳本的格式比認得的新：整個帳本略過並在 build 訊息說明", code == 0 && out.contains("整個帳本略過") && ledger_edges(&db) == 0, &out);
+    let _ = std::fs::write(&ledger_path, &ledger_before);
+    build(&opts(root))?;
+    t.check("帳本換回認得的版本後連結回來", ledger_edges(&db) > 0, "");
 
     println!("逾時與中斷");
     put(root, "src/billing/format.ts", "export function formatRow(n: number): string {\n  return String(n);\n}\n");
@@ -221,9 +320,11 @@ fn run_all(root: &Path, t: &mut Tally) -> Result<(), String> {
     let r1 = export::export(&g, &lay, None)?;
     let read = |rel: &str| std::fs::read_to_string(vault.join(rel)).unwrap_or_default();
     let page = read("需求/billing/export-invoice.md");
-    t.check("每個能力、需求、決策、模組一頁，加 hot 與索引", ["能力/billing.md", "需求/billing/export-invoice.md", "決策/D1.md", "模組/src/billing.md", "hot.md", "index.md", "需求/_index.md"].iter().all(|p| vault.join(p).is_file()), &format!("{} 頁", r1.pages));
-    t.check("頁面有 frontmatter、[[連結]] 與 路徑:行號", page.starts_with("---\n") && page.contains("[[能力/billing]]") && page.contains("[[決策/D1]]") && page.contains("`src/billing/export.ts:1-9`") && page.contains("[[notes/idea]]"), &page);
-    t.check("頁面不放原文", !page.contains("SHALL") && !read("決策/D1.md").contains("含稅"), &page);
+    let dec_name = save_run::decision_id(DECISION);
+    let dec_page = format!("決策/{dec_name}.md");
+    t.check("每個能力、需求、決策、模組一頁，加 hot 與索引", ["能力/billing.md", "需求/billing/export-invoice.md", dec_page.as_str(), "模組/src/billing.md", "hot.md", "index.md", "需求/_index.md"].iter().all(|p| vault.join(p).is_file()), &format!("{} 頁", r1.pages));
+    t.check("頁面有 frontmatter、[[連結]] 與 路徑:行號", page.starts_with("---\n") && page.contains("[[能力/billing]]") && page.contains(&format!("[[決策/{dec_name}]]")) && page.contains("`src/billing/export.ts:1-9`") && page.contains("[[notes/idea]]"), &page);
+    t.check("頁面不放原文", !page.contains("SHALL") && !read(&dec_page).contains("含稅"), &page);
     t.check("不碰 notes/ 與不是工具產生的檔", std::fs::read(vault.join("notes/idea.md")).is_ok_and(|b| b == note_before) && read("能力/手寫的.md") == "人放在這裡的檔\n" && r1.kept == vec!["能力/手寫的.md".to_string()], &format!("{:?}", r1.kept));
     let snap = |dir: &Path| -> Vec<(String, String)> {
         let mut out = Vec::new();

@@ -235,10 +235,15 @@ pub fn stage_links(ctx: &Ctx, run: &str, stage: &str, result: &Value, sc: Option
     out
 }
 
+/// 決策節點的 id：`decisions.jsonl` 那一行內容（不含換行）的 sha1 前 12 碼。知識圖讀決策記憶時用同一個算法，兩邊才對得起來。
+pub fn decision_id(line: &str) -> String {
+    use sha1::{Digest, Sha1};
+    Sha1::digest(line.as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect()
+}
+
 /// 決策 → 需求：`decisions.jsonl` 最後 `count` 筆（剛記下的）各連到這個 run 的需求。
 /// 決策節點的 id 是那一行內容的 sha1 前 12 碼（`decisions.jsonl` 沒有自己的 id）。`stage` 是 `approve:<段>` 或 `decide`。
 pub fn decision_links(ctx: &Ctx, run: &str, stage: &str, count: usize, sc: Option<&SpecCtx>) -> Vec<Value> {
-    use sha1::{Digest, Sha1};
     let name = run_name(ctx, run);
     let reqs = run_requirements(ctx, run, sc);
     let Ok(resolved) = ctx.resolve(run) else { return Vec::new() };
@@ -246,7 +251,7 @@ pub fn decision_links(ctx: &Ctx, run: &str, stage: &str, count: usize, sc: Optio
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let mut out = Vec::new();
     for l in lines.iter().skip(lines.len().saturating_sub(count)) {
-        let id: String = Sha1::digest(l.as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect();
+        let id = decision_id(l);
         for req in &reqs {
             out.push(link("decision_req", node("decision", &id), req.clone(), &name, stage, crate::pack::DECISIONS));
         }

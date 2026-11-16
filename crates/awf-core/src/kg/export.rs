@@ -126,11 +126,11 @@ fn req_links(g: &Graph, ids: &[String]) -> BTreeMap<&'static str, BTreeSet<Strin
         for ed in g.out_edges(id) {
             let group = match ed.kind.as_str() {
                 "contains" | "changes" => continue,
-                "req-run" => "run",
-                "ac-file" => "檔案",
-                "ac-test" => "測試",
-                "ac-commit" => "commit",
-                "ac-spec" => "規格小節",
+                "req_run" => "run",
+                "ac_file" => "檔案",
+                "ac_test" => "測試",
+                "ac_commit" => "commit",
+                "ac_spec" => "規格小節",
                 _ => "其他",
             };
             out.entry(group).or_default().insert(link_line(g, &ed.dst, &ed));
@@ -139,7 +139,7 @@ fn req_links(g: &Graph, ids: &[String]) -> BTreeMap<&'static str, BTreeSet<Strin
             let group = match ed.kind.as_str() {
                 "contains" => continue,
                 "marks" => "標記",
-                "decision-req" => "決策",
+                "decision_req" => "決策",
                 "changes" => "進行中的變更",
                 "mentions" | "links" if ed.provenance.starts_with("note:") => "筆記",
                 "mentions" | "links" => "文件小節",
@@ -255,7 +255,7 @@ fn build_pages(g: &Graph) -> BTreeMap<String, String> {
                             used_by.insert(format!("- [[{}]]", module_page(&d)));
                         }
                     }
-                    "ac-file" | "ac-test" => {
+                    "ac_file" | "ac_test" => {
                         if let Some(pg) = page_of(&ed.src) {
                             reqs.insert(format!("- [[{pg}]]"));
                         }

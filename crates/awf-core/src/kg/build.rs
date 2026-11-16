@@ -478,7 +478,7 @@ fn run(con: &Connection, lay: &Layout, full: bool, clock: &Clock, rep: &mut Buil
     clock.check()?;
     sources::refs(con, &world)?;
     sources::git_edges(con, &world)?;
-    rep.bad_links = sources::ledger(con, lay, &world)?;
+    rep.bad_links = sources::ledger(con, lay, &world, &mut rep.notes)?;
     clock.check()?;
     let hash = store::graph_hash(con)?;
     for (k, v) in [

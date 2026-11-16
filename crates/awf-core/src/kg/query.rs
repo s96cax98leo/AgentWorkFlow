@@ -165,6 +165,10 @@ fn label(kind: &str) -> &'static str {
         "run" => "run",
         "dec" => "決策",
         "chg" => "變更",
+        "epic" => "需求",
+        "ref" => "規格小節",
+        "cmd" => "驗證指令",
+        "dlv" => "交付文件小節",
         _ => "節點",
     }
 }
@@ -254,7 +258,9 @@ pub fn locate(g: &Graph, text: &str, top: usize) -> Answer {
                     *total_score.entry(other.clone()).or_insert(0.0) += gain;
                     let better = via.get(&other).is_none_or(|v| gain > v.0);
                     if better {
-                        via.insert(other.clone(), (gain, format!("經 {kind} 連到 {}", short(id))));
+                        // 第二層：寫實際經過的中間節點，再說它連到哪個起點
+                        let why = if cur == id { format!("經 {kind} 連到 {}", short(id)) } else { format!("經 {kind} 連到 {}（它連到命中的 {}）", short(cur), short(id)) };
+                        via.insert(other.clone(), (gain, why));
                     }
                     next.push((other, gain));
                 }
@@ -290,7 +296,7 @@ pub fn locate(g: &Graph, text: &str, top: usize) -> Answer {
 // ---------------------------------------------------------------- trace
 /// 一個需求、情境或 AC 的整條鏈：規格 → run → 檔案與符號 → 測試 → commit → 交付文件小節。
 pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
-    let root = resolve_id(&g.con, raw).and_then(|id| g.node(&id)).filter(|n| matches!(n.kind.as_str(), "cap" | "req" | "scn" | "ac" | "chg")).ok_or_else(|| format!("找不到這個需求、情境或 AC 的 id：{}", pyish::take(raw, 80)))?;
+    let root = resolve_id(&g.con, raw).and_then(|id| g.node(&id)).filter(|n| matches!(n.kind.as_str(), "cap" | "req" | "scn" | "ac" | "chg" | "epic")).ok_or_else(|| format!("找不到這個需求、情境或 AC 的 id：{}", pyish::take(raw, 80)))?;
     let mut ans = Answer { title: format!("trace {}", root.id), ..Default::default() };
     // 自己與底下的需求、情境
     let mut ids = vec![root.id.clone()];
@@ -303,8 +309,32 @@ pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
         }
         k += 1;
     }
+    // 需求是 epic 或變更的名字時，驗收條件掛在它的 run 底下：把那些 run 寫的 AC 一起算
+    if matches!(root.kind.as_str(), "epic" | "chg") {
+        let runs: Vec<String> = ids.iter().flat_map(|id| g.out_edges(id)).filter(|e| e.kind == "req_run").map(|e| short(&e.dst).to_string()).collect();
+        for r in runs {
+            for src in g.strings("SELECT DISTINCT src FROM edges WHERE owner='@ledger' AND substr(provenance, 1, length(?1) + 8) = 'ledger:' || ?1 || '/' ORDER BY src", &r) {
+                if (src.starts_with("ac:") || src.starts_with("scn:") || src.starts_with("req:")) && !ids.contains(&src) {
+                    ids.push(src);
+                }
+            }
+        }
+    }
+    // 往上：所屬的需求、能力，與碰到它的變更（決策記在需求或變更上）
+    let mut ups: Vec<String> = Vec::new();
+    let mut k = 0;
+    let mut frontier = ids.clone();
+    while k < frontier.len() && frontier.len() < 400 {
+        for ed in g.in_edges(&frontier[k]) {
+            if (ed.kind == "contains" && ed.provenance == "spec" || ed.kind == "changes") && !frontier.contains(&ed.src) {
+                ups.push(ed.src.clone());
+                frontier.push(ed.src);
+            }
+        }
+        k += 1;
+    }
     let mut seen: HashSet<(String, String)> = HashSet::new();
-    let mut files: BTreeSet<String> = BTreeSet::new();
+    let mut runs: BTreeSet<String> = BTreeSet::new();
     let mut push = |ans: &mut Answer, group: &str, id: &str, reason: String| {
         if !seen.insert((group.to_string(), id.to_string())) {
             return;
@@ -325,14 +355,14 @@ pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
             let why = format!("{}{of}", edge_note(&ed));
             match ed.kind.as_str() {
                 "contains" | "changes" => {}
-                "req-run" => push(&mut ans, "run", &ed.dst, why),
-                "ac-spec" => push(&mut ans, "規格小節", &ed.dst, why),
-                "ac-file" => {
-                    files.insert(ed.dst.clone());
-                    push(&mut ans, "檔案與符號", &ed.dst, why)
+                "req_run" => {
+                    runs.insert(ed.dst.clone());
+                    push(&mut ans, "run", &ed.dst, why)
                 }
-                "ac-test" => push(&mut ans, "測試", &ed.dst, why),
-                "ac-commit" => push(&mut ans, "commit", &ed.dst, why),
+                "ac_spec" => push(&mut ans, "規格小節", &ed.dst, why),
+                "ac_file" => push(&mut ans, "檔案與符號", &ed.dst, why),
+                "ac_test" => push(&mut ans, "測試", &ed.dst, why),
+                "ac_commit" => push(&mut ans, "commit", &ed.dst, why),
                 _ => push(&mut ans, "其他連結", &ed.dst, why),
             }
         }
@@ -342,31 +372,34 @@ pub fn trace(g: &Graph, raw: &str) -> Result<Answer, String> {
                 "contains" => {}
                 "marks" => {
                     let path = g.node(&ed.src).map(|n| n.path).unwrap_or_default();
-                    if g.is_test(&path) {
-                        push(&mut ans, "測試", &ed.src, why)
-                    } else {
-                        files.insert(format!("file:{path}"));
-                        push(&mut ans, "檔案與符號", &ed.src, why)
-                    }
+                    push(&mut ans, if g.is_test(&path) { "測試" } else { "檔案與符號" }, &ed.src, why)
                 }
-                "decision-req" => push(&mut ans, "決策", &ed.src, why),
+                "decision_req" => push(&mut ans, "決策", &ed.src, why),
                 "changes" => push(&mut ans, "進行中的變更", &ed.src, why),
                 "mentions" | "links" => push(&mut ans, "文件小節", &ed.src, why),
                 _ => push(&mut ans, "其他連結", &ed.src, why),
             }
         }
     }
-    for f in &files {
-        for ed in g.out_edges(f) {
-            if ed.kind == "change-doc" {
-                push(&mut ans, "交付文件小節", &ed.dst, format!("{}；{}", edge_note(&ed), short(f)));
+    for up in &ups {
+        for ed in g.in_edges(up) {
+            if ed.kind == "decision_req" {
+                push(&mut ans, "決策", &ed.src, format!("{}；{}", edge_note(&ed), short(up)));
+            }
+        }
+    }
+    // 做這個需求的 run 改了哪些交付文件小節
+    for r in &runs {
+        for ed in g.out_edges(r) {
+            if ed.kind == "change_deliverable" {
+                push(&mut ans, "交付文件小節", &ed.dst, format!("{}；{}", edge_note(&ed), short(r)));
             }
         }
     }
     const ORDER: [&str; 10] = ["規格", "進行中的變更", "run", "規格小節", "檔案與符號", "測試", "commit", "交付文件小節", "決策", "文件小節"];
     ans.items.sort_by_key(|i| ORDER.iter().position(|o| *o == i.group).unwrap_or(ORDER.len()));
     for need in ["檔案與符號", "測試", "commit"] {
-        if matches!(root.kind.as_str(), "req" | "scn" | "ac") && !ans.items.iter().any(|i| i.group == need) {
+        if matches!(root.kind.as_str(), "req" | "scn" | "ac" | "epic" | "chg") && !ans.items.iter().any(|i| i.group == need) {
             ans.notes.push(format!("沒有連到{need}"));
         }
     }
@@ -433,7 +466,7 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
             for ed in g.in_edges(m) {
                 let why = format!("{} → {}", edge_note(&ed), short(m));
                 match ed.kind.as_str() {
-                    "ac-file" | "ac-test" => {
+                    "ac_file" | "ac_test" => {
                         reqs.insert(ed.src.clone());
                         push(&mut ans, "需求", &ed.src, why)
                     }
@@ -457,7 +490,6 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
                         reqs.insert(ed.dst.clone());
                         push(&mut ans, "需求", &ed.dst, why)
                     }
-                    "change-doc" => push(&mut ans, "交付文件小節", &ed.dst, why),
                     _ => {}
                 }
             }
@@ -466,15 +498,24 @@ pub fn impact(g: &Graph, targets: &[String]) -> Answer {
     for r in &reqs {
         for ed in g.in_edges(r) {
             match ed.kind.as_str() {
-                "decision-req" => push(&mut ans, "決策", &ed.src, format!("{} → {}", edge_note(&ed), short(r))),
+                "decision_req" => push(&mut ans, "決策", &ed.src, format!("{} → {}", edge_note(&ed), short(r))),
                 "mentions" => push(&mut ans, "文件小節", &ed.src, format!("{} → {}", edge_note(&ed), short(r))),
                 "contains" if ed.provenance == "spec" && ed.src.starts_with("req:") => push(&mut ans, "需求", &ed.src, format!("情境 {} 所屬的需求", short(r))),
                 _ => {}
             }
         }
         for ed in g.out_edges(r) {
-            if ed.kind == "ac-test" {
-                push(&mut ans, "受影響的測試", &ed.dst, format!("{} ← {}", edge_note(&ed), short(r)));
+            match ed.kind.as_str() {
+                "ac_test" => push(&mut ans, "受影響的測試", &ed.dst, format!("{} ← {}", edge_note(&ed), short(r))),
+                // 做過這個需求的 run 改過的交付文件小節
+                "req_run" => {
+                    for d in g.out_edges(&ed.dst) {
+                        if d.kind == "change_deliverable" {
+                            push(&mut ans, "交付文件小節", &d.dst, format!("{} ← {}（{}）", edge_note(&d), short(&ed.dst), short(r)));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -571,11 +612,11 @@ pub fn check(g: &Graph, run: Option<&str>) -> Answer {
     for (id, kinds) in &acs {
         // 標記也算連到檔案或測試
         let marks: Vec<String> = g.in_edges(id).into_iter().filter(|e| e.kind == "marks").filter_map(|e| g.node(&e.src)).map(|n| n.path).collect();
-        let has_file = kinds.contains("ac-file") || marks.iter().any(|p| !g.is_test(p));
-        let has_test = kinds.contains("ac-test") || marks.iter().any(|p| g.is_test(p));
-        let has_spec = !id.starts_with("ac:") || kinds.contains("ac-spec");
+        let has_file = kinds.contains("ac_file") || marks.iter().any(|p| !g.is_test(p));
+        let has_test = kinds.contains("ac_test") || marks.iter().any(|p| g.is_test(p));
+        let has_spec = !id.starts_with("ac:") || kinds.contains("ac_spec");
         let mut miss = Vec::new();
-        for (ok, what) in [(has_spec, "規格小節"), (has_file, "檔案"), (has_test, "測試"), (kinds.contains("ac-commit"), "commit")] {
+        for (ok, what) in [(has_spec, "規格小節"), (has_file, "檔案"), (has_test, "測試"), (kinds.contains("ac_commit"), "commit")] {
             if !ok {
                 miss.push(what);
             }

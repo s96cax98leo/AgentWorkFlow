@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 /// 改了資料表就遞增：舊圖整份重建。
 pub const SCHEMA_VERSION: &str = "1";
 /// 改了解析、分詞或推導規則就遞增：舊圖整份重建。
-pub const CONTENT_VERSION: &str = "1";
+pub const CONTENT_VERSION: &str = "2";
 pub const DB_NAME: &str = "graph.db";
 pub const STATE_READY: &str = "ready";
 pub const STATE_BUILDING: &str = "building";
