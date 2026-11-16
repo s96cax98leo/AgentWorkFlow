@@ -753,3 +753,53 @@ const HIDDEN_SHELL: &[Case] = &[
 fn shell_hidden_behind_wrappers_is_expanded() {
     check("hidden", HIDDEN_SHELL);
 }
+
+// ───────── 11. 會執行參數的指令 ─────────
+
+const EXEC_ARGS: &[Case] = &[
+    ("git bisect run awf save-run approve r", DEV, BLOCK, Sh::Bash),
+    ("awk 'BEGIN{system(\"awf save-run approve r\")}'", DEV, BLOCK, Sh::Bash),
+    ("trap 'awf save-run approve r' EXIT", DEV, BLOCK, Sh::Bash),
+    ("osascript -e 'do shell script \"awf save-run approve r\"'", DEV, BLOCK, Sh::Bash),
+    ("git bisect run sh -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("git rebase -x 'awf save-run approve r' main", DEV, BLOCK, Sh::Bash),
+    ("git rebase --exec='awf publish --branch feature/x' main", DEV, BLOCK, Sh::Bash),
+    ("git submodule foreach 'awf build'", DEV, BLOCK, Sh::Bash),
+    ("git -c alias.x='!awf save-run approve r' x", DEV, BLOCK, Sh::Bash),
+    ("gawk 'BEGIN { \"awf save-run approve r\" | getline }'", DEV, BLOCK, Sh::Bash),
+    ("timeout 5 awk 'BEGIN{system(\"awf next r\")}'", DEV, BLOCK, Sh::Bash),
+    ("trap \"awf deliverables sync\" ERR", DEV, BLOCK, Sh::Bash),
+    ("watch 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("watch -n 5 'cd x && awf next r'", DEV, BLOCK, Sh::Bash),
+    ("su -c 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("env -S \"awf save-run approve r\"", DEV, BLOCK, Sh::Bash),
+    ("ssh localhost 'awf save-run approve r'", DEV, BLOCK, Sh::Bash),
+    ("parallel 'awf save-run approve {}' ::: r", DEV, BLOCK, Sh::Bash),
+    ("Invoke-Command -ScriptBlock { awf save-run approve r }", DEV, BLOCK, Sh::Ps),
+    ("Register-EngineEvent PowerShell.Exiting -Action { awf save-run approve r }", DEV, BLOCK, Sh::Ps),
+    // 同樣的寫法跑唯讀子指令或別的指令：放行
+    ("git bisect run awf kb query x", DEV, ALLOW, Sh::Bash),
+    ("git bisect run cargo test", DEV, ALLOW, Sh::Bash),
+    ("awk 'BEGIN{system(\"awf kb query x\")}'", DEV, ALLOW, Sh::Bash),
+    ("trap 'awf save-run status r' EXIT", DEV, ALLOW, Sh::Bash),
+    ("trap 'rm -f \"$TMP\"' EXIT", DEV, ALLOW, Sh::Bash),
+    ("git rebase -x 'cargo test' main", DEV, ALLOW, Sh::Bash),
+    ("watch -n 5 'awf watch --once'", DEV, ALLOW, Sh::Bash),
+    ("ssh build-host 'awf doctor'", DEV, ALLOW, Sh::Bash),
+    ("Invoke-Command -ScriptBlock { awf kb query x }", DEV, ALLOW, Sh::Ps),
+    // 只是提到（文字、樣式、訊息）：放行
+    ("awk '/awf save-run approve/ {print $2}' docs/a.md", DEV, ALLOW, Sh::Bash),
+    ("awk -F'|' '{print $1}' docs/awf-save-run.md", DEV, ALLOW, Sh::Bash),
+    ("osascript -e 'display notification \"awf save-run approve r 完成\"'", DEV, ALLOW, Sh::Bash),
+    ("git log --grep 'awf save-run approve'", DEV, ALLOW, Sh::Bash),
+    ("git commit -m \"trap 'awf save-run approve r' EXIT 要擋\"", DEV, ALLOW, Sh::Bash),
+    ("sed -n 's/awf save-run approve/x/p' docs/a.md", DEV, ALLOW, Sh::Bash),
+    // 主 session：照舊
+    ("git bisect run awf save-run approve r", MAIN, ALLOW, Sh::Bash),
+    ("trap 'awf save-run approve r plan --by human' EXIT", MAIN, ALLOW, Sh::Bash),
+];
+
+#[test]
+fn commands_that_run_their_arguments() {
+    check("execarg", EXEC_ARGS);
+}

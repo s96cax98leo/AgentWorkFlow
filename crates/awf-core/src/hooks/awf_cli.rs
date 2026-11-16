@@ -331,6 +331,17 @@ fn calls_raw(seg: &str, depth: usize, out: &mut Vec<Call>) {
             inner_cmds.push(ic);
         }
     }
+    // 會執行參數的指令（trap、watch、git bisect run、awk 的 system()、osascript…）
+    let (run_shell, run_text) = exec_args(&toks);
+    for a in run_shell {
+        let ic = (a, false);
+        if !inner_cmds.contains(&ic) {
+            inner_cmds.push(ic);
+        }
+    }
+    for t in &run_text {
+        textual_calls(t, out);
+    }
     let shellish = has(SHELL_NAMES, &name) || has(PS_NESTED_SHELLS, &name) || name == "cmd" || matches!(name.as_str(), "eval" | "invoke-expression" | "iex");
     if !shellish && INTERP.is_match(seg) {
         // python -c、node -e 這類內嵌程式裡提到 awf：看不到它怎麼呼叫
@@ -352,6 +363,137 @@ fn calls_raw(seg: &str, depth: usize, out: &mut Vec<Call>) {
         let inner = if nested_ps { ps_segments(&ic) } else { segments(&ic) };
         for s in inner {
             calls_at(&s, depth + 1, out);
+        }
+    }
+}
+
+/// 把字串參數交給 shell 執行的指令（`watch 'cmd'`、`su -c 'cmd'`、`ssh host 'cmd'`、`parallel 'cmd' ::: x`）。
+const STRING_RUNNERS: &[&str] = &[
+    "watch", "su", "ssh", "sshpass", "parallel", "entr", "flock", "script", "setsid", "unbuffer", "chronic", "doas", "runuser", "nohup",
+    "xargs", "find", "fd", "tmux", "screen", "expect", "at",
+];
+const AWK_NAMES: &[&str] = &["awk", "gawk", "mawk", "nawk"];
+/// 一段裡最多看幾個「會被執行的參數」。
+const MAX_EXEC_ARGS: usize = 16;
+
+/// 會執行參數的指令帶的內容。回（照 shell 語法執行的字串, 別的語言的程式文字）；只收提得到 awf 的。
+/// 開頭是只把參數當文字的指令時，只認開頭那個指令自己（`git bisect run …`、`awk '…'`），後面的字不算。
+fn exec_args(toks: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut shell: Vec<String> = Vec::new();
+    let mut text: Vec<String> = Vec::new();
+    let Some(first_at) = toks.iter().position(|x| !ENV_ASSIGN.is_match(x)) else { return (shell, text) };
+    let first_harmless = has(HARMLESS, &cmd_name(clean_head(&toks[first_at]).0));
+    for (k, t) in toks.iter().enumerate().skip(first_at) {
+        if shell.len() + text.len() >= MAX_EXEC_ARGS || (first_harmless && k > first_at) {
+            break;
+        }
+        let name = cmd_name(clean_head(t).0);
+        let rest = &toks[k + 1..];
+        let mut sh = |a: &str| {
+            if maybe(a) {
+                shell.push(a.to_string());
+            }
+        };
+        match name.as_str() {
+            // trap '<指令>' <訊號…>
+            "trap" => {
+                if let Some(a) = rest.iter().find(|x| !x.starts_with('-')) {
+                    sh(a);
+                }
+            }
+            // env -S '<指令>'
+            "env" => {
+                for (j, a) in rest.iter().enumerate() {
+                    if a == "-S" || a == "--split-string" {
+                        if let Some(v) = rest.get(j + 1) {
+                            sh(v);
+                        }
+                    } else if let Some(v) = a.strip_prefix("--split-string=") {
+                        sh(v);
+                    } else if let Some(v) = a.strip_prefix("-S").filter(|v| !v.is_empty()) {
+                        sh(v);
+                    }
+                }
+            }
+            // git bisect run <指令…>、git rebase -x／--exec '<指令>'、git submodule foreach '<指令>'、alias.x='!<指令>'
+            "git" => {
+                if let Some(b) = rest.iter().position(|x| x == "bisect") {
+                    if let Some(r) = rest[b..].iter().position(|x| x == "run") {
+                        let cmd = &rest[b + r + 1..];
+                        if !cmd.is_empty() {
+                            sh(&super::ps::join(cmd));
+                        }
+                    }
+                }
+                for (j, a) in rest.iter().enumerate() {
+                    if a == "-x" || a == "--exec" {
+                        if let Some(v) = rest.get(j + 1) {
+                            sh(v);
+                        }
+                    } else if let Some(v) = a.strip_prefix("--exec=") {
+                        sh(v);
+                    } else if a == "foreach" {
+                        let cmd: Vec<String> = rest[j + 1..].iter().filter(|x| !x.starts_with('-')).cloned().collect();
+                        sh(&cmd.join(" "));
+                    } else if a.starts_with("alias.") {
+                        if let Some(c) = a.split_once('=').and_then(|(_, v)| v.strip_prefix('!')) {
+                            sh(c);
+                        }
+                    }
+                }
+            }
+            // awk 的 system()、"cmd" | getline
+            n if has(AWK_NAMES, n) => {
+                for a in rest {
+                    if (a.contains("system") || a.contains("getline")) && maybe(a) {
+                        text.push(a.clone());
+                    }
+                }
+            }
+            "osascript" => {
+                for a in rest {
+                    if a.contains("do shell script") && maybe(a) {
+                        text.push(a.clone());
+                    }
+                }
+            }
+            n if has(STRING_RUNNERS, n) => {
+                for a in rest {
+                    if a.chars().any(py::is_space) {
+                        sh(a);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (shell, text)
+}
+
+/// 別的語言的程式文字裡看得到的 `awf <子指令> <參數…>`（`system("awf save-run approve r")`）：照字面當成一次呼叫。
+fn textual_calls(text: &str, out: &mut Vec<Call>) {
+    for (_, end) in INLINE_AWF.find_all(text).into_iter().take(8) {
+        let mut words: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for c in text[end..].chars() {
+            let wordy = c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '=' | ':' | '$' | '{' | '}' | '*');
+            if wordy {
+                cur.push(c);
+                continue;
+            }
+            if !cur.is_empty() {
+                words.push(std::mem::take(&mut cur));
+            }
+            if matches!(c, ';' | '|' | '&' | ')' | '\n') || words.len() >= 12 {
+                break;
+            }
+        }
+        if !cur.is_empty() {
+            words.push(cur);
+        }
+        let Some(sub) = words.first().cloned() else { continue };
+        if has(SUBCOMMANDS, &sub) {
+            out.push(Call { sub, args: words[1..].to_vec(), forwarded: false, direct: false, note: None });
         }
     }
 }
