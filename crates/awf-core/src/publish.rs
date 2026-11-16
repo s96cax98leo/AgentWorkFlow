@@ -416,6 +416,10 @@ pub fn check_policy(ctx: &Ctx, run_dir: Option<&str>, stage: &str) -> R<String> 
     if !chain.is_empty() {
         return refused(format!("recipe 閘門鏈（{name}）不完整：{}", chain.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
     }
+    let spec_ctx = {
+        let (prof, _) = save_run::load_profile(ctx, "");
+        if prof.is_object() { save_run::open_spec(ctx, run_dir, &data, &prof) } else { None }
+    };
     // 到 stage 為止凡是政策核准的段，都重跑同一套政策判定（run.json 可能被手改，不信任紀錄本身）
     for s in sdlc.iter().take(pos + 1) {
         if !contains(want, s)? || !get(stages, s)?.is_object() {
@@ -438,6 +442,13 @@ pub fn check_policy(ctx: &Ctx, run_dir: Option<&str>, stage: &str) -> R<String> 
         let errs = save_run::policy_violations(ctx, s, &result, Some(run_dir))?;
         if !errs.is_empty() {
             return refused(format!("{s} 段政策判定不通過：{}", errs.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
+        }
+        // 需求來源是 openspec 時（沒選就是 None，什麼都不做）：規格檢查也重算，含「和核准時記下的基準比」
+        if let Some(sc) = &spec_ctx {
+            let si = save_run::spec_issues(s, &result, sc, &data)?;
+            if !si.is_empty() {
+                return refused(format!("{s} 段規格檢查不通過：{}", si.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
+            }
         }
     }
     let tail_text = if stage != MIN_STAGE { format!("；要求到 {stage} 段，已 done") } else { String::new() };

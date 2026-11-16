@@ -45,7 +45,10 @@ pub use policy::{
     required_roles_missing, REVIEW_ROLES,
 };
 pub use selftest::selftest;
-pub use speccheck::{criteria_rows, intent_errors_spec, lead_token, open_spec, spec_issues, spec_setting, SpecCtx};
+pub use speccheck::{
+    baseline_diff, baseline_drift, baseline_of, baseline_stage, criteria_rows, intent_errors_spec, lead_token, open_spec, spec_baseline, spec_issues, spec_setting, spec_snapshot, SpecCtx, BASELINE_KEY,
+    BASELINE_VERSION,
+};
 pub use trace::{envelope_of, envelopes, ghostwrite, is_envelope, md_cell, md_cell_str, missing_agents, model_errors, process_trace, record_candidates, retried_ok, Row};
 
 use crate::kb::pyish;

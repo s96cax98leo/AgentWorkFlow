@@ -3,6 +3,9 @@
 //! - plan：proposal 就是 intent，用對照表把 proposal 的節對到必要節（必要內容不能少）。
 //! - design：子任務的 `spec_refs`、`acceptance` 填的 id 要在規格（現行＋這次變更的差異）裡找得到，並跑 `spec validate`。
 //! - test：逐條結果的 id 用同一組；對不到的、漏驗的都列出來。
+//! - 基準：plan、design 核准時把變更的 proposal、差異檔（雜湊）與條目清單記進 run.json（[`spec_baseline`]）；
+//!   之後 design、test、deliver 每次重算都和它比（[`baseline_drift`]）。規格檔 team agent 改得到，
+//!   不釘住的話，把沒過的情境從差異檔刪掉檢查就過了。合法的修訂路徑是重跑 design 段（重存會清掉核准，基準跟著清掉）。
 //!
 //! 需求設定的讀法和 `awf merge-gate` 一樣：`guard.config.json` 的 `requirements` 有設 path／command 時以它為準，否則用 profile 的。
 //! 規格目錄讀不到、找不到對應的變更都算問題（fail-closed），不當成「沒有規格」。
@@ -12,8 +15,8 @@ use super::py::{self, get, iter_or, pj, pname, s, s_or, truthy, R};
 use super::trace::envelopes;
 use super::Ctx;
 use crate::{recipe, spec};
-use serde_json::Value;
-use std::collections::BTreeSet;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// 讀好的規格與這個 run 對應的變更。
 pub struct SpecCtx {
@@ -138,9 +141,151 @@ pub fn criteria_rows(result: &Value) -> Vec<(String, String, String, String)> {
     out
 }
 
-/// design、test 段的規格檢查。回傳問題清單（空＝沒問題）；`approve --by policy` 重算，不過就拒絕，人工核准只警告。
-pub fn spec_issues(stage: &str, result: &Value, sc: &Result<SpecCtx, String>) -> R<Vec<String>> {
-    if !matches!(stage, "design" | "test") {
+/// 核准紀錄裡放規格基準的鍵（`stages.<plan|design>.approved.spec`）。跟著核准走：重存該段、escalate 改成 stale 時和核准一起清掉。
+pub const BASELINE_KEY: &str = "spec";
+/// 基準的格式版本。
+pub const BASELINE_VERSION: u64 = 1;
+/// 一個變更的差異檔最多幾個（超過就不記基準，當成問題）。
+const BASELINE_MAX_FILES: usize = 2000;
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 變更目錄底下 `specs/**` 的每個檔：（相對於變更目錄的路徑 → sha256）。符號連結不跟，記成 `symlink:<目標>`。
+fn delta_files(change_dir: &std::path::Path) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    let mut stack = vec![("specs".to_string(), change_dir.join("specs"))];
+    while let Some((rel, dir)) = stack.pop() {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && rel == "specs" => continue,
+            Err(e) => return Err(format!("讀不到 {rel}：{e}")),
+        };
+        for e in rd {
+            let e = e.map_err(|e| format!("讀不到 {rel}：{e}"))?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            let (child, path) = (format!("{rel}/{name}"), e.path());
+            let meta = std::fs::symlink_metadata(&path).map_err(|e| format!("讀不到 {child}：{e}"))?;
+            if meta.file_type().is_symlink() {
+                let to = std::fs::read_link(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+                out.insert(child, format!("symlink:{to}"));
+            } else if meta.is_dir() {
+                stack.push((child, path));
+            } else {
+                let raw = std::fs::read(&path).map_err(|e| format!("讀不到 {child}：{e}"))?;
+                out.insert(child, sha256_hex(&raw));
+            }
+            if out.len() > BASELINE_MAX_FILES {
+                return Err(format!("差異檔超過 {BASELINE_MAX_FILES} 個"));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 規格現在的樣子（核准時記成基準；之後重算時拿來和基準比）：
+/// `{v, change, proposal, files, items}`——proposal 是 `proposal.md` 的 sha256（沒有這個檔是空字串），
+/// files 是差異檔（`specs/**`）各自的 sha256，items 是條目的穩定 id → 標題。
+/// `conf`、`opened` 是讀好的規格，`change` 是進行中的變更名稱。
+pub fn spec_snapshot(conf: &spec::SourceCfg, opened: &spec::Opened, change: &str) -> Result<Value, String> {
+    let ch = opened.tree.change(change, spec::ChangeState::Active).ok_or_else(|| format!("規格目錄 {} 沒有進行中的變更「{change}」", conf.display))?;
+    let dir = conf.root.join(&ch.dir);
+    let proposal = match std::fs::read(dir.join("proposal.md")) {
+        Ok(raw) => sha256_hex(&raw),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("讀不到變更「{change}」的 proposal.md：{e}")),
+    };
+    let files = delta_files(&dir).map_err(|e| format!("變更「{change}」的差異檔：{e}"))?;
+    let items: BTreeMap<String, String> = spec::change_items(&opened.tree, change).unwrap_or_default().into_iter().map(|i| (i.id, i.title)).collect();
+    Ok(json!({"v": BASELINE_VERSION, "change": change, "proposal": proposal, "files": files, "items": items}))
+}
+
+/// 核准 plan、design 時要記的規格基準。需求來源不是 openspec（`sc` 是 None）回 None；算不出來回 Some(Err)。
+pub fn spec_baseline(sc: Option<&Result<SpecCtx, String>>) -> Option<Result<Value, String>> {
+    Some(match sc? {
+        Err(e) => Err(e.clone()),
+        Ok(sc) => match sc.change.as_deref() {
+            None => Err(sc.no_change()),
+            Some(c) => spec_snapshot(&sc.conf, &sc.opened, c),
+        },
+    })
+}
+
+/// run.json 裡某一段核准時記的規格基準。
+pub fn baseline_of<'a>(data: &'a Value, stage: &str) -> Option<&'a Value> {
+    data.get("stages")?.get(stage)?.get("approved")?.get(BASELINE_KEY).filter(|b| b.is_object() && b.get("items").is_some_and(Value::is_object))
+}
+
+/// `stage` 重算時要比的基準是哪一段核准時記的：design 段比 plan 的；test、deliver（與 publish、merge gate）比 design 的，
+/// 這個 run 沒有 design 段（recipe 跳過）就比 plan 的。
+pub fn baseline_stage(data: &Value, stage: &str) -> &'static str {
+    let has_design = data.get("stages").and_then(|s| s.get("design")).is_some_and(|d| d.is_object() && d.get("status").and_then(Value::as_str) != Some("skipped"));
+    if stage != "design" && has_design { "design" } else { "plan" }
+}
+
+fn str_map(v: Option<&Value>) -> BTreeMap<String, String> {
+    v.and_then(Value::as_object).map(|o| o.iter().map(|(k, x)| (k.clone(), x.as_str().unwrap_or_default().to_string())).collect()).unwrap_or_default()
+}
+
+/// 現在的規格（`now`）和核准時的基準（`base`）差在哪裡。`from` 是基準出自哪一段（訊息用）。
+/// `full` 為否時只比 proposal 與條目有沒有變少（design 段比 plan 的基準：差異檔本來就是 design 段在寫）。
+pub fn baseline_diff(base: &Value, now: &Value, from: &str, full: bool) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    let hint = if from == "design" { "要修訂規格請重跑 design 段（重存會清掉核准），不能直接改" } else { "要改需求請重跑 plan 段並重新核准" };
+    if text(base, "change") != text(now, "change") {
+        out.push(format!("這個 run 對應的變更從「{}」（{from} 核准時）換成「{}」；{hint}", py::take(&text(base, "change"), 80), py::take(&text(now, "change"), 80)));
+        return out;
+    }
+    if text(base, "proposal") != text(now, "proposal") {
+        out.push(format!("變更的 proposal.md 在 {from} 核准之後改過（內容雜湊不同）；{hint}"));
+    }
+    let (old_items, new_items) = (str_map(base.get("items")), str_map(now.get("items")));
+    let gone: Vec<String> = old_items.keys().filter(|k| !new_items.contains_key(*k)).map(|k| py::take(k, 80).to_string()).collect();
+    if !gone.is_empty() {
+        out.push(format!("變更的規格條目比 {from} 核准時少了 {} 條（從差異檔刪掉，或 ids.json 把 id 改掉了）：{}；{hint}", gone.len(), head(&gone, 8)));
+    }
+    let moved: Vec<String> = old_items.iter().filter(|(k, t)| new_items.get(*k).is_some_and(|n| n != *t)).map(|(k, _)| py::take(k, 80).to_string()).collect();
+    if !moved.is_empty() {
+        out.push(format!("有 {} 個 id 現在對到的條目和 {from} 核准時不同（標題或 ids.json 改過）：{}；{hint}", moved.len(), head(&moved, 8)));
+    }
+    if full {
+        let (old_files, new_files) = (str_map(base.get("files")), str_map(now.get("files")));
+        let mut changed: Vec<String> = Vec::new();
+        for (f, h) in &old_files {
+            match new_files.get(f) {
+                None => changed.push(format!("{}（刪除）", py::take(f, 80))),
+                Some(n) if n != h => changed.push(format!("{}（改過）", py::take(f, 80))),
+                _ => {}
+            }
+        }
+        changed.extend(new_files.keys().filter(|f| !old_files.contains_key(*f)).map(|f| format!("{}（新增）", py::take(f, 80))));
+        if !changed.is_empty() {
+            out.push(format!("變更的差異檔在 {from} 核准之後變了 {} 個：{}；{hint}", changed.len(), head(&changed, 8)));
+        }
+    }
+    out
+}
+
+/// 規格和這個 run 核准時記下的基準比（`data` 是 run.json）。回傳問題（空＝沒變）。
+/// 該有基準卻沒有（那一段還沒核准、或核准時沒記成）也算問題：沒有東西可以比，不能當成沒變。
+pub fn baseline_drift(stage: &str, data: &Value, conf: &spec::SourceCfg, opened: &spec::Opened, change: &str) -> Vec<String> {
+    let from = baseline_stage(data, stage);
+    let Some(base) = baseline_of(data, from) else {
+        return vec![format!("run.json 沒有 {from} 核准時的規格基準（{from} 還沒核准，或核准時需求來源還不是 openspec）：沒有東西可以比，重新核准 {from} 段")];
+    };
+    match spec_snapshot(conf, opened, change) {
+        Ok(now) => baseline_diff(base, &now, from, stage != "design"),
+        Err(e) => vec![format!("算不出規格現在的樣子，無法和 {from} 核准時的基準比：{e}")],
+    }
+}
+
+/// design、test、deliver 段的規格檢查。回傳問題清單（空＝沒問題）；`approve --by policy` 重算，不過就拒絕，人工核准只警告。
+/// `data` 是 run.json（取核准時記下的規格基準）。
+pub fn spec_issues(stage: &str, result: &Value, sc: &Result<SpecCtx, String>, data: &Value) -> R<Vec<String>> {
+    if !matches!(stage, "design" | "test" | "deliver") {
         return Ok(Vec::new());
     }
     let sc = match sc {
@@ -148,8 +293,9 @@ pub fn spec_issues(stage: &str, result: &Value, sc: &Result<SpecCtx, String>) ->
         Err(e) => return Ok(vec![e.clone()]),
     };
     let mut out: Vec<String> = Vec::new();
-    if sc.change.is_none() {
-        out.push(sc.no_change());
+    match sc.change.as_deref() {
+        None => out.push(sc.no_change()),
+        Some(c) => out.extend(baseline_drift(stage, data, &sc.conf, &sc.opened, c)),
     }
     let known = sc.known();
     let items = sc.items();

@@ -5,7 +5,7 @@ use super::archive::{next_stage, recipe_summary, status_snapshot, write_archive,
 use super::checks::{constraint_issues, intent_errors, plan_check_for};
 use super::decisions::{decision_errors, record_decisions, split_answer};
 use super::links::{decision_links, link_gaps, links_setting, stage_links, write_links, LEDGER};
-use super::speccheck::{intent_errors_spec, open_spec, spec_issues};
+use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
 use super::policy::{abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, mods, policy_violations, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
 use super::trace::{envelopes, model_errors, process_trace};
@@ -471,7 +471,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             st.insert("plan_check".into(), json!(pc));
         }
         if let Some(sc) = &sc {
-            let si = spec_issues(stage, result, sc)?;
+            let si = spec_issues(stage, result, sc, &data)?;
             let st = st_mut(&mut data, stage)?;
             if si.is_empty() {
                 st.shift_remove("spec_issues");
@@ -658,7 +658,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
                 // 規格檢查與連結檢查都重算，不採信 run.json 記的結果
                 let sc = open_spec(ctx, run, &data, &cprof);
                 if let Some(sc) = &sc {
-                    errs.extend(spec_issues(stage, &result, sc)?.into_iter().map(|e| format!("規格檢查：{e}")));
+                    errs.extend(spec_issues(stage, &result, sc, &data)?.into_iter().map(|e| format!("規格檢查：{e}")));
                 }
                 if links_setting(&cprof) == Some(true) {
                     errs.extend(link_gaps(ctx, run, stage, sc.as_ref().and_then(|r| r.as_ref().ok())).into_iter().map(|e| format!("連結檢查：{e}")));
@@ -681,6 +681,31 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     approved.insert("at".into(), json!(at));
     approved.insert("note".into(), json!(note));
     approved.insert("kind".into(), json!(if by == "policy" { "policy" } else { "human" }));
+    // 規格層（需求來源是 openspec 才有；沒選就什麼都不做）：plan、design 核准時把規格現在的樣子記成基準，
+    // 之後各段重算時和它比。人工核准 test、deliver 時也重算一次，和基準不同只警告（政策核准在上面已經擋了）。
+    let mut spec_warns: Vec<String> = Vec::new();
+    if SDLC.contains(&stage) {
+        let (bprof, _) = load_profile(ctx, profile_arg);
+        let bsc = if bprof.is_object() { open_spec(ctx, run, &data, &bprof) } else { None };
+        if matches!(stage, "plan" | "design") {
+            match spec_baseline(bsc.as_ref()) {
+                Some(Ok(b)) => {
+                    approved.insert(BASELINE_KEY.into(), b);
+                }
+                Some(Err(e)) => spec_warns.push(format!("{stage} 核准了，但規格基準沒記成（{e}）；之後各段的規格檢查會把「沒有基準」當成問題")),
+                None => {}
+            }
+        } else if by != "policy" {
+            if let Some(Ok(sc)) = &bsc {
+                if let Some(c) = sc.change.as_deref() {
+                    let known = iter_or(get(&st, "spec_issues")?)?.iter().map(s).collect::<Vec<_>>();
+                    for m in baseline_drift(stage, &data, &sc.conf, &sc.opened, c).into_iter().filter(|m| !known.contains(m)) {
+                        spec_warns.push(format!("{stage} 存檔之後規格又變了（人工核准照記，但請先確認）：{m}"));
+                    }
+                }
+            }
+        }
+    }
     st_mut(&mut data, stage)?.insert("approved".into(), Value::Object(approved));
     let lock = stage == "plan" && has_recipe(&data)?;
     if lock {
@@ -690,6 +715,9 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     }
     dump(ctx, run, &data)?;
     line(out, format!("{stage} 已記錄核准：{by} @ {at}"));
+    for w in &spec_warns {
+        line(err, format!("警告：{w}"));
+    }
     if !answers.is_empty() {
         // 決策記憶是輔助：寫不出來不影響核准
         match record_decisions(ctx, run, &answers, by, at, a_scope, a_exp, stage, err) {
