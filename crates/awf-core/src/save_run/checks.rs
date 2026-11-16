@@ -215,8 +215,8 @@ pub fn criteria_pattern(profile: &Value) -> Result<Option<Re>, String> {
     Ok(Some(re))
 }
 
-/// 文字裡的驗收條件編號：沒給樣式用內建的（[`ac_ids`]）。
-fn ids_with(text: &str, pat: Option<&Re>) -> Vec<String> {
+/// 文字裡的驗收條件編號：沒給樣式用內建的（[`ac_ids`]）。拆工檢查與連結檢查（`links.rs`）共用，兩邊認的是同一種編號。
+pub fn ids_with(text: &str, pat: Option<&Re>) -> Vec<String> {
     match pat {
         None => ac_ids(text),
         Some(re) => re.find_all(text).into_iter().filter_map(|(a, b)| text.get(a..b)).filter(|x| !x.is_empty()).map(str::to_string).collect(),

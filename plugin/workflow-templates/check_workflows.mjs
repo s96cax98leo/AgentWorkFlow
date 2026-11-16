@@ -85,7 +85,9 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   const errs = []
   // 使用者自己的 agent：profile 的 extensions（加進某一段）與 roles（換掉某一步）
   const prof = embedded(src) || {}
-  const extAgents = new Set([...(prof.extensions || []).map((e) => e.agent), ...Object.values(prof.roles && typeof prof.roles === 'object' ? prof.roles : {})])
+  const extAgents = new Set([...(prof.extensions || []).map((e) => e.agent), ...Object.values(prof.roles && typeof prof.roles === 'object' ? prof.roles : {}),
+    // sdlc-merge 的合併角色（awf next 從 guard.config.json 的 auto_merge.merger_role 帶進 args）也可以是使用者自己的 agent
+    ...(args && typeof args.merger_role === 'string' ? [args.merger_role] : [])])
   let agents = 0
   const visited = []
   const labels = []

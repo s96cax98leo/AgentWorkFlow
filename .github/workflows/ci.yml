@@ -1,4 +1,4 @@
-# AgentWorkFlow 模版本身的 CI：在三個作業系統跑全部檢查。
+# AgentWorkFlow 模版本身的 CI：跑全部檢查（目前只在 macOS arm64，見 check 的矩陣）。
 # 全部檢查＝cargo test --workspace（單元測試、回歸基準、hook 案例、init 煙霧測試）＋cargo xtask check-all
 # （去客戶化掃描、golden、文件核對、recipe／執行核心／pattern／派工預算、供應鏈、啟動器、舊版指紋、片段漂移、
 # 各子指令的 selftest、workflow 乾跑）。工具與測試都是 Rust；只有驗證 workflow 的幾步要 node。
@@ -22,7 +22,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # 1.0.0 先只驗 macOS arm64（plugin/bin 目前只附這個平台的執行檔）。
+        # 做五個平台的發佈時把 ubuntu-latest、windows-latest 加回來。
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: 保留 LF 換行（Windows 預設 autocrlf 會把 checkout 的檔案改成 CRLF；awf.cmd 的 CRLF 由 .gitattributes 指定）

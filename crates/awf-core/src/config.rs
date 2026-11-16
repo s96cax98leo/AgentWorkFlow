@@ -596,6 +596,25 @@ pub fn auto_merge(cfg: &Config) -> AutoMerge {
     AutoMerge { enabled, repos, merger_role, merge_method, freeze_writers, upstream_authorized_by, freeze_file }
 }
 
+/// `guard.config.json` 明寫的合併角色，而且角色名不是內建的 `dev-merge-steward`：回正規化後的完整 agent_type。
+/// 沒有設定檔、沒寫、設定檔讀不懂、值不是一行字、角色名仍是 `dev-merge-steward`（照角色名認就夠）都回 `None`。
+///
+/// 存檔工具與狀態機用它認「這筆派工是合併角色」（代寫紀錄、模型下限、自訂腳本不能派）：只認設定檔，
+/// 不認 trace 自己的說法。回 `None` 時各處的行為和沒有這個設定時相同。hook 的放行判斷不看這裡（它比對完整 agent_type）。
+pub fn custom_merger(ws: &str) -> Option<String> {
+    let cfg = load(ws).ok()?;
+    if !cfg.broken.is_empty() {
+        return None;
+    }
+    let raw = cfg.auto_merge.as_object()?.get("merger_role")?.as_str()?;
+    if py::strip(raw).is_empty() {
+        return None;
+    }
+    let full = auto_merge(&cfg).merger_role;
+    let one_line = !full.is_empty() && !full.chars().any(|c| c.is_control() || c == '`');
+    (one_line && role_name(&full) != "dev-merge-steward").then_some(full)
+}
+
 /// plugin 的 agent 會帶命名空間（例如 agent-workflow:dev-implementer），比對前去掉。
 pub fn role_name(agent: &str) -> &str {
     agent.rsplit(':').next().unwrap_or("")

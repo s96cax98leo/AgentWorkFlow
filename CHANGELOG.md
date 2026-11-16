@@ -26,7 +26,7 @@
   | 設計系統 skill 的 `scripts/check-tokens.py`、`verify-tokens.py` | `awf tokens check`、`awf tokens verify` |
   | `<工具>.py --selftest` | `awf <子指令> --selftest` |
 
-  子指令的參數與旗標不變。資料格式（run.json、信封、trace、稽核紀錄、決策記憶、交付設定）不變，進行中的 run 升級後可以繼續。
+  子指令的參數與旗標不變。資料格式（run.json、信封、trace、稽核紀錄、決策記憶、交付設定）不變，進行中的 run 升級後可以繼續。run.json 多一個鍵 `awf.pending.session`（plan 段交出去當時的 session，中斷回收用；只加不改，讀 run.json 的外部工具不受影響）。
 - **hook 的註冊改成執行檔**：`awf hook <guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context>`。`--hooks project` 的專案要重跑 `awf init --upgrade`。
 - **merge gate 的 CI 範本要重新產生**：改成跑專案 `.claude/teams/bin/` 裡的執行檔，執行前核對 sha256。
 - **模版檔搬進 `plugin/`**（`plugin/scaffold/`、`plugin/workflow-templates/` 的片段、情境與 `check_workflows.mjs`）。自己寫腳本引用舊路徑的要改。
@@ -41,6 +41,9 @@
   - `awf check-rules --git`、`awf recipe check-diff`、`awf sync-branch` 交給 git 的值不能以 `-` 開頭。
   - `guard.config.json` 讀不懂時，team agent 的寫入全擋。
   - `awf run-brief --log` 只能寫 run 目錄底下的紀錄檔。
+  - recipe 指到 profile 沒有定義的 lens、審查軸、驗證模式時，那一段開工前就停下（halted）；原本不認得的名稱會被默默略過。
+  - 換角色的 agent、另外指定的合併角色：存檔時照被頂替的角色重算模型下限，低於下限判 invalid（原本不是 `tpm-`／`dev-` 的 agent 不檢查）。
+  - `rules.md` 規則 11 的「推播」改成「通知」，通知方式來自佔位符 `NOTIFY_HOW`（留空＝在對話中提問）。自己的文件或 hook 引用了原本那一句的要跟著改。
   - 守門多擋：指令替換（`X=$(awf save-run approve …)`）、`sudo -u`／`find -exec`／`xargs -I{}` 後面的 `bash -c`、`git bisect run`、`trap`、ANSI-C 引號與大括號展開改寫的子指令。
 
 ### 新增
@@ -57,6 +60,13 @@
   - `ci` 與 `awf ci render`：專案的測試／lint CI，預設只印不寫；必過的 job 併進 merge gate 的 required checks。
   - 原本寫死的值改成可設定：分類信心門檻、修正迴圈輪數、審查信心門檻與 Nit 上限、審查 lens、限制檢查的逾時、查詢量與調研上限、事件的角度與步驟上限、紀錄的必要節、備份 ref 樣式、程式查詢工具、信封長度。會放寬閘門或交件驗證的方向只准調嚴。
   - `stages.build.affected_tests_only`：build 的修正迴圈只跑受影響的測試（test 段照舊全跑）。
+  - 第二批（盤點剩下的項目；欄位表在 `docs/自訂與擴充.md`）：
+    - 閘門與檢查：`gates.extra`（build、sync 也等核准）、`stages.design.criteria_id_pattern`（驗收條件編號的樣式，拆工檢查與連結檢查共用）、`constraints_format`（限制對照的節名與判定詞，派工單與存檔工具用同一組）、`diff_classes_extra`、敏感路徑與機敏樣式（只能加）。
+    - 流程的內容：`lenses`、`test_modes`、`research_angles`、`plan_modes.<mode>.refute`（可以改寫內建的問法或加自己的名稱）、`roles`（七個唯讀步驟換成自己的 agent，模型下限照被換掉的角色、存檔時重算）、`briefs`。
+    - 慣例：`conventions.branch.integrate`、`conventions.branch.patterns`、`conventions.questions.options`、`conventions.repo_docs`、`stages.test.design_review`、`stages.test.security_review`、`stages.deliver.record_sections`。
+    - 輔助輸出的大小與節奏：`knowledge.pack`、`knowledge.locate`、`knowledge.extensions`、`progress.watch`、`limits.run_brief`、`limits.display`。
+    - 守門設定：`sdlc-merge` 的合併角色與凍結檔跟 `guard.config.json` 的 `auto_merge.merger_role`、`freeze_file`；合併角色換成別的名字時，模型下限、不重派、代寫紀錄照設定檔認它，自訂腳本不能派它。
+  - 三個新的佔位符：`PROTECTED_BRANCHES`（受保護分支，預設 `main,master`）、`DOCS_DIRS`（tpm-writer 可以寫的文件目錄，預設 `docs`）、`NOTIFY_HOW`（需要人決策時怎麼通知）。`awf init --reconfigure <主題>` 可以只重問一個主題。
 - **doctor 體檢**：`models.mode` 是 inherit、知識庫沒建、有 `openspec/` 但需求來源沒設、需求來源在工作區外、最近的 run 沒走 `awf next`、CI 檔與 profile 漂移。
 - **對外介面**：`awf save-run status --json` 與進度事件有 `schema_version`；recipe 跳過的段標 `skipped`。相容承諾寫在 `docs/監控與整合.md`。
 - `awf golden`、`awf tokens`。

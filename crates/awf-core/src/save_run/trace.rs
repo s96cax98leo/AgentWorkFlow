@@ -245,6 +245,39 @@ pub fn retried_ok(trace: &[Value], i: usize) -> R<bool> {
 /// profile 沒有 models 或 mode=inherit 時不檢查；trace 沒有 tier 的舊 workflow 只在 `KERNEL_STAGES` 判錯。
 /// `profile` 是 null 表示沒有 profile。
 pub fn model_errors(stage: &str, result: &Value, profile: &Value, modifiers: &Value) -> R<Vec<String>> {
+    model_errors_with(stage, result, profile, modifiers, None)
+}
+
+/// profile 的 `roles` 開放的七個步驟：這一段、這個 label 是哪一步，以及那一步原本的模版角色。
+/// label 的寫法照範本（`locate:<角度>`、`review:<軸>`…）；執行核心替重複的 label 加的序號（`#2`）先去掉。
+/// 步驟清單要和 [`crate::schema::SWAPPABLE_STEPS`]、challenge 片段的 `awfSwappable` 一致。
+pub fn swapped_step(stage: &str, label: &str) -> Option<(&'static str, &'static str)> {
+    let base = match label.rsplit_once('#') {
+        Some((head, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => label,
+    };
+    const R: &str = "tpm-researcher";
+    const K: &str = "tpm-skeptic";
+    match stage {
+        "plan" if base.starts_with("locate:") => Some(("plan.locate", R)),
+        "plan" if base.starts_with("research:") => Some(("plan.research", R)),
+        "plan" if base == "challenge:intent" => Some(("plan.challenge", K)),
+        "design" if base.starts_with("analyze:") => Some(("design.analyze", K)),
+        "design" if base.starts_with("recheck:") => Some(("design.recheck", K)),
+        "deliver" if base.starts_with("review:") => Some(("deliver.review", "tpm-reviewer")),
+        "deliver" if base.starts_with("verify:") => Some(("deliver.verify", K)),
+        _ => None,
+    }
+}
+
+/// 同 [`model_errors`]，另外處理「派的不是模版角色，但這一步其實是模版角色的工作」：
+///
+/// 1. `merger`（`guard.config.json` 明寫的合併角色，[`crate::config::custom_merger`]）：照 `dev-merge-steward` 的下限算。
+/// 2. profile 的 `roles` 把這一步換成這個 agent（依這一段與 label 反查，[`swapped_step`]）：照被換掉的角色算。
+///    trace 自己記的 `role_as` 不採信；和反查的結果不一樣另外列一則。
+/// 3. 以上都對不到、但 trace 記了 `role_as`：照它說的角色算（只會多查，不會少查）；不是模版角色的名字算錯。
+/// 4. 其餘是使用者自己的 agent（擴充 agent）：執行核心不替它指定模型，也沒有下限。
+pub fn model_errors_with(stage: &str, result: &Value, profile: &Value, modifiers: &Value, merger: Option<&str>) -> R<Vec<String>> {
     let models = if truthy(profile) { get(profile, "models")? } else { &py::NULL };
     let Some(mo) = models.as_object() else { return Ok(Vec::new()) };
     if mo.get("mode").is_some_and(|m| m.as_str() == Some("inherit")) {
@@ -254,16 +287,39 @@ pub fn model_errors(stage: &str, result: &Value, profile: &Value, modifiers: &Va
     let trace = result.as_object().and_then(|r| r.get("trace")).and_then(Value::as_array).unwrap_or(&empty);
     let mut errs: Vec<String> = Vec::new();
     let tier_index = |t: &Value| recipe::TIERS.iter().position(|x| t.as_str() == Some(*x));
+    let roles = profile.get("roles").and_then(Value::as_object);
     for t in trace {
         if !t.is_object() {
             continue;
         }
         let label = s_or(get(t, "label")?, "");
         let agent = s_or(get(t, "agent_type")?, "");
-        let role = agent.rsplit(':').next().unwrap_or_default().to_string();
+        let mut role = agent.rsplit(':').next().unwrap_or_default().to_string();
         let tier = get(t, "tier")?;
-        if !(role.starts_with("tpm-") || role.starts_with("dev-")) {
-            continue; // 使用者自己的 agent（擴充 agent）：執行核心不替它指定模型，也沒有下限
+        let is_template = |r: &str| r.starts_with("tpm-") || r.starts_with("dev-");
+        if !is_template(&role) {
+            let claimed = get(t, "role_as")?;
+            let mapped = swapped_step(stage, &label).filter(|(step, _)| !agent.is_empty() && roles.and_then(|r| r.get(*step)).and_then(Value::as_str) == Some(agent.as_str()));
+            let actual: Option<String> = if !agent.is_empty() && merger == Some(agent.as_str()) {
+                Some(super::STEWARD.to_string())
+            } else {
+                mapped.map(|(_, r)| r.to_string())
+            };
+            match (actual, claimed.as_str()) {
+                (Some(want), said) => {
+                    if said.is_some_and(|x| x != want) || (said.is_none() && !claimed.is_null()) {
+                        errs.push(format!("{label}（{agent}）的 trace 記 role_as={}，但這一步照設定是 {want} 的工作：下限照 {want} 算", s(claimed)));
+                    }
+                    role = want;
+                }
+                (None, Some(said)) if is_template(said) => role = said.to_string(),
+                (None, _) if !claimed.is_null() => {
+                    errs.push(format!("{label}（{agent}）的 role_as「{}」不是模版角色", s(claimed)));
+                    continue;
+                }
+                // 使用者自己的 agent（擴充 agent）：執行核心不替它指定模型，也沒有下限
+                (None, _) => continue,
+            }
         }
         if tier.is_null() || tier.as_str() == Some("") {
             if KERNEL_STAGES.contains(&stage) {
@@ -328,6 +384,8 @@ pub fn process_trace(ctx: &Ctx, run: &str, stage: &str, result: &Value, write: b
     let mut rows: Vec<Row> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
     let dir = pj(run, stage);
+    // guard.config.json 明寫的合併角色（角色名不是 dev-merge-steward 的）：只認設定檔，不認 trace 的說法
+    let merger = crate::config::custom_merger(&ctx.project_root());
     for (i, t) in trace.iter().enumerate() {
         if !t.is_object() {
             missing.push(format!("trace[{i}] 格式不對"));
@@ -337,7 +395,17 @@ pub fn process_trace(ctx: &Ctx, run: &str, stage: &str, result: &Value, write: b
         let mut record = s_or(get(t, "record")?, "");
         let okv = get(t, "ok")?;
         let mut env = envelope_of(t, stage, &envs)?;
-        let is_steward = s_or(get(t, "agent_type")?, "").ends_with(STEWARD);
+        let agent_type = s_or(get(t, "agent_type")?, "");
+        let named = agent_type.ends_with(STEWARD);
+        let custom = !named && !agent_type.is_empty() && merger.as_deref() == Some(agent_type.as_str());
+        // 設定檔指定的合併角色可能有 Write 工具、自己寫了紀錄檔：那就照一般角色核對，不拿代寫的蓋掉；沒寫才和 dev-merge-steward 一樣依信封代寫。
+        // 兩種情況都照順序取用 merge-decision 信封，後面的派工才對得到自己的那一份
+        let own_record = custom && record_candidates(ctx, run, stage, &record).into_iter().any(|c| ctx.is_file(&c) && !head_line(ctx, &c).contains(GHOSTWRITTEN));
+        let is_steward = named || (custom && !own_record);
+        if own_record && okv == &Value::Bool(true) {
+            let next = stewards.next();
+            env = env.or(next);
+        }
         let mut status = "完成".to_string();
         if okv == &Value::Bool(true) && is_steward {
             env = stewards.next();
@@ -441,4 +509,116 @@ pub fn process_trace(ctx: &Ctx, run: &str, stage: &str, result: &Value, write: b
         ctx.write_text(&pj(&dir, INDEX_NAME), &format!("{}\n", lines.join("\n")))?;
     }
     Ok((true, rows, missing))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn profile(roles: Value) -> Value {
+        json!({"models": {"mode": "auto", "tiers": {"light": "haiku", "standard": "sonnet", "strong": "opus"}, "defaults": {"*": "light"}, "floors": {}}, "roles": roles})
+    }
+
+    fn errs(stage: &str, p: &Value, entry: Value, merger: Option<&str>) -> Vec<String> {
+        model_errors_with(stage, &json!({"trace": [entry]}), p, &json!([]), merger).unwrap_or_else(|e| vec![format!("例外：{}", e.msg)])
+    }
+
+    fn entry(label: &str, agent: &str, tier: &str, model: &str, extra: Value) -> Value {
+        let mut t = json!({"label": label, "agent_type": agent, "ok": true, "tier": tier, "model": model});
+        for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+            t[k] = v;
+        }
+        t
+    }
+
+    #[test]
+    fn swapped_step_follows_the_templates_labels() {
+        assert_eq!(swapped_step("plan", "locate:requirement"), Some(("plan.locate", "tpm-researcher")));
+        assert_eq!(swapped_step("plan", "research:upstream#2"), Some(("plan.research", "tpm-researcher")));
+        assert_eq!(swapped_step("plan", "challenge:intent"), Some(("plan.challenge", "tpm-skeptic")));
+        assert_eq!(swapped_step("design", "analyze:coverage"), Some(("design.analyze", "tpm-skeptic")));
+        assert_eq!(swapped_step("design", "recheck:plan"), Some(("design.recheck", "tpm-skeptic")));
+        assert_eq!(swapped_step("deliver", "review:bugs"), Some(("deliver.review", "tpm-reviewer")));
+        assert_eq!(swapped_step("deliver", "verify:bugs"), Some(("deliver.verify", "tpm-skeptic")));
+        // 別段的同名 label、不開放的步驟都不是
+        for (stage, label) in [("test", "verify:api#1"), ("design", "review:bugs"), ("plan", "challenge:other"), ("merge", "analyze"), ("build", "Implement:t1"), ("plan", "intent")] {
+            assert_eq!(swapped_step(stage, label), None, "{stage} {label}");
+        }
+        // 步驟清單和 profile 檢查認的同一份
+        let mine = [("plan", "locate:x"), ("plan", "research:x"), ("plan", "challenge:intent"), ("design", "analyze:x"), ("design", "recheck:x"), ("deliver", "review:x"), ("deliver", "verify:x")];
+        let steps: Vec<&str> = mine.iter().filter_map(|(s, l)| swapped_step(s, l).map(|x| x.0)).collect();
+        assert_eq!(steps, crate::schema::SWAPPABLE_STEPS);
+    }
+
+    /// 換上去的 agent 照被換掉的角色算下限：低於下限判錯、剛好通過；model 也要對得上那一級。
+    #[test]
+    fn swapped_agent_keeps_the_floor_of_the_role_it_replaces() {
+        let p = profile(json!({"plan.challenge": "acme-skeptic"}));
+        let role_as = json!({"role_as": "tpm-skeptic"});
+        let low = errs("plan", &p, entry("challenge:intent", "acme-skeptic", "light", "haiku", role_as.clone()), None);
+        assert!(low.len() == 1 && low[0].contains("（tpm-skeptic）用了 light，低於下限 standard"), "{low:?}");
+        assert!(errs("plan", &p, entry("challenge:intent", "acme-skeptic", "standard", "sonnet", role_as.clone()), None).is_empty());
+        assert!(errs("plan", &p, entry("challenge:intent", "acme-skeptic", "strong", "opus", role_as.clone()), None).is_empty());
+        let wrong_model = errs("plan", &p, entry("challenge:intent", "acme-skeptic", "standard", "haiku", role_as), None);
+        assert!(wrong_model.len() == 1 && wrong_model[0].contains("model 應該是 sonnet"), "{wrong_model:?}");
+    }
+
+    /// trace 不帶 role_as、或謊報成下限較低的角色：照 profile 的 roles 反查，不採信 trace。
+    #[test]
+    fn role_as_in_the_trace_is_not_trusted() {
+        let p = profile(json!({"plan.challenge": "acme-skeptic"}));
+        let missing = errs("plan", &p, entry("challenge:intent", "acme-skeptic", "light", "haiku", json!({})), None);
+        assert!(missing.len() == 1 && missing[0].contains("低於下限 standard"), "{missing:?}");
+        let lied = errs("plan", &p, entry("challenge:intent", "acme-skeptic", "light", "haiku", json!({"role_as": "tpm-researcher"})), None);
+        assert!(lied.iter().any(|e| e.contains("role_as=tpm-researcher") && e.contains("tpm-skeptic 的工作")) && lied.iter().any(|e| e.contains("（tpm-skeptic）用了 light，低於下限 standard")), "{lied:?}");
+        let odd = errs("plan", &p, entry("challenge:intent", "acme-skeptic", "standard", "sonnet", json!({"role_as": 7})), None);
+        assert!(odd.len() == 1 && odd[0].contains("role_as=7"), "{odd:?}");
+        // 沒有經過執行核心（沒有 tier）：和模版角色一樣判錯
+        let bare = errs("plan", &p, json!({"label": "challenge:intent", "agent_type": "acme-skeptic", "ok": true}), None);
+        assert!(bare.len() == 1 && bare[0].contains("沒有 model／tier"), "{bare:?}");
+        // 核心替重複的 label 加的序號不影響反查
+        let nth = errs("plan", &p, entry("challenge:intent#2", "acme-skeptic", "light", "haiku", json!({})), None);
+        assert!(nth.len() == 1 && nth[0].contains("低於下限 standard"), "{nth:?}");
+    }
+
+    /// profile 沒有把這一步換成這個 agent：沒有 role_as 就是擴充 agent（和原本一樣不檢查）；
+    /// 有 role_as 就照它說的角色查（只會多查），不是模版角色的名字算錯。
+    #[test]
+    fn unmapped_agents_are_checked_only_when_they_claim_a_role() {
+        let none = profile(json!({}));
+        let other = profile(json!({"plan.challenge": "someone-else"}));
+        for p in [&none, &other] {
+            assert!(errs("plan", p, json!({"label": "challenge:intent", "agent_type": "acme-skeptic", "ok": true}), None).is_empty());
+            assert!(errs("plan", p, json!({"label": "ext:db", "agent_type": "my:agent", "ok": true}), None).is_empty());
+            let claimed = errs("plan", p, entry("challenge:intent", "acme-skeptic", "light", "haiku", json!({"role_as": "tpm-skeptic"})), None);
+            assert!(claimed.len() == 1 && claimed[0].contains("低於下限 standard"), "{claimed:?}");
+            let junk = errs("plan", p, entry("x", "acme-skeptic", "light", "haiku", json!({"role_as": "nobody"})), None);
+            assert!(junk.len() == 1 && junk[0].contains("不是模版角色"), "{junk:?}");
+        }
+        // 模版角色自己帶 role_as 不影響：照自己的角色名算
+        let own = errs("plan", &none, entry("challenge:intent", "agent-workflow:tpm-skeptic", "light", "haiku", json!({"role_as": "tpm-researcher"})), None);
+        assert!(own.len() == 1 && own[0].contains("（tpm-skeptic）用了 light，低於下限 standard"), "{own:?}");
+        // profile 沒有 models：全部不檢查（和原本一樣）
+        assert!(errs("plan", &json!({"roles": {"plan.challenge": "acme-skeptic"}}), entry("challenge:intent", "acme-skeptic", "light", "haiku", json!({})), None).is_empty());
+    }
+
+    /// guard.config 指定的合併角色照 dev-merge-steward 的下限算，不管 trace 記了什麼；沒指定時這個 agent 就是擴充 agent。
+    #[test]
+    fn configured_merger_gets_the_steward_floor() {
+        let p = profile(json!({}));
+        let m = Some("acme:release-merger");
+        for extra in [json!({}), json!({"role_as": "dev-merge-steward"})] {
+            let low = errs("merge", &p, entry("execute:merge", "acme:release-merger", "standard", "sonnet", extra.clone()), m);
+            assert!(low.len() == 1 && low[0].contains("（dev-merge-steward）用了 standard，低於下限 strong"), "{low:?}");
+            assert!(errs("merge", &p, entry("execute:merge", "acme:release-merger", "strong", "opus", extra), m).is_empty());
+        }
+        let lied = errs("merge", &p, entry("analyze", "acme:release-merger", "light", "haiku", json!({"role_as": "tpm-writer"})), m);
+        assert!(lied.iter().any(|e| e.contains("role_as=tpm-writer")) && lied.iter().any(|e| e.contains("低於下限 strong")), "{lied:?}");
+        let bare = errs("merge", &p, json!({"label": "analyze", "agent_type": "acme:release-merger", "ok": true}), m);
+        assert!(bare.len() == 1 && bare[0].contains("沒有 model／tier"), "{bare:?}");
+        // 設定檔沒指定：和原本一樣不檢查；別的 agent 不受影響
+        assert!(errs("merge", &p, json!({"label": "analyze", "agent_type": "acme:release-merger", "ok": true}), None).is_empty());
+        assert!(errs("merge", &p, json!({"label": "ext:x", "agent_type": "acme:other", "ok": true}), m).is_empty());
+    }
 }
