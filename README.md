@@ -365,6 +365,8 @@ claude plugin update agent-workflow@agentworkflow   # 或在 Claude Code 的 /pl
 awf init --target . --upgrade [--adopt-new-fields]
 ```
 
+從 0.x 升到 1.0 的完整步驟見 [`docs/升級到1.0.md`](docs/升級到1.0.md)。
+
 `--upgrade` 會換掉模版檔、保留你的設定，並列出 profile 缺少的新欄位；`--adopt-new-fields` 把這些欄位補進你的 `methodology.json`。從 0.2.x 升上來要用 recipe 分流，或從 0.3.x 升上來要用模型分級、讀取預算、知識層，就要加 `--adopt-new-fields`。細節見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈升級已 init 的專案〉。
 
 **釘版本、安全安裝**：
