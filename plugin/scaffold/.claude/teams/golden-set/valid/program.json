@@ -1,0 +1,32 @@
+{
+  "schema": "program",
+  "description": "多需求排程：三個 epic，後兩個依賴第一個",
+  "data": {
+    "schema_version": 1,
+    "name": "示範客戶 ACME 第一期",
+    "epics": [
+      {
+        "id": "auth-sso",
+        "title": "單一登入",
+        "run": "20261101-sdlc-auth-sso"
+      },
+      {
+        "id": "billing-export",
+        "title": "匯出帳單",
+        "change": "add-billing-export",
+        "depends_on": [
+          "auth-sso"
+        ]
+      },
+      {
+        "id": "monthly-report",
+        "title": "月報表",
+        "depends_on": [
+          "auth-sso",
+          "billing-export"
+        ],
+        "note": "等帳單格式定案"
+      }
+    ]
+  }
+}

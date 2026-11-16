@@ -1,6 +1,10 @@
 //! SessionStart 的版本提示：plugin 版本和專案 `.claude/teams/VERSION` 不一致時印一行 JSON。
 //! 只是提示，不是守門：永遠 exit 0；沒套用的專案、讀不到版本、輸入壞掉、任何失敗都不印任何東西。
 //!
+//! 1.0 起同一個 hook 另外注入幾行摘要（進行中的 run、斷掉的連結數、最近的決策），見 [`super::auto`]：
+//! 摘要只放在 `hookSpecificOutput.additionalContext`（給模型看），版本提示照舊另外放 `systemMessage`（給人看）。
+//! 沒有摘要可說時，輸出和只有版本提示的時候逐字相同。
+//!
 //! plugin 目錄由 [`crate::template::find_installed`] 找（`AWF_PLUGIN_DIR`、`CLAUDE_PLUGIN_ROOT`、執行檔所在目錄的上一層，
 //! 只認有 `.claude-plugin/plugin.json` 的）。找不到（例如註冊在專案、執行檔不在 plugin 裡）就不提示。
 
@@ -90,11 +94,22 @@ pub fn run() -> i32 {
             _ => None,
         })
         .or_else(|| path::cwd().ok());
-    let (Some(root), Some(plugin)) = (root, plugin_root()) else { return 0 };
-    if let Some(msg) = version_hint(&root, &plugin) {
-        let out = json!({"systemMessage": msg, "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": msg}});
-        let _ = std::io::stdout().write_all(format!("{}\n", py::json_dumps(&out, false)).as_bytes());
+    let Some(root) = root else { return 0 };
+    // 版本提示要找得到 plugin.json；摘要（自動接點）不需要
+    let hint = plugin_root().and_then(|plugin| version_hint(&root, &plugin));
+    let summary = super::auto::session_context(&data, &root);
+    let context = match (&hint, &summary) {
+        (Some(h), Some(s)) => format!("{h}\n{s}"),
+        (Some(h), None) => h.clone(),
+        (None, Some(s)) => s.clone(),
+        (None, None) => return 0,
+    };
+    let mut out = serde_json::Map::new();
+    if let Some(msg) = hint {
+        out.insert("systemMessage".into(), json!(msg));
     }
+    out.insert("hookSpecificOutput".into(), json!({"hookEventName": "SessionStart", "additionalContext": context}));
+    let _ = std::io::stdout().write_all(format!("{}\n", py::json_dumps(&Value::Object(out), false)).as_bytes());
     0
 }
 

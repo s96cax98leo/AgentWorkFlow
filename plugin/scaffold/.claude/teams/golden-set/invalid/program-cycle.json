@@ -1,0 +1,21 @@
+{
+  "schema": "program",
+  "description": "相依有循環",
+  "semantic": true,
+  "data": {
+    "epics": [
+      {
+        "id": "a",
+        "depends_on": [
+          "b"
+        ]
+      },
+      {
+        "id": "b",
+        "depends_on": [
+          "a"
+        ]
+      }
+    ]
+  }
+}

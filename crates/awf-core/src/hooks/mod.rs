@@ -1,12 +1,15 @@
 //! hook 的入口與規則（guard-shell、guard-paths、envelope、session-start）。原本是 0.x 的 Python hook（`guard.py`、`envelope_hook.py` 等）。
 //!
-//! 用法：`awf hook <guard-shell|guard-paths|envelope|session-start> < hook-input.json`
+//! 用法：`awf hook <guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context> < hook-input.json`
 //!
 //!   guard-shell   PreToolUse（Bash|PowerShell）：擋 agent push、agent 的 GitHub 寫入、寫入上游、動禁止路徑、不合規的分支名；
 //!                 之後轉呼叫目標 repo 自己的 guard-git。
 //!   guard-paths   PreToolUse（Edit|Write|NotebookEdit|Read|Grep）：擋寫禁止路徑、各角色寫入範圍以外的檔案；Read 另套讀取預算。
 //!   envelope      PreToolUse（SubagentHandback、StructuredOutput）、SubagentStop、TaskCompleted：檢查交件信封。
-//!   session-start SessionStart：plugin 版本和專案版本不一致時印一行提示。永遠 exit 0。
+//!   session-start SessionStart：plugin 版本和專案版本不一致時印一行提示；另外注入幾行摘要（進行中的 run、斷掉的連結數、最近的決策）。永遠 exit 0。
+//!   mark-dirty    PostToolUse（Edit|Write）：把改到的檔記進知識圖的待更新清單（沒有圖就不記）。永遠 exit 0。
+//!   prompt-context UserPromptSubmit：訊息提到需求 id、檔名、符號名時查知識圖，注入幾行位置（profile 開啟才做）。永遠 exit 0。
+//!                 後三種是提示與自動接點（[`auto`]）：輸出格式與依據寫在該模組的說明。
 //!
 //! 結束碼：0 放行；2 擋下（stderr 回給 Claude）。
 //!
@@ -22,6 +25,7 @@
 //!
 //! release 是 `panic = "abort"`，所以不靠 `catch_unwind`：panic hook 裡直接套第 3 條並結束行程。
 
+pub mod auto;
 pub mod awf_cli;
 pub mod envelope;
 pub mod guard;
@@ -274,8 +278,14 @@ pub fn main(args: &[String]) -> i32 {
     let mode = args.first().map(String::as_str).unwrap_or("");
     let _ = PANIC_MODE.set(mode.to_string());
     install_panic_hook();
-    if args.len() == 1 && mode == "session-start" {
-        return session_start::run();
+    if args.len() == 1 {
+        // 提示與自動接點：永遠 exit 0（出錯、逾時都只是不提示）
+        match mode {
+            "session-start" => return session_start::run(),
+            "mark-dirty" => return auto::mark_dirty(),
+            "prompt-context" => return auto::prompt_context(),
+            _ => {}
+        }
     }
     if args.len() != 1 || !MODES.contains(&mode) {
         say(&format!("用法：awf hook <{}> < hook-input.json", MODES.join("|")));

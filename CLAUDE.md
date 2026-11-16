@@ -79,6 +79,7 @@ awf cost --selftest                                         # workflow 的 token
 awf watch --selftest                                        # watcher（進度事件、通知、狀態列）
 awf doctor --selftest                                       # 安裝檢查（awf doctor）
 awf script --selftest                                       # 自訂腳本的靜態檢查
+awf program --selftest                                      # 多需求排程（awf program status／next）
 awf checklist --selftest、awf spec --selftest、awf run-brief --selftest、awf tokens --selftest   # 其餘有 selftest 的子指令
 awf golden [--dir <golden-set 目錄>] [--verbose]                 # 專案的 golden-set（schema 正反例）
 awf tokens check [--all] <檔案或目錄>…、awf tokens verify [tokens.css] [正本檔]   # 設計系統 skill 的色碼掃描與 tokens 核對
@@ -211,6 +212,17 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **對外介面**：`awf save-run status --json` 與 `progress.jsonl` 帶 `schema_version`（`STATUS_SCHEMA_VERSION`、`watch::PROGRESS_SCHEMA_VERSION`），同版本內只加不改；status 的每段有 `skipped`。承諾寫在 `docs/監控與整合.md`〈相容承諾〉。
 - 測試：`awf save-run --selftest` 的 1.0 案例（`save_run/selftest_v1.rs`）、golden 的 `methodology-openspec*`、`methodology-links*`、`link*`、hook 案例的「D1 連結帳本」。
 
+### 自動接點與多需求排程（1.0）
+
+- **設定**：profile 的 `knowledge.auto`（`update`、`timeout`、`session`、`prompt`、`spec_apply`、`export`），讀法在 `state/auto.rs` 的 `auto_cfg`。全部是輔助：失敗只警告、閘門不讀；沒有圖（`<knowledge.dir>/graph.db`）又沒明確開啟時，`awf next`／`done` 的輸出逐字不變（`state_parity` 不能因此改）。
+- **每段開跑前更新圖**：`machine::workflow_action`、`custom_action` 在 `run_pack` 之前呼叫 `auto::kg_before_stage`（`kg::update`，有時限）。預設不自動建第一份圖。
+- **merge 之後併回規格**：`auto::spec_apply`（由 `decide` 在沒有下一段時呼叫）。沿用 `manual` 動作，多 `preview`、`apply`、`skip` 三個欄位；狀態記在 run.json 的 `awf.spec_apply`，略過用 `awf next --skip spec-apply`。
+- **結案後重寫 vault**：`save_run/cli.rs` 的 `vault_after`（close、abandon 之後）呼叫 `auto::refresh_vault`；沒有圖時輸出不變。
+- **hook**：`hooks/auto.rs`（`session_context`、`mark_dirty`、`prompt_context`）；`awf hook mark-dirty`（PostToolUse）與 `awf hook prompt-context`（UserPromptSubmit）在 `plugin/hooks/hooks.json` 註冊。永遠 exit 0、注入有字數上限、包在資料標籤裡、不注入 subagent；輸出格式的依據（官方文件網址）寫在模組開頭。
+- **中斷回收**：`auto::recover_interrupted`（`cmd_next` 在 `decide` 之前呼叫）。只收 plan 段的調研，條件見函式說明；寫入走 `pack::record_reuse`，紀錄在 run.json 的 `awf.recovered`。
+- **多需求排程**：`awf program`（`crates/awf-core/src/program.rs`）。唯讀：`status`、`next`；`<runs_dir>/program.json` 的格式在 `schemas/program.schema.json`，語意規則 `program::semantic_errors`（`schema::check_doc` 也會呼叫）。team agent 只能跑 `status`（`hooks/awf_cli.rs`）。
+- 測試：`crates/awf/tests/auto_e2e.rs`（假的段結果從開工走到結案、全關與刪掉圖、中斷回收的該收與不該收）、`crates/awf/tests/hooks_auto.rs`（三個 hook 的該注入、不該注入、出錯不注入）、`awf program --selftest`、golden 的 `program*`、`methodology-knowledge-auto*`。說明在 `docs/知識圖.md`〈自動接點〉與 `docs/監控與整合.md`〈多需求排程〉。
+
 ### 平行處理
 
 - **`sdlc-design`**：先由 dev-spec-author 出大綱（`plan-outline`）。預估子任務超過 `parallelism.split_threshold`，或有多個可以各自規劃的區塊時，拆成最多 `max_sub_plans` 個子計劃。每個子計劃由一個 dev-spec-author 平行規劃，寫在 `specs/<epic>/sub/<id>/`，不 commit；最後由一個 dev-spec-author 彙整並 commit。跨子計劃的相依寫成 `@<子計劃 id>`，由 workflow 展開；指向不存在、沒有子任務或自己的子計劃時 halted。
@@ -258,7 +270,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### Hooks（`plugin/hooks/hooks.json` 註冊，規則在 `crates/awf-core/src/hooks/`）
 
-- **入口**：只有一個，`awf hook <guard-shell|guard-paths|envelope|session-start>`。設定一律透過 `crates/awf-core/src/config.rs` 讀 `${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json`，不要寫死路徑。
+- **入口**：只有一個，`awf hook <guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context>`。設定一律透過 `crates/awf-core/src/config.rs` 讀 `${CLAUDE_PROJECT_DIR}/.claude/teams/guard.config.json`，不要寫死路徑。
 - **失敗語意**（`crates/awf-core/src/hooks/mod.rs` 開頭的說明為準）：
   - hook 跑不起來（找不到執行檔、逾時）：plugin 的 `hooks.json` 設 `onFailure: continue`、timeout 10 秒，放行，不鎖死使用者。要更嚴就用 `--hooks project`。
   - 跑得起來但輸入壞掉（空、不是 JSON、缺欄位、shell 指令超過 128KB）：守門類擋（exit 2），交件類放行。128KB 上限是因為 guard 規則耗時隨指令長度約平方成長，拖到逾時就等於放行。

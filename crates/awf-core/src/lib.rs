@@ -20,6 +20,7 @@ pub mod kg;
 pub mod locate;
 pub mod merge_gate;
 pub mod pack;
+pub mod program;
 pub mod publish;
 pub mod pyfmt;
 pub mod recipe;
