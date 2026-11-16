@@ -108,6 +108,14 @@ fn runs_on_of(v: Option<&Value>) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// 不能進 yml 的字元：YAML 當成換行的 U+0085、U+2028、U+2029，其他控制字元（`\n`、`\t` 由呼叫端決定收不收），
+/// 以及看不見的格式字元（零寬、雙向控制、BOM）。它們能讓一段文字在產生的 yml 裡跳出原本的位置。
+fn yaml_break(c: char) -> bool {
+    matches!(c, '\u{85}' | '\u{2028}' | '\u{2029}') || crate::hooks::safe::invisible(c)
+}
+
+const BREAK_MSG: &str = "不能有 Unicode 的行分隔或看不見的字元（U+0085、U+2028、U+2029、零寬與雙向控制字元；YAML 會把行分隔當成換行）";
+
 /// profile 的 `ci` 的語意規則（schema 表達不了的）。回錯誤清單；空的＝可以用。
 pub fn config_errors(ci: &Value) -> Vec<String> {
     let Some(o) = ci.as_object() else { return vec!["ci 要是物件".to_string()] };
@@ -173,7 +181,9 @@ pub fn config_errors(ci: &Value) -> Vec<String> {
         }
         ids.push(id.to_string());
         let name = j.get("name").and_then(Value::as_str).unwrap_or(id).trim().to_string();
-        if name.is_empty() || name.chars().any(char::is_control) {
+        if name.chars().any(yaml_break) {
+            errs.push(format!("ci.jobs 第 {n} 項的 name {BREAK_MSG}"));
+        } else if name.is_empty() || name.chars().any(char::is_control) {
             errs.push(format!("ci.jobs 第 {n} 項的 name 不能是空的或含換行"));
         } else if name.contains(&expr) {
             errs.push(format!("ci.jobs 第 {n} 項的 name 不能寫 GitHub Actions 的運算式"));
@@ -186,7 +196,9 @@ pub fn config_errors(ci: &Value) -> Vec<String> {
                 if r.contains(&expr) {
                     errs.push(format!("ci.jobs 第 {n} 項的 run 不能寫 GitHub Actions 的運算式（含 secrets）；需要的值請在指令裡用環境變數"));
                 }
-                if r.chars().any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t') {
+                if r.chars().any(yaml_break) {
+                    errs.push(format!("ci.jobs 第 {n} 項的 run {BREAK_MSG}"));
+                } else if r.chars().any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t') {
                     errs.push(format!("ci.jobs 第 {n} 項的 run 有控制字元"));
                 }
             }
@@ -623,6 +635,12 @@ pub fn selftest() -> i32 {
         ("觸發", json!({"triggers": ["pull_request_target"]}), "ci.triggers"),
         ("runner 是運算式", json!({"runs_on": format!("{expr} x }}}}")}), "ci.runs_on"),
         ("啟用但沒有 job", json!({"enabled": true}), "至少要有一項"),
+        ("run 有 U+2028（YAML 當換行，能在 run 區塊外接出新的鍵）", json!({"jobs": [{"id": "a", "run": "npm test\u{2028}permissions: write-all\u{2028}on: pull_request_target"}]}), "行分隔"),
+        ("run 有 U+2029", json!({"jobs": [{"id": "a", "run": "npm test\u{2029}    env:"}]}), "行分隔"),
+        ("run 有 U+0085", json!({"jobs": [{"id": "a", "run": "npm test\u{85}x: y"}]}), "行分隔"),
+        ("run 有看不見的字元", json!({"jobs": [{"id": "a", "run": "npm\u{202e} test"}]}), "行分隔"),
+        ("name 有 U+2028", json!({"jobs": [{"id": "a", "name": "測試\u{2028}permissions: write-all", "run": "x"}]}), "行分隔"),
+        ("name 有 U+0085", json!({"jobs": [{"id": "a", "name": "測試\u{85}x", "run": "x"}]}), "name"),
         ("required 型別", json!({"jobs": [{"id": "a", "run": "x", "required": "yes"}]}), "required 要是"),
     ];
     for (label, ci, want) in bad {
