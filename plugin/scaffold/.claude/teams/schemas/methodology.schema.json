@@ -51,6 +51,7 @@
           "properties": {
             "test_first": {"type": "boolean", "description": "true：先由 dev-acceptance-tester 寫會失敗的測試、合進整合分支後才實作；false：先實作，再補驗證測試"},
             "unit_tests": {"type": "string", "description": "實作者寫單元測試的方式"},
+            "affected_tests_only": {"type": "boolean", "description": "選填，預設 false。true：修正迴圈（子任務被退回重做的那幾次）的派工單多一句「先用 awf kg impact --diff <base> 算受影響的測試、只跑那些」，省掉每輪全跑的時間；test 段的閘門照舊全跑。需要知識圖（awf kg）"},
             "guidance": {"type": "string"}
           }
         },

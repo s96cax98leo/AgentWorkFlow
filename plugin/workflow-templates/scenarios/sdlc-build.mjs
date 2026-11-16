@@ -64,6 +64,36 @@ export default [
     },
   },
   {
+    // 修正迴圈只跑受影響的測試（stages.build.affected_tests_only）：開啟時只有第 2 次以後的派工單多一句；關閉（預設）時完全不出現
+    name: '受影響的測試：開啟時修正迴圈的派工單多一句 awf kg impact，第一次的派工單沒有',
+    profile: (p) => ({ stages: { ...(p.stages || {}), build: { ...((p.stages || {}).build || {}), affected_tests_only: true } } }),
+    args: { base: 'origin/develop' },
+    fakes: { 'Implement:t1': { status: 'blocked', summary: '測試沒過' } },
+    expect: (r) => {
+      const errs = []
+      const first = r.prompts['Implement:t1'] || ''
+      const fix = r.prompts['Implement:t1#2'] || ''
+      if (!fix) errs.push(`blocked 之後要重派：${r.labels.join(' → ')}`)
+      if (!/先用 awf kg impact --diff origin\/develop 算受影響的測試、只跑那些/.test(fix)) errs.push('修正的派工單要有 awf kg impact 那一句（帶 base）')
+      if (/awf kg impact/.test(first)) errs.push('第一次的派工單不該有 awf kg impact')
+      const others = Object.entries(r.prompts).filter(([k, v]) => k !== 'Implement:t1#2' && /awf kg impact/.test(v || '')).map(([k]) => k)
+      if (others.length) errs.push(`只有修正迴圈的派工單該有：${others.join('、')}`)
+      if (out(r).halted) errs.push(`不該中斷：${out(r).halt_reason}`)
+      return errs
+    },
+  },
+  {
+    name: '受影響的測試：沒開（預設）時修正迴圈的派工單沒有 awf kg impact',
+    fakes: { 'Implement:t1': { status: 'blocked', summary: '測試沒過' } },
+    expect: (r) => {
+      const errs = []
+      if (!r.prompts['Implement:t1#2']) errs.push(`blocked 之後要重派：${r.labels.join(' → ')}`)
+      const hit = Object.entries(r.prompts).filter(([, v]) => /awf kg impact/.test(v || '')).map(([k]) => k)
+      if (hit.length) errs.push(`沒開的時候不該出現：${hit.join('、')}`)
+      return errs
+    },
+  },
+  {
     // 走過中轉分支後 merge 退回 build：子任務分支要從中轉分支開、integrator 要合回中轉分支
     name: 'branch：args.branch 帶中轉分支',
     args: { branch: 'merge/demo-transit' },
