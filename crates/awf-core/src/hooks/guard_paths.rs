@@ -1,6 +1,6 @@
 //! guard-paths：Edit／Write／NotebookEdit 的寫入範圍，Read／Grep 的機敏檔。原本是 0.x 的 Python 工具 `guard.py` 的 `check_paths`、`check_read`。
 
-use super::guard::{err, fold, git_toplevel, is_secret_path, norm, str_or_empty, tool_input, Guard, AUDIT_FILES, PACK_STATE, PROGRAM_FILE, R, SECRET_FILE_OK, SHARED_CONTEXT_NAMES};
+use super::guard::{err, extra_secret_hit, fold, git_toplevel, is_secret_path, norm, str_or_empty, tool_input, Guard, AUDIT_FILES, PACK_STATE, PROGRAM_FILE, R, SECRET_FILE_OK, SHARED_CONTEXT_NAMES};
 use super::path;
 use super::re::Re;
 use crate::config;
@@ -48,7 +48,7 @@ impl Guard {
             }
         }
         if let Some(Value::String(g)) = ti.get("glob") {
-            if SECRET_GLOB.is_match(g) && !SECRET_FILE_OK.is_match(g) {
+            if (SECRET_GLOB.is_match(g) && !SECRET_FILE_OK.is_match(g)) || extra_secret_hit(g) {
                 return Err(self.block(&format!("{who} 不搜尋機敏檔（glob {g}）；要判斷有無只能在 shell 用 grep -q（rules.md 規則 5）")));
             }
         }

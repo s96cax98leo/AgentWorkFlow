@@ -46,6 +46,16 @@ pub fn load_profile(ctx: &Ctx, given: &str) -> (Value, String) {
     (prof, String::new())
 }
 
+/// profile 的 `gates.extra` 可以加閘門的段。plan、design、test、deliver 本來就有；merge 由確定性的 merge gate 判定，不設人工閘門。
+pub const EXTRA_GATE_STAGES: [&str; 2] = ["build", "sync"];
+
+/// profile 的 `gates.extra`：另外要等核准才能往下走的段。只能加（[`super::GATED`] 的四段拿不掉）；
+/// 不是 [`EXTRA_GATE_STAGES`] 的值、型別不對、profile 是 null 都當成沒寫。
+pub fn extra_gates(profile: &Value) -> Vec<&'static str> {
+    let listed = profile.get("gates").and_then(|g| g.get("extra")).and_then(Value::as_array);
+    EXTRA_GATE_STAGES.iter().copied().filter(|st| listed.is_some_and(|l| l.iter().any(|x| x.as_str() == Some(*st)))).collect()
+}
+
 /// run.json 已經有 recipe、專案卻沒有 profile 檔時的錯誤訊息（save-run、publish、merge-gate 共用）。
 /// recipe 是 plan 段用專案的 profile 解析、鎖定的；profile 不見了通常代表專案根找錯了（或檔案被刪），
 /// 這時退回內建節重算會把 profile 定得更嚴的部分與限制文件一起漏掉，所以不採信。沒有 recipe 的舊 run 不受影響。

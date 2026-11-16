@@ -15,6 +15,7 @@
 //! - 讀 JSON 用 serde_json：不收 NaN／Infinity，超過 64 位元的整數會變成浮點數。
 //! - Python 沒接住的例外（traceback）在 CLI 這裡是一行錯誤訊息，exit code 一樣是 1。
 
+use crate::hooks::re::Re;
 use crate::pyfmt::{self, str_of, truthy};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -751,17 +752,98 @@ fn shapes() -> &'static Shapes {
     })
 }
 
+/// profile 的 `diff_classes_extra` 可以加樣式的類別。只能加嚴：把更多路徑算成這幾類；
+/// doc、test 不在裡面（把路徑歸成文件或測試等於放寬）。
+pub const DIFF_EXTRA_CLASSES: [&str; 4] = ["migration", "manifest", "agent_config", "code"];
+/// 每一類最多幾條樣式、每條最多幾個字。
+pub const DIFF_EXTRA_MAX: usize = 32;
+pub const DIFF_EXTRA_PATTERN_MAX: usize = 300;
+
+/// 編譯過的 `diff_classes_extra`（專案自己加的路徑分類樣式；不分大小寫，和內建樣式一樣）。
+#[derive(Default)]
+pub struct DiffExtra {
+    by: Vec<(&'static str, Vec<Re>)>,
+}
+
+impl DiffExtra {
+    /// 這個路徑另外命中的類別（照 [`DIFF_EXTRA_CLASSES`] 的順序）。
+    pub fn hits(&self, path: &str) -> Vec<&'static str> {
+        let p = norm_path(path);
+        self.by.iter().filter(|(_, res)| res.iter().any(|re| re.is_match(&p))).map(|(k, _)| *k).collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by.iter().all(|(_, v)| v.is_empty())
+    }
+}
+
+/// 讀 `diff_classes_extra`（`v` 是那個鍵的值；None 或 null＝沒設定）。寫得不對回 `Err(每一處的說明)`：
+/// 呼叫端（publish、merge-gate、check-diff）要往嚴的方向處理，不能當成沒設定。
+pub fn diff_extra_of(v: Option<&Value>) -> Result<DiffExtra, Vec<String>> {
+    let Some(v) = v.filter(|v| !v.is_null()) else { return Ok(DiffExtra::default()) };
+    let what = "diff_classes_extra";
+    let Some(o) = v.as_object() else { return Err(vec![format!("{what} 要是物件")]) };
+    let mut errs = Vec::new();
+    for k in o.keys().filter(|k| !DIFF_EXTRA_CLASSES.contains(&k.as_str())) {
+        errs.push(format!("{what} 不認得的類別：{k}（只能加 {}；把路徑歸成 doc 或 test 等於放寬，不開放）", DIFF_EXTRA_CLASSES.join("、")));
+    }
+    let mut by = Vec::new();
+    for cls in DIFF_EXTRA_CLASSES {
+        let Some(list) = o.get(cls).filter(|l| !l.is_null()) else { continue };
+        let Some(items) = list.as_array() else {
+            errs.push(format!("{what}.{cls} 要是正規式的陣列"));
+            continue;
+        };
+        if items.len() > DIFF_EXTRA_MAX {
+            errs.push(format!("{what}.{cls} 最多 {DIFF_EXTRA_MAX} 條（收到 {} 條）", items.len()));
+            continue;
+        }
+        let mut res = Vec::new();
+        for (i, it) in items.iter().enumerate() {
+            match it.as_str().filter(|t| !t.trim().is_empty() && t.chars().count() <= DIFF_EXTRA_PATTERN_MAX) {
+                None => errs.push(format!("{what}.{cls}[{i}] 要是 1–{DIFF_EXTRA_PATTERN_MAX} 個字的正規式")),
+                Some(src) => match Re::python(src, "i") {
+                    Ok(re) => res.push(re),
+                    Err(e) => errs.push(format!("{what}.{cls}[{i}] {e}")),
+                },
+            }
+        }
+        by.push((cls, res));
+    }
+    if errs.is_empty() { Ok(DiffExtra { by }) } else { Err(errs) }
+}
+
+/// profile 的 `diff_classes_extra`（profile 是 null 或沒寫＝沒設定）。
+pub fn diff_extra(profile: &Value) -> Result<DiffExtra, Vec<String>> {
+    diff_extra_of(profile.get("diff_classes_extra"))
+}
+
+/// 分類用的路徑寫法：反斜線換成斜線、去掉開頭的 `./`。
+fn norm_path(path: &str) -> String {
+    let mut p = path.replace('\\', "/");
+    while p.starts_with("./") { p.drain(..2); }
+    p
+}
+
 /// 一個路徑屬於哪幾類（code、test、doc、migration、manifest、agent_config）。回排序過的清單。
 pub fn classify(path: &str) -> Vec<&'static str> {
+    classify_with(path, None)
+}
+
+/// 同 [`classify`]，另外套用專案加的樣式（只會多歸類，不會少）：
+/// 命中 migration、manifest、agent_config 的路徑和內建樣式命中時一樣處理（不再算文件或測試目錄裡的一般檔）；
+/// 命中 code 的路徑在原本的分類之外再算一次 code（原本是文件或測試的仍然保留那一類，兩邊的要求都要滿足）。
+pub fn classify_with(path: &str, extra: Option<&DiffExtra>) -> Vec<&'static str> {
+    let added = extra.map(|e| e.hits(path)).unwrap_or_default();
     let mut p = path.replace('\\', "/");
     while p.starts_with("./") { p.drain(..2); }
     // Python 的 re.I 把 İ（U+0130）與 ı（U+0131）當成 i；Rust 的大小寫折疊不會
     let p = p.replace(['\u{130}', '\u{131}'], "i");
     let sh = shapes();
     let mut cats = Vec::new();
-    if sh.migration.is_match(&p) { cats.push("migration"); }
-    if sh.manifest.is_match(&p) { cats.push("manifest"); }
-    if sh.agent_config.is_match(&p) { cats.push("agent_config"); }
+    if sh.migration.is_match(&p) || added.contains(&"migration") { cats.push("migration"); }
+    if sh.manifest.is_match(&p) || added.contains(&"manifest") { cats.push("manifest"); }
+    if sh.agent_config.is_match(&p) || added.contains(&"agent_config") { cats.push("agent_config"); }
     if sh.test_name.is_match(&p) || (sh.test_root.is_match(&p) && cats.is_empty()) {
         cats.push("test");
     } else if (sh.doc_ext.is_match(&p) || sh.doc_txt.is_match(&p)) && cats.is_empty() {
@@ -769,8 +851,67 @@ pub fn classify(path: &str) -> Vec<&'static str> {
     } else {
         cats.push("code");
     }
+    if added.contains(&"code") && !cats.contains(&"code") { cats.push("code"); }
     cats.sort_unstable();
     cats
+}
+
+#[cfg(test)]
+mod diff_extra_tests {
+    use super::*;
+
+    fn paths(p: &[&str]) -> Value {
+        Value::Array(p.iter().map(|x| s(x)).collect())
+    }
+
+    #[test]
+    fn no_setting_is_identical_to_builtin() {
+        let none = diff_extra(&Value::Null).expect("沒設定");
+        assert!(none.is_empty());
+        for p in ["docs/a.md", "src/a.py", "tests/test_a.py", "db/migrations/1.sql", "package.json", ".github/x.yml", "README.md", "e2e/helpers.ts"] {
+            assert_eq!(classify_with(p, Some(&none)), classify(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn extra_classes_only_add() {
+        let x = diff_extra(&json!({"diff_classes_extra": {"migration": ["(^|/)schema/"], "manifest": ["(^|/)deps\\.txt$"], "agent_config": ["^tools/bots/"], "code": ["^docs/api/", "^tests/fixtures/"]}})).expect("合法的設定");
+        assert_eq!(classify_with("db/Schema/orders.yml", Some(&x)), ["code", "migration"]);
+        assert_eq!(classify_with("docs/schema/orders.md", Some(&x)), ["code", "migration"], "命中 migration 的文件不再算文件");
+        assert_eq!(classify_with("deps.txt", Some(&x)), ["code", "manifest"]);
+        assert_eq!(classify_with("tools/bots/a.md", Some(&x)), ["agent_config", "code"]);
+        assert_eq!(classify_with("docs/api/a.md", Some(&x)), ["code", "doc"], "歸成 code 的文件兩類都算");
+        assert_eq!(classify_with("tests/fixtures/test_a.py", Some(&x)), ["code", "test"]);
+        assert_eq!(classify_with("docs/guide/a.md", Some(&x)), ["doc"], "沒命中的照舊");
+        // 每個路徑的分類都只多不少
+        for p in ["docs/a.md", "src/a.py", "tests/test_a.py", "db/migrations/1.sql", "package.json", "docs/api/a.md", "db/schema/x.yml", "deps.txt"] {
+            let (base, with) = (classify(p), classify_with(p, Some(&x)));
+            assert!(base.iter().all(|c| with.contains(c) || (*c == "doc" || *c == "test") && with.contains(&"code")), "{p}：{base:?} → {with:?}");
+        }
+    }
+
+    #[test]
+    fn shortfalls_only_grow() {
+        let prof = json!({"recipes": builtin_recipes(), "modifiers": builtin_modifiers()});
+        let docs = resolve(&prof, &s("docs"), &json!([]), &Value::Null).expect("docs recipe");
+        let x = diff_extra(&json!({"diff_classes_extra": {"code": ["^docs/api/"], "migration": ["(^|/)schema/"]}})).expect("合法的設定");
+        assert!(diff_shortfalls(&docs, &paths(&["docs/api/a.md"])).expect("內建").is_empty());
+        let got = diff_shortfalls_with(&docs, &paths(&["docs/api/a.md"]), Some(&x)).expect("加嚴");
+        assert!(got.iter().any(|e| e.contains("不允許改產品程式")), "{got:?}");
+        let bug = resolve(&prof, &s("bugfix"), &json!([]), &Value::Null).expect("bugfix recipe");
+        assert!(diff_shortfalls(&bug, &paths(&["db/schema/a.yml"])).expect("內建").is_empty());
+        let got = diff_shortfalls_with(&bug, &paths(&["db/schema/a.yml"]), Some(&x)).expect("加嚴");
+        assert!(got.iter().any(|e| e.contains("改到 migration")), "{got:?}");
+    }
+
+    #[test]
+    fn bad_settings_are_errors() {
+        for bad in [json!({"doc": ["^src/"]}), json!({"test": ["^src/"]}), json!({"code": ["src/("]}), json!({"code": "src/"}), json!({"code": [1]}), json!({"code": [""]}), json!("x"), json!({"code": vec!["a"; DIFF_EXTRA_MAX + 1]})] {
+            assert!(diff_extra(&json!({"diff_classes_extra": bad.clone()})).is_err(), "{bad} 應該被拒絕");
+        }
+        assert!(diff_extra(&json!({"diff_classes_extra": null})).is_ok());
+        assert!(diff_extra(&json!({"diff_classes_extra": {}})).is_ok());
+    }
 }
 
 /// `sorted(set(...))` 的 repr：字串照字碼排，數字照大小排，混型別（Python 比不了）是 TypeError。
@@ -794,6 +935,11 @@ fn sorted_set_repr(kinds: &[Value]) -> R<String> {
 
 /// 實際 diff 需要、但 recipe 沒有的流程；空清單＝相符。
 pub fn diff_shortfalls(r: &Value, paths: &Value) -> R<Vec<String>> {
+    diff_shortfalls_with(r, paths, None)
+}
+
+/// 同 [`diff_shortfalls`]，路徑分類另外套用專案加的樣式（[`classify_with`]；只會多出不符，不會少）。
+pub fn diff_shortfalls_with(r: &Value, paths: &Value, extra: Option<&DiffExtra>) -> R<Vec<String>> {
     let mut out = Vec::new();
     let name = || -> R<String> { Ok(str_of(dget(r, "name")?)) };
     if !truthy(dget_d(r, "publishable", &Value::Bool(true))?) {
@@ -807,7 +953,7 @@ pub fn diff_shortfalls(r: &Value, paths: &Value) -> R<Vec<String>> {
     let mut by: Vec<(&'static str, Vec<String>)> = Vec::new();
     for p in iter(paths)? {
         let Value::String(p) = p else { return Err(no_attr(&p, "replace")) };
-        for c in classify(&p) {
+        for c in classify_with(&p, extra) {
             match by.iter_mut().find(|(k, _)| *k == c) {
                 Some((_, list)) => list.push(p.clone()),
                 None => by.push((c, vec![p.clone()])),
@@ -1015,7 +1161,7 @@ pub fn run(teams: &Path, argv: &[String], git: &dyn Fn(&[String]) -> Result<GitO
                 }
             }
         }
-        Some("check-diff") => match check_diff(argv, git, out, errs) {
+        Some("check-diff") => match check_diff(teams, argv, git, out, errs) {
             Ok(code) => code,
             Err(e) => {
                 errs.push_str(&format!("{e}\n"));
@@ -1030,7 +1176,7 @@ pub fn run(teams: &Path, argv: &[String], git: &dyn Fn(&[String]) -> Result<GitO
     }
 }
 
-fn check_diff(argv: &[String], git: &dyn Fn(&[String]) -> Result<GitOut, String>, out: &mut String, errs: &mut String) -> R<i32> {
+fn check_diff(teams: &Path, argv: &[String], git: &dyn Fn(&[String]) -> Result<GitOut, String>, out: &mut String, errs: &mut String) -> R<i32> {
     let run_path = PathBuf::from(opt(argv, "--run", "")).join("run.json");
     let text = std::fs::read_to_string(&run_path).map_err(|e| perr("OSError", format!("{}：{e}", run_path.display())))?;
     let run: Value = serde_json::from_str(&text).map_err(|e| perr("JSONDecodeError", format!("{}：{e}", run_path.display())))?;
@@ -1060,7 +1206,16 @@ fn check_diff(argv: &[String], git: &dyn Fn(&[String]) -> Result<GitOut, String>
         if py_strip(ln).is_empty() { continue; }
         paths.extend(ln.split('\t').skip(1).filter(|x| !py_strip(x).is_empty()).map(s));
     }
-    let found = diff_shortfalls(&recipe_of_run(&run)?, &Value::Array(paths))?;
+    // 專案加的路徑分類（profile 的 diff_classes_extra）：寫壞了就不比，直接回錯誤（fail-closed）
+    let prof = load_profile(&teams.join("methodology.json")).ok().flatten().unwrap_or(Value::Null);
+    let extra = match diff_extra(&prof) {
+        Ok(x) => x,
+        Err(es) => {
+            errs.push_str(&format!("profile 的 {}（fail-closed）\n", es.join("；")));
+            return Ok(1);
+        }
+    };
+    let found = diff_shortfalls_with(&recipe_of_run(&run)?, &Value::Array(paths), Some(&extra))?;
     for e in &found {
         errs.push_str(&format!("recipe 不足：{e}（要升級就用 awf save-run escalate）\n"));
     }

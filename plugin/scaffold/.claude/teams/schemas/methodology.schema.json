@@ -28,6 +28,7 @@
           "properties": {
             "artifacts": {"type": "array", "items": {"type": "string"}},
             "requirement_style": {"type": "string", "minLength": 1, "description": "需求／驗收條件的寫法"},
+            "criteria_id_pattern": {"type": "string", "minLength": 1, "maxLength": 200, "description": "選填：驗收條件編號的樣式（Python re 的寫法；整個符合的字串就是編號，不能符合空字串）。拆工檢查用它對照 spec 與子任務；沒寫用內建的「AC-…」。編不過會報錯，不會當成沒設定"},
             "guidance": {"type": "string"},
             "system_design": {
               "type": ["object", "null"],
@@ -124,6 +125,25 @@
           }
         },
         "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent（沒寫用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
+        "run_brief": {
+          "type": "object",
+          "description": "選填：長輸出濃縮（awf run-brief）的大小。沒寫或不合範圍的那一項用預設；完整輸出一律在 log 檔",
+          "additionalProperties": false,
+          "properties": {
+            "max_fails": {"type": "integer", "minimum": 1, "maximum": 200, "description": "失敗的測試最多列幾則（沒寫用 20）"},
+            "tail": {"type": "integer", "minimum": 5, "maximum": 500, "description": "認得測試框架時結尾留幾行（沒寫用 20）；--tail 有給以它為準"},
+            "unknown_tail": {"type": "integer", "minimum": 5, "maximum": 500, "description": "認不得框架時結尾留幾行（沒寫用 40）"}
+          }
+        },
+        "display": {
+          "type": "object",
+          "description": "選填：閘門重點（awf next 回的 highlights）列多少。只是顯示用的截斷，完整內容在各段存下來的結果裡；沒寫或不合範圍用預設",
+          "additionalProperties": false,
+          "properties": {
+            "agents": {"type": "integer", "minimum": 1, "maximum": 200, "description": "最多列幾個 agent 的摘要（沒寫用 40）"},
+            "questions": {"type": "integer", "minimum": 1, "maximum": 200, "description": "未決問題與暫定做法各最多列幾則（沒寫用 30）"}
+          }
+        },
         "rounds": {
           "type": "object",
           "description": "選填：重做與修正的輪數上限。跑滿仍然停下交人（這點固定）；調大會多派 agent，仍受 max_agents 限制",
@@ -202,6 +222,32 @@
         },
         "spec_root": {"type": "string", "minLength": 1, "description": "選填：知識圖讀規格（OpenSpec 目錄）的位置，相對專案根目錄；預設 openspec"},
         "timeout": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "選填：awf kg build 的逾時秒數；預設 60"},
+        "extensions": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "pattern": "^\\.[a-z0-9][a-z0-9.+_-]{0,15}$"}, "description": "選填：知識庫與知識圖收哪些副檔名的文件（小寫、帶點）。沒寫用 .md、.markdown、.txt；寫了就是整份清單（要保留預設的也要列出來）。sources 的 glob 要對得到這些檔才會收；機敏檔一律不收。不合規定時用預設並警告"},
+        "pack": {
+          "type": "object",
+          "description": "選填：資料包（awf pack）的大小。沒寫或不合範圍的那一項用預設；只影響 pack.md 的長度，閘門不讀",
+          "additionalProperties": false,
+          "properties": {
+            "top": {"type": "integer", "minimum": 1, "maximum": 50, "description": "知識庫取幾筆（沒寫用 12）"},
+            "budget": {"type": "integer", "minimum": 200, "maximum": 20000, "description": "知識庫節錄的字數預算（沒寫用 3000）"},
+            "decisions": {"type": "integer", "minimum": 0, "maximum": 50, "description": "〈既有決定〉最多帶幾筆（沒寫用 12；0＝不帶）"},
+            "requirement_lines": {"type": "integer", "minimum": 20, "maximum": 2000, "description": "需求是檔案時貼前幾行（沒寫用 200）"},
+            "headings": {"type": "integer", "minimum": 1, "maximum": 200, "description": "子任務資料包裡每份限制文件最多列幾個標題（沒寫用 40）"}
+          }
+        },
+        "locate": {
+          "type": "object",
+          "description": "選填：工具先定位（awf locate）的門檻。沒寫或不合範圍的那一項用預設；只決定要不要多派定位 agent，閘門不讀",
+          "additionalProperties": false,
+          "properties": {
+            "max_segments": {"type": "integer", "minimum": 1, "maximum": 40, "description": "每個角度最多幾段（沒寫用 12）"},
+            "segment_lines": {"type": "integer", "minimum": 40, "maximum": 400, "description": "相鄰的行段合併後最多幾行（沒寫用 120）"},
+            "min_segments": {"type": "integer", "minimum": 3, "maximum": 12, "description": "少於幾段算不夠、照派定位 agent（沒寫用 3；只能調高，3 段是範本與知識圖共用的下限）"},
+            "min_coverage": {"type": "number", "minimum": 0.05, "maximum": 1, "description": "行段涵蓋的查詢詞比例低於這個算不夠（沒寫用 0.3）"},
+            "max_files": {"type": "integer", "minimum": 100, "maximum": 20000, "description": "最多看幾個檔，超過算沒看完、結果不算夠（沒寫用 4000）"},
+            "prune": {"type": "array", "maxItems": 32, "items": {"type": "string", "pattern": "^[^/\\\\*?]{1,64}$"}, "description": "另外不看的目錄名（單一層的名字，不是路徑）。內建的 .git、node_modules、dist、build、target 等永遠不看，這裡只能加"}
+          }
+        },
         "auto": {
           "type": "object",
           "description": "選填：自動接點（流程自己呼叫知識圖與規格層，不用人記指令）。每一項失敗都只警告、不擋流程；閘門不讀它們的輸出。沒有知識圖（<dir>/graph.db）時，除了 update 明確開啟以外全部不做",
@@ -230,6 +276,16 @@
       "description": "選填：進度監看（awf watch）。不設就只寫 <run_dir>/progress.jsonl，不呼叫任何外部指令",
       "additionalProperties": false,
       "properties": {
+        "watch": {
+          "type": "object",
+          "description": "選填：watcher 的節奏。沒寫或不合範圍的那一項用預設；interval、stall_seconds 是命令列旗標沒給時的預設，旗標有給以旗標為準",
+          "additionalProperties": false,
+          "properties": {
+            "interval": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "每隔幾秒看一次（沒寫用 5）"},
+            "stall_seconds": {"type": "integer", "minimum": 0, "maximum": 86400, "description": "workflow 還沒結束、超過幾秒沒有動靜就記 workflow_stalled（沒寫用 900；0＝不記）"},
+            "progress_step": {"type": "integer", "minimum": 1000, "maximum": 10000000, "description": "同一個 agent 每多用多少 token 記一筆 agent_progress（沒寫用 50000）"}
+          }
+        },
         "notify": {
           "type": "object",
           "description": "選填：每個事件呼叫一次的外部指令（例如送到聊天室）。事件以 JSON 從 stdin 給，只含狀態與數字的白名單欄位；內容像機敏值就不送。指令失敗只警告",
@@ -240,6 +296,42 @@
             "events": {"type": "array", "description": "只送這些事件類型；省略＝全部", "items": {"enum": ["run_state", "stage_started", "stage_saved", "waiting_gate", "stage_approved", "record_written", "agent_started", "agent_progress", "workflow_finished", "workflow_stalled", "watch_note"]}}
           }
         }
+      }
+    },
+    "constraints_format": {
+      "type": "object",
+      "description": "選填：限制對照的用語。輸出語言不是中文時，讓 awf save-run 認得 agent 寫的判定詞。內建的「符合／偏離／不適用」永遠認得（只會多認）；設定的詞不能把內建的詞改成別的意思",
+      "additionalProperties": false,
+      "properties": {
+        "heading": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "對照表那一節的名字（沒寫用「限制對照」）；只用在訊息裡，工具認的是表格列不是節名"},
+        "verdicts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ok": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "另外也算「符合」的詞"},
+            "deviation": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "另外也算「偏離」的詞（有偏離就不能政策核准）"},
+            "na": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^|`\\n]+$", "description": "另外也算「不適用」的詞"}
+          }
+        }
+      }
+    },
+    "diff_classes_extra": {
+      "type": "object",
+      "description": "選填：專案另外加的路徑分類（awf publish 與 awf merge-gate 的 diff 反查用）。只能加嚴：把更多路徑算成 migration、manifest、agent_config 或 code；不能把路徑歸成 doc 或 test。樣式是 Python re 的寫法、不分大小寫，比對相對 repo 根的路徑",
+      "additionalProperties": false,
+      "properties": {
+        "migration": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算資料庫 migration 的路徑（需要 design 段與回滾計畫；merge-gate 交給人）"},
+        "manifest": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算依賴宣告或鎖檔的路徑（需要安全審查；merge-gate 交給人）"},
+        "agent_config": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算 agent 或 CI 設定的路徑（需要安全審查；merge-gate 交給人）"},
+        "code": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算產品程式的路徑（原本算文件或測試的，兩邊的要求都要滿足；merge-gate 不再當成低風險）"}
+      }
+    },
+    "gates": {
+      "type": "object",
+      "description": "選填：另外加的核准閘門。plan、design、test、deliver 本來就有、拿不掉；這裡只能再加",
+      "additionalProperties": false,
+      "properties": {
+        "extra": {"type": "array", "maxItems": 2, "items": {"enum": ["build", "sync"]}, "description": "這幾段做完也要等核准才往下走（沒寫＝不加）。存檔當下有列的段就標成有閘門；之後拿掉設定，已經標上的不會消失"}
       }
     },
     "events": {"type": "object", "description": "選填：自訂事件類型（共用 event.js：多個角度平行處理 → skeptic 反駁 → writer 寫文件）。鍵是事件名；和內建類型（meeting、decision、demo-check、reqs-change、upstream）同名時整筆取代。用法見 docs/事件處理.md", "additionalProperties": {"type": "object", "required": ["context", "gather", "challenge", "write"], "additionalProperties": false, "properties": {"title": {"type": "string", "minLength": 1, "description": "這個事件類型做什麼（給人看）"}, "args": {"type": "array", "maxItems": 8, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "description": "必要參數名；缺了 awf next 會回 need_input"}, "optional": {"type": "array", "maxItems": 8, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "description": "選填參數名；文字裡用 {名稱|沒給時的字} 引用"}, "context": {"type": "string", "minLength": 1, "description": "每張派工單開頭的背景；{參數名} 會換成 args 的值，{run_dir} 是 run 目錄"}, "payload": {"enum": ["items", "findings"], "description": "各角度交 items（預設）還是 findings"}, "before": {"type": "array", "maxItems": 6, "items": {"type": "object", "required": ["name", "label", "ask"], "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1, "description": "結果的名字（回傳的鍵，也可以給 data 的 from 引用）", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "label": {"type": "string", "minLength": 1, "description": "派工 label（執行紀錄檔名）", "pattern": "^[a-z][a-z0-9:-]{0,47}$"}, "ask": {"type": "string", "minLength": 1, "description": "派工單內容；{參數名} 會換成 args 的值"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，預設「派工單」"}, "halt": {"type": "string", "minLength": 1, "description": "這一步缺件時回報的 stage 名，預設同 label"}, "payload": {"enum": ["items", "findings"], "description": "交件用哪種 payload，預設同事件的 payload"}, "keep": {"enum": ["list", "envelope"], "description": "回傳只留清單（預設）還是整個信封"}, "stop_if_empty": {"type": "string", "minLength": 1, "description": "清單是空的就正常結束，回傳的 note 用這句話"}}}, "description": "前置步驟：依序、各派一個 tpm-researcher（最多 3 步；limits.event.max_steps 可調，上限 6）"}, "gather": {"type": "object", "required": ["angles"], "additionalProperties": false, "description": "各角度平行（各派一個 tpm-researcher）", "properties": {"label": {"type": "string", "minLength": 1, "description": "派工 label 的前綴（<label>:<角度 key>），預設 gather", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，可用 {key}；預設「派工單（{key}）」"}, "body": {"type": "string", "minLength": 1, "description": "派工單內容，可用 {ask}、{key} 與參數名；預設就是角度的 ask"}, "tail": {"type": "string", "minLength": 1, "description": "接在資料後面的最後一行"}, "data": {"type": "array", "maxItems": 6, "description": "附在派工單後面的資料（每筆一行「標籤：JSON」）", "items": {"type": "object", "required": ["label", "from"], "additionalProperties": false, "properties": {"label": {"type": "string", "minLength": 1, "description": "這份資料在派工單裡的標籤"}, "from": {"type": "string", "minLength": 1, "description": "資料來源：all（全部事項）、kept（skeptic 沒推翻的）、doubted（被推翻或沒被驗證的）、doubted_ids（同上，只有 id）、或 before／after 步驟的 name"}}}}, "angles": {"type": "array", "minItems": 1, "maxItems": 16, "description": "角度清單（最多 8 個；limits.event.max_angles 可調，上限 16）", "items": {"type": "object", "required": ["key", "ask"], "additionalProperties": false, "properties": {"key": {"type": "string", "minLength": 1, "description": "角度代號（事項 id 的前綴）", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "ask": {"type": "string", "minLength": 1, "description": "這個角度要找什麼"}, "type": {"type": "string", "minLength": 1, "description": "可以在 body 用 {type} 引用"}}}}}}, "challenge": {"type": "object", "required": ["ask"], "additionalProperties": false, "description": "tpm-skeptic 的派工單；事項清單會接在後面", "properties": {"ask": {"type": "string", "minLength": 1, "description": "要 skeptic 怎麼反駁"}, "only_status": {"type": "string", "minLength": 1, "description": "只反駁這個 status 的事項（例如 green）"}}}, "after": {"type": "array", "maxItems": 6, "items": {"type": "object", "required": ["name", "label", "ask"], "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1, "description": "結果的名字（回傳的鍵，也可以給 data 的 from 引用）", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "label": {"type": "string", "minLength": 1, "description": "派工 label（執行紀錄檔名）", "pattern": "^[a-z][a-z0-9:-]{0,47}$"}, "ask": {"type": "string", "minLength": 1, "description": "派工單內容；{參數名} 會換成 args 的值"}, "heading": {"type": "string", "minLength": 1, "description": "派工單標題，預設「派工單」"}, "halt": {"type": "string", "minLength": 1, "description": "這一步缺件時回報的 stage 名，預設同 label"}, "payload": {"enum": ["items", "findings"], "description": "交件用哪種 payload，預設同事件的 payload"}, "keep": {"enum": ["list", "envelope"], "description": "回傳只留清單（預設）還是整個信封"}, "stop_if_empty": {"type": "string", "minLength": 1, "description": "清單是空的就正常結束，回傳的 note 用這句話"}}}, "description": "收尾步驟：寫文件之前依序執行（最多 3 步；limits.event.max_steps 可調，上限 6）"}, "write": {"type": "object", "required": ["ask"], "additionalProperties": false, "description": "tpm-writer 的派工單", "properties": {"ask": {"type": "string", "minLength": 1, "description": "要寫哪些文件、寫到哪裡"}, "data": {"type": "array", "maxItems": 6, "description": "附在派工單後面的資料（每筆一行「標籤：JSON」）", "items": {"type": "object", "required": ["label", "from"], "additionalProperties": false, "properties": {"label": {"type": "string", "minLength": 1, "description": "這份資料在派工單裡的標籤"}, "from": {"type": "string", "minLength": 1, "description": "資料來源：all（全部事項）、kept（skeptic 沒推翻的）、doubted（被推翻或沒被驗證的）、doubted_ids（同上，只有 id）、或 before／after 步驟的 name"}}}}, "owner_check": {"type": "boolean", "description": "true＝writer 要交出給決策者版並回報 awf check-rules 通過，否則停下交人"}}}, "returns": {"type": "object", "additionalProperties": false, "description": "回傳的鍵名", "properties": {"all": {"type": "string", "minLength": 1, "description": "全部事項的鍵名，預設 items", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "doubted": {"type": "string", "minLength": 1, "description": "被推翻或沒被驗證的 id 的鍵名，預設 refuted", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, "challenge": {"type": "boolean", "description": "true＝回傳附上 skeptic 的信封"}}}}}},

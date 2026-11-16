@@ -450,7 +450,7 @@ fn scan_repo(repo: &RepoSrc, lay: &Layout, out: &mut Vec<Src>, skipped: &mut Vec
         }
         let lang = Lang::from_path(&inner);
         let low = inner.to_lowercase();
-        if lang.is_none() && !kb::TEXT_EXTS.iter().any(|x| low.ends_with(x)) {
+        if lang.is_none() && !lay.cfg.extensions.iter().any(|x| low.ends_with(x.as_str())) {
             continue;
         }
         let rel = format!("{}:{inner}", repo.id);
@@ -695,6 +695,13 @@ pub fn build(o: &BuildOpts) -> Result<BuildReport, String> {
     let start = Instant::now();
     let lay = layout(o.root.as_deref(), o.profile.as_deref(), o.dir.as_deref(), o.spec_root.as_deref())?;
     let clock = Clock { start, limit: Duration::from_secs(o.timeout.or(lay.timeout).unwrap_or(DEFAULT_TIMEOUT)) };
+    // 專案另外加的機敏檔樣式（guard.config.json 的 secret_files_extra；和 publish、hook、kb 同一份）。
+    // `sensitive` 走 hook 的 is_secret_path，所以放進同一個執行緒區域變數；設定用不了就不建圖（分不出哪些檔是機敏的）
+    let extra = crate::config::SecretExtra::for_project(&lay.root);
+    if let Some(e) = extra.errors.first() {
+        return Err(format!("機敏檔的設定用不了（{e}）：不建圖，請先修正 .claude/teams/guard.config.json"));
+    }
+    crate::hooks::guard::set_secret_files_extra(extra.files);
     pyish::mkdir_p(&lay.dir).map_err(|err| format!("建不出目錄 {}（{}）", lay.dir, err.msg))?;
     let tmp = format!("{}.tmp-{}", lay.db, std::process::id());
     rm(&tmp);

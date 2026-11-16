@@ -243,7 +243,20 @@ impl Guard {
     /// 載入設定（對應 `import guard` 的模組層）。`Err`＝載入失敗，入口改用內建最小規則。
     pub fn load() -> Result<Guard, PyErr> {
         let ws = config::workspace()?;
-        let cfg = config::load(&ws)?;
+        let mut cfg = config::load(&ws)?;
+        // 專案另外加的機敏樣式（secret_files_extra、secret_patterns_extra）：沒設定時這裡什麼都不做。
+        // 樣式編不過和設定檔讀不懂同一個處理（cfg.broken：模版角色的寫入全擋），編得過的照樣生效
+        if cfg.secret_files_extra.is_empty() && cfg.secret_patterns_extra.is_empty() {
+            set_secret_files_extra(Vec::new());
+        } else {
+            let se = config::SecretExtra::of(&cfg);
+            if cfg.broken.is_empty() {
+                if let Some(e) = se.errors.first() {
+                    cfg.broken = e.clone();
+                }
+            }
+            set_secret_files_extra(se.files);
+        }
         let runs = if cfg.runs_dir.is_empty() { String::new() } else { format!("{}/", cfg.runs_dir) };
         let repos = if cfg.repos_dir.is_empty() { String::new() } else { format!("{}/", cfg.repos_dir) };
         let am = config::auto_merge(&cfg);
@@ -591,10 +604,29 @@ impl Guard {
 static SECRET_FILES: Re = Re::new(r"(?:^|/)(?:\.env(?:\.[\w-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:pem|p12|pfx|key|keystore|jks)|\.npmrc|\.pypirc|credentials(?:\.json)?)$", "i");
 pub static SECRET_FILE_OK: Re = Re::new(r"\.env\.(?:example|sample|template)$", "");
 
+thread_local! {
+    /// 專案另外加的機敏檔樣式（guard.config.json 的 `secret_files_extra`）。由 [`Guard::load`] 在載入設定時放進來；
+    /// hook 一個行程只處理一次呼叫，所以放在執行緒區域變數就夠了（[`is_secret_path`] 的呼叫點很多，不逐一傳參數）。
+    static SECRET_FILES_EXTRA: std::cell::RefCell<Vec<Re>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// 換掉這個執行緒的「專案另外加的機敏檔樣式」。
+pub fn set_secret_files_extra(v: Vec<Re>) {
+    SECRET_FILES_EXTRA.with(|c| *c.borrow_mut() = v);
+}
+
+/// 路徑（或 glob）命中專案另外加的機敏檔樣式。沒設定時一律 false、不做任何比對。
+pub fn extra_secret_hit(n: &str) -> bool {
+    SECRET_FILES_EXTRA.with(|c| {
+        let v = c.borrow();
+        !v.is_empty() && v.iter().any(|re| re.is_match(n))
+    })
+}
+
 pub fn is_secret_path(p: &str) -> bool {
     let n = norm(p.trim_matches(|c| c == '"' || c == '\''));
     let n = n.trim_end_matches('/');
-    SECRET_FILES.is_match(n) && !SECRET_FILE_OK.is_match(n)
+    (SECRET_FILES.is_match(n) && !SECRET_FILE_OK.is_match(n)) || extra_secret_hit(n)
 }
 
 /// 知識圖的資料庫檔名（`awf kg`）與它旁邊由工具與人維護的 vault。

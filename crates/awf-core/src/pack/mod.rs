@@ -56,6 +56,56 @@ pub const DECISIONS_VIEW: &str = "決策記憶.md";
 pub const DECISION_SCOPES: [&str; 2] = ["epic", "project"];
 pub const MAX_DECISIONS: usize = 12;
 pub const MAX_HEADINGS: usize = 40;
+/// 需求是檔案時貼進資料包的行數。
+pub const REQUIREMENT_LINES: usize = 200;
+
+/// 資料包的大小（profile 的 `knowledge.pack`）。預設＝原本寫死的值；沒寫或不合範圍的那一項用預設。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PackTune {
+    /// 知識庫取幾筆。
+    pub top: i64,
+    /// 知識庫節錄的字數預算。
+    pub budget: i64,
+    /// 〈既有決定〉最多幾筆。
+    pub decisions: usize,
+    /// 需求是檔案時貼前幾行。
+    pub requirement_lines: usize,
+    /// 子任務資料包裡，每份限制文件最多列幾個標題。
+    pub headings: usize,
+}
+
+impl Default for PackTune {
+    fn default() -> Self {
+        PackTune { top: KB_TOP, budget: KB_BUDGET, decisions: MAX_DECISIONS, requirement_lines: REQUIREMENT_LINES, headings: MAX_HEADINGS }
+    }
+}
+
+impl PackTune {
+    pub fn of(profile: &Value) -> PackTune {
+        use crate::tune::{at, int};
+        let k = |name: &str| at(profile, &["knowledge", "pack", name]);
+        PackTune {
+            top: int(k("top"), 1, 50, KB_TOP),
+            budget: int(k("budget"), 200, 20_000, KB_BUDGET),
+            decisions: int(k("decisions"), 0, 50, MAX_DECISIONS as i64) as usize,
+            requirement_lines: int(k("requirement_lines"), 20, 2000, REQUIREMENT_LINES as i64) as usize,
+            headings: int(k("headings"), 1, 200, MAX_HEADINGS as i64) as usize,
+        }
+    }
+}
+
+thread_local! {
+    /// 這次執行用的大小。`run_pack` 開頭依專案的 profile 放進來；直接呼叫函式（測試、對跑基準）時是預設值。
+    static PACK_TUNE: std::cell::Cell<PackTune> = std::cell::Cell::new(PackTune::default());
+}
+
+pub fn set_tune(t: PackTune) {
+    PACK_TUNE.with(|c| c.set(t));
+}
+
+pub fn tune() -> PackTune {
+    PACK_TUNE.with(std::cell::Cell::get)
+}
 
 /// 用法（`awf pack` 沒給段名時印）。
 pub const USAGE: &str = "資料包與調研重用：每段開跑前由工具（不是 agent）整理好要讀的資料，不花 LLM token。
@@ -874,7 +924,7 @@ pub fn relevant_decisions(runs: &str, run_name: &str, epic: &str, requirement: &
         out.push(d);
     }
     out.reverse();
-    out.truncate(MAX_DECISIONS);
+    out.truncate(tune().decisions);
     Ok(out)
 }
 
@@ -930,7 +980,7 @@ pub fn kb_hits(root: &str, text: &str) -> (Vec<Value>, String) {
     if let Err(e) = kb::build(&kb::BuildOpts { root: Some(root.to_string()), ..Default::default() }) {
         return (Vec::new(), format!("知識庫查詢失敗（{}：{}）", e.class, e.msg));
     }
-    let info = kb::query(text, &kb::QueryOpts { root: Some(root.to_string()), top: KB_TOP, budget: KB_BUDGET, ..Default::default() });
+    let info = kb::query(text, &kb::QueryOpts { root: Some(root.to_string()), top: tune().top, budget: tune().budget, ..Default::default() });
     let hits = info.results.iter().map(|h| json!({"path": h.path, "start": h.start, "end": h.end, "headings": h.headings, "stale": h.stale})).collect();
     (hits, String::new())
 }
@@ -941,8 +991,9 @@ pub fn requirement_text(raw: &str, root: &str) -> String {
     if let Some(f) = requirement_file(raw, root) {
         if let Ok(text) = pyish::read_text(&f) {
             let lines = pyutil::splitlines(&text);
-            let more = if lines.len() > 200 { format!("\n（以下省略，全文見 {}，共 {} 行）", posix(raw), lines.len()) } else { String::new() };
-            let head: Vec<&str> = lines.iter().take(200).copied().collect();
+            let keep = tune().requirement_lines;
+            let more = if lines.len() > keep { format!("\n（以下省略，全文見 {}，共 {} 行）", posix(raw), lines.len()) } else { String::new() };
+            let head: Vec<&str> = lines.iter().take(keep).copied().collect();
             return format!("（取自 {}）\n{}{}", posix(raw), head.join("\n"), more);
         }
     }
@@ -1277,7 +1328,7 @@ pub fn build_task_pack_with(task: &Value, all_tasks: &[Value], spec: Option<&str
             let note = if pyfmt::truthy_opt(c.get("note")) { format!("：{}", flat(c.get("note"), 120)) } else { String::new() };
             l.push(format!("- [{}] {}{note}{}", flat(c.get("id"), 80), flat_str(file, 200), if f.is_some() { "" } else { "（找不到這個檔）" }));
             let heads = f.map(|f| md_headings(&f)).unwrap_or_default();
-            for h in heads.iter().filter(|h| h.level <= 3).take(MAX_HEADINGS) {
+            for h in heads.iter().filter(|h| h.level <= 3).take(tune().headings) {
                 l.push(format!("  - {}-{} ｜ {} {}", h.start, h.end, "#".repeat(h.level), flat_str(&h.title, 100)));
             }
         }
@@ -1394,6 +1445,10 @@ fn today_local() -> String {
 /// 產生一段的資料包。`argv[0]` 是段名。stdout 的文字寫進 `out`；回傳 exit code。
 /// `Err` 是 0.x 的 Python 版沒有接住的例外（那邊是 traceback、exit 1）。
 pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> {
+    // 資料包與工具定位的大小（profile 的 knowledge.pack、knowledge.locate）：沒設定時是預設值，輸出逐字不變
+    let tuned = crate::tune::profile(root);
+    set_tune(PackTune::of(&tuned));
+    locate::set_tune(locate::LocateTune::of(&tuned));
     let Some(stage) = argv.first().map(String::as_str) else { return Ok(2) };
     let run_raw = opt(argv, "--run");
     if run_raw.is_empty() {

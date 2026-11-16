@@ -88,11 +88,11 @@ pub fn plan(kx: &KgCtx, text: &str, names: &[String], located: Option<&mut Map<S
             let mut locs: Vec<Value> = direct.iter().map(|d| json!({"path": d.path, "start": d.start, "end": d.end, "why": d.why})).collect();
             for t in tool {
                 let dup = locs.iter().any(|l| tool_path(l) == tool_path(&t) && l.get("start") == t.get("start"));
-                if !dup && locs.len() < locate::MAX_SEGMENTS {
+                if !dup && locs.len() < locate::tune().max_segments {
                     locs.push(t);
                 }
             }
-            locs.truncate(locate::MAX_SEGMENTS);
+            locs.truncate(locate::tune().max_segments);
             let files: std::collections::BTreeSet<&str> = direct.iter().map(|d| d.path.as_str()).collect();
             notes.push(format!("知識圖：{angle} 命中夠（直接命中 {} 個符號、{} 個檔，接得到需求，和工具定位有重疊），不派定位 agent", direct.len(), files.len()));
             located.insert(angle.to_string(), json!({"locations": locs, "enough": true, "source": "kg"}));

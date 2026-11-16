@@ -2,11 +2,11 @@
 //! 每一支都照 save_run.py 的 `main` 逐行移植：檢查的順序、寫檔的時機、印到 stdout／stderr 的文字都一樣。
 
 use super::archive::{next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
-use super::checks::{constraint_issues, intent_errors, plan_check_for};
+use super::checks::{constraint_issues, intent_errors, plan_check_for_with};
 use super::decisions::{decision_errors, record_decisions, split_answer};
 use super::links::{decision_links, link_gaps, links_setting, stage_links, write_links, LEDGER};
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
-use super::policy::{abandoned_error, chain_errors, escalate_affected, followup_run_errors, has_recipe, load_profile, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors};
+use super::policy::{abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
 use super::trace::{envelopes, model_errors, process_trace};
 use super::{dump, load, opt, opts, Ctx, GATED, HUMAN_ONLY, INDEX_NAME, NO_ENVELOPE, SDLC};
@@ -55,8 +55,14 @@ fn or_empty_obj(v: &Value) -> Value {
     if truthy(v) { v.clone() } else { json!({}) }
 }
 
-fn pending(stage: &str) -> Value {
-    json!({"status": "pending", "gate": GATED.contains(&stage)})
+/// 新的一段。`extra` 是 profile 的 `gates.extra`（[`extra_gates`]）：只會讓更多段有閘門。
+fn pending(stage: &str, extra: &[&str]) -> Value {
+    json!({"status": "pending", "gate": GATED.contains(&stage) || extra.contains(&stage)})
+}
+
+/// 這次用的 profile 另外加了閘門的段（讀不到、不合規則的 profile 當成沒有加；那種 profile 在別處已經報錯）。
+fn gates_of(ctx: &Ctx, profile_arg: &str) -> Vec<&'static str> {
+    extra_gates(&load_profile(ctx, profile_arg).0)
 }
 
 /// `data["stages"]`（可改）。
@@ -78,7 +84,7 @@ fn st_mut<'a>(data: &'a mut Value, stage: &str) -> R<&'a mut Map<String, Value>>
 }
 
 /// 依 recipe 重建 run.json 的 stages：recipe 有的段沒有就補 pending（skipped 的改回 pending），沒有的段標 skipped。
-fn rebuild_stages(data: &mut Value, resolved: &Value) -> R<()> {
+fn rebuild_stages(data: &mut Value, resolved: &Value, extra: &[&str]) -> R<()> {
     let want = get(resolved, "stages")?.clone();
     let d = py::obj_mut(data)?;
     let stages = d.entry("stages").or_insert_with(|| json!({}));
@@ -86,7 +92,7 @@ fn rebuild_stages(data: &mut Value, resolved: &Value) -> R<()> {
         let st = get(stages, st_name)?;
         let wanted = truthy(&want) && py::contains(&want, st_name)?;
         let new = if wanted {
-            if !st.is_object() || get(st, "status")?.as_str() == Some("skipped") { Some(pending(st_name)) } else { None }
+            if !st.is_object() || get(st, "status")?.as_str() == Some("skipped") { Some(pending(st_name, extra)) } else { None }
         } else {
             Some(json!({"status": "skipped", "gate": false}))
         };
@@ -157,11 +163,12 @@ fn dispatch(ctx: &Ctx, argv: &[String], stdin: &mut dyn FnMut() -> R<String>, ou
         let event = opt(argv, "--event", "");
         let mut stages = Map::new();
         if event == "sdlc" {
+            let extra = gates_of(ctx, "");
             for st in SDLC {
-                stages.insert(st.to_string(), pending(st));
+                stages.insert(st.to_string(), pending(st, &extra));
             }
         } else {
-            stages.insert("run".to_string(), pending("run"));
+            stages.insert("run".to_string(), pending("run", &[]));
         }
         let mut data = Map::new();
         data.insert("event".into(), json!(event));
@@ -380,7 +387,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         }
         if has_recipe(&data)? {
             let resolved = idx(idx(&data, "recipe")?, "resolved")?.clone();
-            rebuild_stages(&mut data, &resolved)?;
+            rebuild_stages(&mut data, &resolved, &gates_of(ctx, profile_arg))?;
             write_context(ctx, run, &data)?;
         }
     } else if in_sdlc && has_recipe(&data)? && {
@@ -421,10 +428,15 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
     match stages_mut(&mut data)? {
         Value::Object(o) => {
             if !o.contains_key(stage) {
-                o.insert(stage.to_string(), pending(stage));
+                o.insert(stage.to_string(), pending(stage, &[]));
             }
         }
         other => return Err(py::attr_err(other, "setdefault")),
+    }
+    // profile 的 gates.extra（只能加閘門）：存檔當下 profile 有列的段一律標成有閘門，
+    // 就算這個 run 是在加這項設定之前建立的。拿掉設定不會把已經標上的閘門拿掉。
+    if in_sdlc && sdlc_run && gates_of(ctx, profile_arg).contains(&stage) {
+        st_mut(&mut data, stage)?.insert("gate".into(), json!(true));
     }
     let halted = if result.is_object() { get(result, "halted")?.clone() } else { Value::Null };
     let status = if !errs.is_empty() {
@@ -471,7 +483,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             } else {
                 st.insert("constraint_checks".into(), Value::Array(c_checks));
             }
-            plan_check_for(ctx, run, stage, result, &data)?
+            plan_check_for_with(ctx, run, stage, result, &data, &cprof)?
         };
         let st = st_mut(&mut data, stage)?;
         if pc.is_empty() {
@@ -665,7 +677,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             let crepo = if truthy(target) { Some(py::pp(&s(target))) } else { None };
             errs.extend(constraint_issues(ctx, run, stage, &cprof, crepo.as_deref(), true)?.0.into_iter().map(|e| format!("限制文件：{e}")));
             let result = ctx.load_json(&f)?;
-            errs.extend(plan_check_for(ctx, run, stage, &result, &data)?.into_iter().map(|e| format!("拆工檢查：{e}")));
+            errs.extend(plan_check_for_with(ctx, run, stage, &result, &data, &cprof)?.into_iter().map(|e| format!("拆工檢查：{e}")));
             if cprof.is_object() {
                 // 規格檢查與連結檢查都重算，不採信 run.json 記的結果
                 let sc = open_spec(ctx, run, &data, &cprof);
@@ -815,11 +827,12 @@ fn escalate_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mu
     }
     first = added_idx.iter().copied().fold(first, usize::min);
     let mut stale: Vec<&str> = Vec::new();
+    let extra_g = extra_gates(&profile);
     for (i, st_name) in SDLC.iter().enumerate() {
         let stages = stages_mut(&mut data)?;
         let st = get(stages, st_name)?;
         if added.iter().any(|a| a.as_str() == Some(*st_name)) {
-            py::obj_mut(stages)?.insert(st_name.to_string(), pending(st_name));
+            py::obj_mut(stages)?.insert(st_name.to_string(), pending(st_name, &extra_g));
         } else if st.is_object() && get(st, "status")?.as_str() == Some("done") && (added_idx.iter().any(|a| i > *a) || changed.iter().any(|c| c == st_name) || i > first) {
             let st = st_mut(&mut data, st_name)?;
             st.insert("status".into(), json!("stale"));
@@ -827,7 +840,7 @@ fn escalate_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mu
             stale.push(st_name);
         }
     }
-    rebuild_stages(&mut data, &merged)?;
+    rebuild_stages(&mut data, &merged, &extra_g)?;
     let label = |r: &Value| -> R<String> {
         let m = get(r, "modifiers")?;
         Ok(format!("{}{}", s(get(r, "name")?), if truthy(m) { format!("+{}", py::join("+", &py::iter(m)?)?) } else { String::new() }))

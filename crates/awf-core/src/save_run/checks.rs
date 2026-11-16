@@ -6,6 +6,7 @@ use super::{Ctx, GHOSTWRITTEN, INDEX_NAME};
 use crate::kb::pyish;
 use crate::merge_gate::pyutil;
 use crate::{pack, recipe};
+use crate::hooks::re::Re;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -33,14 +34,108 @@ pub fn constraint_file(ctx: &Ctx, c: &Value, repo: Option<&str>) -> R<Option<Str
     Ok(None)
 }
 
-static ROW: LazyLock<Option<Regex>> = LazyLock::new(|| {
+fn row_regex(words: &[String]) -> Option<Regex> {
     let ws = format!("[{}]*", pyish::WS_CLASS);
-    Regex::new(&format!(r"^{ws}\|{ws}`?\[?([a-z0-9][a-z0-9-]{{0,39}})\]?`?{ws}\|{ws}({}){ws}\|", CONSTRAINT_VERDICTS.join("|"))).ok()
-});
+    let alts: Vec<String> = words.iter().map(|w| regex::escape(w)).collect();
+    Regex::new(&format!(r"^{ws}\|{ws}`?\[?([a-z0-9][a-z0-9-]{{0,39}})\]?`?{ws}\|{ws}({}){ws}\|", alts.join("|"))).ok()
+}
+
+static ROW: LazyLock<Option<Regex>> = LazyLock::new(|| row_regex(&CONSTRAINT_VERDICTS.map(String::from)));
+
+/// 判定詞的長度上限（字元數）。
+pub const VERDICT_WORD_MAX: usize = 40;
+
+/// 限制對照的用語（profile 的 `constraints_format`）：輸出語言不是中文時，讓工具認得 agent 寫的判定詞。
+/// 內建的「符合／偏離／不適用」永遠認得（只會多認，不會少認）；`deviation` 是另外也算「偏離」的詞。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ConstraintFormat {
+    /// 訊息裡提到的節名；空字串＝內建的「限制對照」。
+    pub heading: String,
+    pub ok: String,
+    pub deviation: String,
+    pub na: String,
+}
+
+/// 一個判定詞或節名能不能用：非空、去頭尾空白後不變、不含表格線與換行、不超過 [`VERDICT_WORD_MAX`] 個字。
+pub fn format_word_ok(w: &str) -> bool {
+    !w.is_empty() && w.trim() == w && w.chars().count() <= VERDICT_WORD_MAX && !w.chars().any(|c| c == '|' || c == '`' || c.is_control())
+}
+
+/// `constraints_format` 寫得不對的地方（空清單＝可以用）。[`crate::schema::methodology_errors`] 與 [`constraint_format`] 共用。
+pub fn constraint_format_errors(v: &Value) -> Vec<String> {
+    let mut errs = Vec::new();
+    let Some(o) = v.as_object() else { return vec!["constraints_format 要是物件".to_string()] };
+    for k in o.keys().filter(|k| !matches!(k.as_str(), "heading" | "verdicts")) {
+        errs.push(format!("constraints_format 不認得的鍵：{k}"));
+    }
+    if let Some(h) = o.get("heading") {
+        if !h.as_str().is_some_and(format_word_ok) {
+            errs.push(format!("constraints_format.heading 要是 1–{VERDICT_WORD_MAX} 個字、不含 |、反引號與換行的字串"));
+        }
+    }
+    if let Some(vd) = o.get("verdicts") {
+        let Some(vo) = vd.as_object() else { return vec!["constraints_format.verdicts 要是物件（ok、deviation、na）".to_string()] };
+        for k in vo.keys().filter(|k| !matches!(k.as_str(), "ok" | "deviation" | "na")) {
+            errs.push(format!("constraints_format.verdicts 不認得的鍵：{k}（只有 ok、deviation、na）"));
+        }
+        let word = |k: &str| vo.get(k).and_then(Value::as_str).unwrap_or_default();
+        for k in ["ok", "deviation", "na"] {
+            if vo.get(k).is_some_and(|w| !w.as_str().is_some_and(format_word_ok)) {
+                errs.push(format!("constraints_format.verdicts.{k} 要是 1–{VERDICT_WORD_MAX} 個字、不含 |、反引號與換行的字串"));
+            }
+        }
+        let (ok, dev, na) = (word("ok"), word("deviation"), word("na"));
+        // 三個詞不能互相撞，也不能把內建的詞挪去當別的判定（「偏離」永遠是偏離）
+        let clash = |a: &str, b: &str| !a.is_empty() && a == b;
+        if clash(ok, dev) || clash(ok, na) || clash(dev, na) {
+            errs.push("constraints_format.verdicts 的三個詞不能相同".to_string());
+        }
+        if [ok, na].contains(&CONSTRAINT_VERDICTS[1]) || [CONSTRAINT_VERDICTS[0], CONSTRAINT_VERDICTS[2]].contains(&dev) || ok == CONSTRAINT_VERDICTS[2] || na == CONSTRAINT_VERDICTS[0] {
+            errs.push("constraints_format.verdicts 不能把內建的判定詞（符合、偏離、不適用）改成別的意思".to_string());
+        }
+    }
+    errs
+}
+
+/// 讀 profile 的 `constraints_format`；沒寫、寫得不對都回預設（只認內建的詞：對不上會判缺對照，是變嚴）。
+pub fn constraint_format(profile: &Value) -> ConstraintFormat {
+    let Some(v) = profile.get("constraints_format").filter(|v| v.is_object()) else { return ConstraintFormat::default() };
+    if !constraint_format_errors(v).is_empty() {
+        return ConstraintFormat::default();
+    }
+    let word = |path: &[&str]| path.iter().try_fold(v, |cur, k| cur.get(*k)).and_then(Value::as_str).unwrap_or_default().to_string();
+    ConstraintFormat { heading: word(&["heading"]), ok: word(&["verdicts", "ok"]), deviation: word(&["verdicts", "deviation"]), na: word(&["verdicts", "na"]) }
+}
+
+impl ConstraintFormat {
+    /// 對照列認得的判定詞：內建三個，加上設定的。
+    fn words(&self) -> Vec<String> {
+        let mut out: Vec<String> = CONSTRAINT_VERDICTS.map(String::from).to_vec();
+        for w in [&self.ok, &self.deviation, &self.na] {
+            if !w.is_empty() && !out.contains(w) {
+                out.push(w.clone());
+            }
+        }
+        out
+    }
+
+    fn is_deviation(&self, verdict: &str) -> bool {
+        verdict == CONSTRAINT_VERDICTS[1] || (!self.deviation.is_empty() && verdict == self.deviation)
+    }
+
+    fn heading(&self) -> &str {
+        if self.heading.is_empty() { "限制對照" } else { &self.heading }
+    }
+}
 
 /// 這一段的執行紀錄（`<run>/<stage>/*.md`）裡的〈限制對照〉列：{id: [(判定, 紀錄檔名)]}。
 /// 代寫的紀錄只來自信封，不算 agent 做過對照。
 pub fn constraint_rows(ctx: &Ctx, run: &str, stage: &str) -> HashMap<String, Vec<(String, String)>> {
+    constraint_rows_with(ctx, run, stage, &ConstraintFormat::default())
+}
+
+/// 同 [`constraint_rows`]，判定詞另外認 `fmt` 設定的。
+pub fn constraint_rows_with(ctx: &Ctx, run: &str, stage: &str, fmt: &ConstraintFormat) -> HashMap<String, Vec<(String, String)>> {
     let mut out: HashMap<String, Vec<(String, String)>> = HashMap::new();
     let d = pj(run, stage);
     if !ctx.is_dir(&d) {
@@ -51,7 +146,14 @@ pub fn constraint_rows(ctx: &Ctx, run: &str, stage: &str) -> HashMap<String, Vec
         Err(_) => return out,
     };
     names.sort();
-    let Some(row) = ROW.as_ref() else { return out };
+    let custom;
+    let row = if *fmt == ConstraintFormat::default() {
+        ROW.as_ref()
+    } else {
+        custom = row_regex(&fmt.words());
+        custom.as_ref()
+    };
+    let Some(row) = row else { return out };
     for name in names {
         if name == INDEX_NAME {
             continue;
@@ -94,6 +196,33 @@ pub fn ac_ids(text: &str) -> Vec<String> {
     out
 }
 
+/// 驗收條件編號的樣式長度上限。
+pub const CRITERIA_PATTERN_MAX: usize = 200;
+
+/// profile 的 `stages.design.criteria_id_pattern`：驗收條件編號的樣式（Python `re` 的寫法，整個符合的字串就是編號）。
+/// 沒寫回 `Ok(None)`（用內建的「AC-…」）；寫了但不能用回 `Err(說明)`，呼叫端要當成問題回報，不能當成沒設定。
+pub fn criteria_pattern(profile: &Value) -> Result<Option<Re>, String> {
+    let Some(v) = profile.get("stages").and_then(|s| s.get("design")).and_then(|d| d.get("criteria_id_pattern")).filter(|v| !v.is_null()) else { return Ok(None) };
+    let what = "stages.design.criteria_id_pattern";
+    let Some(src) = v.as_str() else { return Err(format!("{what} 要是字串")) };
+    if src.trim().is_empty() || src.chars().count() > CRITERIA_PATTERN_MAX {
+        return Err(format!("{what} 要是 1–{CRITERIA_PATTERN_MAX} 個字的正規式"));
+    }
+    let re = Re::python(src, "").map_err(|e| format!("{what} {e}"))?;
+    if re.is_match("") {
+        return Err(format!("{what} 不能符合空字串（那樣每個位置都是編號）"));
+    }
+    Ok(Some(re))
+}
+
+/// 文字裡的驗收條件編號：沒給樣式用內建的（[`ac_ids`]）。
+fn ids_with(text: &str, pat: Option<&Re>) -> Vec<String> {
+    match pat {
+        None => ac_ids(text),
+        Some(re) => re.find_all(text).into_iter().filter_map(|(a, b)| text.get(a..b)).filter(|x| !x.is_empty()).map(str::to_string).collect(),
+    }
+}
+
 /// 這一段回傳裡的子任務清單（design.payload.subtasks、payload.subtasks 或頂層 subtasks）。
 pub fn result_subtasks(result: &Value) -> Vec<Value> {
     let Some(r) = result.as_object() else { return Vec::new() };
@@ -116,6 +245,11 @@ pub fn result_subtasks(result: &Value) -> Vec<Value> {
 ///
 /// 回傳裡沒有子任務時不檢查（那一段沒拆工）。
 pub fn plan_check_issues(ctx: &Ctx, result: &Value, spec: Option<&str>) -> R<Vec<String>> {
+    plan_check_issues_with(ctx, result, spec, None)
+}
+
+/// 同 [`plan_check_issues`]；`pat` 是驗收條件編號的樣式（[`criteria_pattern`]），None 用內建的「AC-…」。
+pub fn plan_check_issues_with(ctx: &Ctx, result: &Value, spec: Option<&str>, pat: Option<&Re>) -> R<Vec<String>> {
     let subs = result_subtasks(result);
     if subs.is_empty() {
         return Ok(Vec::new());
@@ -186,7 +320,7 @@ pub fn plan_check_issues(ctx: &Ctx, result: &Value, spec: Option<&str>) -> R<Vec
         }
     }
     if let Some(spec) = spec.filter(|p| ctx.is_file(p)) {
-        let mut in_spec: Vec<String> = ctx.read_text_lossy(spec).map(|t| ac_ids(&t)).unwrap_or_default();
+        let mut in_spec: Vec<String> = ctx.read_text_lossy(spec).map(|t| ids_with(&t, pat)).unwrap_or_default();
         in_spec.sort();
         in_spec.dedup();
         let mut used: Vec<String> = Vec::new();
@@ -194,7 +328,7 @@ pub fn plan_check_issues(ctx: &Ctx, result: &Value, spec: Option<&str>) -> R<Vec
             let mut both = iter_or(get(x, "acceptance")?)?;
             both.extend(iter_or(get(x, "story_ids")?)?);
             for t in both {
-                used.extend(ac_ids(&s(&t)));
+                used.extend(ids_with(&s(&t), pat));
             }
         }
         used.sort();
@@ -216,9 +350,18 @@ pub fn plan_check_issues(ctx: &Ctx, result: &Value, spec: Option<&str>) -> R<Vec
 
 /// plan、design 段存檔與政策核准時的拆工檢查：spec 檔取目標 repo 裡這個 epic 的 `spec.md`。
 pub fn plan_check_for(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &Value) -> R<Vec<String>> {
+    plan_check_for_with(ctx, run, stage, result, data, &NULL)
+}
+
+/// 同 [`plan_check_for`]；`profile` 有 `stages.design.criteria_id_pattern` 時用它認驗收條件編號（寫壞了列成問題）。
+pub fn plan_check_for_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &Value, profile: &Value) -> R<Vec<String>> {
     if !matches!(stage, "plan" | "design") {
         return Ok(Vec::new());
     }
+    let (pat, pat_err) = match criteria_pattern(profile) {
+        Ok(p) => (p, None),
+        Err(e) => (None, Some(e)),
+    };
     let target = get(data, "target_repo")?;
     let repo = if truthy(target) { Some(ctx.abs(&py::pp(&s(target)))) } else { None };
     let mut epic = super::run_epic(ctx, run)?;
@@ -227,7 +370,10 @@ pub fn plan_check_for(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &
         epic = if truthy(args) { s_or(get(args, "epic")?, "") } else { String::new() };
     }
     let sd = pack::spec_dir(repo.as_deref(), &epic, "", &ctx.pack_root);
-    let mut issues = plan_check_issues(ctx, result, sd.map(|d| pj(&d, "spec.md")).as_deref())?;
+    let mut issues = plan_check_issues_with(ctx, result, sd.map(|d| pj(&d, "spec.md")).as_deref(), pat.as_ref())?;
+    if let Some(e) = pat_err {
+        issues.push(format!("{e}：驗收條件的編號認不出來，spec 對照改用內建的「AC-…」樣式（請修正 profile）"));
+    }
     // plan.json 在、但讀不懂（NaN、巢狀太深、寫壞）：epic 可能就寫在裡面，不能當成「沒有 epic」而默默少做 spec 對照
     let plan_json = pj(&ctx.abs(run), "plan.json");
     if std::path::Path::new(&plan_json).is_file() && pack::load_json(&plan_json).is_none() {
@@ -276,7 +422,8 @@ pub fn constraint_issues(ctx: &Ctx, run: &str, stage: &str, profile: &Value, rep
     }
     let mut issues: Vec<String> = Vec::new();
     let mut checks: Vec<Value> = Vec::new();
-    let rows = constraint_rows(ctx, run, stage);
+    let fmt = constraint_format(profile);
+    let rows = constraint_rows_with(ctx, run, stage, &fmt);
     for c in &cons {
         let (cid, f) = (s_or(get(c, "id")?, ""), s_or(get(c, "file")?, ""));
         if constraint_file(ctx, c, repo)?.is_none() {
@@ -285,10 +432,10 @@ pub fn constraint_issues(ctx: &Ctx, run: &str, stage: &str, profile: &Value, rep
         if get(c, "trace")?.as_str() == Some("table") && !(stage == "build" && truthy(get(c, "paths")?)) {
             let got = rows.get(&cid).map(Vec::as_slice).unwrap_or_default();
             if got.is_empty() {
-                issues.push(format!("限制 [{cid}] 要逐條對照，這一段的執行紀錄卻沒有它的〈限制對照〉列"));
+                issues.push(format!("限制 [{cid}] 要逐條對照，這一段的執行紀錄卻沒有它的〈{}〉列", fmt.heading()));
             }
             for (verdict, name) in got {
-                if verdict == "偏離" {
+                if fmt.is_deviation(verdict) {
                     issues.push(format!("限制 [{cid}] 有偏離（{name}），要由人決定"));
                 }
             }
