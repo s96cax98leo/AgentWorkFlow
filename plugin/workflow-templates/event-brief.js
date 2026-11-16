@@ -196,7 +196,7 @@ function resolveModel(profile, role, stage, suggested, modifiers) {
 //      trace 每筆記 model、tier、reason。profile 沒有 models 或 mode=inherit 時不指定模型（沿用主對話模型）。
 //   2. 失敗升級：mode=auto 時，較低等級沒有交件（null、throw、交件無效）就用高一級重派一次，最多一次；
 //      第一次那筆 trace 標 superseded，重派那筆記 attempt=2 與 escalated_from。再失敗就是缺件，由呼叫端 halted。
-//      dev-integrator、dev-merge-steward（會動到共用分支）與帶 retry:false 的派工不重派。
+//      dev-integrator、dev-merge-steward（會動到共用分支）、頂替這兩個角色的 agent（roleAs）與帶 retry:false 的派工不重派。
 //   3. 派工數上限（I8）：超過 max_agents 就不再派（回 null、label 記進 capped，trace 記一筆 capped=true），呼叫端照缺件 halted 交人，不靜默截斷。
 // workflow 開頭：awfInit({...})（challenge 片段）之後呼叫 awfKernelInit({ profile, stage, modifiers, max_agents[, roles] })。
 //   roles（選填）：只准派的 agent_type 清單；自訂腳本由 awf 帶入，派清單以外的 agent 會 throw。
@@ -274,7 +274,8 @@ async function awfAgent(prompt, opts) {
   const first = await run(m, { attempt: 1 })
   if (valid(first)) return first
   // 會動到共用分支的角色不自動重派：第一次可能已經做了一半（合併、推送），重做要由人判斷
-  const up = m.mode === 'auto' && o.retry !== false && !AWF_NO_RETRY.includes(awfRole(o.agentType)) ? modelUp(m.tier) : ''
+  // 換上去的 agent（roleAs）頂的是不重派的角色時一樣不重派（例如 guard.config 的 merger_role 指定的合併角色）
+  const up = m.mode === 'auto' && o.retry !== false && !AWF_NO_RETRY.includes(awfRole(o.agentType)) && !AWF_NO_RETRY.includes(swap.role_as) ? modelUp(m.tier) : ''
   const mine = () => awfState().trace.filter((t) => t.label === label)
   if (!up) { const t = mine().pop(); if (t) t.ok = false; return null }
   if (k.max && k.count >= k.max) { const t = mine().pop(); if (t) t.ok = false; return over() }

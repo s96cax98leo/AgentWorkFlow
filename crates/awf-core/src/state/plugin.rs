@@ -276,6 +276,7 @@ pub fn render(env: &Env, name: &str, plugin: Option<&str>, args: Option<&Value>)
 }
 
 /// 自訂腳本可以派的 agent_type：模版角色（不含 dev-merge-steward）加上 guard.config.json 登記過的擴充 agent。
+/// `auto_merge.merger_role` 指定的合併角色就算登記成擴充 agent 也不算（合併是信任邊界，只有 sdlc-merge 能派）。
 pub fn custom_roles(env: &Env) -> R<Vec<String>> {
     let ns = cfg_str(&read_config(env)?, "AGENT_NS", &format!("{PLUGIN_NAME}:"));
     let g = load_json_or(env, &pj(&env.teams(), "guard.config.json"))?;
@@ -283,7 +284,8 @@ pub fn custom_roles(env: &Env) -> R<Vec<String>> {
     if let Value::Object(ext) = py::get(&g, "extension_agents")? {
         let mut keys: Vec<String> = ext.keys().cloned().collect();
         keys.sort();
-        out.extend(keys);
+        let merger = crate::config::custom_merger(&env.project);
+        out.extend(keys.into_iter().filter(|k| merger.as_deref() != Some(k.as_str())));
     }
     Ok(out)
 }

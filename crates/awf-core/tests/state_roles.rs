@@ -120,3 +120,24 @@ fn swapped_roles_must_be_registered() {
     put(&p, ".claude/teams/guard.config.json", &json!({}));
     assert!(render(&p.env, "sdlc-plan", Some(&p.plugin), None).is_ok(), "沒有 roles 時照舊");
 }
+
+/// 自訂腳本可以派的 agent：`auto_merge.merger_role` 指定的合併角色就算登記成擴充 agent 也不在裡面
+/// （合併是信任邊界，只有 sdlc-merge 能派）。沒指定、或指定的是內建的 dev-merge-steward 時清單和以前相同。
+#[test]
+fn custom_scripts_cannot_dispatch_the_configured_merger() {
+    let p = proj("script-merger");
+    let ext = json!({"acme:release-merger": "tpm-reviewer", "acme-reviewer": "tpm-reviewer"});
+    let roles = |p: &Proj| awf_core::state::custom_roles(&p.env).unwrap_or_else(|e| panic!("custom_roles 失敗：{e:?}"));
+    put(&p, ".claude/teams/guard.config.json", &json!({"extension_agents": ext}));
+    let before = roles(&p);
+    assert!(before.contains(&"acme:release-merger".to_string()) && before.contains(&"acme-reviewer".to_string()), "{before:?}");
+    assert!(!before.iter().any(|r| r.ends_with("dev-merge-steward")), "內建的合併角色本來就不能派：{before:?}");
+
+    put(&p, ".claude/teams/guard.config.json", &json!({"extension_agents": ext, "auto_merge": {"merger_role": "agent-workflow:dev-merge-steward"}}));
+    assert_eq!(roles(&p), before, "指定的是預設值時清單不變");
+
+    put(&p, ".claude/teams/guard.config.json", &json!({"extension_agents": ext, "auto_merge": {"merger_role": "acme:release-merger"}}));
+    let after = roles(&p);
+    assert!(!after.contains(&"acme:release-merger".to_string()), "合併角色不能由自訂腳本派：{after:?}");
+    assert!(after.contains(&"acme-reviewer".to_string()) && after.len() == before.len() - 1, "其他擴充 agent 不受影響：{after:?}");
+}

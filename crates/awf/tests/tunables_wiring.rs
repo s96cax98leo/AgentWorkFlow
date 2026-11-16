@@ -345,3 +345,130 @@ fn links_without_the_pattern_only_know_builtin_ids() {
     let (_t, root) = links_run("links-set-ac", Some(r"\bISSUE-\d+\b"), "AC-1 匯出 CSV", "AC-1");
     assert_eq!(stage_list(&root, "design", "link_gaps"), ["子任務 t1 的驗收條件沒有可辨識的 id（符合 stages.design.criteria_id_pattern 的編號或規格 id），連不到 spec、測試與 commit"]);
 }
+
+// ------------------------------------------------------------------ 換角色與合併角色：模型下限照被頂替的角色算
+
+fn models() -> Value {
+    json!({"mode": "auto", "tiers": {"light": "haiku", "standard": "sonnet", "strong": "opus"}, "defaults": {"*": "light"}, "floors": {}})
+}
+
+/// plan 存檔，trace 只有反駁 intent 那一步（紀錄檔寫好）。
+fn save_plan_with_challenge(root: &Path, agent: &str, tier: &str, model: &str, role_as: Option<&str>) -> Out {
+    let mut r = plan_result();
+    write(&root.join(RUN).join("plan/challenge-intent.md"), "# 紀錄\n");
+    let mut t = json!({"label": "challenge:intent", "agent_type": agent, "phase": "Challenge", "record": format!("{RUN}/plan/challenge-intent.md"), "ok": true, "tier": tier, "model": model});
+    if let Some(x) = role_as {
+        t["role_as"] = json!(x);
+    }
+    r["trace"] = json!([t]);
+    sr(root, &["stage", RUN, "plan"], Some(&r.to_string()))
+}
+
+/// `roles` 把 plan 的反駁換成自己的 agent：存檔時照 tpm-skeptic 在 plan 段的下限（standard）重算。
+/// 低於下限判 invalid、剛好通過；trace 不帶 `role_as` 或謊報成別的角色一樣被擋。
+#[test]
+fn swapped_agent_below_the_floor_is_invalid_at_save() {
+    let t = Tmp::new("roles-floor");
+    let root = t.path().join("proj");
+    mk(&root, &builtin_profile(json!({"models": models(), "roles": {"plan.challenge": "acme-skeptic"}})));
+    must(sr(&root, &["init", RUN, "--event", "sdlc", "--target", "repo", "--requirement", "r"], None), "init");
+    let low = save_plan_with_challenge(&root, "acme-skeptic", "light", "haiku", Some("tpm-skeptic"));
+    assert!(low.code == 1 && low.all().contains("模型分級：challenge:intent（tpm-skeptic）用了 light，低於下限 standard"), "低於下限要判錯：{}", low.all());
+    assert_eq!(run_json(&root)["stages"]["plan"]["status"], "invalid");
+    for (role_as, what) in [(None, "不帶 role_as"), (Some("tpm-researcher"), "謊報 role_as")] {
+        let o = save_plan_with_challenge(&root, "acme-skeptic", "light", "haiku", role_as);
+        assert!(o.code == 1 && o.all().contains("（tpm-skeptic）用了 light，低於下限 standard"), "{what} 也要照 tpm-skeptic 的下限：{}", o.all());
+    }
+    let lied = save_plan_with_challenge(&root, "acme-skeptic", "standard", "sonnet", Some("tpm-researcher"));
+    assert!(lied.code == 1 && lied.all().contains("role_as=tpm-researcher"), "謊報的 role_as 本身也要列出來：{}", lied.all());
+    let ok = save_plan_with_challenge(&root, "acme-skeptic", "standard", "sonnet", Some("tpm-skeptic"));
+    assert!(ok.code == 0 && !ok.all().contains("模型分級"), "剛好在下限要通過：{}", ok.all());
+    assert_ne!(run_json(&root)["stages"]["plan"]["status"], "invalid");
+}
+
+/// profile 沒有 `roles`：同一筆 trace（不是模版角色、沒有 role_as）照舊當擴充 agent，不檢查。
+#[test]
+fn extension_agents_are_still_not_checked() {
+    let t = Tmp::new("roles-none");
+    let root = t.path().join("proj");
+    mk(&root, &builtin_profile(json!({"models": models()})));
+    must(sr(&root, &["init", RUN, "--event", "sdlc", "--target", "repo", "--requirement", "r"], None), "init");
+    let o = save_plan_with_challenge(&root, "acme-skeptic", "light", "haiku", None);
+    assert!(o.code == 0 && !o.all().contains("模型分級"), "沒有換角色時不該多擋：{}", o.all());
+}
+
+fn merge_decision() -> Value {
+    let mut e = envelope(json!({"decision": "merge", "repo": "acme-fork/app", "pr": 3, "head_sha": SHA, "traceability": [], "out_of_scope": [], "followups": [], "risk_tier": "low", "gate_reasons": [], "merge_state": "merged"}));
+    e["evidence"] = json!([{"claim": "gate 判 merge", "source": "awf merge-gate", "result": "exit 0"}]);
+    e
+}
+
+/// merge 存檔：兩筆派工（analyze、execute:merge）都是 `agent`，等級 `tier`；不寫紀錄檔。
+fn save_merge(root: &Path, agent: &str, tier: &str, model: &str) -> Out {
+    let entry = |label: &str, file: &str| json!({"label": label, "agent_type": agent, "phase": "Execute", "record": format!("{RUN}/merge/{file}"), "ok": true, "tier": tier, "model": model});
+    let r = json!({"stage": "merge", "analysis": merge_decision(), "execute": merge_decision(), "trace": [entry("analyze", "analyze.md"), entry("execute:merge", "execute-merge.md")]});
+    sr(root, &["stage", RUN, "merge"], Some(&r.to_string()))
+}
+
+fn merger_project(tag: &str, guard: Option<Value>) -> (Tmp, PathBuf) {
+    let t = Tmp::new(tag);
+    let root = t.path().join("proj");
+    mk(&root, &builtin_profile(json!({"models": models()})));
+    if let Some(g) = guard {
+        write_json(&root.join(".claude/teams/guard.config.json"), &g);
+    }
+    must(sr(&root, &["init", RUN, "--event", "sdlc", "--target", "repo", "--requirement", "r"], None), "init");
+    (t, root)
+}
+
+const MERGER: &str = "acme:release-merger";
+
+fn merger_guard() -> Value {
+    json!({"auto_merge": {"enabled": true, "merger_role": MERGER}, "extension_agents": {MERGER: "tpm-reviewer"}})
+}
+
+/// `guard.config.json` 指定了別的合併角色：存檔時照 dev-merge-steward 的下限（strong）算，trace 有沒有記 `role_as` 都一樣；
+/// 它沒有寫紀錄檔時和 dev-merge-steward 一樣依信封代寫，不算缺件。
+#[test]
+fn configured_merger_is_held_to_the_steward_floor_and_gets_its_record_written() {
+    let (_t, root) = merger_project("merger-set", Some(merger_guard()));
+    let low = save_merge(&root, MERGER, "standard", "sonnet");
+    assert!(low.code == 1 && low.all().contains("（dev-merge-steward）用了 standard，低於下限 strong"), "低於下限要判錯：{}", low.all());
+    let ok = save_merge(&root, MERGER, "strong", "opus");
+    assert!(ok.code == 0 && !ok.all().contains("模型分級"), "strong 要通過：{}", ok.all());
+    for f in ["analyze.md", "execute-merge.md"] {
+        let body = std::fs::read_to_string(root.join(RUN).join("merge").join(f)).unwrap_or_default();
+        assert!(body.contains(GHOST) && body.contains("gate 判 merge"), "{f} 要依信封代寫：{body}");
+    }
+    assert!(run_json(&root)["stages"]["merge"].get("missing_records").is_none(), "代寫的紀錄不算缺件");
+}
+
+/// 合併角色自己寫了紀錄檔（有 Write 工具的 agent）：照一般角色核對，不拿代寫的蓋掉。
+#[test]
+fn configured_merger_keeps_its_own_record() {
+    let (_t, root) = merger_project("merger-own", Some(merger_guard()));
+    let own = root.join(RUN).join("merge/analyze.md");
+    write(&own, "# 我自己寫的紀錄\n\n逐條對照見下。\n");
+    must(save_merge(&root, MERGER, "strong", "opus"), "stage merge");
+    assert_eq!(std::fs::read_to_string(&own).unwrap_or_default(), "# 我自己寫的紀錄\n\n逐條對照見下。\n", "自己寫的紀錄不能被蓋掉");
+    let other = std::fs::read_to_string(root.join(RUN).join("merge/execute-merge.md")).unwrap_or_default();
+    assert!(other.contains(GHOST), "沒寫的那一筆照樣代寫：{other}");
+    assert!(run_json(&root)["stages"]["merge"].get("missing_records").is_none());
+}
+
+/// 設定檔沒指定（或指定的就是預設值）：這個 agent 只是擴充 agent，和原本一樣不查下限；
+/// 預設的 dev-merge-steward 照舊查、照舊代寫。
+#[test]
+fn without_the_setting_nothing_changes_for_the_merge_stage() {
+    for (tag, guard) in [("merger-none", None), ("merger-default", Some(json!({"auto_merge": {"enabled": true, "merger_role": "agent-workflow:dev-merge-steward"}})))] {
+        let (_t, root) = merger_project(tag, guard);
+        let o = save_merge(&root, MERGER, "standard", "sonnet");
+        assert!(!o.all().contains("模型分級"), "{tag}：沒指定時不該照 steward 的下限查別的 agent：{}", o.all());
+        let low = save_merge(&root, "agent-workflow:dev-merge-steward", "standard", "sonnet");
+        assert!(low.code == 1 && low.all().contains("（dev-merge-steward）用了 standard，低於下限 strong"), "{tag}：{}", low.all());
+        let ok = save_merge(&root, "agent-workflow:dev-merge-steward", "strong", "opus");
+        assert!(ok.code == 0, "{tag}：{}", ok.all());
+        let body = std::fs::read_to_string(root.join(RUN).join("merge/analyze.md")).unwrap_or_default();
+        assert!(body.contains(GHOST), "{tag}：steward 的紀錄照舊代寫");
+    }
+}

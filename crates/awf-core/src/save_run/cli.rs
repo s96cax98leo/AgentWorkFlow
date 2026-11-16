@@ -8,7 +8,7 @@ use super::links::{decision_links, id_pattern, link_gaps_with, links_setting, st
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
 use super::policy::{abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
-use super::trace::{envelopes, model_errors, process_trace};
+use super::trace::{envelopes, model_errors_with, process_trace};
 use super::{dump, load, opt, opts, Ctx, GATED, HUMAN_ONLY, INDEX_NAME, NO_ENVELOPE, SDLC};
 use crate::kb::PyErr;
 use crate::{pack, pyfmt, recipe, schema};
@@ -413,7 +413,8 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             let rec = get(result, "recipe")?;
             Value::Array(if rec.is_object() { mods(get(rec, "modifiers")?)? } else { Vec::new() })
         };
-        errs.extend(model_errors(stage, result, &mprof, &mods_v)?.into_iter().map(|e| format!("模型分級：{e}")));
+        let merger = crate::config::custom_merger(&ctx.project_root());
+        errs.extend(model_errors_with(stage, result, &mprof, &mods_v, merger.as_deref())?.into_iter().map(|e| format!("模型分級：{e}")));
     }
     let target_v = get(&data, "target_repo")?;
     let target = if truthy(target_v) { Some(py::pp(&s(target_v))) } else { None };

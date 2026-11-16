@@ -168,5 +168,16 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(tr.own.tier === tr.tpl.tier && tr.own.model === tr.tpl.model && tr.own.role_as === 'tpm-skeptic', `換上去的 agent 要和被換掉的角色同一級：${JSON.stringify([tr.own, tr.tpl])}`)
   need(tr.plain.role_as === undefined && tr.tpl.role_as === undefined, '沒有換角色的派工不該記 role_as')
   need(tr.spoof.tier === tr.tpl.tier && tr.spoof.model === tr.tpl.model, '模版角色帶 roleAs 不能改變它自己的模型分級')
+  // 頂替不重派角色的 agent（roleAs 是 dev-merge-steward、dev-integrator）失敗時不升級重派；頂替別的角色的照常重派一次
+  let calls = []
+  k = make(async (p, o) => { calls.push(o.label); return null }, () => {})
+  k.awfInit({ run_dir: '_runs/r1', stage: 'merge', lang: 'zh-TW' }); k.awfKernelInit({ profile: FP, stage: 'merge', modifiers: [], max_agents: 9 })
+  await k.awfAgent('x', { label: 'merger', agentType: 'acme:release-merger', roleAs: 'dev-merge-steward' })
+  await k.awfAgent('x', { label: 'integ', agentType: 'acme:own-integrator', roleAs: 'dev-integrator' })
+  await k.awfAgent('x', { label: 'swapped', agentType: 'acme-own-agent', roleAs: 'tpm-researcher' })
+  const cnt = (l) => calls.filter((x) => x === l).length
+  need(cnt('merger') === 1 && cnt('integ') === 1 && cnt('swapped') === 2, `頂替不重派角色的 agent 不該重派：${JSON.stringify(calls)}`)
+  const mt = k.awfTrace().find((t) => t.label === 'merger')
+  need(mt.role_as === 'dev-merge-steward' && mt.tier === 'strong' && mt.ok === false, `頂替合併角色的 agent 要照 dev-merge-steward 的下限：${JSON.stringify(mt)}`)
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })

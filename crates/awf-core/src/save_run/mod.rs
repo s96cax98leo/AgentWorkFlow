@@ -55,7 +55,7 @@ pub use speccheck::{
     baseline_diff, baseline_drift, baseline_of, baseline_stage, criteria_rows, intent_errors_spec, lead_token, open_spec, spec_baseline, spec_issues, spec_setting, spec_snapshot, SpecCtx, BASELINE_KEY,
     BASELINE_VERSION,
 };
-pub use trace::{envelope_of, envelopes, ghostwrite, is_envelope, md_cell, md_cell_str, missing_agents, model_errors, process_trace, record_candidates, retried_ok, Row};
+pub use trace::{envelope_of, envelopes, ghostwrite, is_envelope, md_cell, md_cell_str, missing_agents, model_errors, model_errors_with, process_trace, record_candidates, retried_ok, swapped_step, Row};
 
 use crate::kb::pyish;
 use py::R;
@@ -73,6 +73,8 @@ pub const NULL_OK_KEYS: [&str; 8] = ["gate", "halt_reason", "reason", "problem",
 pub const NOT_DELIVERY_KEYS: [&str; 2] = ["trace", "recipe"];
 pub const NO_ENVELOPE: &str = "沒有任何信封（agent 缺件）";
 pub const INDEX_NAME: &str = "執行紀錄索引.md";
+/// 合併角色的角色名。agent_type 以它結尾的派工照合併角色處理（代寫紀錄、模型下限）；
+/// `guard.config.json` 的 `auto_merge.merger_role` 指定了別的 agent 時，那個完整 agent_type 也算（[`crate::config::custom_merger`]，只認設定檔）。
 pub const STEWARD: &str = "dev-merge-steward";
 pub const GHOSTWRITTEN: &str = "由 save_run 代寫";
 pub const BLOCKING_SEVERITIES: [&str; 2] = ["blocker", "important"];

@@ -142,5 +142,21 @@ export default [
       fakes: { analyze: () => null },
       expect: (r) => (r.calls.filter((c) => c.label === 'analyze').length === 1 && r.out && r.out.halted ? [] : [`合併角色不該重派：${r.labels.join(',')}`]),
     },
+    {
+      // 合併角色換成角色名不同的 agent：模型分級與下限照 dev-merge-steward 算（trace 記 role_as），存檔工具再依 guard.config 重算一次
+      name: '合併角色：換成別的名字的 agent → trace 記 role_as=dev-merge-steward、等級照 steward 的下限（strong）；沒交件不重派',
+      args: { merger_role: 'acme:release-merger' }, virtualAgents: ['acme:release-merger'],
+      profile: { models: { mode: 'auto', defaults: { '*': 'light' } } },
+      fakes: { ...CONSISTENT, 'execute:merge': () => null },
+      expect: (r) => {
+        const tr = (((r.out || {}).trace) || []).filter((t) => t.agent_type === 'acme:release-merger')
+        return [
+          ...(tr.length >= 2 ? [] : [`分析與執行要派設定的合併角色：${r.calls.map((c) => `${c.label}=${c.agentType}`).join(',')}`]),
+          ...tr.filter((t) => t.role_as !== 'dev-merge-steward' || t.tier !== 'strong').map((t) => `${t.label} 要記 role_as=dev-merge-steward、tier=strong：${JSON.stringify({ role_as: t.role_as, tier: t.tier })}`),
+          ...(r.calls.filter((c) => c.label === 'execute:merge').length === 1 ? [] : [`合併角色沒交件不該重派：${r.labels.join(',')}`]),
+          ...((((r.out || {}).trace) || []).filter((t) => t.agent_type !== 'acme:release-merger' && t.role_as).map((t) => `${t.label} 不該有 role_as`)),
+        ]
+      },
+    },
   ...kgScenarios(),
 ]
