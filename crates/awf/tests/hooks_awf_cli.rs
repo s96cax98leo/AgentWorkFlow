@@ -466,10 +466,12 @@ fn messages_name_the_awf_command() {
 fn long_chained_command_stays_fast() {
     let tmp = Tmp::new("perf");
     let ws = workspace(&tmp.0);
-    let limit_ms: u128 = if cfg!(debug_assertions) { 7000 } else { 2000 };
+    // CI 的共用機器比開發機慢而且不穩（同一份程式發佈版量到 1.7～2.3 秒），那裡放寬到 5 秒：仍然低於內部期限（8 秒）與 hook 的逾時（10 秒）。
+    let on_ci = std::env::var_os("CI").is_some_and(|v| !v.is_empty());
+    let limit_ms: u128 = if cfg!(debug_assertions) { 7000 } else if on_ci { 5000 } else { 2000 };
     // 除錯版在 CI 的共用機器上要 6～8 秒，會碰到內部期限（那時照設計是擋）。CI 的除錯版改用三分之一的長度，
     // 完整長度由 CI 另外用發佈版跑這個測試（.github/workflows/ci.yml 的「長指令（發佈版）」）。
-    let kb: usize = if cfg!(debug_assertions) && std::env::var_os("CI").is_some_and(|v| !v.is_empty()) { 42 } else { 127 };
+    let kb: usize = if cfg!(debug_assertions) && on_ci { 42 } else { 127 };
     for (unit, want) in [("ls", ALLOW), ("awf kb query x", ALLOW), ("cat plugin/bin/awf", ALLOW), ("$X kb lint", ALLOW), ("bash -c 'awf kb lint'", ALLOW)] {
         let n = (kb * 1024) / (unit.len() + 4);
         let cmd = vec![unit; n].join(" && ");
