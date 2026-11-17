@@ -36,8 +36,9 @@ pub fn err<T>(class: &str, msg: &str) -> R<T> {
 }
 
 pub const AUDIT_FILES: &[&str] = &["merge-audit.jsonl", "publish-audit.jsonl"];
+/// run 目錄底下認得的段目錄：SDLC 的段（[`crate::stages::IDS`]）之外的名字。用的時候會和 SDLC 的段合併再排序。
 const BUILTIN_STAGES: &[&str] = &[
-    "plan", "design", "design-revise", "build", "sync", "test", "deliver", "merge",
+    "design-revise",
     "brief", "meeting", "demo-check", "decision", "post-merge", "upstream", "pr-review", "reqs-change", "run",
 ];
 pub const PACK_STATE: &[&str] = &["reuse", "pack-args"];
@@ -260,7 +261,7 @@ impl Guard {
         let runs = if cfg.runs_dir.is_empty() { String::new() } else { format!("{}/", cfg.runs_dir) };
         let repos = if cfg.repos_dir.is_empty() { String::new() } else { format!("{}/", cfg.repos_dir) };
         let am = config::auto_merge(&cfg);
-        let mut run_stages: Vec<String> = BUILTIN_STAGES.iter().map(|s| s.to_string()).collect();
+        let mut run_stages: Vec<String> = crate::stages::IDS.iter().chain(BUILTIN_STAGES).map(|s| s.to_string()).collect();
         let bits = config::profile_bits(&ws);
         for s in bits.event_stages {
             if !run_stages.contains(&s) {

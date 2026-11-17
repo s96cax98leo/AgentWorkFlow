@@ -53,7 +53,7 @@ pub const USAGE: &str = "自訂 workflow 腳本的靜態檢查與組裝（awf ne
 `awf script --selftest`。
 ";
 
-pub const STAGES: [&str; 3] = ["design", "build", "deliver"];
+pub use crate::stages::CUSTOM_SCRIPT as STAGES;
 /// 自訂腳本可以派的模版角色：check_agents 的 CORE 扣掉 dev-merge-steward（合併是信任邊界，只有 sdlc-merge 能派）。
 pub const ROLES: [&str; 13] = [
     "tpm-planner", "tpm-researcher", "tpm-reviewer", "tpm-skeptic", "tpm-writer",

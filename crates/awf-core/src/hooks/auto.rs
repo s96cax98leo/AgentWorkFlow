@@ -94,7 +94,7 @@ fn word(v: Option<&Value>) -> String {
     if !t.is_empty() && t.chars().count() <= 40 && t.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_')) { t.to_string() } else { String::new() }
 }
 
-const STAGES: [&str; 7] = ["plan", "design", "build", "sync", "test", "deliver", "merge"];
+use crate::stages::IDS as STAGES;
 
 /// 一個 run 現在的狀況（一句話）；已結案、已取消、讀不懂的回 None。
 fn run_state(data: &Value) -> Option<String> {

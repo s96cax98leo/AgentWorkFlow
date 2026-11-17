@@ -490,7 +490,7 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
     }
     let own = stage_workflow(stage);
     let workflow = if forced_wf.is_empty() { own.clone() } else { forced_wf.to_string() };
-    if !forced_wf.is_empty() && forced_wf != own && !(stage == "design" && forced_wf == "sdlc-design-revise") {
+    if !forced_wf.is_empty() && forced_wf != own && !crate::stages::alt_templates_of(stage).contains(&forced_wf) {
         return awf_err(format!("{stage} 段不能用 {forced_wf}"));
     }
     if status == "done" && py::truthy(py::get(&st, "gate")?) && !py::truthy(py::get(&st, "approved")?) && forced_wf.is_empty() {

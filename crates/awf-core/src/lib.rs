@@ -33,6 +33,7 @@ pub mod schema;
 pub mod script;
 pub mod scrub;
 pub mod spec;
+pub mod stages;
 pub mod state;
 pub mod sync_branch;
 pub mod template;

@@ -14,9 +14,9 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 /// 限制文件可以套用的段。
-pub const CONSTRAINT_STAGES: &[&str] = &["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub const CONSTRAINT_STAGES: &[&str] = &crate::stages::CONSTRAINT;
 /// 簡寫沒寫段時的預設。
-pub const CONSTRAINT_DEFAULT_STAGES: &[&str] = &["design", "deliver"];
+pub const CONSTRAINT_DEFAULT_STAGES: &[&str] = &crate::stages::CONSTRAINT_DEFAULT;
 /// 讀取上限的模式。
 pub const LIMIT_MODES: &[&str] = &["off", "warn", "enforce"];
 /// 分支怎麼跟上 base。

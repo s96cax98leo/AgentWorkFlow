@@ -26,14 +26,17 @@ pub const SUPPORTED_KEYWORDS: &[&str] = &[
 pub const EVENT_MAX_ANGLES: i64 = 8;
 pub const EVENT_MAX_STEPS: i64 = 3;
 
-/// 不能拿來當自訂事件名的字：不是 event.js 的事件、SDLC 的段、工具自己的目錄名。
-pub const EVENT_RESERVED: &[&str] = &[
-    "sdlc", "brief", "pr-review", "post-merge", "merge", "debate", "run", "plan", "design", "build", "sync", "test", "deliver", "archive", "logs",
-];
+/// 不能拿來當自訂事件名的字：不是 event.js 的事件、工具自己的目錄名。SDLC 的段（[`crate::stages::IDS`]）另外算，見 [`event_reserved`]。
+pub const EVENT_RESERVED: &[&str] = &["sdlc", "brief", "pr-review", "post-merge", "merge", "debate", "run", "archive", "logs"];
+
+/// 這個名字能不能拿來當自訂事件名：[`EVENT_RESERVED`] 與 SDLC 的段都不行。
+pub fn event_reserved(name: &str) -> bool {
+    EVENT_RESERVED.contains(&name) || crate::stages::is_sdlc(name)
+}
 
 /// 限制文件（profile 的 `constraints[].stages`）可以套用的段：SDLC 的七段，以及不是 event.js 的三個事件的段名。
 /// event.js 的事件（內建的 `state::EVENT_TYPES` 與 profile 的 `events`）另外算。
-pub const CONSTRAINT_SDLC_STAGES: &[&str] = &["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub const CONSTRAINT_SDLC_STAGES: &[&str] = &crate::stages::CONSTRAINT;
 pub const CONSTRAINT_EVENT_STAGES: &[&str] = &["brief", "pr-review", "post-merge"];
 
 /// 一個專案的 schema 目錄與設定（`.claude/teams/`）。
@@ -900,7 +903,7 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             if !name_re.is_match(name) {
                 errs.push(format!("events 的事件名「{name}」要是小寫英數與連字號（32 字以內）"));
             }
-            if EVENT_RESERVED.contains(&name.as_str()) {
+            if event_reserved(name) {
                 errs.push(format!("events 不能用「{name}」當事件名（已經是別的流程或 SDLC 的段）"));
             }
             let steps: Vec<&Value> = before_steps.iter().chain(after_steps.iter()).copied().collect();

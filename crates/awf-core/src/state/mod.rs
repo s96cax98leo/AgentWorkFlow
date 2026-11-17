@@ -336,7 +336,7 @@ pub(crate) fn hint(k: &str) -> &'static str {
 }
 
 pub(crate) fn stage_workflow(stage: &str) -> String {
-    format!("sdlc-{stage}")
+    crate::stages::template_of(stage).map_or_else(|| format!("sdlc-{stage}"), str::to_string)
 }
 
 /// profile（methodology.json）的 events：使用者自訂的事件類型。讀不懂就當沒有。
