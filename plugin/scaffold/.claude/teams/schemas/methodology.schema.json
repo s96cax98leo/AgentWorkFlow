@@ -7,6 +7,7 @@
   "properties": {
     "name": {"type": "string", "minLength": 1, "description": "profile 名稱，例如 default、lightweight"},
     "description": {"type": "string", "minLength": 1},
+    "extends": {"type": ["string", "array"], "minLength": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1}, "description": "選填，繼承：內建 profile 的名字（模版的 methodologies/<名>.json，例如 default、lightweight），或專案內 .claude/teams/ 底下的 .json 相對路徑；由左到右疊上，最後疊上這份檔自己的內容（後面的覆寫前面的）。物件逐鍵深度合併，純量與陣列整個取代，值寫 null＝拿掉繼承來的鍵；name 與 extends 本身不繼承。被繼承的檔也可以有 extends（最多 4 層、不能循環）。各指令讀到的都是合併後的結果，見 docs/自訂與擴充.md〈profile 繼承〉"},
     "stages": {
       "type": "object",
       "description": "SDLC 各段的做法；guidance 會原文放進該段的派工單",

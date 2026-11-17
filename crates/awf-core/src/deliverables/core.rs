@@ -397,7 +397,9 @@ pub fn load_config(root: &str) -> (Option<Value>, String) {
         let errs = config_errors(&cfg);
         return if errs.is_empty() { (Some(cfg), rel) } else { (None, format!("交付設定有問題：{}", join_head(&errs))) };
     }
-    let prof = load_json(&pyish::pjoin(root, ".claude/teams/methodology.json")).unwrap_or(Value::Null);
+    let pf = pyish::pjoin(root, ".claude/teams/methodology.json");
+    // 繼承（extends）解析失敗照「讀不懂」：當作 profile 沒有交付設定
+    let prof = load_json(&pf).and_then(|v| crate::profile::resolve_str(&pf, v).ok()).unwrap_or(Value::Null);
     let d = get(&prof, "deliverables");
     if d.is_object() && get(d, "enabled") == &Value::Bool(true) && get(d, "documents").is_array() {
         let errs = config_errors(d);

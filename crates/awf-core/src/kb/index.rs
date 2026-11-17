@@ -138,7 +138,17 @@ pub fn load_config(root: Option<&str>, profile: Option<&str>, sources: Option<&[
     };
     if Path::new(&prof).is_file() {
         let raw = pyish::read_text(&prof).map_err(|e| PyErr::os(&e, &prof))?;
-        match pyish::json_loads(&raw) {
+        // 繼承（extends）解析失敗照「讀不懂」：警告、用預設的 knowledge 設定
+        let loaded = pyish::json_loads(&raw).map(|v| crate::profile::resolve_str(&prof, v));
+        let loaded = match loaded {
+            Ok(Err(e)) => {
+                warn(&format!("profile 的繼承（extends）讀不懂（{e}），改用預設的 knowledge 設定"));
+                Ok(Value::Null)
+            }
+            Ok(Ok(v)) => Ok(v),
+            Err(e) => Err(e),
+        };
+        match loaded {
             Ok(Value::Object(mut data)) => {
                 if let Some(Value::Object(k)) = data.remove("knowledge") {
                     know = k;

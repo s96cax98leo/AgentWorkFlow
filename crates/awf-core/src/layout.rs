@@ -207,9 +207,10 @@ pub fn run_base(profile: &Value, run: &Value) -> Option<String> {
     recipe_base(profile, &run_recipe(run))
 }
 
-/// 讀一份 profile（methodology.json）；讀不到、不是 JSON 物件回 `Null`。
+/// 讀一份 profile（methodology.json）；讀不到、不是 JSON 物件、繼承（`extends`）解析失敗回 `Null`。
 pub fn read_profile(path: &str) -> Value {
-    std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object).unwrap_or(Value::Null)
+    std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| crate::profile::resolve_str(path, v).ok()).filter(Value::is_object).unwrap_or(Value::Null)
 }
 
 /// 專案（`<root>/.claude/teams/methodology.json`）裡，這個 run 的 recipe 專屬的主線分支。

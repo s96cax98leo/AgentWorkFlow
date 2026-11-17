@@ -22,6 +22,7 @@ pub mod layout;
 pub mod locate;
 pub mod merge_gate;
 pub mod pack;
+pub mod profile;
 pub mod program;
 pub mod project;
 pub mod publish;

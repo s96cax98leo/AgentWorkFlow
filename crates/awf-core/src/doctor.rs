@@ -334,19 +334,44 @@ fn check_config(env: &Env) -> Part {
     } else if !meth.as_ref().is_some_and(Value::is_object) {
         out.push(item("methodology", ERR, "methodology.json 不是合法的 JSON 物件", "修正 JSON 語法（常見：多了結尾逗號、少了引號）"));
     } else if let Some(m) = &meth {
-        let checked = match schema_teams(env) {
-            Some(t) => Schemas::new(t).check_doc(m, "methodology"),
-            None => Err("找不到 schemas/methodology.schema.json".to_string()),
+        // 繼承（extends）：列出繼承鏈，驗的是合併後的結果（錯誤標上來源）；沒有 extends 時不多列、輸出不變
+        let inherited = if crate::profile::has_extends(m) {
+            match crate::profile::inspect_with(Path::new(&mf), env.template.as_deref().map(Path::new)) {
+                Ok(r) => {
+                    if let Some(r) = &r {
+                        out.push(item("profile-extends", INFO, format!("methodology.json 的繼承鏈：{}（後面的覆寫前面的）", r.sources.join(" → ")), ""));
+                    }
+                    Ok(r)
+                }
+                Err(e) => {
+                    out.push(item("profile-extends", ERR, format!("methodology.json 的繼承（extends）讀不懂：{e}"),
+                        "extends 每一項要是內建 profile 的名字（例如 default、lightweight），或 .claude/teams/ 底下的 .json 相對路徑；不能循環，最多 4 層"));
+                    Err(())
+                }
+            }
+        } else {
+            Ok(None)
         };
-        match checked {
-            Err(e) => out.push(item("methodology", WARN, format!("methodology.json 沒辦法驗證：驗證器跑不起來（{e}）"), "跑 awf init --target <這個專案> --upgrade 補齊工具與 schema")),
-            Ok(errs) if !errs.is_empty() => out.push(item(
-                "methodology",
-                ERR,
-                format!("methodology.json 有 {} 個問題：{}{}", errs.len(), errs.iter().take(5).cloned().collect::<Vec<_>>().join("；"), if errs.len() > 5 { "…" } else { "" }),
-                "照訊息修正；欄位說明見模版的 docs/自訂與擴充.md",
-            )),
-            Ok(_) => out.push(item("methodology", OK, "methodology.json 通過 schema 與語意規則", "")),
+        if let Ok(inherited) = inherited {
+            let merged = inherited.as_ref().map_or(m, |r| &r.value);
+            let checked = match schema_teams(env) {
+                Some(t) => Schemas::new(t).check_doc(merged, "methodology"),
+                None => Err("找不到 schemas/methodology.schema.json".to_string()),
+            };
+            let checked = match (checked, &inherited) {
+                (Ok(errs), Some(r)) if !errs.is_empty() => Ok(crate::profile::blame(&errs, r)),
+                (c, _) => c,
+            };
+            match checked {
+                Err(e) => out.push(item("methodology", WARN, format!("methodology.json 沒辦法驗證：驗證器跑不起來（{e}）"), "跑 awf init --target <這個專案> --upgrade 補齊工具與 schema")),
+                Ok(errs) if !errs.is_empty() => out.push(item(
+                    "methodology",
+                    ERR,
+                    format!("methodology.json 有 {} 個問題：{}{}", errs.len(), errs.iter().take(5).cloned().collect::<Vec<_>>().join("；"), if errs.len() > 5 { "…" } else { "" }),
+                    "照訊息修正；欄位說明見模版的 docs/自訂與擴充.md",
+                )),
+                Ok(_) => out.push(item("methodology", OK, "methodology.json 通過 schema 與語意規則", "")),
+            }
         }
     }
     let gf = pyish::pjoin(&teams, "guard.config.json");
@@ -367,6 +392,8 @@ fn check_config(env: &Env) -> Part {
     if !is_file(&pyish::pjoin(&teams, "workflow.config")) {
         out.push(item("config", WARN, "沒有 .claude/teams/workflow.config：workflow 範本的佔位符沒有值可以換，awf next 會拒絕", "跑 awf init --target <這個專案> --upgrade"));
     }
+    // 有繼承時看合併後的 extensions／roles（繼承讀不懂時上面已經報過，這裡照原樣看檔案自己的）
+    let meth = meth.map(|m| if crate::profile::has_extends(&m) { crate::profile::resolve_str(&mf, m.clone()).unwrap_or(m) } else { m });
     if meth.as_ref().is_some_and(Value::is_object) {
         let miss = state::unregistered(env, meth.as_ref()).map_err(py_err)?;
         if !miss.is_empty() {
@@ -429,7 +456,8 @@ fn check_overrides(env: &Env, plugin: Option<&str>) -> Part {
 
 /// 專案的 profile（讀不懂回 None：那是 `check_config` 的事）。
 fn profile_of(env: &Env) -> Option<Value> {
-    load_json(&pyish::pjoin(&env.teams(), "methodology.json")).filter(Value::is_object)
+    let file = pyish::pjoin(&env.teams(), "methodology.json");
+    load_json(&file).and_then(|v| crate::profile::resolve_str(&file, v).ok()).filter(Value::is_object)
 }
 
 fn guard_of(env: &Env) -> Option<Value> {

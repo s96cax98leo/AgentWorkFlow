@@ -585,6 +585,8 @@ fn methodology_requirements(proj: &str) -> Result<Value, Fail> {
         Err(JsonErr::Decode(_)) => return Ok(Value::Null),
         Err(e) => return Err(Fail::Input(format!("讀不到 {path}：{e}"))),
     };
+    // 繼承（extends）解析失敗：hold（不當作沒有 extends，也不默默改用守門設定的需求來源）
+    let data = crate::profile::resolve_str(&path, data).map_err(|e| Fail::Input(format!("讀不到 {path}：{e}")))?;
     let rc = g(&data, "requirements");
     Ok(if rc.is_object() { rc.clone() } else { Value::Null })
 }
@@ -1484,8 +1486,14 @@ fn load_profile_for(teams: &str, given: Option<&str>) -> (Value, String) {
         Ok(p) => p,
         Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{e}")),
     };
+    // 繼承（extends）：解析失敗＝profile 讀不懂（fail-closed）
+    let prof = match crate::profile::resolve_str(&path, prof) {
+        Ok(p) => p,
+        Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{e}")),
+    };
     if !prof.is_object() { return (Value::Null, format!("開發規範 profile {path} 不是 JSON 物件")); }
     let errs = schema::methodology_errors(&prof);
+    let errs = if errs.is_empty() { errs } else { crate::profile::blame_path(std::path::Path::new(&path), errs) };
     if !errs.is_empty() { return (Value::Null, format!("開發規範 profile {path} 不合規則：{}", first(&errs, 3).join("；"))); }
     (prof, String::new())
 }
@@ -1664,6 +1672,7 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
     // 專案加的路徑分類：只取 profile 的 diff_classes_extra 這一個鍵（profile 不存在、讀不懂或沒寫這個鍵＝沒設定，照舊）
     inp.diff_extra = pyutil::read_text(&pyutil::join(proj, ".claude/teams/methodology.json")).ok()
         .and_then(|t| pyjson::loads(&t).ok())
+        .and_then(|p| crate::profile::resolve_str(&pyutil::join(proj, ".claude/teams/methodology.json"), p).ok())
         .and_then(|p| p.get("diff_classes_extra").filter(|v| !v.is_null()).cloned());
     attempt((|| {
         let Some(p) = a.truthy("--recipe") else { return Ok(()) };

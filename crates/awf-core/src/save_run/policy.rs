@@ -36,10 +36,16 @@ pub fn load_profile(ctx: &Ctx, given: &str) -> (Value, String) {
         Ok(p) => p,
         Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{}", e.msg)),
     };
+    // 繼承（extends）：解析失敗＝profile 讀不懂（fail-closed），不當作沒有 extends
+    let prof = match crate::profile::resolve_str(&ctx.abs(&path), prof) {
+        Ok(p) => p,
+        Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{e}")),
+    };
     if !prof.is_object() {
         return (Value::Null, format!("開發規範 profile {path} 不是 JSON 物件"));
     }
     let errs = schema::methodology_errors(&prof);
+    let errs = if errs.is_empty() { errs } else { crate::profile::blame_path(std::path::Path::new(&ctx.abs(&path)), errs) };
     if !errs.is_empty() {
         return (Value::Null, format!("開發規範 profile {path} 不合規則：{}", errs.iter().take(3).cloned().collect::<Vec<_>>().join("；")));
     }
