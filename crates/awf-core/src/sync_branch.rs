@@ -244,7 +244,8 @@ pub fn backup_ref_ok(p: &str) -> bool {
 /// 這次 rebase 要用的備份 ref 樣式：profile 有寫而且合規則才採用；沒有 profile、讀不懂、沒寫、不合規則一律用內建的（不因此停下）。
 fn backup_pattern(repo: &str, methodology: Option<&str>) -> String {
     let path = methodology.map(pyutil::path_str).unwrap_or_else(|| pyutil::join(repo, ".claude/teams/methodology.json"));
-    let custom = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|prof| {
+    let custom = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|prof| crate::profile::resolve_str(&path, prof).ok()).and_then(|prof| {
         prof.get("conventions").and_then(|c| c.get("sync")).and_then(|s| s.get("backup_ref")).and_then(Value::as_str).filter(|p| backup_ref_ok(p)).map(str::to_string)
     });
     custom.unwrap_or_else(|| DEFAULT_BACKUP_REF.to_string())
@@ -299,6 +300,8 @@ mod backup_ref_tests {
 fn sync_conventions(repo: &str, methodology: Option<&str>) -> R<Conventions> {
     let path = methodology.map(pyutil::path_str).unwrap_or_else(|| pyutil::join(repo, ".claude/teams/methodology.json"));
     let prof = load_json(&path, "methodology")?;
+    // 繼承（extends）解析失敗＝讀不懂：停下（和 JSON 讀不懂一樣）
+    let prof = crate::profile::resolve_str(&path, prof).map_err(|e| Halt(format!("methodology {path} 讀不懂：{e}")))?;
     let empty = json!({});
     let sync = match g(&prof, "conventions") {
         conv @ Value::Object(_) if pyfmt::truthy(g(conv, "sync")) => g(conv, "sync"),

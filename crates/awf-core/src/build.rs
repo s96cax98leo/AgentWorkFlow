@@ -245,7 +245,10 @@ pub fn load_methodology(teams_dir: &Path) -> Result<Option<Value>, String> {
     }
     let text = read_text(&path)?;
     let data = pyjson::loads(&text).map_err(|e| format!("{} 不是合法 JSON：{e}", path.display()))?;
+    // 繼承（extends）：內嵌合併後的結果；解析失敗不內嵌（和 JSON 讀不懂一樣報錯）。沒有 extends 時原樣
+    let data = crate::profile::resolve_file(&path, data).map_err(|e| format!("{} 的繼承（extends）讀不懂：{e}", path.display()))?;
     let errs = Schemas::new(teams_dir).check_doc(&data, "methodology")?;
+    let errs = if errs.is_empty() { errs } else { crate::profile::blame_path(&path, errs) };
     if !errs.is_empty() {
         let head: Vec<&str> = errs.iter().take(5).map(String::as_str).collect();
         return Err(format!("{} 不符合 schemas/methodology.schema.json：{}", path.display(), head.join("；")));

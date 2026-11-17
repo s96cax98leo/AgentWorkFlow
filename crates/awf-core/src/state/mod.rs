@@ -341,7 +341,9 @@ pub(crate) fn stage_workflow(stage: &str) -> String {
 
 /// profile（methodology.json）的 events：使用者自訂的事件類型。讀不懂就當沒有。
 pub fn profile_events(env: &Env) -> py::R<Map<String, Value>> {
-    let m = load_json(env, &pyish::pjoin(&env.teams(), "methodology.json"))?;
+    let file = pyish::pjoin(&env.teams(), "methodology.json");
+    // 繼承（extends）解析失敗照「讀不懂」當沒有（產生腳本時 plugin::methodology 會報錯停下）
+    let m = load_json(env, &file)?.and_then(|v| crate::profile::resolve_str(&file, v).ok());
     let mut out = Map::new();
     if let Some(Value::Object(ev)) = m.as_ref().and_then(|m| m.as_object()).and_then(|m| m.get("events")) {
         for (k, v) in ev {

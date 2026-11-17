@@ -200,7 +200,12 @@ fn methodology(env: &Env) -> A<Option<Value>> {
     if is_file(&file) && !m.as_ref().is_some_and(Value::is_object) {
         return awf_err(format!("{file} 讀不懂（不是 JSON 物件）"));
     }
-    Ok(m)
+    // 繼承（extends）：內嵌的是合併後的結果；解析失敗就拒絕（不當作沒有 extends）
+    match m.map(|v| crate::profile::resolve_str(&file, v)) {
+        Some(Err(e)) => awf_err(format!("{file} 的繼承（extends）讀不懂：{e}")),
+        Some(Ok(v)) => Ok(Some(v)),
+        None => Ok(None),
+    }
 }
 
 /// profile 的 extensions（加進某一段的 agent）與 roles（換掉某一步的 agent）裡、沒有登記在 guard.config.json `extension_agents` 的 agent。

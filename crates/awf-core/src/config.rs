@@ -689,8 +689,11 @@ pub struct ProfileBits {
 /// 讀不到、格式不對一律當作沒有這些設定（回空的）。
 pub fn profile_bits(ws: &str) -> ProfileBits {
     let mut out = ProfileBits::default();
-    let Ok(text) = read_text(&methodology_path(ws)) else { return out };
-    let Ok(Value::Object(doc)) = serde_json::from_str::<Value>(&text) else { return out };
+    let path = methodology_path(ws);
+    let Ok(text) = read_text(&path) else { return out };
+    let Ok(doc) = serde_json::from_str::<Value>(&text) else { return out };
+    // 繼承（extends）：沒有時不碰檔案系統；解析失敗照「讀不懂當作沒設定」
+    let Ok(Value::Object(doc)) = crate::profile::resolve_str(&path, doc) else { return out };
     if let Some(Value::Object(ev)) = doc.get("events") {
         out.event_stages = ev.keys().filter(|k| {
             let b = k.as_bytes();
@@ -734,9 +737,12 @@ fn limit_int(v: Option<&Value>) -> u64 {
 
 /// None＝整個功能關閉：沒有 methodology.json、讀不懂、沒有 limits 鍵、沒寫 mode、mode 是 off 或不認得的值。
 pub fn limits(ws: &str) -> Option<Limits> {
-    let text = read_text(&methodology_path(ws)).ok()?;
+    let path = methodology_path(ws);
+    let text = read_text(&path).ok()?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let data: Value = serde_json::from_str(text).ok()?;
+    // 繼承（extends）解析失敗＝讀不懂＝關閉（讀取預算的任何例外都放行，I9）
+    let data = crate::profile::resolve_str(&path, data).ok()?;
     let lim = data.as_object()?.get("limits")?.as_object()?;
     let mode = lim.get("mode")?.as_str()?;
     if mode != "enforce" && mode != "warn" {

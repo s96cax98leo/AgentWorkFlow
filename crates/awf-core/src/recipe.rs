@@ -558,7 +558,9 @@ fn stricter<'a>(a: &'a Value, b: &'a Value) -> R<&'a Value> {
 pub fn load_profile(path: &Path) -> R<Option<Value>> {
     if !path.is_file() { return Ok(None); }
     let text = std::fs::read_to_string(path).map_err(|e| perr("OSError", format!("{}：{e}", path.display())))?;
-    serde_json::from_str(&text).map(Some).map_err(|e| perr("JSONDecodeError", format!("{}：{e}", path.display())))
+    let doc: Value = serde_json::from_str(&text).map_err(|e| perr("JSONDecodeError", format!("{}：{e}", path.display())))?;
+    // 繼承（extends）：合併後的結果；解析失敗和 JSON 讀不懂一樣回錯誤
+    crate::profile::resolve_file(path, doc).map(Some).map_err(|e| perr("ValueError", format!("{}：{e}", path.display())))
 }
 
 /// 回傳解析後的 recipe：`{...recipe 欄位, name, requested, resolved_from, modifiers, size, errors}`。
