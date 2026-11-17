@@ -689,8 +689,9 @@ async function awfAgent(prompt, opts) {
   return null
 }
 /*@end*/
-// 派工數上限（I8）：profile 的 limits.max_agents，沒設用 20（一個事件正常不超過 12）
-const MAX_AGENTS = Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 20
+// 派工數上限（I8）：profile 的 limits.max_agents（1 以上的整數）；沒設或不合法用 40，和文件、其他範本一致（一個事件正常不超過 12）。
+// 0 或負數不採用：執行核心會把它當成「不設上限」
+const MAX_AGENTS = awfInt(MP.limits, 'max_agents', 1, Number.MAX_SAFE_INTEGER, 40)
 awfKernelInit({ profile: METHODOLOGY, stage: TYPE, modifiers: [], max_agents: MAX_AGENTS })
 const CTX = fill(EV.context, A)
 const LIST_KEY = EV.payload === 'findings' ? 'findings' : 'items'

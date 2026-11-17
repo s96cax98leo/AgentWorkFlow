@@ -75,4 +75,13 @@ export default [
     profile: { limits: { max_agents: 3 } }, args: { event: 'meeting' },
     expect: (r) => (r.out && r.out.halted && (r.out.capped || []).length && !r.labels.includes('write') ? [] : [`到上限應該 halted 並列出沒派的：${JSON.stringify(r.out && { halted: r.out.halted, capped: r.out.capped })}`]),
   },
+  // 預設的上限是 40（和文件、其他範本一致；原本這支是 20）：6 步前置＋16 個角度＋skeptic＋writer＝24 個要派得完
+  ...[['沒寫', {}], ['不合法（0）', { max_agents: 0 }], ['不合法（負數）', { max_agents: -5 }]].map(([what, lim]) => ({
+    name: `上限：limits.max_agents ${what} → 用 40，24 個 agent 派得完`,
+    profile: { limits: { ...lim, event: { max_angles: 16, max_steps: 6 } }, ...withEvents({ incident: { ...INCIDENT,
+      before: Array.from({ length: 6 }, (_, i) => ({ name: `b${i}`, label: `b${i}`, ask: 'x' })),
+      gather: { label: 'look', angles: Array.from({ length: 16 }, (_, i) => ({ key: `a${i}`, ask: 'x' })) } } }) },
+    args: { event: 'incident', incident: 'x' },
+    expect: (r) => (r.labels.length === 24 && r.labels.includes('write') && !(r.out.capped || []).length ? [] : [`24 個都要派出、不能到上限：${r.labels.length} 個，capped=${JSON.stringify(r.out && r.out.capped)}`]),
+  })),
 ]
