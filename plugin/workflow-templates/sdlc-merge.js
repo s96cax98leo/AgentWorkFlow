@@ -632,6 +632,10 @@ const MERGER = typeof A.merger_role === 'string' && /^([A-Za-z0-9][A-Za-z0-9._-]
 const MERGER_NAME = MERGER.split(':').pop()
 const MERGER_OPTS = { agentType: MERGER, retry: false, ...(MERGER_NAME === 'dev-merge-steward' ? {} : { roleAs: 'dev-merge-steward' }) }
 const FREEZE_FILE = awfLine(A.freeze_file, 300, '{{RUNS_DIR}}/auto-merge.freeze.json')
+// 合併方式與退回時要不要轉回 draft 也跟 guard.config.json 的 auto_merge（merge_method、return_to_draft；awf next 帶進 args，--set 給的不採用）。
+// hook 強制合併指令帶 merge_method 對應的旗標，所以這裡要寫同一個；不是 merge／rebase 一律 squash（預設）。return_to_draft 只有明確的 false 才不轉
+const MERGE_METHOD = ['merge', 'rebase'].includes(A.merge_method) ? A.merge_method : 'squash'
+const TO_DRAFT = A.return_to_draft !== false
 const EVIDENCE = A.evidence || `${A.run_dir}/test.json 的 verifier 信封（取出 .verifier 存到暫存目錄再給 --evidence）`
 const FINDINGS = [].concat(A.findings || [`${A.run_dir}/deliver.json 的 findings（保留下來的審查發現）`]).join('、')
 // 審查／驗證當下的 head：awf merge-gate 有 --findings 卻沒有 --reviewed-sha 一律 hold。主 session 可用 args.reviewed_sha 直接給；
@@ -710,14 +714,14 @@ const GATE = `awf merge-gate check --decision - --repo ${GH} --pr ${N} --head-sh
 const COMMENT = (decisionNote) => `把 gate 輸入貼成 PR 留言（在跑 gate 之前）：內容寫到 mktemp -d 的暫存檔，第一行是 <!-- agent-merge-gate-inputs -->，接著一個 \`\`\`json 區塊，` +
   `格式 {"decision": <${decisionNote}，整個信封>, "evidence": <驗證證據（正規化證據或 verifier 的 criteria 信封）>, "tests_before": <N>, "tests_after": <N>, "findings": <保留下來的審查發現>}；` +
   `再 gh pr comment ${N} --repo ${GH} --body-file <暫存檔>。只新增留言，不改、不刪既有留言。`
-const RETURN = `gh pr review ${N} --repo ${GH} --request-changes --body "<新需求摘要：逐則 requirement_id、期望、實際、要怎麼調整>"，再 gh pr ready ${N} --repo ${GH} --undo 轉回 draft`
+const RETURN = `gh pr review ${N} --repo ${GH} --request-changes --body "<新需求摘要：逐則 requirement_id、期望、實際、要怎麼調整>"${TO_DRAFT ? `，再 gh pr ready ${N} --repo ${GH} --undo 轉回 draft` : '（設定是退回時不轉回 draft：不要跑 gh pr ready --undo）'}`
 
 // (c)／(d) 執行模式
 phase('Execute')
 const exec = await awfAgent(
   inconsistent
     ? `${CTX}\n\n## 派工單（執行模式：退回）\n對照或挑戰判出不一致，這個 PR 不合併。\n1. 確認 head 仍是 ${dec.head_sha}。\n2. ${COMMENT('下面這份最終 merge-decision')}\n3. 用同一份 merge-decision 跑 gate 留下紀錄：${GATE}。不論 gate 判什麼都不合併。\n4. 退回 PR：${RETURN}。\n最終 merge-decision（decision 以 gate 與本派工單較嚴者為準，gate_reasons 照抄 gate 輸出）：\n${JSON.stringify(finalDecision)}\npayload 用 merge-decision。`
-    : `${CTX}\n\n## 派工單（執行模式：合併）\n對照與挑戰都判一致。\n1. 確認 head 仍是 ${dec.head_sha}。變了的話：guard.config.json 的 auto_merge.carry_verdict_on_rebase 不是 true 就停下判 hold，不做任何 gh 寫入；是 true 就照樣往下，由 gate 用 patch-id 判斷能不能沿用（之後的 --head-sha、--match-head-commit 都用目前 head）。${FREEZE_FILE} 存在且 frozen=true（自動合併已凍結）時也一樣停下。\n2. ${COMMENT('下面這份 merge-decision')}\n3. 跑 gate：${GATE}。\n4. exit 0：gh pr merge ${N} --repo ${GH} --squash --match-head-commit <目前 head>（合併方式依 guard.config.json 的 auto_merge.merge_method，預設 squash；目標 repo 用 CI 的 agent-merge-gate 當 required check 時，要等它對這個 head 轉綠才合併得進去）。合併指令回報成功不代表已合進去（merge queue 可能只是排隊）：接著跑 gh pr view ${N} --repo ${GH} --json state,mergedAt,mergeCommit 讀回，state=MERGED 填 merge_state=merged，還在排隊填 queued，其他填 not_merged。\n5. exit 1 或 3：不合併，改為退回 PR：${RETURN}；followups 照抄 gate 輸出的 followups，merge_state 填 not_merged。\nmerge-decision：\n${JSON.stringify(dec)}\npayload 用 merge-decision，gate_reasons 照抄 gate 輸出。`,
+    : `${CTX}\n\n## 派工單（執行模式：合併）\n對照與挑戰都判一致。\n1. 確認 head 仍是 ${dec.head_sha}。變了的話：guard.config.json 的 auto_merge.carry_verdict_on_rebase 不是 true 就停下判 hold，不做任何 gh 寫入；是 true 就照樣往下，由 gate 用 patch-id 判斷能不能沿用（之後的 --head-sha、--match-head-commit 都用目前 head）。${FREEZE_FILE} 存在且 frozen=true（自動合併已凍結）時也一樣停下。\n2. ${COMMENT('下面這份 merge-decision')}\n3. 跑 gate：${GATE}。\n4. exit 0：gh pr merge ${N} --repo ${GH} --${MERGE_METHOD} --match-head-commit <目前 head>（合併方式依 guard.config.json 的 auto_merge.merge_method，預設 squash；目標 repo 用 CI 的 agent-merge-gate 當 required check 時，要等它對這個 head 轉綠才合併得進去）。合併指令回報成功不代表已合進去（merge queue 可能只是排隊）：接著跑 gh pr view ${N} --repo ${GH} --json state,mergedAt,mergeCommit 讀回，state=MERGED 填 merge_state=merged，還在排隊填 queued，其他填 not_merged。\n5. exit 1 或 3：不合併，改為退回 PR：${RETURN}；followups 照抄 gate 輸出的 followups，merge_state 填 not_merged。\nmerge-decision：\n${JSON.stringify(dec)}\npayload 用 merge-decision，gate_reasons 照抄 gate 輸出。`,
   { label: inconsistent ? 'execute:return' : 'execute:merge', phase: 'Execute', ...MERGER_OPTS, schema: DECISION },
 )
 const result = exec ? exec.payload : { ...finalDecision, decision: 'hold', gate_reasons: ['steward 執行模式沒有交件；PR 狀態未知，先查 PR 狀態與 merge-audit.jsonl'] }
@@ -770,5 +774,5 @@ return {
     ? '已合併。之後跑 event-post-merge 監看 {{BASE_BRANCH}} 的 CI。'
     : queued
     ? `已進 merge queue，還沒合進去。不要重派合併；之後用 gh pr view ${N} --repo ${GH} --json state 確認，合進去後再跑 event-post-merge。`
-    : `未合併，PR 已退回並轉回 draft。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走需求變動事件（event 的 reqs-change 類型）；實作要補的回到 SDLC 對應段落（通常是 ${R.stages.filter((x) => ['build', 'test', 'deliver'].includes(x)).map((x) => `sdlc-${x}`).join(' → ')}；之前走過中轉分支的，這幾段都帶 branch=中轉分支），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,
+    : `未合併，PR 已退回${TO_DRAFT ? '並轉回 draft' : ''}。新需求在 ${FOLLOWUP_DIR}/：需求本身要改的走需求變動事件（event 的 reqs-change 類型）；實作要補的回到 SDLC 對應段落（通常是 ${R.stages.filter((x) => ['build', 'test', 'deliver'].includes(x)).map((x) => `sdlc-${x}`).join(' → ')}；之前走過中轉分支的，這幾段都帶 branch=中轉分支），修好後重跑 sdlc-merge。${result.decision === 'escalate' ? 'gate 判 escalate：先交人判斷。' : ''}`,
 }

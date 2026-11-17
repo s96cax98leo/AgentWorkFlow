@@ -147,6 +147,8 @@ pub struct AutoMerge {
     pub freeze_writers: Vec<String>,
     pub upstream_authorized_by: Map<String, Value>,
     pub freeze_file: String,
+    /// 退回 PR 時要不要把它轉回 draft（`gh pr ready --undo`）。預設 true；只有明寫 `false` 才不轉（request-changes 照舊）。
+    pub return_to_draft: bool,
 }
 
 /// 工作區：`CLAUDE_PROJECT_DIR`；沒有就和閘門用同一套找法（[`crate::project::locate`]：從目前目錄往上找最外層含
@@ -600,7 +602,8 @@ pub fn auto_merge(cfg: &Config) -> AutoMerge {
     } else {
         ff
     };
-    AutoMerge { enabled, repos, merger_role, merge_method, freeze_writers, upstream_authorized_by, freeze_file }
+    let return_to_draft = !matches!(get("return_to_draft"), Some(Value::Bool(false)));
+    AutoMerge { enabled, repos, merger_role, merge_method, freeze_writers, upstream_authorized_by, freeze_file, return_to_draft }
 }
 
 /// `guard.config.json` 明寫的合併角色，而且角色名不是內建的 `dev-merge-steward`：回正規化後的完整 agent_type。
