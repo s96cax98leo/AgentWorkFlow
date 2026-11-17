@@ -309,7 +309,9 @@ const REVIEW_CONF = (MP.review || {}).min_confidence
 const MIN_CONF = (typeof REVIEW_CONF === 'number' && REVIEW_CONF >= 0 && REVIEW_CONF <= 0.8) ? REVIEW_CONF : 0.8
 // 報告裡 Nit 最多列幾則：profile 的 review.max_nits（0–50；沒寫或不合法用 5）
 const MAX_NITS = (Number.isInteger(REVIEW.max_nits) && REVIEW.max_nits >= 0 && REVIEW.max_nits <= 50) ? REVIEW.max_nits : 5
-const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 gh pr diff／git diff，不 approve、不 merge、不 comment。`
+// 取 diff 的方式：profile 的 review.diff_command（一行、200 字以內；沒寫或不合法用 gh pr diff／git diff）。只是寫在派工單上的做法，守門規則照舊
+const DIFF_HOW = awfLine(REVIEW.diff_command, 200, 'gh pr diff／git diff')
+const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 ${DIFF_HOW}，不 approve、不 merge、不 comment。`
 /*@snippet:challenge*/
 // ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
