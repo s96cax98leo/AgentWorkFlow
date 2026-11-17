@@ -33,7 +33,7 @@
 16. **先 plan、後動手**：開發走 AI-native SDLC：intent → design → spec → plan →（測試與實作，先後依開發規範 profile）→ verifier →（設計／安全審查）→ PR 審查 → 人核准。各段做法（產出文件、需求寫法、測試時機、驗證方式）與專案慣例（code style、commit、分支命名、PR 大小、文件格式）由開發規範 profile（`.claude/teams/methodology.json`，init 時依使用者的習慣產生）決定，模版只管流程與閘門。plan、design、test、deliver 四個閘門預設都要{{DECISION_OWNER}}核准才進下一段（plan 閘門一律由人核准，可批次、非同步；design、test、deliver 在專案政策允許時可用政策核准）；之後的 merge 段不設人工閘門，由確定性的 `awf merge-gate` 判定，判定不是 merge 就交{{DECISION_OWNER}}；核准用 `awf save-run approve` 記錄，並在對話裡列重點，不只依賴工具狀態。全自動流程用 `--by policy` 時（`--note` 寫政策名稱），工具會讀該段的實際結果：verifier 有不是 pass 的條目、反作弊有發現、有 blocking 待決問題或 blocker／important 發現、skeptic 的 verdicts 有 refuted、agent 缺件（回傳裡有 null 或零信封）、workflow 回報 halted，都不能政策核准，要交{{DECISION_OWNER}}。重存某一段會清掉該段的核准；核准要整條閘門鏈都已通過（不能跳過前面的閘門）。需求取消時用 `awf save-run abandon <run_dir> --reason … --by … --at …` 記錄：之後任何一段都不能核准，`awf publish` 也拒絕推送。
 17. **決策者的回覆照字面讀**：「調整」不是「核准」；附帶意見要先處理再請求核准。
 18. **commit**：格式照開發規範 profile 的 `conventions.commit`（預設 profile 是 Conventional Commits、scope 放 Story ID）；結尾署名行 `{{ATTRIBUTION_LINE}}`。`awf check-rules --git` 檢查署名行；profile 有設 `check_regex` 時也檢查標題格式。
-19. **分支**：新分支只用 `guard.config.json` 的 `allowed_branch_prefixes`（{{ALLOWED_BRANCH_PREFIXES}}）；子任務分支 `{{BRANCH_PREFIX}}<epic>--<sub>`，各開 worktree，檔案所有權不重疊；整合用整合分支，依相依順序合併。不 force push、不 `--no-verify`。建議的分支名不合規時改用允許的前綴並註明。
+19. **分支**：新分支只用 `guard.config.json` 的 `allowed_branch_prefixes`（{{ALLOWED_BRANCH_PREFIXES}}）；子任務分支 `{{BRANCH_PREFIX}}<epic>--<sub>`（profile 的 `conventions.branch.patterns` 有設時照它），各開 worktree，檔案所有權不重疊；整合用整合分支，依相依順序合併。不 force push、不 `--no-verify`。建議的分支名不合規時改用允許的前綴並註明。
 20. **測試失敗就改程式，不改測試**；不加 skip、fixme、retry，不放寬斷言。上游測試不改；例外要{{DECISION_OWNER}}核准，並記錄在 spec 的「整合修訂與例外」。
 21. **改寫 commit 歷史前留備份分支**；改寫後更新文件中引用的 SHA。
 

@@ -133,6 +133,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
   - `requirements`：需求來源。
   - `conventions`：慣例。
   - `parallelism`：選填的工作流程參數。
+- `conventions.branch.bases`（選填，recipe 名 → 分支名）：某些 recipe 專屬的主線（例：`base_branch` 是整合線 develop、hotfix 用 main）。解析只有一處（`crates/awf-core/src/layout.rs` 的 `recipe_base`／`run_base`／`bases_problems`）：`stage_args` 帶給範本的 `base`、`awf publish` 的 PR 目標、`awf recipe check-diff` 與交付文件的比對基準都從它拿，`--base`／`--set base=` 優先；沒設定時走原本的路。plan 之後鎖定的 recipe 換了主線時 `state/machine.rs` 的 `base_changed` 停下交人。測試在 `crates/awf/tests/layout_e2e.rs` 的 `recipe_base_configured`；對照表在 `docs/自訂與擴充.md`〈分支管理對照 git-flow〉。
 - 內建兩份：`methodologies/default.json`（現行做法）與 `lightweight.json`。init 問答或 `--answers` 的結果會合併成專案的 `.claude/teams/methodology.json`。
 - `stages.design.system_design`（選填）：SA／SD 方法。內建 profile 依 System Design Primer（`docs/系統設計方法.md`，CC BY 4.0，用自己的話改寫並註明出處，不貼原文）：每個需求做功能層 SD，有系統面時四步完整；sdlc-design 照它派工，並多派 skeptic 的 `system-design` lens。
 - 需求來源 adapter（json、command，以及 spec-md 範例）和 `awf merge-gate` 共用。`guard.config.json` 的 `requirements` 有設時以它為準。

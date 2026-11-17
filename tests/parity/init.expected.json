@@ -320,7 +320,7 @@
   "proj/.claude/teams/methodologies/default.json": "-:c7242b93da61d5e3",
   "proj/.claude/teams/methodologies/lightweight.json": "-:4547f48687da0204",
   "proj/.claude/teams/methodology.json": "-:3f31f59e11ab8ecf",
-  "proj/.claude/teams/rules.md": "-:bc893c50a0a248ac",
+  "proj/.claude/teams/rules.md": "-:95c55310522a6958",
   "proj/.claude/teams/schemas/": "d",
   "proj/.claude/teams/schemas/deliverables.schema.json": "-:3ea5076f29213f0a",
   "proj/.claude/teams/schemas/envelope.schema.json": "-:ca8e3696daacb09c",
@@ -601,7 +601,7 @@
       "proj/.claude/teams/README.md": "-:b017b3b17a5091ef",
       "proj/.claude/teams/guard.config.json": "-:718ed8ea24a5354a",
       "proj/.claude/teams/methodology.json": "-:a27161083edea35c",
-      "proj/.claude/teams/rules.md": "-:060383ff8bd2bb8e",
+      "proj/.claude/teams/rules.md": "-:7477207740b7dc88",
       "proj/.claude/teams/workflow.config": [
        "-:6ce7e6904a121d15",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=acme-portal-2\nCLIENT_NAME=示範客戶 ACME\nREPOS_DIR=\nUPSTREAM_REPO=acme-upstream/portal,acme-upstream/lib\nFORK_REPO=acme-team/portal\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=English\nTASK_ID_PREFIX=REQ-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feat/\nALLOWED_BRANCH_PREFIXES=feat/,fix/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=/_acme/agent-runs/\nBRIEFS_DIR=\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: \"ACME\" bot \\ tools\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -670,7 +670,7 @@
       ],
       "proj/.claude/teams/README.md": "-:47d74d03e8e2a9ec",
       "proj/.claude/teams/guard.config.json": "-:90a2534ee87afed8",
-      "proj/.claude/teams/rules.md": "-:3731fb5ab9667490",
+      "proj/.claude/teams/rules.md": "-:393e158c33f83650",
       "proj/.claude/teams/workflow.config": [
        "-:d7ca53ef22a5a7ef",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=rel-config\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_runs_here\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -714,7 +714,7 @@
       ],
       "proj/.claude/teams/README.md": "-:0d57ef85df53c868",
       "proj/.claude/teams/guard.config.json": "-:28950a44baa5442d",
-      "proj/.claude/teams/rules.md": "-:350d281c4f8621c1",
+      "proj/.claude/teams/rules.md": "-:5875e4db6d405bf4",
       "proj/.claude/teams/workflow.config": [
        "-:0ada40058d05ea4e",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=from-cwd\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_in/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -751,7 +751,7 @@
       ],
       "proj/.claude/teams/README.md": "-:957bba03335c7375",
       "proj/.claude/teams/guard.config.json": "-:65ccd5997391adda",
-      "proj/.claude/teams/rules.md": "-:928e0f3d784aa048",
+      "proj/.claude/teams/rules.md": "-:51ef1e3a12c44a3b",
       "proj/CLAUDE.md": "-:02c02ebb048a454b"
      },
      "as_base": [
@@ -782,7 +782,7 @@
      "files": {
       "proj/.claude/teams/README.md": "-:c2a35c45d10c283f",
       "proj/.claude/teams/guard.config.json": "-:eae0c5cfe32e6a08",
-      "proj/.claude/teams/rules.md": "-:d3088b9f8bb3d700",
+      "proj/.claude/teams/rules.md": "-:de220d8d1cf04f30",
       "proj/.claude/teams/workflow.config": [
        "-:f4afe1cea8528b1b",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=from-here\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -817,7 +817,7 @@
       ],
       "proj2/.claude/teams/README.md": "-:b651866b6f9d0147",
       "proj2/.claude/teams/guard.config.json": "-:4bf374352063a07a",
-      "proj2/.claude/teams/rules.md": "-:9e8d25b408468ddb",
+      "proj2/.claude/teams/rules.md": "-:4a2cfa6482f719cb",
       "proj2/.claude/teams/workflow.config": [
        "-:2f906bd605a34de8",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=cwd-wins\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -859,7 +859,7 @@
       ],
       "proj/.claude/teams/README.md": "-:dc285264b77cd572",
       "proj/.claude/teams/guard.config.json": "-:7508c204d0b56f3c",
-      "proj/.claude/teams/rules.md": "-:36061bd28e1bbeb3",
+      "proj/.claude/teams/rules.md": "-:299b0c14c13b00f9",
       "proj/.claude/teams/workflow.config": [
        "-:cb509fe39d966ae8",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME={{NOPE}}\nCLIENT_NAME={{PROJECT_NAME}}\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -904,7 +904,7 @@
        "{\n \"payload\": \"items\",\n \"data\": {\n  \"status\": \"done\",\n  \"summary\": \"範例\",\n  \"artifacts\": [\n   \"_tpm/runs/x/a.md\"\n  ],\n  \"evidence\": [\n   {\n    \"claim\": \"c\",\n    \"source\": \"a.md:1\",\n    \"result\": \"ok\"\n   }\n  ],\n  \"confidence\": 0.9,\n  \"open_questions\": [],\n  \"derived_work\": [\n   \"補文件\"\n  ],\n  \"payload\": {\n   \"source\": \"_tpm/meetings/x.md\",\n   \"items\": [\n    {\n     \"id\": \"i1\",\n     \"type\": \"action\",\n     \"text\": \"做 a\",\n     \"owner\": \"拍板\",\n     \"status\": \"open\",\n     \"refs\": [\n      \"x.md:10\"\n     ]\n    }\n   ]\n  }\n }\n}"
       ],
       "proj/.claude/teams/guard.config.json": "-:46ad7ddaae0ed839",
-      "proj/.claude/teams/rules.md": "-:e7cd92ed8fec422d",
+      "proj/.claude/teams/rules.md": "-:60dd695cd83a81e6",
       "proj/.claude/teams/schemas/envelope.schema.json": "-:32a4b4e503cd1eee",
       "proj/.claude/teams/workflow.config": [
        "-:0fbc65503dc2c7fd",
@@ -950,7 +950,7 @@
       ],
       "proj/.claude/teams/README.md": "-:3f753423962de57c",
       "proj/.claude/teams/methodology.json": "-:c6222ec7c5a39351",
-      "proj/.claude/teams/rules.md": "-:728c19ed0f9fd6a5",
+      "proj/.claude/teams/rules.md": "-:50b38a85d5d73765",
       "proj/.claude/teams/workflow.config": [
        "-:395395a45d6751dd",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=lightweight\n"
@@ -978,7 +978,7 @@
      "base_at": "proj2",
      "files": {
       "proj2/.claude/teams/README.md": "-:3f753423962de57c",
-      "proj2/.claude/teams/rules.md": "-:728c19ed0f9fd6a5",
+      "proj2/.claude/teams/rules.md": "-:50b38a85d5d73765",
       "proj2/.claude/teams/workflow.config": [
        "-:d80dab35a90bd5a0",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -1559,7 +1559,7 @@
        "{\n  \"branch_prefix\": \"work/\",\n  \"code_style\": {\n    \"tool\": \"ruff\",\n    \"command\": \"ruff check .\",\n    \"description\": \"提交前跑 ruff check，不得新增違規。\"\n  },\n  \"commit\": \"類型: 摘要（示範客戶 ACME 的格式）\",\n  \"commit_regex\": \"^(feat|fix): .+\",\n  \"doc_format\": \"AsciiDoc\",\n  \"main_session_push_merge\": true,\n  \"methodology\": \"lightweight\",\n  \"pr_size\": {\n    \"max_lines\": 300,\n    \"max_files\": \"不限\"\n  },\n  \"requirements\": {\n    \"source\": \"json\",\n    \"path\": \"docs/requirements.json\"\n  },\n  \"sync_strategy\": \"transit\",\n  \"test_first\": true\n}\n"
       ],
       "proj/.claude/teams/methodology.json": "-:c1839190f33f2bd7",
-      "proj/.claude/teams/rules.md": "-:cefcaeda612a4b60",
+      "proj/.claude/teams/rules.md": "-:cbb6e3c79194f231",
       "proj/.claude/teams/workflow.config": [
        "-:baadd9321cb729b5",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=work/\nALLOWED_BRANCH_PREFIXES=work/,feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=lightweight\n"
@@ -2025,7 +2025,7 @@
        "{\n  \"branch_prefix\": \"x/\",\n  \"overrides\": {\n    \"conventions\": {\n      \"pr_size\": {\n        \"max_files\": 3\n      },\n      \"extra\": {\n        \"k\": [\n          1,\n          2.5,\n          null,\n          true\n        ]\n      }\n    },\n    \"description\": \"示範客戶 ACME 的做法\"\n  }\n}\n"
       ],
       "proj/.claude/teams/methodology.json": "-:a69c280f8e57aa0b",
-      "proj/.claude/teams/rules.md": "-:8d7cb730fb5f6b68",
+      "proj/.claude/teams/rules.md": "-:930718da1a1489b9",
       "proj/.claude/teams/workflow.config": [
        "-:c8c84ef13bc41d29",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=x/\nALLOWED_BRANCH_PREFIXES=x/,feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -2609,7 +2609,7 @@
        "{\n  \"branch_prefix\": \"zz/\",\n  \"methodology\": \"lightweight\"\n}\n"
       ],
       "proj/.claude/teams/methodology.json": "-:22aebb8e287aa151",
-      "proj/.claude/teams/rules.md": "-:ab9cbc29b902e38c",
+      "proj/.claude/teams/rules.md": "-:7f804f2b1926b649",
       "proj/.claude/teams/workflow.config": [
        "-:1bb496b39c93f263",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=zz/\nALLOWED_BRANCH_PREFIXES=zz/,feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=lightweight\n"
@@ -2644,7 +2644,7 @@
        "{\n  \"branch_prefix\": \"zz/\",\n  \"methodology\": \"lightweight\"\n}\n"
       ],
       "proj2/.claude/teams/methodology.json": "-:22aebb8e287aa151",
-      "proj2/.claude/teams/rules.md": "-:ea25b0df653ddf9f",
+      "proj2/.claude/teams/rules.md": "-:59fafd755d833b7e",
       "proj2/.claude/teams/workflow.config": [
        "-:57d14438ba14ad97",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=with-answers\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=zz/\nALLOWED_BRANCH_PREFIXES= zz/ , yy/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=lightweight\n"
@@ -3095,7 +3095,7 @@
        "-:23f7392063c22beb",
        "{\n  \"branch_prefix\": \"feature/\",\n  \"pr_size\": {\n    \"max_lines\": \"300\",\n    \"max_files\": \"15\"\n  }\n}\n"
       ],
-      "proj/.claude/teams/rules.md": "-:2f85e55652f0054a",
+      "proj/.claude/teams/rules.md": "-:88cd5a3cbdb99daf",
       "proj/.claude/teams/workflow.config": [
        "-:8f35276205637de5",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=eof-proj\nCLIENT_NAME=示範客戶 ACME\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -3170,7 +3170,7 @@
        "{\n  \"main_session_push_merge\": \"y\",\n  \"methodology\": \"lightweight\",\n  \"test_first\": true\n}\n"
       ],
       "proj/.claude/teams/methodology.json": "-:3981cfd34ff77137",
-      "proj/.claude/teams/rules.md": "-:87a913235209a64a",
+      "proj/.claude/teams/rules.md": "-:4cba32e77c1200c2",
       "proj/.claude/teams/workflow.config": [
        "-:216597a97be047fd",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=from-tty\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=lightweight\n"
@@ -3238,7 +3238,7 @@
        "{\n  \"branch_prefix\": \"squash\",\n  \"pr_size\": {\n    \"max_lines\": \"300\",\n    \"max_files\": \"15\"\n  }\n}\n"
       ],
       "proj/.claude/teams/methodology.json": "-:43ef95fa3108ac7f",
-      "proj/.claude/teams/rules.md": "-:76a5478804d916f5",
+      "proj/.claude/teams/rules.md": "-:b155618812accbc0",
       "proj/.claude/teams/workflow.config": [
        "-:fe8f81625c338603",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=squash\nALLOWED_BRANCH_PREFIXES=squash,feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -3321,7 +3321,7 @@
       ],
       "proj2/.claude/teams/README.md": "-:15d7aa518434424d",
       "proj2/.claude/teams/guard.config.json": "-:947bce08a3c30edf",
-      "proj2/.claude/teams/rules.md": "-:cb24b7d06caca4c5",
+      "proj2/.claude/teams/rules.md": "-:75bcbbcca1703d50",
       "proj2/.claude/teams/workflow.config": [
        "-:6b8c7155917fdb97",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=tty-config\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -3369,7 +3369,7 @@
      "stderr": "",
      "files": {
       "proj/.claude/teams/README.md": "-:31c4178096503652",
-      "proj/.claude/teams/rules.md": "-:a011a5c0c18a4ca5",
+      "proj/.claude/teams/rules.md": "-:432b3523b8e6913b",
       "proj/.claude/teams/workflow.config": [
        "-:f3636115b2ef3258",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=force-asks\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -5556,7 +5556,7 @@
        "#!/bin/sh\necho a\"b\n"
       ],
       "proj/.claude/teams/guard.config.json": "-:1408c4f645f851e6",
-      "proj/.claude/teams/rules.md": "-:735b1bab9561f6f7",
+      "proj/.claude/teams/rules.md": "-:312c4bbc561fe5ee",
       "proj/.claude/teams/workflow.config": [
        "-:97d05907a9640768",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=a\"b\nCLIENT_NAME=示範客戶 ACME\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -5771,7 +5771,7 @@
      "files": {
       "proj/.claude/teams/guard.config.json": "-:b0ed9d9afaf11c4f",
       "proj/.claude/teams/methodology.json": "-:a1a239d36841dccf",
-      "proj/.claude/teams/rules.md": "-:c2e0db48cfd1bd3d",
+      "proj/.claude/teams/rules.md": "-:d80048cd732ff4fc",
       "proj/.claude/teams/schemas/payloads/old.schema.json": [
        "-:5f36b2ea290645ee",
        "{}\n"
@@ -6010,7 +6010,7 @@
        "AGENT_NS=acme:\nOUTPUT_LANGUAGE=English\n"
       ],
       "proj/.claude/teams/guard.config.json": "-:6c9f5f30ee48e0c3",
-      "proj/.claude/teams/rules.md": "-:fc9cbad2b5410187",
+      "proj/.claude/teams/rules.md": "-:3fd263c642b76e59",
       "proj/.claude/teams/workflow.config": [
        "-:af43d076e13f64cf",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=English\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=acme:\nMETHODOLOGY=default\n"
@@ -6076,7 +6076,7 @@
      "stdout": "== 升級 agent-workflow：9.9.9 → 9.9.9 ==\n佔位符的值：@TMP@/my.config\n開發規範 profile：保留 methodology.json，和內建 default 比對沒有缺少的欄位\n更新 309 個模版檔到 @TMP@/proj\n保留使用者設定（模版部分更新）3 個：\n  - .claude/teams/guard.config.json：你的值全部保留；沒有新欄位\n  - .claude/teams/rules.md：「專案規則」段之後保留，前面更新成新版\n  - CLAUDE.md：「專案特定」段之後保留，前面更新成新版\n保留 2 個使用者的檔案，沒有改動（--force／--upgrade 也不覆蓋；要整份換成模版版本加 --overwrite-user-files）：\n  - .claude/settings.json\n  - .claude/teams/methodology.json\n保留 1 支和任何一版範本都對不上的 workflow（可能改過）：event-reqs-change.js。awf 不會採用它們；要繼續用就在檔案結尾加一行「// awf-override: <版本>」，不用就刪掉。\n已更新：1 支 workflow（開發規範 profile：default），改了 0 支\n\n升級完成：9.9.9 → 9.9.9。用 git diff 檢查變更；驗證指令見下面第 5 步。\n記得也更新 plugin（agents、skills、hooks、awf 執行檔）：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins。\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/teams/rules.md": "-:fc9cbad2b5410187",
+      "proj/.claude/teams/rules.md": "-:3fd263c642b76e59",
       "proj/.claude/teams/workflow.config": [
        "-:af43d076e13f64cf",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=my-project\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=English\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_tpm/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=acme:\nMETHODOLOGY=default\n"
@@ -6117,7 +6117,7 @@
       ],
       "proj/.claude/teams/README.md": "-:8679e3aa4b0928e4",
       "proj/.claude/teams/guard.config.json": "-:838dfdf82d556f65",
-      "proj/.claude/teams/rules.md": "-:fe9f71e4e253dfed",
+      "proj/.claude/teams/rules.md": "-:8a901a105432c3b7",
       "proj/.claude/teams/workflow.config": [
        "-:941ab149f9716844",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=keep-me\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_acme/agent-runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -6230,7 +6230,7 @@
        "PROJECT_NAME=changed\nRUNS_DIR=_new/runs\n"
       ],
       "proj/.claude/teams/README.md": "-:06919dbef64b583e",
-      "proj/.claude/teams/rules.md": "-:84d2e9b26c38a634",
+      "proj/.claude/teams/rules.md": "-:974e05a1a6cf688f",
       "proj/.claude/teams/workflow.config": [
        "-:baef4f07539d1207",
        "# awf init 這次用的佔位符值（awf init --upgrade／--force 沒給 --config 時沿用）。不要放金鑰或密碼。\nPROJECT_NAME=changed\nCLIENT_NAME=示範客戶\nREPOS_DIR=repos\nUPSTREAM_REPO=\nFORK_REPO=\nFORBIDDEN_REPOS=\nOUTPUT_LANGUAGE=繁體中文\nTASK_ID_PREFIX=TASK-\nTASK_AUTHORITY=任務管理系統\nDECISION_OWNER=使用者\nSTAKEHOLDER=需求方\nNOTIFY_HOW=推播到手機（PushNotification）\nBRANCH_PREFIX=feature/\nALLOWED_BRANCH_PREFIXES=feature/,bugfix/,hotfix/,release/,merge/\nPROTECTED_BRANCHES=main,master\nBASE_BRANCH=main\nBASE_REMOTE=origin\nSPECS_DIR=specs\nWORKTREES_DIR=.worktrees\nSPEC_TEMPLATES_DIR=specs/_templates\nRUNS_DIR=_new/runs\nBRIEFS_DIR=_tpm/briefs\nDOCS_DIRS=docs\nATTRIBUTION_LINE=Assisted-by: Claude\nDESIGN_SYSTEM_NAME=my-design-system\nAGENT_NS=agent-workflow:\nMETHODOLOGY=default\n"
@@ -6895,7 +6895,7 @@
        "-:55d7aaf8ff54aec1",
        "[\"不是物件\"]"
       ],
-      "proj/.claude/teams/rules.md": "-:15c8d3c14539bb60"
+      "proj/.claude/teams/rules.md": "-:49bb1290222a4a2e"
      },
      "as_base": [
       0,
