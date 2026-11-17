@@ -593,7 +593,7 @@ const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：
   (A.authorization ? `\n授權補充：${A.authorization}` : '') + DELIV_NOTE + KG_NOTE
 
 const TEST_NOTE = ((MP.stages || {}).build || {}).test_first === false ? '這個 profile 不要求測試先行：test 子任務會在實作完成後才做，code 子任務不要依賴 test 子任務。' : ''
-const SUBTASK_RULES = `每個子任務獨佔 owns 的檔案（不重疊），寫 depends_on 與可機械判定的 acceptance；有 spec.md 時每個子任務標 spec_refs（對應的 spec 小節，寫「spec.md#標題」，標題照抄、不能重名），實作的人只讀那幾節；某個子任務完成前一定會紅的檢查（例如等它換掉的截圖）寫在那個子任務的 expected_red，整合時不會為它停下；kind=test 的子任務擁有測試目錄（例如 e2e/tests 與各服務 tests/）；偏寬淺、沒有相依的子任務會由多個 agent 平行實作，能並行就並行，數量最小化。${TEST_NOTE}`
+const SUBTASK_RULES = `每個子任務獨佔 owns 的檔案（不重疊），寫 depends_on 與可機械判定的 acceptance；有 spec.md 時每個子任務標 spec_refs（對應的 spec 小節，寫「spec.md#標題」，標題照抄、不能重名），實作的人只讀那幾節；某個子任務完成前一定會紅的檢查（例如等它換掉的截圖）寫在那個子任務的 expected_red，整合時不會為它停下；kind=test 的子任務擁有測試目錄；偏寬淺、沒有相依的子任務會由多個 agent 平行實作，能並行就並行，數量最小化。${TEST_NOTE}`
 // SA／SD 方法（profile 的 stages.design.system_design；預設 profile 依 System Design Primer）。沒設就不套用
 const SD = STAGE.system_design || null
 const SD_RULES = SD
