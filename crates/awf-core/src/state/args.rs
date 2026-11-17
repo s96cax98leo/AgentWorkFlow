@@ -196,7 +196,7 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
         let sync = stage_result(env, run, "sync")?;
         let default = format!("{}{}", read_config(env)?.get("BRANCH_PREFIX").and_then(Value::as_str).unwrap_or_default(), a.get("epic").map(s_or).unwrap_or_default());
         if let Some(head) = sync.get("head_branch").and_then(Value::as_str).filter(|h| !h.is_empty() && *h != default) {
-            if ["build", "test", "deliver", "sync"].contains(&stage) {
+            if crate::stages::has(stage, crate::stages::Flag::TransitBranch) {
                 if let Some(b) = a.get("branch").filter(|b| !blank(b) && b.as_str() != Some(head)) {
                     notes.push(format!("忽略 --set 的 branch={}：sync 走過中轉分支，以它回報的 {head} 為準", py::s(b)));
                 }

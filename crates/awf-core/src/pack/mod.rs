@@ -42,7 +42,7 @@ use std::sync::LazyLock;
 
 pub type PyResult<T> = Result<T, PyErr>;
 
-pub const SDLC: [&str; 7] = ["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub use crate::stages::IDS as SDLC;
 pub const STORE: &str = "reuse.json";
 pub const ARGS: &str = "pack-args.json";
 pub const KB_TOP: i64 = 12;

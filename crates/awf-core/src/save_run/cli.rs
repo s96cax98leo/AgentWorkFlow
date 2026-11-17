@@ -712,7 +712,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     if SDLC.contains(&stage) {
         let (bprof, _) = load_profile(ctx, profile_arg);
         let bsc = if bprof.is_object() { open_spec(ctx, run, &data, &bprof) } else { None };
-        if matches!(stage, "plan" | "design") {
+        if crate::stages::has(stage, crate::stages::Flag::SpecBaseline) {
             match spec_baseline(bsc.as_ref()) {
                 Some(Ok(b)) => {
                     approved.insert(BASELINE_KEY.into(), b);

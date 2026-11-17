@@ -23,7 +23,7 @@ use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 
 const TOLERANCE: f64 = 0.10;
-const STAGES: [&str; 5] = ["plan", "design", "build", "test", "deliver"];
+use awf_core::stages::BUDGET as STAGES;
 
 /// 乾跑全部 workflow，回 check_workflows.mjs 的情境報告。init 與產生腳本在行程內呼叫 awf-core（見 [`crate::tempproj`]）。
 fn scenario_report(root: &Path) -> Result<Value, String> {
@@ -98,7 +98,7 @@ pub fn summarize(data: &Value) -> Result<Value, String> {
         let mut total: Option<usize> = Some(0);
         for st in pyfmt::items(r.get("stages")) {
             let Some(st) = st.as_str().filter(|s| STAGES.contains(s)) else { continue };
-            let wf = format!("sdlc-{st}.js");
+            let wf = format!("{}.js", awf_core::stages::template_of(st).unwrap_or_default());
             let want = format!("recipe:{name}");
             let found = match data.get(&wf) {
                 Some(v) => v.get("scenarios").and_then(Value::as_array).and_then(|a| a.iter().find(|s| sc_name(s) == want)),

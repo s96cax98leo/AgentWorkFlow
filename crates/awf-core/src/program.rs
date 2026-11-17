@@ -13,7 +13,7 @@ use std::io::Write;
 
 pub const FILE: &str = "program.json";
 pub const SCHEMA_VERSION: u64 = 1;
-const STAGES: [&str; 7] = ["plan", "design", "build", "sync", "test", "deliver", "merge"];
+use crate::stages::IDS as STAGES;
 
 pub const USAGE: &str = "多需求排程：讀 <runs_dir>/program.json（一批 epic、相依、對應的 run 或變更），只排順序與提示。
 

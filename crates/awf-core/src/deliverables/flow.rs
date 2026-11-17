@@ -485,10 +485,10 @@ pub fn record_block(data: &Value, summary: &str, show_approvers: bool) -> String
     lines.push(if body.is_empty() { "（沒有交付摘要）".to_string() } else { body.into_owned() });
     lines.extend([String::new(), "#### 核准紀錄".into(), String::new(), "| 階段 | 核准者 | 時間 |".into(), "|---|---|---|".into()]);
     let name = |st: &str| -> String {
-        match st {
-            "plan" => "規劃", "design" => "設計", "build" => "實作", "sync" => "同步", "test" => "驗證", "deliver" => "交付", "merge" => "合併",
-            other => return cell_s(other, 20),
-        }.to_string()
+        match crate::stages::label_of(st) {
+            Some(l) => l.to_string(),
+            None => cell_s(st, 20),
+        }
     };
     let mut any_row = false;
     if let Some(stages) = get(data, "stages").as_object() {

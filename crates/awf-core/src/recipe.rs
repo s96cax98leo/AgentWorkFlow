@@ -23,7 +23,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-pub const SDLC: &[&str] = &["plan", "design", "build", "sync", "test", "deliver", "merge"];
+/// SDLC 的段與順序（[`crate::stages`] 是唯一來源）。
+pub const SDLC: &[&str] = &crate::stages::IDS;
 pub const PLAN_MODES: &[&str] = &["feature", "diagnose", "impact", "invariants", "changelog", "baseline", "research", "revert"];
 pub const ALL_ANGLES: &[&str] = &["requirement", "specs-adr", "code-contracts", "upstream"];
 pub const ALL_AXES: &[&str] = &["standards", "spec", "bugs", "history"];
