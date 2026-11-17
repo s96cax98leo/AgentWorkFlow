@@ -1,4 +1,6 @@
 // event-pr-review.js 的乾跑情境：缺件（規則 26）——security lens 掛了不能看起來乾淨。
+import { eventPrefixScenarios } from './_event-shared.mjs'
+
 const halted = (label) => (r) => [
   ...(r.out && r.out.halted ? [] : ['缺件時應回 halted']),
   ...(new RegExp(label).test((r.out && r.out.halt_reason) || '') ? [] : [`halt_reason 沒寫出 ${label}`]),
@@ -53,4 +55,5 @@ export default [
     profile: (p) => ({ conventions: { ...(p.conventions || {}), repo_docs: { review: '../REVIEW.md' } } }),
     expect: (r) => Object.entries(r.prompts).filter(([l, p]) => l.startsWith('review:') && !/依目標 repo 的 REVIEW\.md 分級/.test(p)).map(([l]) => `${l} 要退回 REVIEW.md`),
   },
+  ...eventPrefixScenarios('pr-review'),
 ]

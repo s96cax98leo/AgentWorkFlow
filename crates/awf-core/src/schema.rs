@@ -31,6 +31,11 @@ pub const EVENT_RESERVED: &[&str] = &[
     "sdlc", "brief", "pr-review", "post-merge", "merge", "debate", "run", "plan", "design", "build", "sync", "test", "deliver", "archive", "logs",
 ];
 
+/// 限制文件（profile 的 `constraints[].stages`）可以套用的段：SDLC 的七段，以及不是 event.js 的三個事件的段名。
+/// event.js 的事件（內建的 `state::EVENT_TYPES` 與 profile 的 `events`）另外算。
+pub const CONSTRAINT_SDLC_STAGES: &[&str] = &["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub const CONSTRAINT_EVENT_STAGES: &[&str] = &["brief", "pr-review", "post-merge"];
+
 /// 一個專案的 schema 目錄與設定（`.claude/teams/`）。
 pub struct Schemas {
     pub teams_dir: PathBuf,
@@ -927,7 +932,25 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
     for (i, c) in cons.iter().enumerate() {
         let cid = str_opt(get(c, "id"));
         let who = if get(c, "id").is_some_and(Value::is_string) { format!("constraints[{cid}]") } else { format!("constraints[{i}]") };
-        strings_of(get(c, "stages"), &format!("{who}.stages"), &mut errs);
+        let c_stages = strings_of(get(c, "stages"), &format!("{who}.stages"), &mut errs);
+        // 段名要認得（SDLC 的段、固定的事件、內建事件類型、profile 的 events 自訂的事件名）。原本由 schema 的 enum 擋，
+        // 開放事件名之後由這裡接手，所以和名稱表一樣只在 check_doc 那條路查（只跑語意規則的呼叫端行為不變：不認得的段名就是沒有任何一段套用）
+        if !typed {
+            for st in c_stages.iter().filter_map(|v| v.as_str()) {
+                let known = CONSTRAINT_SDLC_STAGES.contains(&st)
+                    || CONSTRAINT_EVENT_STAGES.contains(&st)
+                    || crate::state::EVENT_TYPES.iter().any(|(e, _)| *e == st)
+                    || obj(get(doc, "events")).is_some_and(|ev| ev.contains_key(st));
+                if !known {
+                    errs.push(format!(
+                        "{who}.stages 的「{st}」不是認得的段（SDLC：{}；事件：{}、{}，或 events 自訂的事件名）",
+                        CONSTRAINT_SDLC_STAGES.join("、"),
+                        CONSTRAINT_EVENT_STAGES.join("、"),
+                        crate::state::EVENT_TYPES.iter().map(|(e, _)| *e).collect::<Vec<_>>().join("、")
+                    ));
+                }
+            }
+        }
         strings_of(get(c, "paths"), &format!("{who}.paths"), &mut errs);
         if let Some(f) = get(c, "file").and_then(Value::as_str).filter(|f| !f.is_empty()) {
             let norm = f.replace('\\', "/");

@@ -1,5 +1,6 @@
 // event-brief.js 的乾跑情境：依賴程式子任務的非程式子任務要等 SDLC、缺件（規則 26）。
 import { ENV, tuneScenarios } from './_helpers.mjs'
+import { eventPrefixScenarios } from './_event-shared.mjs'
 
 const ST = (id, kind, depends_on = []) => ({ id, title: `子任務 ${id}`, kind, owns: [], depends_on, acceptance: ['a'] })
 const PLAN = (subtasks) => ENV({ epic: 'sample', subtasks })
@@ -80,4 +81,5 @@ export default [
     ],
   },
   ...tuneScenarios(),
+  ...eventPrefixScenarios('brief'),
 ]

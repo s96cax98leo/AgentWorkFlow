@@ -2,6 +2,7 @@
 // 這裡把它們合起來並補上 args.event；另外有「類型：<名>」（每種類型用預設假回傳跑一次，預算基準與合併前後的對照用）、
 // 自訂事件類型（profile 的 events）與上限的情境。
 import { ENV } from './_helpers.mjs'
+import { eventPrefixScenarios } from './_event-shared.mjs'
 import meeting from './_event-meeting.mjs'
 import decision from './_event-decision.mjs'
 import demoCheck from './_event-demo-check.mjs'
@@ -84,4 +85,7 @@ export default [
     args: { event: 'incident', incident: 'x' },
     expect: (r) => (r.labels.length === 24 && r.labels.includes('write') && !(r.out.capped || []).length ? [] : [`24 個都要派出、不能到上限：${r.labels.length} 個，capped=${JSON.stringify(r.out && r.out.capped)}`]),
   })),
+  // 限制文件與知識圖進共同前綴：內建類型與自訂類型各跑一次（段名就是事件類型）
+  ...eventPrefixScenarios('meeting', { args: { event: 'meeting' } }).map((sc) => ({ ...sc, name: `meeting｜${sc.name}` })),
+  ...eventPrefixScenarios('incident', { args: { event: 'incident', incident: 'x' }, profile: withEvents({ incident: INCIDENT }) }).map((sc) => ({ ...sc, name: `自訂類型｜${sc.name}` })),
 ]

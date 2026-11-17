@@ -505,7 +505,7 @@
           "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$", "description": "短代號（對照表用），例如 arch、design、frontend、review"},
           "file": {"type": "string", "minLength": 1, "description": "文件路徑，相對專案根目錄或目標 repo（不能是絕對路徑或含 ..）"},
           "note": {"type": "string", "maxLength": 200, "description": "一句話說明這份文件管什麼"},
-          "stages": {"type": "array", "minItems": 1, "items": {"enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}, "description": "套用到哪些段"},
+          "stages": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "description": "套用到哪些段：SDLC 的七段（plan、design、build、sync、test、deliver、merge），或事件的段名（brief、pr-review、post-merge、內建事件類型 meeting、decision、demo-check、reqs-change、upstream，以及 events 自訂的事件名）。寫了不認得的名字 profile 判不合規則。事件的段只帶進派工單：trace 與 check 的閘門檢查只在 SDLC 的段做"},
           "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "選填 glob：只適用於碰到這些路徑的工作。build 段只發給擁有的路徑對得上的子任務；其他段整段適用並註明範圍"},
           "trace": {"enum": ["none", "table"], "description": "table＝該段的執行紀錄要有〈限制對照〉一列（符合／偏離／不適用），缺了或偏離不能政策核准；預設 none"},
           "check": {"type": "string", "minLength": 1, "description": "選填：檢查指令（在目標 repo 執行）。awf save-run stage 存檔時執行，exit 非 0 不能政策核准"},

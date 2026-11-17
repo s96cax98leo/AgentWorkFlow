@@ -1,5 +1,6 @@
 // event-post-merge.js 的乾跑情境：缺件（規則 26）、凍結檔路徑取自設定、給決策者文件的 check_rules 核對（規則 12）。
 import { ENV } from './_helpers.mjs'
+import { eventPrefixScenarios } from './_event-shared.mjs'
 
 const F = (id, severity) => ({ id, severity, claim: 'c', location: 'abc1234 https://ci/1', recommendation: 'r', confidence: 0.9 })
 const halted = (label) => (r) => [
@@ -37,4 +38,5 @@ export default [
     fakes: { ...BLOCKER, write: ENV({ documents: [{ path: '/tmp/run/給決策者.md', kind: 'for_owner', audience: 'owner' }] }) },
     expect: halted('rule_check'),
   },
+  ...eventPrefixScenarios('post-merge', { fakes: BLOCKER }),
 ]
