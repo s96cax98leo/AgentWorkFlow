@@ -695,6 +695,17 @@ const modeHow = (PLAN_MODES[MODE] && PLAN_MODES[MODE].guidance) || MODE_HOW[MODE
 // 反駁重點可以由 profile 的 plan_modes.<mode>.refute 改寫（1–2000 字；沒寫或不合法用內建的）
 const USER_REFUTE = PLAN_MODES[MODE] && PLAN_MODES[MODE].refute
 const modeRefute = (typeof USER_REFUTE === 'string' && USER_REFUTE.trim() && USER_REFUTE.length <= 2000) ? USER_REFUTE : (MODE_REFUTE[MODE] || MODE_REFUTE.feature)
+// 沒有 design 段的 recipe 在 plan 段拆子任務時，這個 plan_mode 另外的規則（profile 的 plan_modes.<mode>.tasks_rule：1–2000 字；沒寫或不合法用內建的）。
+// 內建只有 diagnose 有一條：先寫會失敗的重現測試、修正依賴它。profile 不要求測試先行（stages.build.test_first=false）時 build 段會忽略
+// code 對 test 的相依，照那句話拆出來的相依不會生效，所以改成「修正後補回歸測試」（有設 tasks_rule 時照設定，不管 test_first）
+const TASKS_TEST_FIRST = ((MP.stages || {}).build || {}).test_first !== false
+const MODE_TASKS = {
+  diagnose: TASKS_TEST_FIRST
+    ? '第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。'
+    : '這個 profile 不要求測試先行：修正的子任務不依賴測試；另拆一個補回歸測試的子任務（kind=test，重現這次的問題，修正合進來後要通過）。',
+}
+const USER_TASKS_RULE = PLAN_MODES[MODE] && PLAN_MODES[MODE].tasks_rule
+const tasksRule = (typeof USER_TASKS_RULE === 'string' && USER_TASKS_RULE.trim() && USER_TASKS_RULE.length <= 2000) ? USER_TASKS_RULE : (Object.prototype.hasOwnProperty.call(MODE_TASKS, MODE) ? MODE_TASKS[MODE] : '')
 
 // ── 調研角度：依 recipe.research_angles 從角度表挑；mode 專屬的 ask 優先。locate=false 的角度不查檔案（例如查上游 PR），不分兩段 ──
 const ANGLES = {
@@ -892,7 +903,7 @@ if (!stages.has('design') && stages.has('build')) {
   const tasks = await awfAgent(
     `${CTX}${RECIPE_NOTE}\n\n## 派工單（拆子任務：recipe ${recipe.name} 沒有 design 段）\n` +
     `1. 讀 ${SPEC_DIR}/intent.md 與 skeptic 的判定（下面），在同目錄寫 ${SPEC_DIR}/plan.md：子任務、每個子任務獨佔的檔案（owns，不能重疊）、相依與驗收（對應 intent 的驗收條件，寫成可驗證的指令）。` +
-    `${MODE === 'diagnose' ? '第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。' : ''}\n` +
+    `${tasksRule}\n` +
     `2. 子任務的 kind 只能是：${kinds.join('、') || '（這個 recipe 不允許任何子任務）'}；超出的會被擋下。\n` +
     `3. 每個子任務標 complexity（light＝改一兩個檔的機械式修改；standard＝一般實作；strong＝跨模組或有並行、安全風險）並在 complexity_reason 寫一句理由；build 段依它選模型。\n` +
     `4. commit plan.md（${commitFor('docs', A.epic)}；結尾 {{ATTRIBUTION_LINE}}）。不 push。\n` +

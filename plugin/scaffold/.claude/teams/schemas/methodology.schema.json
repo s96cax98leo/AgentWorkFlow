@@ -678,7 +678,7 @@
         "type": "object",
         "required": ["sections"],
         "additionalProperties": false,
-        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}, "refute": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "選填：這個 plan_mode 的 intent 交給 skeptic 反駁時的重點（沒寫用內建的）"}}
+        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}, "tasks_rule": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S", "description": "選填：沒有 design 段的 recipe 在 plan 段拆子任務時，這個 plan_mode 另外的規則（寫進 tasks 的派工單）。沒寫用內建的：只有 diagnose 有一條「先寫會失敗的重現測試、修正依賴它」；stages.build.test_first 是 false 時內建改成「修正後補回歸測試」"}, "refute": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "選填：這個 plan_mode 的 intent 交給 skeptic 反駁時的重點（沒寫用內建的）"}}
       }
     },
     "requirements": {

@@ -612,4 +612,29 @@ export default [
     args: { base: undefined }, fakes: FEATURE_TRIAGE,
     expect: (r) => { const ps = Object.entries(r.prompts); return [...(ps.length ? [] : ['沒有派出任何 agent']), ...ps.filter(([, p]) => !/，從 [A-Za-z0-9._-]+\/[A-Za-z0-9._\/-]+ 開）/.test(p) || /從 undefined 開/.test(p)).map(([l]) => `${l} 的派工單沒有主線分支`)] },
   },
+  {
+    // 拆子任務的規則（profile 的 plan_modes.<mode>.tasks_rule）：內建只有 diagnose 有一條
+    name: '可設定：沒設 tasks_rule → diagnose 的 tasks 派工單照內建（先寫會失敗的重現測試）',
+    profile: RP, args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/寫成可驗證的指令）。第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。\n2\. /.test(r.prompts.tasks || '') ? [] : ['沒設定時 tasks 的派工單要和原本逐字相同']),
+  },
+  {
+    name: '可設定：plan_modes.diagnose.tasks_rule → tasks 的派工單照設定；別的 plan_mode 不受影響',
+    profile: { ...RP, plan_modes: { diagnose: { sections: ['現象', '重現步驟', '預期行為', '根因'], tasks_rule: '示範客戶 ACME 的做法：先補監控告警的子任務，再修正。' } } },
+    args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/寫成可驗證的指令）。示範客戶 ACME 的做法：先補監控告警的子任務，再修正。\n2\. /.test(r.prompts.tasks || '') && !/重現測試（kind=test）/.test(r.prompts.tasks || '') ? [] : ['tasks 的派工單沒有照 tasks_rule']),
+  },
+  {
+    name: '可設定：tasks_rule 不合法（空白、不是字串、太長）→ 照內建',
+    profile: { ...RP, plan_modes: { diagnose: { sections: ['現象', '重現步驟', '預期行為', '根因'], tasks_rule: '   ' } } },
+    args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。\n2\. /.test(r.prompts.tasks || '') ? [] : ['不合法的 tasks_rule 要退回內建']),
+  },
+  {
+    // test_first=false 時 build 段忽略 code 對 test 的相依：內建那句「修正依賴重現測試」會和它矛盾，改成修正後補回歸測試
+    name: '不測試先行：stages.build.test_first=false 而且沒設 tasks_rule → diagnose 改成修正後補回歸測試',
+    profile: { ...RP, stages: { build: { test_first: false, guidance: 'x' } } },
+    args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/寫成可驗證的指令）。這個 profile 不要求測試先行：修正的子任務不依賴測試；另拆一個補回歸測試的子任務/.test(r.prompts.tasks || '') && !/修正的子任務依賴它/.test(r.prompts.tasks || '') ? [] : ['test_first=false 時不能再要求修正依賴重現測試']),
+  },
 ]
