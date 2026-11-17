@@ -753,7 +753,8 @@ const results = { tests: [], layers: [], integrations: [], failures: [] }
 // recipe=revert：實作只跑 git revert，不做其他改動（commit 取 args.revert_commits，沒給就照 intent 的回退範圍）
 const IS_REVERT = R.name === 'revert'
 const REVERT_COMMITS = [].concat(A.revert_commits || [])
-const REVERT_BRIEF = `這是 revert：只跑 git revert --no-edit ${REVERT_COMMITS.length ? REVERT_COMMITS.join(' ') : '<commit>（照 ' + SPEC + '/intent.md 的回退範圍逐一列出的 commit）'}，不做其他改動、不手改程式；` +
+// 用 --no-commit 再自己 commit：git 預設的 revert 訊息（Revert "…"）不照 profile 的 commit 格式，有設 check_regex 時 deliver 的 commit 檢查會過不了
+const REVERT_BRIEF = `這是 revert：只跑 git revert --no-commit ${REVERT_COMMITS.length ? REVERT_COMMITS.join(' ') : '<commit>（照 ' + SPEC + '/intent.md 的回退範圍逐一列出的 commit）'}，再 commit 一次（${commitFor('revert', A.epic)}；訊息寫明 revert 了哪些 commit），不做其他改動、不手改程式；` +
   `有衝突或回退範圍不清楚就以 needs_decision 回報，不要自己解。revert 完跑本子任務範圍的 verify 指令，結果寫進 tests[]。`
 
 // 失敗（null）或沒交 done 的 agent 不能默默丟掉：記進 failures，並以 halted: true 停下，不進下一層。

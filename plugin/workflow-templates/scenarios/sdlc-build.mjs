@@ -277,7 +277,7 @@ export default [
   ...recipeScenarios('build', (n) => ({
     args: n === 'bugfix' || n === 'hotfix' ? { subtasks: FIX_SUBTASKS() } : n === 'docs' ? { subtasks: [{ id: 't0', title: '改文件', kind: 'doc', owns: ['docs/a.md'], depends_on: [], acceptance: ['連結檢查通過'] }] } : n === 'test-only' ? { subtasks: SAMPLE_SUBTASKS('test') } : n === 'revert' ? { revert_commits: ['abc1234'] } : {},
     expect: n === 'revert'
-      ? (r) => Object.entries(r.prompts).filter(([l]) => l.startsWith('Implement')).every(([, p]) => /git revert --no-edit abc1234/.test(p) && !/讓已合進整合分支的驗收測試轉綠/.test(p)) ? [] : ['revert 的實作派工單要只跑 git revert abc1234']
+      ? (r) => Object.entries(r.prompts).filter(([l]) => l.startsWith('Implement')).every(([, p]) => /git revert --no-commit abc1234，再 commit 一次（commit 訊息照 profile 的格式：/.test(p) && !/--no-edit/.test(p) && !/讓已合進整合分支的驗收測試轉綠/.test(p)) ? [] : ['revert 的實作派工單要只跑 git revert --no-commit abc1234，再照 profile 的格式 commit']
       : undefined,
   })),
   {
