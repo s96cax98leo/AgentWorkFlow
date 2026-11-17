@@ -85,6 +85,17 @@ impl Guard {
         Ok(cands.iter().any(|c| format!("/{}", fold(c)).contains("/.github/workflows/")))
     }
 
+    /// Write／Edit 的路徑在某個專案的 `.claude/flows/` 底下（自訂段的腳本；照寫的路徑與解開符號連結後的路徑都看）。
+    fn flow_script_path(&self, p: &str) -> R<bool> {
+        let mut cands = vec![norm(p)];
+        match path::resolve(&norm(p)) {
+            Ok(r) => cands.push(r),
+            Err(e) if e.class == "FileNotFoundError" || e.class == "OSError" => {}
+            Err(e) => return Err(e.into()),
+        }
+        Ok(cands.iter().any(|c| format!("/{}/", fold(c)).contains("/.claude/flows/")))
+    }
+
     /// 模版角色不論寫入範圍都不能寫的檔（守門設定、稽核紀錄、凍結檔、profile 與 workflow 腳本、CI 檔、知識圖、
     /// run 狀態與共用背景）：回碰到的是哪一種。給「請工具代寫」的路徑用（`awf run-brief --log <路徑>`），
     /// 判法和 [`Self::check_paths_rules`] 對 Write／Edit 的同一批規則一致。
@@ -100,6 +111,9 @@ impl Guard {
         }
         if self.ci_workflow_path(p)? {
             return Ok(Some(".github/workflows/ 底下的檔".into()));
+        }
+        if self.flow_script_path(p)? {
+            return Ok(Some(".claude/flows/ 底下的檔（自訂段的腳本）".into()));
         }
         if super::guard::kg_path(p) {
             return Ok(Some("知識圖的檔（graph.db 與 vault）".into()));
@@ -227,6 +241,10 @@ impl Guard {
         if has_role && self.ci_workflow_path(&p)? {
             return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（不論在哪個 repo；CI 檔決定哪些檢查會跑，只由人或主 session 改，\
 例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）（{}）", shown(&rel))));
+        }
+        if has_role && self.flow_script_path(&p)? {
+            return Err(self.block(&format!("{agent} 不能寫 .claude/flows/ 底下的檔（不論在哪個目錄；自訂段的腳本決定那一段怎麼跑，只由人或主 session 改；\
+可以讀。需要改就寫進交件的 open_questions）（{}）", shown(&rel))));
         }
         if has_role && super::guard::kg_path(&p) {
             return Err(self.block(&format!("{agent} 不能寫知識圖的檔（graph.db 與 vault，含 vault/notes/；圖只由主 session 跑 awf kg build／export 產生，筆記是人寫的）（{}）", shown(&rel))));

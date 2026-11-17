@@ -684,6 +684,8 @@ pub struct ProfileBits {
     pub event_stages: Vec<String>,
     /// `knowledge.repos[].path` 照寫的原文（還沒解析成絕對路徑；不是非空字串的項目不收）。
     pub knowledge_repos: Vec<String>,
+    /// `flow.stages[].id`：自訂段的段名（run 目錄的 `<段>.json` 是閘門資料）。只看形狀、不看其他規則是否合格（寧可多擋）。
+    pub flow_stages: Vec<String>,
 }
 
 /// 讀不到、格式不對一律當作沒有這些設定（回空的）。
@@ -698,6 +700,9 @@ pub fn profile_bits(ws: &str) -> ProfileBits {
                 && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
         }).cloned().collect();
     }
+    if let Some(Value::Array(list)) = doc.get("flow").and_then(|f| f.get("stages")) {
+        out.flow_stages = list.iter().take(MAX_FLOW_STAGES).filter_map(|x| x.get("id").and_then(Value::as_str)).filter(|id| crate::stages::flow_id_ok(id)).map(str::to_string).collect();
+    }
     if let Some(Value::Array(repos)) = doc.get("knowledge").and_then(|k| k.get("repos")) {
         for r in repos.iter().take(MAX_KNOWLEDGE_REPOS) {
             if let Some(p) = r.get("path").and_then(Value::as_str).map(py::strip).filter(|p| !p.is_empty() && !p.contains('\0')) {
@@ -707,6 +712,9 @@ pub fn profile_bits(ws: &str) -> ProfileBits {
     }
     out
 }
+
+/// 守門只看 `flow.stages` 的前幾筆（規則上限是 8；多看一些是為了「宣告超過上限」時照樣擋，清單再長也不讓 hook 變慢）。
+pub const MAX_FLOW_STAGES: usize = 64;
 
 /// 守門只看 `knowledge.repos` 的前幾筆（每一筆都要解析路徑；清單再長也不讓 hook 變慢）。
 pub const MAX_KNOWLEDGE_REPOS: usize = 32;
