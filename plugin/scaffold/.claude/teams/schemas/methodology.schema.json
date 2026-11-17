@@ -491,7 +491,7 @@
       "properties": {
         "min_confidence": {"type": "number", "minimum": 0, "maximum": 0.8, "description": "審查發現的信心門檻（沒寫用 0.8）。只能調低：門檻越低留下的發現越多；高於 0.8 會放掉內建本來會留的發現，不接受"},
         "max_nits": {"type": "integer", "minimum": 0, "maximum": 50, "description": "event-pr-review 的報告裡 Nit 最多列幾則（沒寫用 5）"},
-        "lenses": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"enum": ["standards", "spec", "bugs", "security", "design", "history"]}, "description": "event-pr-review 沒帶 args.lenses 時用哪些 lens（沒寫用全部六個）"}
+        "lenses": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "event-pr-review 沒帶 args.lenses 時用哪些 lens（沒寫用內建六個：standards、spec、bugs、security、design、history）。可以寫自己定義的 lens（lenses.pr_review；沒寫那張表時用 lenses.deliver）；寫了內建與名稱表都沒有的名字，profile 判不合規則、workflow 開工前停下交人"}
       }
     },
     "constraints": {
@@ -618,12 +618,13 @@
     },
     "lenses": {
       "type": "object",
-      "description": "選填：design 的檢查 lens、design 修訂輪的複查 lens、deliver 的審查軸怎麼問（定義）。選哪些仍由 recipes／modifiers 決定；這裡寫的同名項目換掉內建的問法，新名稱可以讓 recipes 選用。名稱是小寫英數與連字號（40 字以內）。recipe 指到內建與這裡都沒有的名稱時，該段停下交人",
+      "description": "選填：design 的檢查 lens、design 修訂輪的複查 lens、deliver 的審查軸、PR 審查的 lens 怎麼問（定義）。選哪些仍由 recipes／modifiers 決定（PR 審查由 review.lenses 或 args.lenses）；這裡寫的同名項目換掉內建的問法，新名稱可以讓 recipes 選用。名稱是小寫英數與連字號（40 字以內）。recipe 指到內建與這裡都沒有的名稱時，該段停下交人",
       "additionalProperties": false,
       "properties": {
         "design": {"type": "object", "description": "sdlc-design 的 lens（內建 coverage、plan、system-design、delta、rollback、compat）", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這個 lens 要檢查什麼（問法）"}}}},
         "design_revise": {"type": "object", "description": "sdlc-design-revise 的複查 lens（內建 resolved、regression，profile 有系統設計方法時加 system-design）。新名稱一律加派，最多採用 8 個", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這個 lens 要複查什麼（問法）"}}}},
-        "deliver": {"type": "object", "description": "sdlc-deliver 的審查軸（內建 standards、spec、bugs、history）；新的軸排在內建四軸後面", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這一軸要審什麼（問法）"}}}}
+        "deliver": {"type": "object", "description": "sdlc-deliver 的審查軸（內建 standards、spec、bugs、history）；新的軸排在內建四軸後面", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這一軸要審什麼（問法）"}}}},
+        "pr_review": {"type": "object", "description": "event-pr-review 的 lens（內建 standards、spec、bugs、security、design、history）。同名的給內建 lens 加上問法，新名稱可以讓 review.lenses 或 args.lenses 選用。沒寫這張表時用 deliver 那一張；寫了（就算是空物件）就只看這一張", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["ask"], "properties": {"ask": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "這個 lens 要審什麼（問法）"}}}}
       }
     },
     "test_modes": {

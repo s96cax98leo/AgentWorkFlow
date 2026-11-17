@@ -1,7 +1,7 @@
 export const meta = {
   name: 'event-pr-review',
-  description: '審一個 PR 或分支（不是自己 SDLC 開發的）：各 lens 平行（預設 standards、spec、bugs、security、design、history）→ 去重 → 每批由 skeptic 反駁 → 只留信心達到門檻且未被推翻的；只產報告、不留言',
-  whenToUse: '要審 PR 或分支；args：target（PR 編號＋repo 或分支名）、repo（本機 clone 路徑）、run_dir、lenses（可省略）',
+  description: '審一個 PR 或分支（不是自己 SDLC 開發的）：各 lens 平行（預設 standards、spec、bugs、security、design、history；profile 可以加自己的 lens）→ 去重 → 每批由 skeptic 反駁 → 只留信心達到門檻且未被推翻的；只產報告、不留言',
+  whenToUse: '要審 PR 或分支；args：target（PR 編號＋repo 或分支名）、repo（本機 clone 路徑）、run_dir、lenses（可省略；陣列或逗號分隔的字串）',
   phases: [{ title: 'Review', detail: '每個 lens 一個 tpm-reviewer' }, { title: 'Verify', detail: 'tpm-skeptic' }, { title: 'Write' }],
 }
 
@@ -291,7 +291,19 @@ const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.m
 awfKernelInit({ profile: METHODOLOGY, stage: 'pr-review', modifiers: [], max_agents: MAX_AGENTS })
 // 預設的 lens：args.lenses > profile 的 review.lenses > 內建六個
 const REVIEW = MP.review || {}
-const LENSES = A.lenses || ((Array.isArray(REVIEW.lenses) && REVIEW.lenses.length) ? [...new Set(REVIEW.lenses)] : ['standards', 'spec', 'bugs', 'security', 'design', 'history'])
+const BUILTIN_LENSES = ['standards', 'spec', 'bugs', 'security', 'design', 'history']
+// args.lenses 可以是陣列，也可以是逗號分隔的字串（awf next --set lenses=bugs,security 給的是字串）
+const ARG_LENSES = typeof A.lenses === 'string' && A.lenses.trim() ? A.lenses.split(',').map((x) => x.trim()).filter(Boolean) : A.lenses
+const LENSES = ARG_LENSES || ((Array.isArray(REVIEW.lenses) && REVIEW.lenses.length) ? [...new Set(REVIEW.lenses)] : BUILTIN_LENSES)
+// lens 的名稱表（自己的 lens 與問法）：profile 的 lenses.pr_review；沒寫這張表時用 lenses.deliver（和 sdlc-deliver 的審查軸共用一份定義）。
+// 同名的定義給內建的 lens 加上問法，新名稱可以讓 review.lenses 或 args.lenses 選用。定義不合法的略過（awfDefs），等於沒定義。
+const LENS_DEFS = (() => {
+  const l = MP.lenses && typeof MP.lenses === 'object' && !Array.isArray(MP.lenses) ? MP.lenses : {}
+  return awfDefs(l.pr_review && typeof l.pr_review === 'object' && !Array.isArray(l.pr_review) ? l.pr_review : l.deliver, 'ask')
+})()
+// 指到內建與名稱表都沒有的 lens：開工前停下交人，不默默略過（和 recipe 指到沒定義的 design lens、審查軸同一個原則）。
+// args.lenses 不是陣列、或是空陣列也一樣停下（一個 lens 都沒派的審查不能看起來像「沒有發現」）
+const BAD_LENSES = Array.isArray(LENSES) ? LENSES.filter((x) => typeof x !== 'string' || !(BUILTIN_LENSES.includes(x) || x in LENS_DEFS)) : [LENSES]
 // 審查發現的信心門檻：profile 的 review.min_confidence（0–0.8；只能調低＝留下更多發現；沒寫或不合法用 0.8）
 const REVIEW_CONF = (MP.review || {}).min_confidence
 const MIN_CONF = (typeof REVIEW_CONF === 'number' && REVIEW_CONF >= 0 && REVIEW_CONF <= 0.8) ? REVIEW_CONF : 0.8
@@ -582,8 +594,16 @@ function dedupeFindings(groups, field) {
 const missing = []
 const halt = (stage, extra = {}) => haltMissing({ event: 'pr-review' }, stage, missing, { ...extra, trace: awfTrace() })
 
+if (Array.isArray(LENSES) && !LENSES.length) return { trace: awfTrace(), event: 'pr-review', halted: true, stage: 'review', halt_reason: 'args.lenses 是空的：至少要有一個 lens' }
+if (BAD_LENSES.length) {
+  return { trace: awfTrace(), event: 'pr-review', halted: true, stage: 'review',
+    halt_reason: `lens「${BAD_LENSES.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join('、')}」沒有定義（內建：${BUILTIN_LENSES.join('、')}；自己的 lens 寫在 methodology.json 的 lenses.pr_review，沒有這張表時用 lenses.deliver）` }
+}
+// 名稱表有定義的 lens 帶上問法；沒有定義的（內建六個）維持原本的字
+const lensAsk = (lens) => (LENS_DEFS[lens] ? `只用 ${lens} 觀點審查：${LENS_DEFS[lens].ask}\n` : `只用 ${lens} 觀點審查，`)
+
 phase('Review')
-const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 ${REVIEW_DOC} 分級，每則附 file:line 與 0–1 信心，只列 ≥${MIN_CONF}。payload 用 findings（lens=${lens}）。`,
+const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n${lensAsk(lens)}依目標 repo 的 ${REVIEW_DOC} 分級，每則附 file:line 與 0–1 信心，只列 ≥${MIN_CONF}。payload 用 findings（lens=${lens}）。`,
   { label: `review:${lens}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS })))
 // 各 lens 的發現 id 各自編號，加 lens 前綴（<lens>:<id>），skeptic 的 target_id 才不會撞號
 const batches = []

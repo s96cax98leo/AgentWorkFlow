@@ -622,6 +622,8 @@ fn outside(s: &str) -> bool {
 /// design lens、deliver 審查軸、測試模式的內建名稱（範本 sdlc-design.js、sdlc-deliver.js、sdlc-test.js 的內建定義；要和它們一致）。
 pub const BUILTIN_DESIGN_LENSES: &[&str] = &["coverage", "plan", "system-design", "delta", "rollback", "compat"];
 pub const BUILTIN_TEST_MODES: &[&str] = &["verify", "regression", "equivalence", "benchmark"];
+/// PR 審查（event-pr-review.js）內建的 lens；要和範本的 `BUILTIN_LENSES` 一致。
+pub const BUILTIN_PR_LENSES: &[&str] = &["standards", "spec", "bugs", "security", "design", "history"];
 /// profile 的 `roles` 可以換的步驟（challenge 片段的 `awfSwappable` 同一張表）。
 pub const SWAPPABLE_STEPS: &[&str] = &["plan.locate", "plan.research", "plan.challenge", "design.analyze", "design.recheck", "deliver.review", "deliver.verify"];
 
@@ -686,6 +688,16 @@ fn name_table_errors(doc: &Value, refs: bool) -> Vec<String> {
     let design = defined(lens_of("design"), "lenses.design", "ask", &mut errs);
     defined(lens_of("design_revise"), "lenses.design_revise", "ask", &mut errs);
     let deliver = defined(lens_of("deliver"), "lenses.deliver", "ask", &mut errs);
+    // PR 審查的 lens：有寫 lenses.pr_review（物件）就只看它，沒寫才用 lenses.deliver（和範本 event-pr-review.js 的 LENS_DEFS 同一套）
+    let pr_own = defined(lens_of("pr_review"), "lenses.pr_review", "ask", &mut errs);
+    let pr_review = if lens_of("pr_review").is_some_and(Value::is_object) { &pr_own } else { &deliver };
+    if refs {
+        for k in items(get(doc, "review").and_then(|r| get(r, "lenses"))).iter().filter_map(Value::as_str) {
+            if !BUILTIN_PR_LENSES.contains(&k) && !pr_review.contains(k) {
+                errs.push(format!("review.lenses 的「{k}」沒有定義（內建：{}；自己的 lens 寫在 lenses.pr_review，沒有這張表時用 lenses.deliver）", BUILTIN_PR_LENSES.join("、")));
+            }
+        }
+    }
     let modes = defined(get(doc, "test_modes"), "test_modes", "note", &mut errs);
     defined(get(doc, "research_angles"), "research_angles", "ask", &mut errs);
     if modes.contains("verify") {
