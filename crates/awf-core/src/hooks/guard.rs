@@ -263,7 +263,7 @@ impl Guard {
         let am = config::auto_merge(&cfg);
         let mut run_stages: Vec<String> = crate::stages::IDS.iter().chain(BUILTIN_STAGES).map(|s| s.to_string()).collect();
         let bits = config::profile_bits(&ws);
-        for s in bits.event_stages {
+        for s in bits.event_stages.into_iter().chain(bits.flow_stages) {
             if !run_stages.contains(&s) {
                 run_stages.push(s);
             }

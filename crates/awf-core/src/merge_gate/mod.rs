@@ -1526,6 +1526,8 @@ fn recipe_tamper_errors(teams: &str, data: &Value, profile: Option<&str>) -> Res
     if flag(res, "publishable") && !flag(&base, "publishable") { loose.push("publishable 被改成 true".into()); }
     if truthy(g(&base, "followup")) && !truthy(g(res, "followup")) { loose.push("followup 被拿掉".into()); }
     errs.extend(loose.into_iter().map(|e| format!("run.json 的 recipe.resolved 比 {name} 的定義鬆（手改過？）：{e}")));
+    // 自訂段（profile 的 flow）：點名的段要還在 profile 裡、順序要照 profile（resolved 沒有自訂段時不做事）
+    errs.extend(crate::stages::flow_tamper(&prof, g(res, "stages")));
     Ok(errs)
 }
 
@@ -1696,6 +1698,9 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
         if !PathBuf::from(&meth).is_file() { return Err(Fail::Input(crate::save_run::profile_missing(&meth))); }
         let tamper = recipe_tamper_errors(&teams, &data, Some(meth.as_str())).map_err(Fail::Crash)?;
         if !tamper.is_empty() { return Err(Fail::Input(first(&tamper, 3).join("；"))); }
+        // 自訂段（profile 的 flow）一定在 merge 之前：recipe 點名的每一個都要做完、由人核准（沒有自訂段時是空的）
+        let flow_pending = crate::stages::flow_unapproved(&data, None);
+        if !flow_pending.is_empty() { return Err(Fail::Input(format!("--recipe {p} 的自訂段還沒過：{}", first(&flow_pending, 5).join("；")))); }
         inp.recipe = Some(r.clone());
         if inp.requirements_source.starts_with("openspec:") {
             let (rc, _) = requirements_config(cfg, proj)?;

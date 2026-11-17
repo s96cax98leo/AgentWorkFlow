@@ -13,7 +13,6 @@ use std::io::Write;
 
 pub const FILE: &str = "program.json";
 pub const SCHEMA_VERSION: u64 = 1;
-use crate::stages::IDS as STAGES;
 
 pub const USAGE: &str = "多需求排程：讀 <runs_dir>/program.json（一批 epic、相依、對應的 run 或變更），只排順序與提示。
 
@@ -244,12 +243,14 @@ pub fn run_status(data: &Value) -> (&'static str, String) {
     }
     let Some(stages) = o.get("stages").and_then(Value::as_object) else { return ("unknown", "run.json 沒有 stages".to_string()) };
     let status = |s: &str| stages.get(s).and_then(|x| x.get("status")).and_then(Value::as_str).unwrap_or_default();
-    let waiting = STAGES.iter().find(|s| status(s) == "done" && truthy(stages.get(**s).and_then(|x| x.get("gate"))) && !truthy(stages.get(**s).and_then(|x| x.get("approved"))));
+    // 沒有自訂段時就是內建的七段；有自訂段（profile 的 flow）時照 run.json 的順序把它算進來
+    let names = crate::stages::names_in_run(stages);
+    let waiting = names.iter().find(|s| status(s) == "done" && truthy(stages.get(s.as_str()).and_then(|x| x.get("gate"))) && !truthy(stages.get(s.as_str()).and_then(|x| x.get("approved"))));
     let detail = if let Some(s) = waiting {
         format!("等 {s} 段核准")
-    } else if let Some(s) = STAGES.iter().find(|s| matches!(status(s), "blocked" | "invalid" | "needs_decision")) {
+    } else if let Some(s) = names.iter().find(|s| matches!(status(s), "blocked" | "invalid" | "needs_decision")) {
         format!("{s} 段停下了，等人處理")
-    } else if let Some(s) = STAGES.iter().find(|s| stages.contains_key(**s) && !matches!(status(s), "done" | "skipped")) {
+    } else if let Some(s) = names.iter().find(|s| stages.contains_key(s.as_str()) && !matches!(status(s), "done" | "skipped")) {
         format!("下一段 {s}")
     } else {
         "每一段都完成了，還沒結案（awf save-run close）".to_string()

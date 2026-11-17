@@ -392,6 +392,12 @@ pub fn check_policy(ctx: &Ctx, run_dir: Option<&str>, stage: &str) -> R<String> 
     if !get_opt(&r, "publishable")?.map_or(true, truthy) {
         return refused(format!("recipe {name} 不能推送（publishable=false；spike 拒推，要落地請另開 run）"));
     }
+    // 自訂段（profile 的 flow）一定在 merge 之前：recipe 點名的每一個都要做完、由人核准才能推（含排在 deliver 後面的）。
+    // 沒有自訂段時是空的。chain_errors 也會查排在 --stage 之前的；這裡另外擋「deliver 之後、merge 之前」的與政策核准的紀錄
+    let flow_pending = crate::stages::flow_unapproved(&data, Some(crate::stages::FLOW_NO_ANCHOR));
+    if !flow_pending.is_empty() {
+        return refused(format!("recipe {name} 的自訂段還沒過：{}", flow_pending.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
+    }
     let ends: Vec<&str> = if stage == MIN_STAGE { vec![MIN_STAGE] } else { vec![MIN_STAGE, stage] };
     for s in &ends {
         if !contains(want, s)? {

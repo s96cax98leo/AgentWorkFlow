@@ -319,6 +319,19 @@ pub fn render_custom(env: &Env, src: &str, stage: &str, args: &Value) -> A<(Stri
             script::STAGES.join("、")
         ));
     }
+    render_script(env, src, stage, args)
+}
+
+/// 自訂段（profile 的 `flow`）的腳本：檢查與組裝和 [`render_custom`] 完全一樣，只是不限 `script::STAGES`
+/// （那份名單管的是「哪些內建段可以換腳本」；自訂段本來就沒有標準腳本）。呼叫端要先確認 `stage` 是 profile 宣告的自訂段。
+pub fn render_flow(env: &Env, src: &str, stage: &str, args: &Value) -> A<(String, Value)> {
+    if crate::stages::is_sdlc(stage) || !crate::stages::flow_id_ok(stage) {
+        return awf_err(format!("{stage} 不是自訂段"));
+    }
+    render_script(env, src, stage, args)
+}
+
+fn render_script(env: &Env, src: &str, stage: &str, args: &Value) -> A<(String, Value)> {
     let text = match env.sr().read_text(src) {
         Ok(t) => t,
         Err(e) => return awf_err(format!("讀不到自訂腳本 {src}：{}", e.msg)),

@@ -2,7 +2,7 @@
 
 use super::args::stage_result;
 use super::{
-    auto, awf_err, current_session, event_route, find_template, has, hint, is_file, load_json_or, opt, or_obj, read_config, render, render_custom, run_pack, s_or, setdefault_obj, stage_args,
+    auto, awf_err, current_session, event_route, find_template, has, hint, is_file, load_json_or, opt, or_obj, read_config, render, render_custom, render_flow, run_pack, s_or, setdefault_obj, stage_args,
     stage_workflow, write, Env, Fail, A,
 };
 use crate::kb::pyish;
@@ -161,7 +161,8 @@ pub fn highlights(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str
 /// gate_mode=plan-only 的 recipe：非 plan 的閘門先試政策核准（save_run approve --by policy，條件完全由它判）。
 /// 過了回 None（data 已更新成核准後的 run.json）；不適用回空清單；被拒回理由清單（交人）。plan 段永遠不試。
 pub fn try_policy(env: &Env, run: &str, data: &mut Value, stage: &str) -> A<Option<Vec<String>>> {
-    if sr::HUMAN_ONLY.contains(&stage) || !sr::has_recipe(data)? {
+    // 自訂段（不是內建的段）和 plan 一樣永遠不試：一律由人核准
+    if sr::HUMAN_ONLY.contains(&stage) || !sr::SDLC.contains(&stage) || !sr::has_recipe(data)? {
         return Ok(Some(Vec::new()));
     }
     let ctx = env.sr();
@@ -254,11 +255,115 @@ pub fn carry(mut act: Value, data: &Value) -> R<Value> {
 }
 
 pub fn gate_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str) -> R<Value> {
-    Ok(json!({
-        "action": "gate", "stage": stage, "human_only": sr::HUMAN_ONLY.contains(&stage), "highlights": highlights(env, run, run_arg, data, stage)?,
+    let custom = is_flow(data, stage);
+    let mut act = json!({
+        "action": "gate", "stage": stage, "human_only": sr::HUMAN_ONLY.contains(&stage) || custom, "highlights": highlights(env, run, run_arg, data, stage)?,
         "say": "把 highlights 在對話裡列給使用者看。blocking 的問題合成一次、用選項問；provisional 是 agent 已照建議先做的暫定，一次列出來請使用者確認（都同意就在 approve 加 --accept-defaults，記進決策記憶；不同意的那幾題用 --answer 記使用者的答覆）。使用者明確核准才跑 approve；「調整」「可以但…」不是核准。",
         "approve": format!("{NEXT_CMD} approve --run {run_arg} {stage} --by <誰核准的> [--answer \"<問題>=<答覆>\"]… [--accept-defaults]"),
         "cost": format!("awf cost --project . --run-dir {run_arg}"),
+    });
+    // 自訂段（profile 的 flow）與給人看的段名：有才加欄位（沒有 flow 的專案這個動作逐字不變）
+    let flow = flow_of(env);
+    let m = py::obj_mut(&mut act)?;
+    if let Some(l) = flow.own_label(stage) {
+        m.insert("label".into(), json!(l));
+    }
+    if custom {
+        m.insert("custom".into(), json!(true));
+        let st = stage_entry(data, stage)?;
+        let approver = st.get("approver").and_then(Value::as_str).unwrap_or_default().to_string();
+        if !approver.is_empty() {
+            m.insert("approver".into(), json!(approver));
+        }
+        if let Some(a) = st.get("artifacts").filter(|a| py::truthy(a)) {
+            m.insert("artifacts".into(), a.clone());
+        }
+        let who = if approver.is_empty() { String::new() } else { format!("profile 寫的核准者是「{}」（只是提示，不做身分驗證；--by 填實際核准的人）。", crate::hooks::safe::text(&approver, 60)) };
+        let say = format!("這是自訂段（profile 的 flow），一律由人核准、不能政策核准。{who}artifacts 是這一段該有的產出（在 {run_arg}/{stage}/ 底下），缺的會列在 missing_records。{}", py::s(py::idx(&act, "say")?));
+        py::obj_mut(&mut act)?.insert("say".into(), json!(say));
+    }
+    Ok(act)
+}
+
+/// 這個 run 的這一段是不是自訂段（profile 的 flow 加的段）：鎖定的 recipe 點名了它，或存檔時標了 `flow`。
+pub fn is_flow(data: &Value, stage: &str) -> bool {
+    !sr::SDLC.contains(&stage)
+        && (crate::stages::run_customs(data).iter().any(|c| c == stage)
+            || data.get("stages").and_then(|s| s.get(stage)).and_then(|s| s.get("flow")) == Some(&Value::Bool(true)))
+}
+
+/// profile 的自訂段與段名（只供顯示用的讀法：讀不到、讀不懂就當成沒有 flow）。
+fn flow_of(env: &Env) -> crate::stages::Resolved {
+    crate::stages::Resolved::of(&crate::layout::read_profile(&pj(&env.teams(), "methodology.json")))
+}
+
+/// 鎖定的 recipe 點名了自訂段時，和現在的 profile 對不上的地方（自訂段被拿掉、順序被改、profile 讀不懂）。沒有點名時回空的、不讀 profile。
+fn flow_problems(env: &Env, data: &Value) -> R<Vec<String>> {
+    if crate::stages::run_customs(data).is_empty() {
+        return Ok(Vec::new());
+    }
+    let (prof, perr) = sr::load_profile_for(&env.sr(), &[]);
+    let mut out: Vec<String> = if perr.is_empty() { Vec::new() } else { vec![perr] };
+    out.extend(crate::stages::flow_tamper(&prof, py::get(py::get(py::get(data, "recipe")?, "resolved")?, "stages")?));
+    Ok(out)
+}
+
+/// 自訂段（profile 的 flow）：用 profile 指定的腳本跑。腳本走和 `awf next --script` 同一套機制（靜態檢查、組裝、執行核心的角色白名單、
+/// 外層覆寫 stage／recipe／trace），結果一樣帶 custom_script 標記、不能政策核准。腳本不存在、不在 `.claude/flows/` 底下、檢查不過都停下（`Fail::Awf`）。
+pub fn flow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str, prepare: bool) -> A<Value> {
+    let (prof, perr) = sr::load_profile_for(&env.sr(), &[]);
+    if !perr.is_empty() {
+        return awf_err(format!("自訂段 {stage} 不能跑：{perr}"));
+    }
+    let flow = crate::stages::Resolved::of(&prof);
+    let Some(def) = flow.custom(stage) else {
+        return awf_err(format!("自訂段 {stage} 在 profile 的 flow.stages 沒有宣告（被拿掉或改名了？）：不略過，交人處理"));
+    };
+    if def.script.is_empty() {
+        return awf_err(format!("自訂段 {stage} 的 script 不合規則（要是專案內的相對路徑、在 {} 底下、副檔名 .js、不含 ..）", crate::stages::FLOW_DIR));
+    }
+    let src = pyish::pjoin(&env.project, &def.script);
+    if !is_file(&src) {
+        return awf_err(format!("自訂段 {stage} 的腳本 {} 不存在（profile 的 flow.stages[{stage}].script）", def.script));
+    }
+    // 解開符號連結之後還要在專案的 .claude/flows/ 底下（連到別處的檔不採用）
+    let root = format!("{}/", pyish::resolve(&pyish::pjoin(&env.project, crate::stages::FLOW_DIR))?.trim_end_matches('/'));
+    if !pyish::resolve(&src)?.starts_with(&root) {
+        return awf_err(format!("自訂段 {stage} 的腳本 {} 實際位置不在專案的 {} 底下（符號連結？），不採用", def.script, crate::stages::FLOW_DIR));
+    }
+    let name = format!("flow-{stage}");
+    let (mut a, need, mut notes) = stage_args(env, run, data, stage, &name)?;
+    if !need.is_empty() {
+        return Ok(need_input(stage, &name, &need, &format!("{NEXT_CMD} next --run {run_arg}")));
+    }
+    if prepare {
+        notes.extend(auto::kg_before_stage(env));
+    }
+    // 派工資訊：這一段該有的產出與放的位置（腳本從 A 讀）
+    if !def.artifacts.is_empty() {
+        a.insert("artifacts".into(), json!(def.artifacts));
+    }
+    if !def.approver.is_empty() {
+        a.insert("approver".into(), json!(def.approver));
+    }
+    let a_val = Value::Object(a);
+    let (text, mut custom) = render_flow(env, &src, stage, &a_val)?;
+    py::obj_mut(&mut custom)?.insert("flow".into(), json!(true));
+    py::obj_mut(&mut custom)?.insert("source".into(), json!(def.script));
+    if prepare {
+        write(&pj(run, &format!(".wf/{name}.js")), &text)?;
+        write(&pj(run, &format!(".wf/{name}.args.json")), &format!("{}\n", py::dumps(&a_val, Some(1))))?;
+    }
+    notes.push(format!(
+        "{stage} 是自訂段（profile 的 flow），用 {} 跑：存檔時的檢查和標準腳本一樣（紀錄、模型下限、recipe），做完一律停下等人核准{}",
+        def.script,
+        if def.approver.is_empty() { String::new() } else { format!("（核准者：{}）", crate::hooks::safe::text(&def.approver, 60)) }
+    ));
+    Ok(json!({
+        "action": "run_workflow", "stage": stage, "workflow": name, "script": format!("{run_arg}/.wf/{name}.js"), "custom": custom,
+        "how": "用 Workflow 工具執行：scriptPath 給 script，不用傳 args（已經內嵌在腳本裡）。",
+        "then": format!("{NEXT_CMD} done --run {run_arg}"),
+        "notes": notes,
     }))
 }
 
@@ -302,6 +407,9 @@ fn base_changed(env: &Env, run: &str, run_arg: &str, stage: &str, workflow: &str
 
 #[allow(clippy::too_many_arguments)]
 pub fn workflow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str, workflow: &str, plugin: Option<&str>, prepare: bool) -> A<Value> {
+    if s_or(py::get(data, "event")?) == "sdlc" && is_flow(data, stage) {
+        return flow_action(env, run, run_arg, data, stage, prepare);
+    }
     let (mut a, need, mut notes) = stage_args(env, run, data, stage, workflow)?;
     if !need.is_empty() {
         return Ok(need_input(stage, workflow, &need, &format!("{NEXT_CMD} next --run {run_arg}")));
@@ -480,7 +588,8 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
         return Ok(json!({"action": "done", "state": "done", "say": tips.join(" ")}));
     };
     let stage = stage.as_str();
-    if !py::contains(py::idx(data, "stages")?, stage)? || !sr::SDLC.contains(&stage) {
+    let custom = is_flow(data, stage);
+    if !py::contains(py::idx(data, "stages")?, stage)? || !(sr::SDLC.contains(&stage) || custom) {
         return awf_err(format!("沒有 {stage} 這一段"));
     }
     let st = py::idx(py::idx(data, "stages")?, stage)?.clone();
@@ -488,12 +597,20 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
     if status == "skipped" {
         return awf_err(format!("recipe 沒有 {stage} 段（要加段走 awf save-run escalate）"));
     }
-    let own = stage_workflow(stage);
+    // 鎖定的 recipe 點名的自訂段要還在 profile 裡、順序要對：對不上就停下交人，不默默略過（plan 段本身照常，核准時再擋）
+    if stage != "plan" {
+        let probs = flow_problems(env, data)?;
+        if !probs.is_empty() {
+            return Ok(json!({"action": "halted", "stage": stage, "status": "flow", "reason": format!("自訂段和 profile 對不上：{}", probs.join("；")),
+                "advice": "把 methodology.json 的 flow 宣告補回去（或改回 plan 核准時的順序）再跑 awf next；確定不做這一段，就 awf save-run abandon 後重開 run"}));
+        }
+    }
+    let own = if custom { format!("flow-{stage}") } else { stage_workflow(stage) };
     let workflow = if forced_wf.is_empty() { own.clone() } else { forced_wf.to_string() };
     if !forced_wf.is_empty() && forced_wf != own && !crate::stages::alt_templates_of(stage).contains(&forced_wf) {
         return awf_err(format!("{stage} 段不能用 {forced_wf}"));
     }
-    if status == "done" && py::truthy(py::get(&st, "gate")?) && !py::truthy(py::get(&st, "approved")?) && forced_wf.is_empty() {
+    if status == "done" && (custom || py::truthy(py::get(&st, "gate")?)) && !py::truthy(py::get(&st, "approved")?) && forced_wf.is_empty() {
         let Some(refused) = try_policy(env, run, data, stage)? else {
             let rest: Vec<String> = argv.iter().filter(|a| *a != "--retry").cloned().collect();
             return decide(env, run, run_arg, data, plugin, &rest);
@@ -507,7 +624,13 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
         }
         return Ok(act);
     }
-    let chain = sr::chain_errors(data, stage)?;
+    let mut chain = sr::chain_errors(data, stage)?;
+    // 排在前面的自訂段（不靠 run.json 的標記；沒有自訂段時是空的）
+    for e in crate::stages::flow_unapproved(data, Some(stage)) {
+        if !chain.iter().any(|c| c.contains(&e)) {
+            chain.push(e);
+        }
+    }
     if !chain.is_empty() {
         return Ok(json!({"action": "halted", "stage": stage, "status": "chain", "reason": format!("前面的段還沒過：{}", chain.join("；")), "advice": "先完成並核准前面的段"}));
     }
@@ -551,6 +674,9 @@ pub fn custom_action(env: &Env, run: &str, run_arg: &str, data: &mut Value, argv
     };
     let stage = stage.as_str();
     let script_arg = opt(argv, "--script");
+    if is_flow(data, stage) {
+        return awf_err(format!("{stage} 是自訂段：腳本由 profile 的 flow.stages 指定，不能用 --script 換（直接跑 awf next）"));
+    }
     if !script::STAGES.contains(&stage) {
         render_custom(env, script_arg, stage, &json!({}))?; // 回「這一段不能用自訂腳本」
     }
@@ -562,7 +688,13 @@ pub fn custom_action(env: &Env, run: &str, run_arg: &str, data: &mut Value, argv
     if status == "done" && py::truthy(py::get(&st, "gate")?) && !py::truthy(py::get(&st, "approved")?) && !has(argv, "--retry") {
         return awf_err(format!("{stage} 段已經有結果、在等核准；要用自訂腳本重跑這一段就加 --stage {stage} --retry"));
     }
-    let chain = sr::chain_errors(data, stage)?;
+    let mut chain = sr::chain_errors(data, stage)?;
+    // 排在前面的自訂段（不靠 run.json 的標記；沒有自訂段時是空的）
+    for e in crate::stages::flow_unapproved(data, Some(stage)) {
+        if !chain.iter().any(|c| c.contains(&e)) {
+            chain.push(e);
+        }
+    }
     if !chain.is_empty() {
         return awf_err(format!("前面的段還沒過：{}", chain.join("；")));
     }
@@ -755,7 +887,7 @@ pub fn handoff_text(env: &Env, run: &str, run_arg: &str, data: &Value) -> R<Stri
 pub fn text_of(act: &Value) -> R<String> {
     let stage = py::get(act, "stage")?;
     let mut lines = vec![format!("動作：{}{}", py::s(py::get(act, "action")?), if py::truthy(stage) { format!("（{} 段）", py::s(stage)) } else { String::new() })];
-    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("say", "說明"), ("approve", "核准"), ("publish", "推送"), ("preview", "試跑"), ("apply", "執行"), ("skip", "略過")] {
+    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("say", "說明"), ("approver", "核准者"), ("approve", "核准"), ("publish", "推送"), ("preview", "試跑"), ("apply", "執行"), ("skip", "略過")] {
         let v = py::get(act, k)?;
         if py::truthy(v) {
             lines.push(format!("{label}：{}", py::s(v)));

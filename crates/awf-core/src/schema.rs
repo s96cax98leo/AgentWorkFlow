@@ -793,6 +793,145 @@ fn dup_strings(vals: &[Option<&Value>]) -> BTreeSet<String> {
 
 /// 開發規範 profile 的語意規則（schema 表達不了的部分）。
 /// 清單與物件欄位的型別也在這裡檢查：閘門讀 profile（`save_run::load_profile`、merge gate）只跑這個函式，沒有 JSON Schema 先擋。
+// ------------------------------------------------------------------ 自訂段（profile 的 flow）
+
+/// 自訂段（`flow`）的規則。型別與形狀也在這裡查（閘門讀 profile 時只跑語意規則、不跑 JSON Schema，形狀不對不能當成沒寫）。
+/// 讀法在 [`crate::stages::Resolved`]；這裡擋的是「宣告本身不合規則」：
+/// - id：小寫英數與連字號、字母開頭、32 字以內；不能和內建的段、保留名（[`event_reserved`]）、內建或自訂的事件類型同名；不重複；最多 8 個。
+/// - after：內建的段（merge 除外）或另一個自訂段；指得到、不循環。所以自訂段一定在 plan 之後、merge 之前。
+/// - run 只收 script；script 在 `.claude/flows/` 底下、副檔名 `.js`、不含 `..`。
+/// - gate 只收 human（沒寫也是 human）：自訂段做完一律等人核准。
+/// - labels 的鍵只能是內建的段或宣告過的自訂段。
+pub fn flow_errors(doc: &Value) -> Vec<String> {
+    use crate::stages as st;
+    let Some(flow) = get(doc, "flow").filter(|f| !f.is_null()) else { return Vec::new() };
+    let Some(fo) = flow.as_object() else { return vec![format!("flow 要是物件（收到 {}）", type_name(flow))] };
+    let mut errs = Vec::new();
+    for k in fo.keys().filter(|k| !["stages", "labels"].contains(&k.as_str())) {
+        errs.push(format!("flow 不認得的欄位：{k}（只有 stages、labels）"));
+    }
+    let list: Vec<&Value> = match fo.get("stages") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(a)) => a.iter().collect(),
+        Some(other) => {
+            errs.push(format!("flow.stages 要是陣列（收到 {}）", type_name(other)));
+            Vec::new()
+        }
+    };
+    if list.len() > st::FLOW_MAX {
+        errs.push(format!("flow.stages 有 {} 個，最多 {} 個", list.len(), st::FLOW_MAX));
+    }
+    let ids: Vec<&str> = list.iter().filter_map(|x| get(x, "id").and_then(Value::as_str)).collect();
+    let resolved = st::Resolved::of(doc);
+    for (i, x) in list.iter().enumerate() {
+        let Some(xo) = x.as_object() else {
+            errs.push(format!("flow.stages[{i}] 要是物件（收到 {}）", type_name(x)));
+            continue;
+        };
+        let id = xo.get("id").and_then(Value::as_str);
+        let who = match id {
+            Some(id) if st::flow_id_ok(id) => format!("flow.stages[{id}]"),
+            _ => format!("flow.stages[{i}]"),
+        };
+        for k in xo.keys().filter(|k| !["id", "after", "run", "script", "gate", "approver", "artifacts"].contains(&k.as_str())) {
+            errs.push(format!("{who} 不認得的欄位：{k}"));
+        }
+        let mut id_ok = false;
+        match id {
+            None => errs.push(format!("{who}.id 必填，要是字串")),
+            Some(id) if !st::flow_id_ok(id) => errs.push(format!("{who}.id 要是小寫英數與連字號、英文字母開頭、32 字以內")),
+            Some(id) if st::is_sdlc(id) => errs.push(format!("{who}.id 不能和內建的段同名（flow 只能加段，不能取代、改名或調換內建的段）")),
+            Some(id) if event_reserved(id) => errs.push(format!("{who}.id 不能用「{id}」（已經是別的流程或工具自己的目錄名）")),
+            Some(id) if crate::state::EVENT_TYPES.iter().any(|(e, _)| *e == id) || obj(get(doc, "events")).is_some_and(|ev| ev.contains_key(id)) => {
+                errs.push(format!("{who}.id 不能和事件類型同名（run 目錄底下的段目錄會撞在一起）"))
+            }
+            Some(id) if ids.iter().filter(|x| **x == id).count() > 1 => errs.push(format!("flow.stages 的 id「{id}」重複")),
+            Some(_) => id_ok = true,
+        }
+        match xo.get("after").and_then(Value::as_str) {
+            None => errs.push(format!("{who}.after 必填：接在哪一段後面（內建的段，或另一個自訂段）")),
+            Some(a) if a == st::FLOW_NO_ANCHOR => errs.push(format!("{who}.after 不能是 {a}：{a} 是信任邊界，自訂段一定在它之前")),
+            Some(a) if Some(a) == id => errs.push(format!("{who}.after 不能是自己")),
+            Some(a) if !st::is_sdlc(a) && !ids.contains(&a) => errs.push(format!("{who}.after 的「{a}」指不到東西（要是內建的段，或 flow.stages 裡另一個自訂段的 id）")),
+            Some(_) => {
+                if id_ok && i < st::FLOW_MAX && !id.is_some_and(|id| resolved.is_custom(id)) {
+                    errs.push(format!("{who}.after 接不到內建的段（自訂段之間循環，或接著的那一段本身不合規則）"));
+                }
+            }
+        }
+        match xo.get("run") {
+            Some(Value::String(r)) if r == st::FLOW_RUN => {}
+            Some(other) => errs.push(format!("{who}.run 這一版只收 \"{}\"（收到 {}）", st::FLOW_RUN, str_of(other))),
+            None => errs.push(format!("{who}.run 必填（這一版只收 \"{}\"）", st::FLOW_RUN)),
+        }
+        match xo.get("script").and_then(Value::as_str) {
+            Some(p) if st::flow_script_ok(p) => {}
+            Some(p) => errs.push(format!("{who}.script 要是專案內的相對路徑、在 {} 底下、副檔名 .js、不能含 ..（收到 {p}）", st::FLOW_DIR)),
+            None => errs.push(format!("{who}.script 必填，要是字串")),
+        }
+        match xo.get("gate") {
+            None => {}
+            Some(Value::String(g)) if g == st::FLOW_GATE => {}
+            Some(other) => errs.push(format!("{who}.gate 這一版只收 \"{}\"（收到 {}）：自訂段做完一律等人核准", st::FLOW_GATE, str_of(other))),
+        }
+        match xo.get("approver") {
+            None => {}
+            Some(Value::String(a)) if st::flow_text_ok(a, st::FLOW_APPROVER_MAX) => {}
+            Some(_) => errs.push(format!("{who}.approver 要是一行字、{} 字以內", st::FLOW_APPROVER_MAX)),
+        }
+        match xo.get("artifacts") {
+            None => {}
+            Some(Value::Array(a)) => {
+                if a.len() > st::FLOW_ARTIFACTS_MAX {
+                    errs.push(format!("{who}.artifacts 有 {} 個，最多 {} 個", a.len(), st::FLOW_ARTIFACTS_MAX));
+                }
+                if a.iter().any(|n| !n.as_str().is_some_and(st::flow_artifact_ok)) {
+                    errs.push(format!("{who}.artifacts 的每一項要是檔名（放在 <run>/<段>/ 底下；不能有路徑分隔、不能以 . 開頭、80 字以內）"));
+                }
+                if !dup_strings(&a.iter().map(Some).collect::<Vec<_>>()).is_empty() {
+                    errs.push(format!("{who}.artifacts 有重複的檔名"));
+                }
+            }
+            Some(other) => errs.push(format!("{who}.artifacts 要是陣列（收到 {}）", type_name(other))),
+        }
+    }
+    match fo.get("labels") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(l)) => {
+            for (k, v) in l {
+                if !st::is_sdlc(k) && !ids.contains(&k.as_str()) {
+                    errs.push(format!("flow.labels 的「{k}」不是內建的段，也不是 flow.stages 宣告的自訂段"));
+                }
+                if !v.as_str().is_some_and(|t| st::flow_text_ok(t, st::FLOW_LABEL_MAX)) {
+                    errs.push(format!("flow.labels.{k} 要是一行字、{} 字以內", st::FLOW_LABEL_MAX));
+                }
+            }
+        }
+        Some(other) => errs.push(format!("flow.labels 要是物件（收到 {}）", type_name(other))),
+    }
+    errs
+}
+
+/// recipe 的 `stages` 與 modifier 的 `add_stages` 點名的段要認得：內建的段，或 `flow.stages` 宣告過（而且接得上）的自訂段。
+/// 原本由 schema 的 enum 擋；開放自訂段之後由這裡接手（兩條路都查：不認得的段不能默默略過）。
+fn flow_stage_refs(doc: &Value) -> Vec<String> {
+    let flow = crate::stages::Resolved::of(doc);
+    let mut errs = Vec::new();
+    for (table, key) in [("recipes", "stages"), ("modifiers", "add_stages")] {
+        for (name, def) in obj(get(doc, table)).into_iter().flatten() {
+            for x in items(get(def, key)).iter().filter_map(|v| v.as_str()) {
+                if !crate::stages::is_sdlc(x) && !flow.is_custom(x) {
+                    errs.push(format!(
+                        "{table}.{name}.{key} 的「{x}」不是認得的段（內建：{}；或 flow.stages 宣告的自訂段）",
+                        crate::stages::IDS.join("、")
+                    ));
+                }
+            }
+        }
+    }
+    errs
+}
+
 pub fn methodology_errors(doc: &Value) -> Vec<String> {
     methodology_errors_with(doc, true)
 }
@@ -1048,6 +1187,9 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             }
         }
     }
+    // 自訂段（flow）：宣告本身的規則，以及 recipe／modifier 點名的段要認得
+    errs.extend(flow_errors(doc));
+    errs.extend(flow_stage_refs(doc));
     errs.extend(name_table_errors(doc, !typed));
     let req = get(doc, "requirements").filter(|r| r.is_object());
     let rget = |k: &str| req.and_then(|r| get(r, k));
