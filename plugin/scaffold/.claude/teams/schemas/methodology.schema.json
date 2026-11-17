@@ -142,7 +142,7 @@
             "roles": {"type": "object", "description": "各角色的額度（鍵是不帶命名空間的角色名）；0＝該角色不限", "additionalProperties": {"type": "integer", "minimum": 0}}
           }
         },
-        "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent（沒寫用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
+        "max_agents": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "一支 workflow 一次執行最多派幾個 agent（1–1000；沒寫或不在範圍內用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
         "run_brief": {
           "type": "object",
           "description": "選填：長輸出濃縮（awf run-brief）的大小。沒寫或不合範圍的那一項用預設；完整輸出一律在 log 檔",

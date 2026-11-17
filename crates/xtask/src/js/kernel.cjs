@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -179,5 +179,21 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(cnt('merger') === 1 && cnt('integ') === 1 && cnt('swapped') === 2, `頂替不重派角色的 agent 不該重派：${JSON.stringify(calls)}`)
   const mt = k.awfTrace().find((t) => t.label === 'merger')
   need(mt.role_as === 'dev-merge-steward' && mt.tier === 'strong' && mt.ok === false, `頂替合併角色的 agent 要照 dev-merge-steward 的下限：${JSON.stringify(mt)}`)
+  // 1.1：八支 sdlc 範本共用的函式（派工數上限、profile 那一行、commit 寫法、擴充 agent 的派工單）
+  const ma = (v, x) => k.awfMaxAgents({ limits: { max_agents: v } }, x)
+  need(ma(12) === 12 && ma(1) === 1 && ma(1000) === 1000 && ma(0) === 40 && ma(-3) === 40 && ma(1001) === 40 && ma(2.5) === 40 && ma('12') === 40 && k.awfMaxAgents(null) === 40 && k.awfMaxAgents({}) === 40 && k.awfMaxAgents({ limits: 7 }) === 40, 'awfMaxAgents 的範圍判斷不對')
+  need(ma(12, 8) === 20 && ma(undefined, 16) === 56 && ma(12, -4) === 12 && ma(12, 1.5) === 12 && ma(12, '8') === 12, 'awfMaxAgents 的另加額度不對')
+  need(k.awfMethNote(null) === '開發規範 profile：未設定（沒有 .claude/teams/methodology.json），做法與慣例依目標 repo 既有規範。' && k.awfMethNote({ name: 'acme' }) === '開發規範 profile：acme（.claude/teams/methodology.json；各段做法與慣例以它為準）。文件格式：依目標 repo。' && /文件格式：Markdown。$/.test(k.awfMethNote({ name: 'acme', conventions: { doc_format: { format: 'Markdown' } } })), 'awfMethNote 的字不對')
+  const cf11 = (c) => k.awfCommitFor({ conventions: { commit: c } }, 'docs', 'acme-1')
+  need(k.awfCommitFor(null, 'docs', 'e') === 'commit 訊息照目標 repo 的慣例' && cf11({}) === 'commit 訊息照目標 repo 的慣例' && cf11({ format: '<type>: <摘要>' }) === 'commit 訊息照 profile 的格式：<type>: <摘要>' && cf11({ format: 'F', examples: { docs: 'docs(<epic>): x <epic>' } }) === 'commit 訊息照 profile 的格式：F（範例：docs(acme-1): x acme-1）' && cf11({ format: 'F', examples: { feat: 'y' } }) === 'commit 訊息照 profile 的格式：F', 'awfCommitFor 的字不對')
+  seen = []
+  k = make(async (p, o) => { seen.push([p, o]); return env('ok') }, () => {})
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' }); k.awfKernelInit({ profile: PROFILE, stage: 'plan', modifiers: [], max_agents: 1 })
+  const ej11 = k.awfExtJob({ name: 'acme-audit', agent: 'acme:auditor', instructions: '查示範客戶 ACME 的規範' }, '背景', 'Research', '_runs/r1', { type: 'object' })
+  need(typeof ej11 === 'function' && seen.length === 0, 'awfExtJob 要回函式、呼叫前不派工')
+  await ej11()
+  t = k.awfTrace()
+  need(seen.length === 1 && seen[0][1].label === 'ext:acme-audit' && seen[0][1].agentType === 'acme:auditor' && seen[0][1].phase === 'Research' && seen[0][1].schema.type === 'object' && seen[0][0].includes('## 派工單（擴充 agent：acme-audit）\n查示範客戶 ACME 的規範\n只讀不改') && seen[0][0].includes('_runs/r1/ext-acme-audit.md') && seen[0][0].includes('lens=acme-audit'), `awfExtJob 的派工單或 opts 不對：${JSON.stringify(seen[0] && seen[0][1])}`)
+  need(t.length === 1 && (await ej11()) === null && k.awfCapped().join() === 'ext:acme-audit#2', 'awfExtJob 要經過執行核心（派工數上限）')
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })

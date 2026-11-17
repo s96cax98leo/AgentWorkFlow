@@ -312,6 +312,33 @@ const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：$
 // awf save-run stage 依 trace 產生「執行紀錄索引.md」並核對紀錄檔存在，缺了算缺件。
 // profile 裡可調的整數：o[k] 是 lo～hi 的整數才採用，沒寫或不合法一律用預設 d（預設＝原本寫死的值）
 function awfInt(o, k, lo, hi, d) { const v = o && typeof o === 'object' ? o[k] : undefined; return Number.isInteger(v) && v >= lo && v <= hi ? v : d }
+// 派工數上限（profile 的 limits.max_agents）：1–1000 的整數才採用，沒寫或不合法用 40；extra＝這一段另加的額度
+// （design 依子計劃數、build 依子任務數、test 依子計劃數），不是正整數就不加。12 支範本都用這一個，不各寫各的。
+function awfMaxAgents(profile, extra) { return awfInt((profile || {}).limits, 'max_agents', 1, 1000, 40) + (Number.isInteger(extra) && extra > 0 ? extra : 0) }
+// 派工單裡「開發規範 profile」那一行（八支 sdlc 範本共用）。methodology＝內嵌的 profile（null＝專案沒有 profile）。
+function awfMethNote(methodology) {
+  const p = methodology && typeof methodology === 'object' ? methodology : null
+  return p
+    ? `開發規範 profile：${p.name}（.claude/teams/methodology.json；各段做法與慣例以它為準）。文件格式：${(((p.conventions || {}).doc_format) || {}).format || '依目標 repo'}。`
+    : '開發規範 profile：未設定（沒有 .claude/teams/methodology.json），做法與慣例依目標 repo 既有規範。'
+}
+// commit 訊息的寫法（profile 的 conventions.commit：format 與 examples.<kind>；範例裡的 <epic> 換成這次的 epic）。沒有 format 就照目標 repo 的慣例。
+function awfCommitFor(profile, kind, epic) {
+  const c = ((profile || {}).conventions || {}).commit || {}
+  const ex = ((c.examples || {})[kind] || '').replace(/<epic>/g, epic)
+  return c.format ? `commit 訊息照 profile 的格式：${c.format}${ex ? `（範例：${ex}）` : ''}` : 'commit 訊息照目標 repo 的慣例'
+}
+// 使用者加進某一段的自己的 agent（profile 的 extensions）：回一個派工的函式（給 parallel／pipeline 用）。plan、design、test、deliver 四支共用同一張派工單。
+// e＝extensions 的一筆（name、agent、instructions）；ctx＝這一段的共同背景；runDir＝run 目錄；schema＝findings 的 schema。
+// agentType 用使用者給的原值（不加命名空間）；一律交 findings。派工走 awfDispatch：啟用了執行核心就經過它。
+function awfExtJob(e, ctx, phaseName, runDir, schema) {
+  return () => awfDispatch(
+    `${ctx}\n\n## 派工單（擴充 agent：${e.name}）\n${e.instructions}\n` +
+    `只讀不改：不改程式、測試與 spec，不 push、不對 GitHub 寫入。詳細結果寫到 ${runDir}/ext-${e.name}.md。` +
+    `payload 用 findings（lens=${e.name}）：每則附 0–1 信心與嚴重度；會擋住上線或合併的列 blocker／important（會擋住政策核准），其餘列 nit／info。`,
+    { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema },
+  )
+}
 // 前綴裡可調的字：awfInit({ ..., tune: awfTune(profile) })。沒給 tune、沒寫或值不合法時用預設（＝原本寫死的字），前綴逐字不變。
 // - knowledge.code_tools：程式碼優先用哪些查詢工具（最多 8 個名字；空陣列＝不提）。
 // - constraints_format：限制對照的節名與判定詞（awfConstraintFormat；沒寫或不合法是 null＝內建的字）。
