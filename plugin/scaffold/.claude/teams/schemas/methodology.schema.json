@@ -733,6 +733,7 @@
           "properties": {
             "prefix": {"type": "string", "minLength": 1, "description": "epic 與子任務分支的前綴（同 BRANCH_PREFIX）"},
             "naming": {"type": "string"},
+            "bases": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 100}, "description": "選填：某些 recipe 專屬的主線分支（recipe 名 → 分支名，不含 remote；remote 一律是守門設定的 base_remote）。沒列的 recipe 用守門設定的 base_branch。例：base_branch 是整合線 develop、hotfix 要從 main 開並併回 main，就寫 hotfix → main。列了的 recipe：狀態機帶給範本的 base、awf publish 的 PR 目標分支、awf recipe check-diff 與交付文件的比對基準都用它（命令列的 --base、--set base= 仍然優先）。鍵要是內建或 profile 自己的 recipe；分支名只收英數與 . _ / -。不合規則時整份不採用。這個值不會讓任何分支變成可以直接 push"},
             "integrate": {"enum": ["merge --no-ff", "merge"], "description": "選填：子任務分支合進整合分支的方式（dev-integrator 讀）。merge --no-ff＝一律留 merge commit（預設）；merge＝可以 fast-forward。只開放保留各子任務 commit 的合併方式"},
             "patterns": {
               "type": "object",

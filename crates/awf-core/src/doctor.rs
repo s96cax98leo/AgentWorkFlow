@@ -483,6 +483,23 @@ fn check_base_branch(env: &Env) -> Part {
             format!("要擋就把 {base} 加進 guard.config.json 的 protected_branches（或跑 awf init --target <這個專案> --reconfigure guard）；刻意不保護就不用理會"),
         ));
     }
+    // recipe 專屬的主線（profile 的 conventions.branch.bases）：一樣只提示有沒有受保護
+    if let Some(Value::Object(bases)) = profile_of(env).as_ref().and_then(|p| p.get("conventions")).and_then(|c| c.get("branch")).and_then(|b| b.get("bases")) {
+        let mut seen: Vec<&str> = Vec::new();
+        for (name, b) in bases {
+            let Some(b) = b.as_str().filter(|b| crate::layout::branch_ok(b) && *b != base && !protected.iter().any(|p| p == b)) else { continue };
+            if seen.contains(&b) {
+                continue;
+            }
+            seen.push(b);
+            out.push(item(
+                "base-branch",
+                INFO,
+                format!("recipe {name} 的主線 {b}（conventions.branch.bases）不在受保護分支裡（protected_branches：{}）：agent 與主 session 直接 push {b} 不會被 hook 擋", protected.join("、")),
+                format!("要擋就把 {b} 加進 guard.config.json 的 protected_branches（或跑 awf init --target <這個專案> --reconfigure guard）；刻意不保護就不用理會"),
+            ));
+        }
+    }
     Ok(out)
 }
 

@@ -173,6 +173,17 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
         let list: Vec<Value> = m.split(',').filter(|x| !x.is_empty()).map(|x| json!(x)).collect();
         a.insert("modifiers".into(), Value::Array(list));
     }
+    // recipe 專屬的主線（profile 的 conventions.branch.bases）：這個 run 的 recipe 有列、而且沒有用 --base／--set base= 指定時，
+    // 這一段的 base 用它（範本的 A.base 沒給時是守門設定的主線）。沒設定時整段不做，args 和以前逐字相同
+    if workflow.starts_with("sdlc-") && s_or(py::get(data, "event")?) == "sdlc" && !a.get("base").is_some_and(|b| !blank(b)) {
+        let name = a.get("recipe").and_then(Value::as_str).filter(|n| !n.is_empty()).unwrap_or("feature").to_string();
+        let profile = crate::layout::read_profile(&pj(&env.teams(), "methodology.json"));
+        if let Some(b) = crate::layout::recipe_base(&profile, &name) {
+            let want = format!("{}/{b}", crate::layout::for_project(&env.project).base_remote);
+            notes.push(format!("recipe {name} 的主線是 {b}（conventions.branch.bases）：這一段帶 base={want}"));
+            a.insert("base".into(), json!(want));
+        }
+    }
     if workflow.starts_with("sdlc-") && workflow != "sdlc-merge" {
         let sync = stage_result(env, run, "sync")?;
         let default = format!("{}{}", read_config(env)?.get("BRANCH_PREFIX").and_then(Value::as_str).unwrap_or_default(), a.get("epic").map(s_or).unwrap_or_default());
