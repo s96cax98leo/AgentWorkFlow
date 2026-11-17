@@ -477,6 +477,11 @@ pub fn write_matrix(root: &str, run: &str) -> (i32, Vec<String>) {
 // ------------------------------------------------------------------ sync
 /// 功能開發紀錄的一段：交付摘要（標題降階）與核准紀錄。
 pub fn record_block(data: &Value, summary: &str, show_approvers: bool) -> String {
+    record_block_with(data, summary, show_approvers, &crate::stages::Resolved::of(&Value::Null))
+}
+
+/// 同 [`record_block`]，段名先用 profile 的 `flow.labels`（只影響顯示；沒有 `flow` 時和 [`record_block`] 逐字相同）。
+pub fn record_block_with(data: &Value, summary: &str, show_approvers: bool, flow: &crate::stages::Resolved) -> String {
     let mut lines: Vec<String> = vec![format!("### {}", title_of(data)), String::new()];
     let norm = summary.replace("\r\n", "\n");
     let body = h1_re().replace(pyish::strip(&norm), "");
@@ -485,6 +490,9 @@ pub fn record_block(data: &Value, summary: &str, show_approvers: bool) -> String
     lines.push(if body.is_empty() { "（沒有交付摘要）".to_string() } else { body.into_owned() });
     lines.extend([String::new(), "#### 核准紀錄".into(), String::new(), "| 階段 | 核准者 | 時間 |".into(), "|---|---|---|".into()]);
     let name = |st: &str| -> String {
+        if let Some(l) = flow.own_label(st) {
+            return cell_s(l, 20);
+        }
         match crate::stages::label_of(st) {
             Some(l) => l.to_string(),
             None => cell_s(st, 20),
@@ -581,7 +589,8 @@ pub fn sync(root: &str, run: &str, repo: Option<&str>, reviewed: &[String], only
         if summary.is_empty() {
             notes.push(format!("這個 run 沒有交付摘要（{}），功能開發紀錄只記核准紀錄", posix(&sp)));
         }
-        let block = record_block(&data, &summary, get(&cfg, "show_approvers") == &Value::Bool(true));
+        let flow = crate::stages::Resolved::of(&crate::layout::read_profile(&pyish::pjoin(root, ".claude/teams/methodology.json")));
+        let block = record_block_with(&data, &summary, get(&cfg, "show_approvers") == &Value::Bool(true), &flow);
         let hits = privacy_hits(&block, &allow, &[run_name_rule(root)]);
         if !hits.is_empty() {
             return (1, vec![format!("交付摘要有隱私字串，沒有寫入功能開發紀錄：{}", hits.iter().take(5).cloned().collect::<Vec<_>>().join("；"))]);

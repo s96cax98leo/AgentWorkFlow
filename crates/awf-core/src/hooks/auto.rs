@@ -94,7 +94,6 @@ fn word(v: Option<&Value>) -> String {
     if !t.is_empty() && t.chars().count() <= 40 && t.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_')) { t.to_string() } else { String::new() }
 }
 
-use crate::stages::IDS as STAGES;
 
 /// 一個 run 現在的狀況（一句話）；已結案、已取消、讀不懂的回 None。
 fn run_state(data: &Value) -> Option<String> {
@@ -105,8 +104,10 @@ fn run_state(data: &Value) -> Option<String> {
     let event = word(data.get("event"));
     let stages = data.get("stages").and_then(Value::as_object)?;
     let status = |s: &str| stages.get(s).and_then(|x| x.get("status")).and_then(Value::as_str).unwrap_or_default().to_string();
-    let waiting = STAGES.iter().find(|s| {
-        let st = stages.get(**s);
+    // 沒有自訂段時就是內建的七段；有自訂段（profile 的 flow）時照 run.json 的順序把它算進來
+    let names = crate::stages::names_in_run(stages);
+    let waiting = names.iter().find(|s| {
+        let st = stages.get(s.as_str());
         status(s) == "done" && st.and_then(|x| x.get("gate")).is_some_and(crate::pyfmt::truthy) && !st.and_then(|x| x.get("approved")).is_some_and(crate::pyfmt::truthy)
     });
     let pending = word(data.get("awf").and_then(|a| a.get("pending")).and_then(|p| p.get("stage")));
@@ -114,10 +115,10 @@ fn run_state(data: &Value) -> Option<String> {
         format!("等 {s} 段核准")
     } else if !pending.is_empty() {
         format!("{pending} 段交出去了、還沒存檔")
-    } else if let Some(s) = STAGES.iter().find(|s| matches!(status(s).as_str(), "blocked" | "invalid" | "needs_decision")) {
+    } else if let Some(s) = names.iter().find(|s| matches!(status(s).as_str(), "blocked" | "invalid" | "needs_decision")) {
         format!("{s} 段停下了，等人處理")
     } else if event == "sdlc" {
-        match STAGES.iter().find(|s| stages.contains_key(**s) && !matches!(status(s).as_str(), "done" | "skipped")) {
+        match names.iter().find(|s| stages.contains_key(s.as_str()) && !matches!(status(s).as_str(), "done" | "skipped")) {
             Some(s) => format!("下一段 {s}"),
             None => "每一段都完成了，還沒結案".to_string(),
         }
