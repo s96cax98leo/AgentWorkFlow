@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob, awfDesignDocs, awfSubtaskRules, awfSdRules, awfDesignDocRules, awfDeltaRule }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob, awfDesignDocs, awfSubtaskRules, awfSdRules, awfDesignDocRules, awfDeltaRule, awfIntegrateConflicts }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -203,5 +203,8 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(k.awfSdRules(null) === '' && k.awfSdRules({ stages: { design: { system_design: null } } }) === '' && k.awfSdRules({ stages: { design: { system_design: sd11 } } }) === '- 系統設計（SA／SD，方法出處：S）：\n  步驟：一；二\n  功能層：F\n  系統層：Y\n  寫在：design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由。\n' && /第 4 步逐項檢查的主題：甲、乙\n  寫在：D。\n$/.test(k.awfSdRules({ stages: { design: { system_design: { ...sd11, topics: ['甲', '乙'], document: 'D' } } } })), 'awfSdRules 的字不對')
   need(k.awfDesignDocRules(null, 'specs/x') === '- 產出文件（放在 specs/x/）：spec.md、plan.md（profile 沒列的不必寫）；架構取捨怎麼記錄依 profile 的指引，沒寫就依目標 repo 慣例。\n- 需求／驗收條件的寫法：照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文。\n' && /：a\.md（profile 沒列的不必寫）[^\n]*\n- 需求／驗收條件的寫法：R。\n- profile 的指引：G\n- 系統設計/.test(k.awfDesignDocRules({ stages: { design: { artifacts: ['a.md'], requirement_style: 'R', guidance: 'G', system_design: sd11 } } }, 'd')), 'awfDesignDocRules 的字不對')
   need(k.awfDeltaRule('change', 'impact').startsWith('- 這是變更需求（recipe change，plan_mode=impact）：寫 delta spec') && k.awfDeltaRule('feature', 'feature') === '' && k.awfDeltaRule('change', undefined) === '', 'awfDeltaRule 的判斷不對')
+  const ic = (v) => k.awfIntegrateConflicts({ conventions: { branch: { integrate_conflicts: v } } })
+  const TRANSIT = '有衝突照目標 repo 的分支與合併規範用中轉分支解並分類'
+  need(ic('transit') === TRANSIT && ic(undefined) === TRANSIT && ic('rebase') === TRANSIT && ic(' stop') === TRANSIT && ic(1) === TRANSIT && k.awfIntegrateConflicts(null) === TRANSIT && /^有衝突就在整合分支上直接解並分類/.test(ic('in-place')) && /^有衝突不要自己解：git merge --abort/.test(ic('stop')), 'awfIntegrateConflicts 的判斷不對')
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })

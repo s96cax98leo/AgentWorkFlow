@@ -734,6 +734,7 @@
             "prefix": {"type": "string", "minLength": 1, "description": "epic 與子任務分支的前綴（同 BRANCH_PREFIX）"},
             "naming": {"type": "string"},
             "integrate": {"enum": ["merge --no-ff", "merge"], "description": "選填：子任務分支合進整合分支的方式（dev-integrator 讀）。merge --no-ff＝一律留 merge commit（預設）；merge＝可以 fast-forward。只開放保留各子任務 commit 的合併方式"},
+            "integrate_conflicts": {"enum": ["transit", "in-place", "stop"], "description": "選填：子任務分支（sdlc-build）與修正分支（sdlc-test）合進整合分支有衝突時怎麼辦。transit＝照目標 repo 的規範用中轉分支解（預設）；in-place＝直接在整合分支上解；stop＝不解，中止合併、交人處理。跟上 base 的衝突（sdlc-sync）不讀這個值"},
             "patterns": {
               "type": "object",
               "description": "選填：子任務分支與修正分支的命名樣式（sdlc-build、sdlc-test 照它組分支名；worktree 目錄名不變）。一定以 <prefix><epic> 開頭（前綴照 BRANCH_PREFIX），後面先接一個 . _ - 再寫其餘（不能接 /：<prefix><epic> 分支已經存在，git 不允許它底下再開分支）；其餘只能是英數與 . _ -，不能有連續兩個點、不能以 . 或 .lock 結尾。不合規則時範本用內建樣式",

@@ -128,6 +128,15 @@ function awfConstraintFormat(profile) {
 // 子任務與修正分支合進整合分支的方式（profile 的 conventions.branch.integrate）：只有 merge --no-ff（預設）與 merge。
 // 沒寫或不是這兩個值一律 merge --no-ff（squash、rebase 會改寫子任務的 commit，不開放）。「跟上 base」的合併（sdlc-sync）不讀這個值。
 function awfIntegrate(profile) { return ((((profile || {}).conventions || {}).branch || {}).integrate) === 'merge' ? 'merge' : 'merge --no-ff' }
+// 子任務與修正分支合進整合分支時有衝突怎麼辦（profile 的 conventions.branch.integrate_conflicts）：回寫進整合派工單的那一句（不含句號）。
+// transit（預設）＝照目標 repo 的規範用中轉分支解；in-place＝直接在整合分支上解；stop＝不解，中止合併交人。沒寫或不是這三個值用 transit。
+// 「跟上 base」的衝突（sdlc-sync）不讀這個值：那一段的策略由 awf sync-branch 決定。
+function awfIntegrateConflicts(profile) {
+  const v = ((((profile || {}).conventions || {}).branch || {}).integrate_conflicts)
+  if (v === 'in-place') return '有衝突就在整合分支上直接解並分類（只組合兩邊的意圖，不發明新行為；拿不準就以 needs_decision 交人）'
+  if (v === 'stop') return '有衝突不要自己解：git merge --abort 還原後以 needs_decision 回報衝突的檔，交人處理'
+  return '有衝突照目標 repo 的分支與合併規範用中轉分支解並分類'
+}
 // blocking 問題要附幾個選項（profile 的 conventions.questions.options：寫給 agent 看的文字，1–20 字的一行）；沒寫或不合法用「2–3」。
 // 信封驗證的「blocking 問題至少兩個選項」不跟著變。
 function awfQuestionOptions(profile) { return awfLine(((((profile || {}).conventions || {}).questions || {}).options), 20, '2–3') }
@@ -805,7 +814,7 @@ async function fixParallel(round, groups) {
   const ir = await awfAgent(
     `${CTX}\n\n## 派工單（整合修正第 ${round} 輪）\n依序把這些分支 git ${awfIntegrate(MP)} 進 ${BRANCH}（在 ${EPIC_DIR} 操作）：\n` +
     ok.map((r) => `- ${r.payload.branch}（${r.payload.task_id}）`).join('\n') +
-    `\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}；沒有就用該 repo 的對等指令），全綠後移除這些修正的 worktree 與分支。\n${RUN_BRIEF}\npayload 用 build-result（task_id=fix${round}、branch=${BRANCH}）。`,
+    `\n${awfIntegrateConflicts(MP)}。合完跑 rules.md 專案規則的 verify 指令（基準 ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}；沒有就用該 repo 的對等指令），全綠後移除這些修正的 worktree 與分支。\n${RUN_BRIEF}\npayload 用 build-result（task_id=fix${round}、branch=${BRANCH}）。`,
     { label: `integrate:fix#${round}`, phase: 'Integrate', agentType: NS + 'dev-integrator', schema: BUILD },
   )
   fixes.push(ir)

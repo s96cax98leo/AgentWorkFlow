@@ -61,7 +61,8 @@
       },
       "branch": {
         "prefix": "feature/",
-        "naming": "<prefix><epic>；子任務 <prefix><epic>--<子任務 id>。"
+        "naming": "<prefix><epic>；子任務 <prefix><epic>--<子任務 id>。",
+        "integrate_conflicts": "stop"
       },
       "pr_size": {
         "max_lines": 400,
