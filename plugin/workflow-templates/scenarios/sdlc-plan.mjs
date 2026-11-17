@@ -615,7 +615,8 @@ export default [
   {
     // 拆子任務的規則（profile 的 plan_modes.<mode>.tasks_rule）：內建只有 diagnose 有一條
     name: '可設定：沒設 tasks_rule → diagnose 的 tasks 派工單照內建（先寫會失敗的重現測試）',
-    profile: RP, args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    // 內建那一句以測試先行為前提：明寫 test_first=true（專案的 profile 可能是不測試先行）
+    profile: { ...RP, stages: { build: { test_first: true, guidance: 'x' } } }, args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
     expect: (r) => (/寫成可驗證的指令）。第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。\n2\. /.test(r.prompts.tasks || '') ? [] : ['沒設定時 tasks 的派工單要和原本逐字相同']),
   },
   {
@@ -626,7 +627,7 @@ export default [
   },
   {
     name: '可設定：tasks_rule 不合法（空白、不是字串、太長）→ 照內建',
-    profile: { ...RP, plan_modes: { diagnose: { sections: ['現象', '重現步驟', '預期行為', '根因'], tasks_rule: '   ' } } },
+    profile: { ...RP, plan_modes: { diagnose: { sections: ['現象', '重現步驟', '預期行為', '根因'], tasks_rule: '   ' } }, stages: { build: { test_first: true, guidance: 'x' } } },
     args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
     expect: (r) => (/第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。\n2\. /.test(r.prompts.tasks || '') ? [] : ['不合法的 tasks_rule 要退回內建']),
   },
@@ -651,7 +652,8 @@ export default [
   },
   {
     // 共同前綴只寫有啟用的東西：讀取預算（limits.mode）與知識層（knowledge.sources）
-    name: '前綴：預設 profile（沒開讀取預算、有知識層來源）→ 不寫「hook 會擋超量讀取」，照樣提 awf kb query',
+    name: '前綴：沒開讀取預算、有知識層來源（內建 profile 的樣子）→ 不寫「hook 會擋超量讀取」，照樣提 awf kb query',
+    profile: (p) => ({ limits: { ...(p.limits || {}), mode: 'off' }, knowledge: { ...(p.knowledge || {}), sources: ['docs/**/*.md'] } }),
     expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context：大檔帶 offset／limit 分段讀。/.test(p) && /再用 awf kb query "<問題>" 或 Grep 找行段/.test(p) && !/超量讀取/.test(p) ? [] : ['預設 profile 的前綴不對'] },
   },
   {
