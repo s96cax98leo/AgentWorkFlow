@@ -96,5 +96,7 @@
     ]
    }
   ]
- }
+ },
+ "semantic": true,
+ "expect": "stages"
 }

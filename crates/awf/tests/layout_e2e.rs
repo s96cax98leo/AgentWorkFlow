@@ -149,7 +149,11 @@ fn base_branch_configured() {
         assert!(text.contains("'upstream/develop'") && !text.contains("origin/main"), "{name}.js 的預設 base 沒有跟著設定");
     }
     let pm = read(&wf.join("event-post-merge.js"));
-    assert!(pm.contains("--branch develop；") && pm.contains("讀 develop 的 CI") && !pm.contains("--branch main"), "event-post-merge.js 要看設定的主線分支");
+    // 讀 CI 的指令是可設定的樣板（post_merge.ci_commands），{branch} 在執行時代入設定的主線分支
+    assert!(
+        pm.contains(".replace(/\\{branch\\}/g, () => 'develop')") && pm.contains("讀 develop 的 CI") && !pm.contains("=> 'main'") && !pm.contains("--branch main"),
+        "event-post-merge.js 要看設定的主線分支"
+    );
 
     // 2. 乾跑通過，沒帶 base 的派工單用新值
     match dry_run(&t) {
@@ -451,4 +455,112 @@ fn spec_dirs_answers_and_detect() {
     assert_eq!(detect(&p)["suggested_answers"]["guard"]["specs_dir"], "docs/specs");
     std::fs::create_dir_all(p.join("specs")).unwrap();
     assert!(detect(&p)["suggested_answers"]["guard"]["specs_dir"].is_null());
+}
+
+/// `conventions.branch.bases`：某個 recipe 專屬的主線。主線（base_branch）是整合線 develop、hotfix 從 main 開並併回 main。
+/// 沒列的 recipe（feature）照舊用 base_branch；列了的（hotfix）狀態機、publish、check-diff 都用它；沒設定時 args 沒有 base。
+#[test]
+fn recipe_base_configured() {
+    let w = Work::new("bases");
+    let t = init(&w, "proj", "PROJECT_NAME=acme-portal\nBASE_BRANCH=develop\n");
+    let plugin = root().join("plugin");
+    let meth = t.join(".claude/teams/methodology.json");
+    let before = load(&meth);
+    let start = |name: &str, extra: &[&str]| -> PathBuf {
+        let run = format!("_tpm/runs/2026-11-17-{name}");
+        let mut argv = vec!["start", "--run", &run, "--event", "sdlc", "--repo", "repos/app", "--epic", name, "--requirement", "示範客戶 ACME 的匯出功能", "--plugin-dir", s(&plugin)];
+        argv.extend_from_slice(extra);
+        let r = awf(&argv, &t);
+        assert_eq!(r.code, 0, "awf start 失敗：\n{}", r.all());
+        t.join(run)
+    };
+    let next = |run: &Path, extra: &[&str]| -> Out {
+        let mut argv = vec!["next", "--run", s(run), "--plugin-dir", s(&plugin)];
+        argv.extend_from_slice(extra);
+        awf(&argv, &t)
+    };
+    let plan_args = |run: &Path| load(&run.join(".wf/sdlc-plan.args.json"));
+
+    // 0. 沒設定：args 沒有 base（範本用守門設定的主線）
+    let r0 = start("acme-plain", &["--recipe", "hotfix"]);
+    let n = next(&r0, &[]);
+    assert_eq!(n.code, 0, "{}", n.all());
+    assert!(plan_args(&r0).get("base").is_none(), "沒設定 bases 時 args 不該有 base：{}", plan_args(&r0));
+    assert!(!n.stdout.contains("conventions.branch.bases"), "沒設定時不該多說明：{}", n.stdout);
+
+    // 1. 設定 hotfix → main
+    let mut prof = before.clone();
+    prof["conventions"]["branch"]["bases"] = serde_json::json!({"hotfix": "main"});
+    write(&meth, &serde_json::to_string_pretty(&prof).unwrap());
+
+    // feature：base 照舊是整合線（args 不帶，腳本的預設是 origin/develop）
+    let rf = start("acme-export", &[]);
+    let n = next(&rf, &[]);
+    assert_eq!(n.code, 0, "{}", n.all());
+    assert!(plan_args(&rf).get("base").is_none(), "feature 沒有專屬的主線：{}", plan_args(&rf));
+    assert!(read(&rf.join(".wf/sdlc-plan.js")).contains("if (!A.base) A.base = 'origin/develop'"), "feature 的 base 是整合線");
+
+    // hotfix：base 是 main
+    let rh = start("acme-fix", &["--recipe", "hotfix"]);
+    let n = next(&rh, &[]);
+    assert_eq!(n.code, 0, "{}", n.all());
+    assert_eq!(plan_args(&rh)["base"], "origin/main", "hotfix 從 main 開：{}", n.stdout);
+    assert!(n.stdout.contains("recipe hotfix 的主線是 main（conventions.branch.bases）"), "動作要說明 base 從哪來：{}", n.stdout);
+    // --base／--set base= 優先
+    let rb = start("acme-fix2", &["--recipe", "hotfix", "--base", "origin/release/2.x"]);
+    assert_eq!(next(&rb, &[]).code, 0);
+    assert_eq!(plan_args(&rb)["base"], "origin/release/2.x", "明確指定的 base 優先");
+
+    // 2. plan 當時不知道 recipe（照 feature 從 develop 開），核准時鎖成 hotfix：後面的段停下來交人
+    let mut data = load(&rf.join("run.json"));
+    data["recipe"] = serde_json::json!({"name": "hotfix", "modifiers": [], "resolved": {"name": "hotfix", "stages": ["plan", "design", "build", "deliver", "merge"]}});
+    data["stages"]["plan"] = serde_json::json!({"status": "done"});
+    write(&rf.join("run.json"), &serde_json::to_string_pretty(&data).unwrap());
+    let n = next(&rf, &["--stage", "design"]);
+    assert!(n.code != 0 && n.all().contains("plan 段開分支時的 base 是 origin/develop") && n.all().contains("主線是 origin/main"), "base 變了要停下：{} {}", n.code, n.all());
+    // 明確指定 base 之後可以往下
+    let n = next(&rf, &["--stage", "design", "--set", "base=origin/develop"]);
+    assert_eq!(n.code, 0, "明確指定 base 之後要能往下：{}", n.all());
+
+    // 3. 工具：沒帶 --base 時用 recipe 的主線；帶了以命令列為準
+    if which("git").is_some() {
+        let repo = t.join("repos/app");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        write(&repo.join("a.txt"), "a\n");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "chore: 起點"]);
+        git(&repo, &["branch", "hotfix/acme-fix"]);
+        let run_h = t.join("_tpm/runs/2026-11-17-tool-hotfix");
+        write(&run_h.join("run.json"), &serde_json::json!({"target_repo": s(&repo), "recipe": {"name": "hotfix"}}).to_string());
+        let run_f = t.join("_tpm/runs/2026-11-17-tool-feature");
+        write(&run_f.join("run.json"), &serde_json::json!({"target_repo": s(&repo), "recipe": {"name": "feature"}}).to_string());
+        let cd = awf(&["recipe", "check-diff", "--run", s(&run_h)], &t);
+        assert!(cd.code != 0 && cd.all().contains("origin/main"), "check-diff（hotfix）：\n{}", cd.all());
+        let cd = awf(&["recipe", "check-diff", "--run", s(&run_f)], &t);
+        assert!(cd.code != 0 && cd.all().contains("origin/develop"), "check-diff（feature）：\n{}", cd.all());
+        let publish = |run: &Path, extra: &[&str]| {
+            let mut argv = vec!["publish", "push", "--repo-dir", s(&repo), "--branch", "hotfix/acme-fix", "--run", s(run), "--dry-run", "--project-dir", s(&t)];
+            argv.extend_from_slice(extra);
+            awf(&argv, &t).all()
+        };
+        assert!(publish(&run_h, &[]).contains("\"base\": \"main\""), "publish（hotfix）的 PR 目標是 main：\n{}", publish(&run_h, &[]));
+        assert!(publish(&run_f, &[]).contains("\"base\": \"develop\""), "publish（feature）的 PR 目標是整合線：\n{}", publish(&run_f, &[]));
+        assert!(publish(&run_h, &["--base", "trunk"]).contains("\"base\": \"trunk\""), "--base 優先");
+    }
+
+    // 4. 不合規則：整份不採用（照守門設定的主線），awf doctor 列出來
+    prof["conventions"]["branch"]["bases"] = serde_json::json!({"hotfix": "origin main", "docs": "main"});
+    write(&meth, &serde_json::to_string_pretty(&prof).unwrap());
+    let rx = start("acme-bad", &["--recipe", "hotfix"]);
+    let n = next(&rx, &[]);
+    assert!(n.code != 0 || plan_args(&rx).get("base").is_none(), "不合規則的 bases 不能被採用：{}", n.all());
+    let d = awf(&["doctor", "--plugin-dir", s(&plugin)], &t).all();
+    assert!(d.contains("conventions.branch.bases.hotfix 要是分支名"), "awf doctor 要列出不合規則的值：\n{d}");
+
+    // 5. 主線不在受保護分支裡：awf doctor 提示
+    prof["conventions"]["branch"]["bases"] = serde_json::json!({"hotfix": "release/2.x"});
+    write(&meth, &serde_json::to_string_pretty(&prof).unwrap());
+    let d = awf(&["doctor", "--plugin-dir", s(&plugin)], &t).all();
+    assert!(d.contains("recipe hotfix 的主線 release/2.x（conventions.branch.bases）不在受保護分支裡"), "awf doctor 要提示：\n{d}");
 }

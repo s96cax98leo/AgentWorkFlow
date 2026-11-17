@@ -1189,7 +1189,12 @@ fn check_diff(teams: &Path, argv: &[String], git: &dyn Fn(&[String]) -> Result<G
         v => v.to_string(),
     };
     // 沒帶 --base：守門設定（teams 目錄的 guard.config.json）的 base_remote／base_branch，沒設定就是 origin/main
-    let base_default = crate::layout::Layout::of(&crate::layout::read_guard(&teams.join("guard.config.json").to_string_lossy())).base_ref();
+    let lay = crate::layout::Layout::of(&crate::layout::read_guard(&teams.join("guard.config.json").to_string_lossy()));
+    // 這個 run 的 recipe 有專屬的主線（profile 的 conventions.branch.bases）時用它
+    let base_default = match crate::layout::run_base(&crate::layout::read_profile(&teams.join("methodology.json").to_string_lossy()), &run) {
+        Some(b) => format!("{}/{b}", lay.base_remote),
+        None => lay.base_ref(),
+    };
     let base = opt(argv, "--base", &base_default);
     // 值會直接交給 git：- 開頭的會被當成 git 的選項
     if base.starts_with('-') || repo.starts_with('-') {

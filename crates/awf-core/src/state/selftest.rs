@@ -1029,5 +1029,12 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
             .unwrap_or_default();
         let want: BTreeMap<String, Vec<String>> = EVENT_TYPES.iter().map(|(k, v)| (k.to_string(), v.iter().map(|x| x.to_string()).collect())).collect();
         t.check("真的範本：event.js 內建的事件類型與必要參數和 EVENT_TYPES 一致", found == want, format!("{found:?}"));
+        // PR 審查內建的 lens：範本與 profile 的語意規則（review.lenses 指到沒定義的名字）要是同一份清單
+        let pr_src = read(&pj(&real_dir, "event-pr-review.js"));
+        let pr_found: Vec<String> = regex::Regex::new(r"(?m)^const BUILTIN_LENSES = \[([^\]]*)\]$")
+            .ok()
+            .and_then(|re| re.captures(&pr_src).map(|m| m[1].split(',').map(|x| x.trim_matches(|ch| ch == ' ' || ch == '\'').to_string()).collect()))
+            .unwrap_or_default();
+        t.check("真的範本：event-pr-review.js 內建的 lens 和 schema::BUILTIN_PR_LENSES 一致", pr_found == crate::schema::BUILTIN_PR_LENSES, format!("{pr_found:?}"));
     }
 }

@@ -153,5 +153,31 @@ pub fn selftest(out: &mut String) -> i32 {
     };
     check!("結案摘要：沒有帳本時沒有這一節，其餘逐字相同", !without.contains("## 連結") && without == cut, without);
     let _ = std::fs::write(&ledger, keep);
+
+    // ---- 1.1：交付摘要的節與讀者（設定的 summary_sections、audience）：合規則才帶進資料包，否則範本用內建的
+    let ss = |v: Value| super::flow::summary_sections(&json!({"summary_sections": v}));
+    check!("交付摘要的節：合規則的清單原樣帶", ss(json!(["交付內容", "驗證方式"])) == Some(json!(["交付內容", "驗證方式"])));
+    check!(
+        "交付摘要的節：沒寫、空的、重複、太多、太長、有換行或反引號、前後有空白、不是字串 → 不帶（範本用內建的三節）",
+        super::flow::summary_sections(&json!({})).is_none()
+            && ss(json!([])).is_none()
+            && ss(json!(["甲", "甲"])).is_none()
+            && ss(json!(["1", "2", "3", "4", "5", "6", "7", "8", "9"])).is_none()
+            && ss(json!(["字".repeat(41)])).is_none()
+            && ss(json!(["甲\n乙"])).is_none()
+            && ss(json!(["甲`乙"])).is_none()
+            && ss(json!([" 甲"])).is_none()
+            && ss(json!(["甲", 7])).is_none()
+            && ss(json!("甲")).is_none()
+    );
+    let au = |v: Value| super::flow::audience(&json!({"audience": v}));
+    check!(
+        "讀者：1–20 字的一行才帶；沒寫或不合規則不帶（範本用「客戶」）",
+        au(json!("內部使用單位")).as_deref() == Some("內部使用單位") && super::flow::audience(&json!({})).is_none() && au(json!("")).is_none() && au(json!("字".repeat(21))).is_none() && au(json!("甲\n乙")).is_none() && au(json!(7)).is_none()
+    );
+    check!(
+        "設定檢查：summary_sections 重複會報錯",
+        crate::schema::deliverables_errors(Some(&json!({"documents": [], "summary_sections": ["甲", "甲"]})), "deliverables").iter().any(|e| e.contains("summary_sections")) && crate::schema::deliverables_errors(Some(&json!({"documents": [], "summary_sections": ["甲", "乙"]})), "deliverables").is_empty()
+    );
     finish(out, ok_all, n)
 }

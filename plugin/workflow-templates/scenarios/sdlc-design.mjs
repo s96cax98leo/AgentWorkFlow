@@ -205,4 +205,10 @@ export default [
   },
   ...roleScenarios('design.analyze', 'tpm-skeptic', /^analyze:/),
   ...kgScenarios(),
+  {
+    // 「契約不夠用就回報、不自己設計新端點」是 contract-first 的做法：範本不寫，由 profile 的 stages.design.guidance 帶（內建 default profile 有這一句）
+    name: '做法不寫死：profile 的 guidance 沒有契約那一句 → 設計的派工單不出現；guidance 有寫 → 照 guidance 出現',
+    profile: { stages: { design: { artifacts: ['spec.md', 'plan.md'], requirement_style: 'x', guidance: '示範客戶 ACME：沒有契約檔，介面直接寫在 spec。' } } },
+    expect: (r) => { const p = r.prompts.design || ''; return !/不自己設計新端點/.test(p) && /- profile 的指引：示範客戶 ACME：沒有契約檔，介面直接寫在 spec。\n/.test(p) ? [] : ['契約那一句不該由範本寫死'] },
+  },
 ]

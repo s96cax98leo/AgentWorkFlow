@@ -94,5 +94,6 @@
       ]
     }
   },
-  "expect": "lenses"
+  "expect": "lenses",
+  "semantic": true
 }

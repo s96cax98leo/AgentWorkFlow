@@ -1,5 +1,6 @@
 // event-brief.js 的乾跑情境：依賴程式子任務的非程式子任務要等 SDLC、缺件（規則 26）。
 import { ENV, tuneScenarios } from './_helpers.mjs'
+import { eventPrefixScenarios } from './_event-shared.mjs'
 
 const ST = (id, kind, depends_on = []) => ({ id, title: `子任務 ${id}`, kind, owns: [], depends_on, acceptance: ['a'] })
 const PLAN = (subtasks) => ENV({ epic: 'sample', subtasks })
@@ -79,5 +80,29 @@ export default [
       ...(!/；上游模式）/.test(r.prompts['work:research:a'] || '') && /；上游模式）/.test(r.prompts['work:research:b'] || '') ? [] : ['關鍵字不合法時照內建的關鍵字（a 不是、b 是）']),
     ],
   },
+  {
+    // 上游模式的關鍵字：預設是文件寫的四個（沒有 merge），純英數的關鍵字整字比對
+    name: '上游模式：預設關鍵字整字比對 → prompt、product 不誤中，PR、upstream、上游、衝突才算；merge 不在預設裡',
+    fakes: { plan: PLAN([
+      { ...ST('a', 'research'), title: '整理 prompt 的寫法' }, { ...ST('b', 'research'), title: 'Improve product docs' },
+      { ...ST('c', 'research'), title: '說明 merge 策略' }, { ...ST('d', 'research'), title: '看 PR#12 的影響' },
+      { ...ST('e', 'research'), title: '開pr前的檢查' }, { ...ST('f', 'research'), title: 'Upstream 的變動' },
+      { ...ST('g', 'research'), title: '上游的 CI' }, { ...ST('h', 'research'), title: '預測衝突' },
+    ]) },
+    expect: (r) => {
+      const up = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].filter((id) => /；上游模式）/.test(r.prompts[`work:research:${id}`] || '')).join('')
+      return up === 'defgh' ? [] : [`上游模式應該只有 d、e、f、g、h：${up}`]
+    },
+  },
+  {
+    name: '上游模式：自訂的英數關鍵字也整字比對（vendor 不中 vendored），中文關鍵字照樣是包含就算',
+    profile: { briefs: { upstream_keywords: ['vendor', '供應商'] } },
+    fakes: { plan: PLAN([{ ...ST('a', 'research'), title: 'vendored 目錄整理' }, { ...ST('b', 'research'), title: '問 Vendor 的窗口' }, { ...ST('c', 'research'), title: '新供應商評估' }]) },
+    expect: (r) => {
+      const up = ['a', 'b', 'c'].filter((id) => /；上游模式）/.test(r.prompts[`work:research:${id}`] || '')).join('')
+      return up === 'bc' ? [] : [`上游模式應該只有 b、c：${up}`]
+    },
+  },
   ...tuneScenarios(),
+  ...eventPrefixScenarios('brief'),
 ]

@@ -159,4 +159,35 @@ export default [
       },
     },
   ...kgScenarios(),
+    {
+      // 合併方式跟 guard.config.json 的 auto_merge.merge_method（hook 強制合併指令帶對應的旗標）
+      name: '合併方式：args.merge_method=rebase → 合併指令寫 --rebase',
+      args: { merge_method: 'rebase' },
+      fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },
+      expect: (r) => { const p = r.prompts['execute:merge'] || ''; return /gh pr merge [^\n]{0,80} --rebase --match-head-commit/.test(p) && !/--squash --match-head-commit/.test(p) ? [] : ['合併指令沒有照 merge_method'] },
+    },
+    {
+      name: '合併方式：沒帶或不認得的值 → --squash',
+      args: { merge_method: 'fast-forward --admin' },
+      fakes: { ...CONSISTENT, 'execute:merge': EXEC('merged') },
+      expect: (r) => { const p = r.prompts['execute:merge'] || ''; return /gh pr merge [^\n]{0,80} --squash --match-head-commit/.test(p) && !/--admin/.test(p) ? [] : ['不認得的 merge_method 要退回 squash'] },
+    },
+    {
+      // 退回時要不要轉回 draft 跟 auto_merge.return_to_draft
+      name: '退回：預設（沒帶 return_to_draft，或不是布林 false）→ 轉回 draft',
+      args: { return_to_draft: 'false' },
+      expect: (r) => { const p = r.prompts['execute:return'] || ''; return /--undo 轉回 draft/.test(p) && /PR 已退回並轉回 draft。/.test((r.out || {}).next || '') ? [] : [`預設要轉回 draft：${(r.out || {}).next}`] },
+    },
+    {
+      name: '退回：return_to_draft=false → 只 request-changes，不轉 draft',
+      args: { return_to_draft: false },
+      expect: (r) => {
+        const p = r.prompts['execute:return'] || ''
+        return [
+          ...(/--request-changes/.test(p) && /設定是退回時不轉回 draft：不要跑 gh pr ready --undo/.test(p) && !/--undo 轉回 draft/.test(p) ? [] : ['return_to_draft=false 時派工單不該要求轉 draft']),
+          ...(/PR 已退回。/.test((r.out || {}).next || '') && !/轉回 draft/.test((r.out || {}).next || '') ? [] : [`回傳的 next 不該說已轉回 draft：${(r.out || {}).next}`]),
+          ...(r.out && r.out.merged === false ? [] : ['退回不能算已合併']),
+        ]
+      },
+    },
 ]

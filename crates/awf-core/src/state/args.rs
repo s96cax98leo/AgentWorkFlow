@@ -103,15 +103,17 @@ fn blank(v: &Value) -> bool {
     v.is_null() || v.as_str() == Some("")
 }
 
-/// sdlc-merge 要跟著 guard.config.json 走的兩個值：`auto_merge.merger_role`、`auto_merge.freeze_file`。
+/// sdlc-merge 要跟著 guard.config.json 走的值：`auto_merge.merger_role`、`auto_merge.freeze_file`、`auto_merge.merge_method`、`auto_merge.return_to_draft`。
 /// 範本讀不到設定檔，所以由這裡帶進 args。只在設定檔有明寫、而且正規化後和範本的預設
-/// （`<AGENT_NS>dev-merge-steward`、`<RUNS_DIR>/auto-merge.freeze.json`）不同時才帶：沒寫時 args 和以前逐字相同。
+/// （`<AGENT_NS>dev-merge-steward`、`<RUNS_DIR>/auto-merge.freeze.json`、`squash`、轉回 draft）不同時才帶：沒寫時 args 和以前逐字相同。
+/// `merge_method` 只帶 hook 認得的三種（squash／merge／rebase）：hook 強制合併指令照它寫，範本寫死 `--squash` 的話設成別種時指令會被擋。
 /// 設定檔讀不懂時不帶（hook 那邊照它自己的失敗語意擋），正規化用 hook 的同一個函式（`config::auto_merge`）。
 fn merge_guard_args(env: &Env) -> R<Vec<(String, String)>> {
     let raw = super::load_json_or(env, &pj(&env.teams(), "guard.config.json"))?;
     let am = raw.get("auto_merge").filter(|v| v.is_object());
     let set = |k: &str| am.and_then(|a| a.get(k)).and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty());
-    if !set("merger_role") && !set("freeze_file") {
+    let no_draft = am.and_then(|a| a.get("return_to_draft")) == Some(&Value::Bool(false));
+    if !set("merger_role") && !set("freeze_file") && !set("merge_method") && !no_draft {
         return Ok(Vec::new());
     }
     let Ok(cfg) = crate::config::load(&env.project) else { return Ok(Vec::new()) };
@@ -127,6 +129,12 @@ fn merge_guard_args(env: &Env) -> R<Vec<(String, String)>> {
     let default_freeze = format!("{}/auto-merge.freeze.json", wc_str("RUNS_DIR", "_tpm/runs").trim_end_matches('/'));
     if set("freeze_file") && single_line(&norm.freeze_file) && norm.freeze_file != default_freeze {
         out.push(("freeze_file".to_string(), norm.freeze_file.clone()));
+    }
+    if set("merge_method") && ["merge", "rebase"].contains(&norm.merge_method.as_str()) {
+        out.push(("merge_method".to_string(), norm.merge_method.clone()));
+    }
+    if no_draft && !norm.return_to_draft {
+        out.push(("return_to_draft".to_string(), "false".to_string()));
     }
     Ok(out)
 }
@@ -173,6 +181,17 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
         let list: Vec<Value> = m.split(',').filter(|x| !x.is_empty()).map(|x| json!(x)).collect();
         a.insert("modifiers".into(), Value::Array(list));
     }
+    // recipe 專屬的主線（profile 的 conventions.branch.bases）：這個 run 的 recipe 有列、而且沒有用 --base／--set base= 指定時，
+    // 這一段的 base 用它（範本的 A.base 沒給時是守門設定的主線）。沒設定時整段不做，args 和以前逐字相同
+    if workflow.starts_with("sdlc-") && s_or(py::get(data, "event")?) == "sdlc" && !a.get("base").is_some_and(|b| !blank(b)) {
+        let name = a.get("recipe").and_then(Value::as_str).filter(|n| !n.is_empty()).unwrap_or("feature").to_string();
+        let profile = crate::layout::read_profile(&pj(&env.teams(), "methodology.json"));
+        if let Some(b) = crate::layout::recipe_base(&profile, &name) {
+            let want = format!("{}/{b}", crate::layout::for_project(&env.project).base_remote);
+            notes.push(format!("recipe {name} 的主線是 {b}（conventions.branch.bases）：這一段帶 base={want}"));
+            a.insert("base".into(), json!(want));
+        }
+    }
     if workflow.starts_with("sdlc-") && workflow != "sdlc-merge" {
         let sync = stage_result(env, run, "sync")?;
         let default = format!("{}{}", read_config(env)?.get("BRANCH_PREFIX").and_then(Value::as_str).unwrap_or_default(), a.get("epic").map(s_or).unwrap_or_default());
@@ -191,9 +210,13 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
         // 合併角色與凍結檔跟 guard.config.json 的 auto_merge（hook 與 awf merge-gate 讀的同一份）：--set 給的不採用
         a.shift_remove("merger_role");
         a.shift_remove("freeze_file");
+        a.shift_remove("merge_method");
+        a.shift_remove("return_to_draft");
         for (k, v) in merge_guard_args(env)? {
             notes.push(format!("guard.config.json 的 auto_merge 有設 {k}：這一段帶 {k}={v}"));
-            a.insert(k, json!(v));
+            // return_to_draft 是布林值（只會帶 false），其餘是字串
+            let val = if k == "return_to_draft" { json!(false) } else { json!(v) };
+            a.insert(k, val);
         }
     }
     if workflow == "sdlc-build" {

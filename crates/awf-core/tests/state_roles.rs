@@ -79,6 +79,31 @@ fn merge_args_follow_guard_config() {
     assert!(none(&a), "型別不對或空白時不該帶：{a:?}");
 }
 
+/// 合併方式與退回時要不要轉回 draft 也跟 guard.config.json：只在和預設（squash、轉回 draft）不同時才帶，`--set` 給的不採用。
+#[test]
+fn merge_method_and_return_to_draft_follow_guard_config() {
+    let p = proj("merge-method");
+    let none = |a: &serde_json::Map<String, Value>| !a.contains_key("merge_method") && !a.contains_key("return_to_draft");
+    // 沒寫、寫的就是預設值、不認得的值、型別不對：不帶（範本用 squash、轉回 draft）
+    for am in [json!({"enabled": true}), json!({"merge_method": "squash", "return_to_draft": true}), json!({"merge_method": " SQUASH "}), json!({"merge_method": "fast-forward", "return_to_draft": "false"}), json!({"merge_method": 7, "return_to_draft": 0})] {
+        put(&p, ".claude/teams/guard.config.json", &json!({"auto_merge": am}));
+        let (a, notes) = merge_args(&p, json!({"pr": 7}));
+        assert!(none(&a) && notes.is_empty(), "{am} 不該帶：{a:?}");
+        // --set 給的一律拿掉
+        let (a, _) = merge_args(&p, json!({"pr": 7, "merge_method": "rebase", "return_to_draft": false}));
+        assert!(none(&a), "{am}：--set 給的不採用：{a:?}");
+    }
+    // 有明寫而且和預設不同：帶進 args（merge_method 正規化成小寫；return_to_draft 是布林 false）
+    put(&p, ".claude/teams/guard.config.json", &json!({"auto_merge": {"merge_method": " Rebase ", "return_to_draft": false}}));
+    let (a, notes) = merge_args(&p, json!({"pr": 7, "merge_method": "merge", "return_to_draft": true}));
+    assert_eq!(a.get("merge_method"), Some(&json!("rebase")));
+    assert_eq!(a.get("return_to_draft"), Some(&json!(false)));
+    assert_eq!(notes.iter().filter(|n| n.contains("auto_merge")).count(), 2, "{notes:?}");
+    put(&p, ".claude/teams/guard.config.json", &json!({"auto_merge": {"merge_method": "merge"}}));
+    let (a, _) = merge_args(&p, json!({"pr": 7}));
+    assert!(a.get("merge_method") == Some(&json!("merge")) && !a.contains_key("return_to_draft"), "{a:?}");
+}
+
 #[test]
 fn merge_args_only_for_merge() {
     // 別的段不受影響：--set 的同名參數原樣留著（只有 sdlc-merge 認這兩個鍵）

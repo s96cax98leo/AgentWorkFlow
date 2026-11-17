@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob, awfDesignDocs, awfSubtaskRules, awfSdRules, awfDesignDocRules, awfDeltaRule, awfIntegrateConflicts }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -92,10 +92,19 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(!/限制文件/.test(k.awfPrefix()), '沒有限制時前綴不該多出規則')
   // 可調的值（1.0）：沒寫或不合法一律用預設；前綴在沒有 tune、沒有 kg 時逐字不變
   need(k.awfInt({ n: 5 }, 'n', 1, 9, 3) === 5 && k.awfInt({ n: 0 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 10 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 2.5 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: '5' }, 'n', 1, 9, 3) === 3 && k.awfInt(null, 'n', 1, 9, 3) === 3 && k.awfInt('x', 'n', 1, 9, 3) === 3, 'awfInt 的範圍或型別判斷不對')
-  const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12, constraints_format: null })
+  const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12, constraints_format: null, read_hook: false, kb: false })
   need(JSON.stringify(k.awfTune(null)) === T0 && JSON.stringify(k.awfTune({})) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: 'graft' }, limits: { envelope: { summary_chars: 401, evidence_items: 2 } } })) === T0, `awfTune 的預設不對：${JSON.stringify(k.awfTune(null))}`)
   need(JSON.stringify(k.awfTune({ knowledge: { code_tools: ['a', 'a'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: ['x\ny'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: Array.from({ length: 9 }, (_, i) => `t${i}`) } })) === T0, 'code_tools 重複、含換行或超過 8 個要退回預設')
-  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3, constraints_format: null }), 'awfTune 沒有採用合法的設定')
+  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3, constraints_format: null, read_hook: false, kb: false }), 'awfTune 沒有採用合法的設定')
+  // 1.1：讀取預算與知識層沒啟用時，前綴不寫「hook 會擋超量讀取」與 awf kb query
+  const flags = (p) => { const t = k.awfTune(p); return `${t.read_hook},${t.kb}` }
+  need(flags({ limits: { mode: 'enforce' }, knowledge: { sources: ['docs/**/*.md'] } }) === 'true,true' && flags({ limits: { mode: 'warn' } }) === 'true,false' && flags({ limits: { mode: 'off' }, knowledge: { sources: [] } }) === 'false,false' && flags({ limits: { mode: 'x' }, knowledge: { sources: 'docs' } }) === 'false,false' && flags({ knowledge: { sources: [' ', 7] } }) === 'false,false', 'awfTune 的 read_hook／kb 判斷不對')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' })
+  need(/- 省 context：大檔帶 offset／limit 分段讀。/.test(k.awfPrefix()) && /，再用 Grep 找行段，只讀那幾行/.test(k.awfPrefix()) && !/超量讀取|awf kb query/.test(k.awfPrefix()), '沒啟用讀取預算、沒設知識層時前綴不該提 hook 與 awf kb query')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', tune: k.awfTune({ limits: { mode: 'warn' }, knowledge: { sources: ['docs/**/*.md'] } }) })
+  need(/- 省 context（hook 會擋超量讀取）：大檔帶/.test(k.awfPrefix()) && /，再用 awf kb query "<問題>" 或 Grep 找行段，只讀那幾行/.test(k.awfPrefix()), '啟用讀取預算、有知識層來源時前綴要照寫')
+  const TL11 = [{ id: 'c1', file: 'docs/a.md', note: '', paths: [], table: false }]
+  need(/先用 awf kb query 或 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11)) && /先用 awf kb query 或 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11, null, true)) && /；先用 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11, null, false)), 'awfConstraintRule 的 kb 參數不對')
   const SIX = '產出、驗證'
   const rs = (v) => k.awfRecordSections({ stages: { deliver: { record_sections: v } } }, SIX)
   need(rs(['甲', '乙']) === '甲、乙' && rs([]) === SIX && rs(['甲', '甲']) === SIX && rs(['甲\n乙']) === SIX && rs([' 甲']) === SIX && rs(['x'.repeat(41)]) === SIX && rs('甲') === SIX && rs(Array.from({ length: 13 }, (_, i) => `節${i}`)) === SIX && k.awfRecordSections(null, SIX) === SIX, 'awfRecordSections 的判斷不對')
@@ -179,5 +188,32 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(cnt('merger') === 1 && cnt('integ') === 1 && cnt('swapped') === 2, `頂替不重派角色的 agent 不該重派：${JSON.stringify(calls)}`)
   const mt = k.awfTrace().find((t) => t.label === 'merger')
   need(mt.role_as === 'dev-merge-steward' && mt.tier === 'strong' && mt.ok === false, `頂替合併角色的 agent 要照 dev-merge-steward 的下限：${JSON.stringify(mt)}`)
+  // 1.1：八支 sdlc 範本共用的函式（派工數上限、profile 那一行、commit 寫法、擴充 agent 的派工單）
+  const ma = (v, x) => k.awfMaxAgents({ limits: { max_agents: v } }, x)
+  need(ma(12) === 12 && ma(1) === 1 && ma(1000) === 1000 && ma(0) === 40 && ma(-3) === 40 && ma(1001) === 40 && ma(2.5) === 40 && ma('12') === 40 && k.awfMaxAgents(null) === 40 && k.awfMaxAgents({}) === 40 && k.awfMaxAgents({ limits: 7 }) === 40, 'awfMaxAgents 的範圍判斷不對')
+  need(ma(12, 8) === 20 && ma(undefined, 16) === 56 && ma(12, -4) === 12 && ma(12, 1.5) === 12 && ma(12, '8') === 12, 'awfMaxAgents 的另加額度不對')
+  need(k.awfMethNote(null) === '開發規範 profile：未設定（沒有 .claude/teams/methodology.json），做法與慣例依目標 repo 既有規範。' && k.awfMethNote({ name: 'acme' }) === '開發規範 profile：acme（.claude/teams/methodology.json；各段做法與慣例以它為準）。文件格式：依目標 repo。' && /文件格式：Markdown。$/.test(k.awfMethNote({ name: 'acme', conventions: { doc_format: { format: 'Markdown' } } })), 'awfMethNote 的字不對')
+  const cf11 = (c) => k.awfCommitFor({ conventions: { commit: c } }, 'docs', 'acme-1')
+  need(k.awfCommitFor(null, 'docs', 'e') === 'commit 訊息照目標 repo 的慣例' && cf11({}) === 'commit 訊息照目標 repo 的慣例' && cf11({ format: '<type>: <摘要>' }) === 'commit 訊息照 profile 的格式：<type>: <摘要>' && cf11({ format: 'F', examples: { docs: 'docs(<epic>): x <epic>' } }) === 'commit 訊息照 profile 的格式：F（範例：docs(acme-1): x acme-1）' && cf11({ format: 'F', examples: { feat: 'y' } }) === 'commit 訊息照 profile 的格式：F', 'awfCommitFor 的字不對')
+  seen = []
+  k = make(async (p, o) => { seen.push([p, o]); return env('ok') }, () => {})
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' }); k.awfKernelInit({ profile: PROFILE, stage: 'plan', modifiers: [], max_agents: 1 })
+  const ej11 = k.awfExtJob({ name: 'acme-audit', agent: 'acme:auditor', instructions: '查示範客戶 ACME 的規範' }, '背景', 'Research', '_runs/r1', { type: 'object' })
+  need(typeof ej11 === 'function' && seen.length === 0, 'awfExtJob 要回函式、呼叫前不派工')
+  await ej11()
+  t = k.awfTrace()
+  need(seen.length === 1 && seen[0][1].label === 'ext:acme-audit' && seen[0][1].agentType === 'acme:auditor' && seen[0][1].phase === 'Research' && seen[0][1].schema.type === 'object' && seen[0][0].includes('## 派工單（擴充 agent：acme-audit）\n查示範客戶 ACME 的規範\n只讀不改') && seen[0][0].includes('_runs/r1/ext-acme-audit.md') && seen[0][0].includes('lens=acme-audit'), `awfExtJob 的派工單或 opts 不對：${JSON.stringify(seen[0] && seen[0][1])}`)
+  need(t.length === 1 && (await ej11()) === null && k.awfCapped().join() === 'ext:acme-audit#2', 'awfExtJob 要經過執行核心（派工數上限）')
+  // 1.1：design 兩支範本共用的規則文字
+  const dd = (a, w) => k.awfDesignDocs({ stages: { design: { artifacts: a } } }, w).join('、')
+  need(k.awfDesignDocs(null).join('、') === 'intent、design、spec、plan、progress' && k.awfDesignDocs(null, false).join('、') === 'design、spec、plan、progress' && dd(['spec.md', 'plan.md']) === 'intent、spec、plan' && dd(['spec.md', 'plan.md'], false) === 'spec、plan' && dd(['intent.md', 'SPEC.MD', 'adr']) === 'intent、SPEC、adr' && dd([]) === 'intent、design、spec、plan、progress' && dd(['a\nb']) === 'intent、design、spec、plan、progress' && dd('spec.md') === 'intent、design、spec、plan、progress' && dd([7]) === 'intent、design、spec、plan、progress', 'awfDesignDocs 的判斷不對')
+  need(/數量最小化。$/.test(k.awfSubtaskRules(null)) && /spec_refs/.test(k.awfSubtaskRules({})) && /expected_red/.test(k.awfSubtaskRules({})) && /code 子任務不要依賴 test 子任務。$/.test(k.awfSubtaskRules({ stages: { build: { test_first: false } } })) && !/不要求測試先行/.test(k.awfSubtaskRules({ stages: { build: { test_first: true } } })), 'awfSubtaskRules 的字不對')
+  const sd11 = { source: 'S', steps: ['一', '二'], feature_scope: 'F', system_scope: 'Y' }
+  need(k.awfSdRules(null) === '' && k.awfSdRules({ stages: { design: { system_design: null } } }) === '' && k.awfSdRules({ stages: { design: { system_design: sd11 } } }) === '- 系統設計（SA／SD，方法出處：S）：\n  步驟：一；二\n  功能層：F\n  系統層：Y\n  寫在：design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由。\n' && /第 4 步逐項檢查的主題：甲、乙\n  寫在：D。\n$/.test(k.awfSdRules({ stages: { design: { system_design: { ...sd11, topics: ['甲', '乙'], document: 'D' } } } })), 'awfSdRules 的字不對')
+  need(k.awfDesignDocRules(null, 'specs/x') === '- 產出文件（放在 specs/x/）：spec.md、plan.md（profile 沒列的不必寫）；架構取捨怎麼記錄依 profile 的指引，沒寫就依目標 repo 慣例。\n- 需求／驗收條件的寫法：照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文。\n' && /：a\.md（profile 沒列的不必寫）[^\n]*\n- 需求／驗收條件的寫法：R。\n- profile 的指引：G\n- 系統設計/.test(k.awfDesignDocRules({ stages: { design: { artifacts: ['a.md'], requirement_style: 'R', guidance: 'G', system_design: sd11 } } }, 'd')), 'awfDesignDocRules 的字不對')
+  need(k.awfDeltaRule('change', 'impact').startsWith('- 這是變更需求（recipe change，plan_mode=impact）：寫 delta spec') && k.awfDeltaRule('feature', 'feature') === '' && k.awfDeltaRule('change', undefined) === '', 'awfDeltaRule 的判斷不對')
+  const ic = (v) => k.awfIntegrateConflicts({ conventions: { branch: { integrate_conflicts: v } } })
+  const TRANSIT = '有衝突照目標 repo 的分支與合併規範用中轉分支解並分類'
+  need(ic('transit') === TRANSIT && ic(undefined) === TRANSIT && ic('rebase') === TRANSIT && ic(' stop') === TRANSIT && ic(1) === TRANSIT && k.awfIntegrateConflicts(null) === TRANSIT && /^有衝突就在整合分支上直接解並分類/.test(ic('in-place')) && /^有衝突不要自己解：git merge --abort/.test(ic('stop')), 'awfIntegrateConflicts 的判斷不對')
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })

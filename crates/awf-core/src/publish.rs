@@ -717,7 +717,10 @@ pub fn publish(env: &Env, a: &Args) -> Result<(i32, Value), String> {
     // 沒帶 --base：PR 的目標分支用守門設定的 base_branch（預設 main）。推送的 remote 是 fork，和 base_remote 無關
     let with_base;
     let a = if a.base.is_empty() {
-        with_base = Args { base: crate::layout::for_project(&proj).base_branch, ..a.clone() };
+        // 這個 run 的 recipe 有專屬的主線（profile 的 conventions.branch.bases）時用它；run.json 讀不到就照守門設定（閘門之後一樣會拒絕）
+        let own = some(&a.run).and_then(|r| env.ctx.resolve(r).ok()).and_then(|r| std::fs::read(pyish::pjoin(&r, "run.json")).ok())
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|run| crate::layout::run_base_for_project(&proj, &run));
+        with_base = Args { base: own.unwrap_or_else(|| crate::layout::for_project(&proj).base_branch), ..a.clone() };
         &with_base
     } else {
         a

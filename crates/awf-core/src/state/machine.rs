@@ -271,11 +271,43 @@ fn need_input(stage: &str, workflow: &str, need: &[String], how_head: &str) -> V
            "how": format!("{how_head} {}", need.iter().map(|k| format!("--set {k}=<值>")).collect::<Vec<_>>().join(" "))})
 }
 
+/// plan 段開分支時用的 base 和這一段要用的不同（plan 核准時鎖定的 recipe 有專屬的主線，而 plan 當時還不知道）：回要給人看的說明。
+/// 分支是從別條線開的，照新的 base 比對會把那條線的改動都算進來，所以停下來交人，不默默往下跑。
+/// 只在 profile 有 `conventions.branch.bases`、而且 plan 是經由 `awf next` 跑的（留有 `.wf/sdlc-plan.args.json`）時才比；其餘情況回 None。
+fn base_changed(env: &Env, run: &str, run_arg: &str, stage: &str, workflow: &str, a: &Map<String, Value>) -> R<Option<String>> {
+    if stage == "plan" || !workflow.starts_with("sdlc-") || !sr::SDLC.contains(&stage) {
+        return Ok(None);
+    }
+    let profile = crate::layout::read_profile(&pj(&env.teams(), "methodology.json"));
+    let has_bases = profile.get("conventions").and_then(|c| c.get("branch")).and_then(|b| b.get("bases")).and_then(Value::as_object).is_some_and(|o| !o.is_empty());
+    if !has_bases {
+        return Ok(None);
+    }
+    let Some(Value::Object(plan)) = super::load_json(env, &pj(run, ".wf/sdlc-plan.args.json"))? else { return Ok(None) };
+    let default = crate::layout::for_project(&env.project).base_ref();
+    let of = |m: &Map<String, Value>| m.get("base").and_then(Value::as_str).filter(|b| !b.is_empty()).unwrap_or(&default).to_string();
+    let (was, now) = (of(&plan), of(a));
+    if was == now {
+        return Ok(None);
+    }
+    let recipe = a.get("recipe").and_then(Value::as_str).unwrap_or("feature");
+    let show = |t: &str| crate::hooks::safe::text(t, 120);
+    Ok(Some(format!(
+        "plan 段開分支時的 base 是 {}，但鎖定的 recipe（{}）的主線是 {}（conventions.branch.bases）：分支是從別條線開的，不能直接往下跑。\
+         處理方式擇一：(1) 移除這個 epic 的 worktree 與分支後重跑 plan（{NEXT_CMD} next --run {run_arg} --stage plan --retry；這次會從 {} 開，plan 要重新核准）；\
+         (2) 確定要沿用現在的分支，就明確指定 base（{NEXT_CMD} next --run {run_arg} --set base={}）。開工時先用 awf start --recipe <名> 指定 recipe 可以避免這個情況。",
+        show(&was), show(recipe), show(&now), show(&now), show(&was)
+    )))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn workflow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str, workflow: &str, plugin: Option<&str>, prepare: bool) -> A<Value> {
     let (mut a, need, mut notes) = stage_args(env, run, data, stage, workflow)?;
     if !need.is_empty() {
         return Ok(need_input(stage, workflow, &need, &format!("{NEXT_CMD} next --run {run_arg}")));
+    }
+    if let Some(msg) = base_changed(env, run, run_arg, stage, workflow, &a)? {
+        return awf_err(msg);
     }
     if prepare {
         // 每段開跑前先讓知識圖跟上（有圖、或 knowledge.auto.update 開啟時才做；失敗只多一行警告）
@@ -287,6 +319,11 @@ pub fn workflow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage:
             a.insert(k, v);
         }
         notes.extend(pnotes);
+    }
+    // 事件的 workflow 不跑資料包：有知識圖（開得起來）時一樣帶 kg＝true，共同前綴才多一行查圖的指示
+    // （和 sdlc 各段 pack-args.json 的 kg 同一個意思）。沒有圖時沒有這個鍵，參數與產生的腳本逐字不變；只看圖在不在，不建圖
+    if prepare && !workflow.starts_with("sdlc-") && !a.contains_key("kg") && crate::kg::flow::open_root(&env.project).is_some() {
+        a.insert("kg".into(), json!(true));
     }
     let a_val = Value::Object(a.clone());
     let (text, rnotes) = render(env, workflow, plugin, Some(&a_val))?;
