@@ -518,6 +518,60 @@ fn check_ci(env: &Env) -> Part {
     })
 }
 
+/// 自訂段（profile 的 `flow`）：宣告不合規則、腳本不存在或沒通過檢查、宣告了但沒有 recipe 點名。
+/// profile 沒有 `flow` 時不列任何項目。
+fn check_flow(env: &Env) -> Part {
+    let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
+    if prof.get("flow").is_none_or(Value::is_null) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let errs = crate::schema::flow_errors(&prof);
+    if !errs.is_empty() {
+        out.push(item(
+            "flow",
+            ERR,
+            format!("methodology.json 的 flow（自訂段）不合規則：{}{}", errs.iter().take(5).cloned().collect::<Vec<_>>().join("；"), if errs.len() > 5 { format!("；…（共 {} 則）", errs.len()) } else { String::new() }),
+            "照 docs/自訂與擴充.md〈自訂段〉修正；修好之前，點名這些段的 recipe 在 plan 段就會被擋下",
+        ));
+    }
+    let flow = crate::stages::Resolved::of(&prof);
+    let named = |id: &str| {
+        [("recipes", "stages"), ("modifiers", "add_stages")].iter().any(|(table, key)| {
+            prof.get(*table).and_then(Value::as_object).is_some_and(|t| t.values().any(|d| d.get(*key).and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(id)))))
+        })
+    };
+    let mut good: Vec<String> = Vec::new();
+    for c in flow.customs() {
+        if c.script.is_empty() {
+            continue; // 路徑不合規則：上面那一項已經列了
+        }
+        let src = pyish::pjoin(&env.project, &c.script);
+        if !is_file(&src) {
+            out.push(item("flow", ERR, format!("自訂段 {} 的腳本 {} 不存在", c.id, c.script), format!("把腳本放到 {}（寫法同 awf next --script 的自訂腳本，先用 awf script check 檢查）；走到這一段時 awf next 會停下", c.script)));
+            continue;
+        }
+        match state::render_flow(env, &src, &c.id, &json!({})) {
+            Ok(_) => {}
+            Err(Fail::Awf(msg)) => {
+                let brief: String = msg.split('\n').take(4).collect::<Vec<_>>().join(" ");
+                out.push(item("flow", ERR, format!("自訂段 {} 的腳本 {} 不能用：{brief}", c.id, c.script), format!("跑 awf script check {} 看完整的清單並修正；走到這一段時 awf next 會停下", c.script)));
+                continue;
+            }
+            Err(Fail::Py(e)) => return Err((e.class.to_string(), e.msg)),
+        }
+        if !named(&c.id) {
+            out.push(item("flow", INFO, format!("自訂段 {} 宣告了，但沒有任何 recipe 的 stages 或 modifier 的 add_stages 點名它：不會跑", c.id), format!("要跑就把 \"{}\" 加進對應 recipe 的 stages（位置不重要，順序照 flow 的 after）", c.id)));
+            continue;
+        }
+        good.push(format!("{}（接在 {} 後面）", c.id, c.after));
+    }
+    if !good.is_empty() && out.iter().all(|i| i.level != ERR) {
+        out.push(item("flow", OK, format!("自訂段：{}；做完一律等人核准", good.join("、")), ""));
+    }
+    Ok(out)
+}
+
 /// 2. 知識庫沒建：`<knowledge.dir>/kb.sqlite` 不存在。
 /// 只在「用得到」時提示：profile 有 `knowledge`，或專案有可以索引的內容（`docs/`、`openspec/`）。
 /// 兩個都沒有的專案（沒設定知識庫、也沒有文件）提示了也沒事可做，不列。
@@ -668,10 +722,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 12] = [
+    let parts: [&dyn Fn() -> Part; 13] = [
         &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
         &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
-        &|| check_ci(env), &|| check_base_branch(env),
+        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env),
     ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查
