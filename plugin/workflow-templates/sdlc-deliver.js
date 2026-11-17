@@ -322,8 +322,10 @@ const docPath = (v, d) => { const t = awfLine(v, 200, ''); return t && !/^([\\/]
 const REVIEW_DOC = docPath(REPO_DOCS.review, 'REVIEW.md')
 const PR_TEMPLATE = docPath(REPO_DOCS.pr_template, '.github/pull_request_template.md')
 const AXIS_DEFS = [
-  { key: 'standards', ask: `規範：目標 repo 的 CLAUDE.md、${REVIEW_DOC}、分支與合併規範，以及開發規範 profile 的慣例（code style：${(CONV.code_style || {}).description || '依目標 repo'}；commit：${COMMIT.format || '依目標 repo'}；分支：${(CONV.branch || {}).naming || '依目標 repo'}）。` +
-    (PR_SIZE.max_lines || PR_SIZE.max_files
+  { key: 'standards', ask: `規範：目標 repo 的 CLAUDE.md、${REVIEW_DOC}、分支與合併規範，以及開發規範 profile 的慣例（code style：${(CONV.code_style || {}).description || '依目標 repo'}；commit：${COMMIT.format || '依目標 repo'}；分支：${(CONV.branch || {}).naming || '依目標 repo'}）。`,
+    // extra：不屬於「問法」的部分（profile 的 PR 大小上限與 review_axes）。lenses.deliver.standards 改寫問法時照樣附在後面，
+    // 不會因為換了問法就默默少量 PR 大小、少看 profile 補充的審查重點
+    extra: (PR_SIZE.max_lines || PR_SIZE.max_files
       ? `另外量 PR 大小（profile 的上限：${[PR_SIZE.max_lines ? `${PR_SIZE.max_lines} 行` : '', PR_SIZE.max_files ? `${PR_SIZE.max_files} 個檔` : ''].filter(Boolean).join('或')}；量法：${PR_SIZE.scope || `git diff --numstat ${BASE}...HEAD`}），超過就列一則 important，建議拆成依序可合的小 PR。`
       : 'profile 沒有設 PR 大小上限，不檢查 PR 大小。') +
     ((STAGE.review_axes || []).length ? `\nprofile 補充的審查重點：${STAGE.review_axes.join('；')}` : '') },
@@ -333,11 +335,11 @@ const AXIS_DEFS = [
   { key: 'bugs', ask: '只看這次改動引入的邏輯、邊界、回歸、併發與錯誤處理問題。' },
   { key: 'history', ask: '對改動處 git log -L／git blame，找出破壞原本設計意圖的改動。' },
 ]
-// 審查軸的定義可以由 profile 的 lenses.deliver 改寫或新增（{ "<key>": { "ask": "…" } }）：同名的換問法，新名稱的排在內建四軸後面。
+// 審查軸的定義可以由 profile 的 lenses.deliver 改寫或新增（{ "<key>": { "ask": "…" } }）：同名的換問法（內建軸的 extra 照樣附上），新名稱的排在內建四軸後面。
 // recipe 指到內建與 profile 都沒有的軸一律 halted
 const USER_AXES = awfDefs((MP.lenses || {}).deliver, 'ask')
 const AXIS_ALL = [
-  ...AXIS_DEFS.map((a) => (USER_AXES[a.key] ? { key: a.key, ask: USER_AXES[a.key].ask } : a)),
+  ...AXIS_DEFS.map((a) => ({ key: a.key, ask: (USER_AXES[a.key] ? USER_AXES[a.key].ask : a.ask) + (a.extra || '') })),
   ...Object.keys(USER_AXES).filter((k) => !AXIS_DEFS.some((a) => a.key === k)).map((k) => ({ key: k, ask: USER_AXES[k].ask })),
 ]
 // 審查軸取自 recipe.deliver_axes（順序照上面）

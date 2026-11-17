@@ -201,4 +201,19 @@ export default [
   ...roleScenarios('deliver.review', 'tpm-reviewer', /^review:/),
   ...roleScenarios('deliver.verify', 'tpm-skeptic', /^verify:/, { fakes: ONE_FINDING }),
   ...kgScenarios(),
+  {
+    // 改寫 standards 的問法時，PR 大小上限與 review_axes 不能跟著消失（它們不是問法的一部分）
+    name: 'lens 定義：改寫 lenses.deliver.standards → 問法換掉，但 PR 大小檢查與 review_axes 照樣附在後面',
+    profile: (p) => ({ lenses: { deliver: { standards: { ask: '示範客戶 ACME 的規範軸：只對照 docs/規範.md。' } } },
+      conventions: { ...(p.conventions || {}), pr_size: { max_lines: 300, scope: 'git diff --numstat' } },
+      stages: { ...(p.stages || {}), deliver: { ...((p.stages || {}).deliver || {}), review_axes: ['金額計算要看幣別'] } } }),
+    expect: (r) => {
+      const q = r.prompts['review:standards'] || ''
+      return [
+        ...(/示範客戶 ACME 的規範軸：只對照 docs\/規範\.md。另外量 PR 大小（profile 的上限：300 行；量法：git diff --numstat），超過就列一則 important/.test(q) ? [] : ['改寫 standards 後 PR 大小檢查不見了']),
+        ...(/\nprofile 補充的審查重點：金額計算要看幣別/.test(q) ? [] : ['改寫 standards 後 review_axes 不見了']),
+        ...(/目標 repo 的 CLAUDE\.md、/.test(q) ? ['內建的問法應該被換掉'] : []),
+      ]
+    },
+  },
 ]
