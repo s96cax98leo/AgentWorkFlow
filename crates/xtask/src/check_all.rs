@@ -12,7 +12,7 @@
 //!   4. check-agents：`awf check-agents --plugin-dir plugin`（在 `plugin/scaffold/` 下跑，schema 取自 scaffold）。
 //!   5. 各子指令的 selftest：`awf <子指令> --selftest`（在 `plugin/scaffold/` 下跑），清單見 [`SELFTESTS`]。
 //!   6. bench --selftest：基準實跑不花 token 的部分。
-//!   7. workflow 乾跑：暫存專案 init、產生 12 支腳本，`node check_workflows.mjs` 把每支與全部情境走一遍。
+//!   7. workflow 乾跑：暫存專案 init、產生 13 支腳本，`node check_workflows.mjs` 把每支與全部情境走一遍。
 //!
 //! 沒有 node 時：需要 node 的步驟（check-recipes、check-kernel、check-patterns、check-budget、workflow 乾跑）印「略過」、
 //! 不執行，總結列出；略過不算通過，所以整體 exit 1。確定要在沒有 node 的機器上只看其餘步驟時加 `--allow-skip`

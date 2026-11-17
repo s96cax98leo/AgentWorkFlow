@@ -431,7 +431,7 @@ fn invalid_declarations_are_refused() {
     id_builtin["id"] = json!("design");
     let cases: Vec<(&str, Value, &str)> = vec![
         ("after-merge", json!({"stages": [after_merge]}), "after 不能是 merge"),
-        ("gate-policy", json!({"stages": [gate_policy]}), "gate 這一版只收"),
+        ("gate-policy", json!({"stages": [gate_policy]}), "只有 run 是 steps 才能用"),
         ("id-builtin", json!({"stages": [id_builtin]}), "不能和內建的段同名"),
         ("script-outside", json!({"stages": [bad_script]}), ".claude/flows/"),
     ];

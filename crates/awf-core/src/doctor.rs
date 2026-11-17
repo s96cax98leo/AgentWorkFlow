@@ -571,16 +571,17 @@ fn check_flow(env: &Env) -> Part {
     };
     let mut good: Vec<String> = Vec::new();
     for c in flow.customs() {
-        if c.script.is_empty() {
+        if !c.by_steps() && c.script.is_empty() {
             continue; // 路徑不合規則：上面那一項已經列了
         }
+        // 用步驟宣告的段沒有腳本：定義的規則在上面那一項（flow_errors）查過了，這裡只看有沒有被點名
         let src = pyish::pjoin(&env.project, &c.script);
-        if !is_file(&src) {
+        if !c.by_steps() && !is_file(&src) {
             out.push(item("flow", ERR, format!("自訂段 {} 的腳本 {} 不存在", c.id, c.script), format!("把腳本放到 {}（寫法同 awf next --script 的自訂腳本，先用 awf script check 檢查）；走到這一段時 awf next 會停下", c.script)));
             continue;
         }
-        match state::render_flow(env, &src, &c.id, &json!({})) {
-            Ok(_) => {}
+        match if c.by_steps() { Ok(()) } else { state::render_flow(env, &src, &c.id, &json!({})).map(|_| ()) } {
+            Ok(()) => {}
             Err(Fail::Awf(msg)) => {
                 let brief: String = msg.split('\n').take(4).collect::<Vec<_>>().join(" ");
                 out.push(item("flow", ERR, format!("自訂段 {} 的腳本 {} 不能用：{brief}", c.id, c.script), format!("跑 awf script check {} 看完整的清單並修正；走到這一段時 awf next 會停下", c.script)));
@@ -592,10 +593,11 @@ fn check_flow(env: &Env) -> Part {
             out.push(item("flow", INFO, format!("自訂段 {} 宣告了，但沒有任何 recipe 的 stages 或 modifier 的 add_stages 點名它：不會跑", c.id), format!("要跑就把 \"{}\" 加進對應 recipe 的 stages（位置不重要，順序照 flow 的 after）", c.id)));
             continue;
         }
-        good.push(format!("{}（接在 {} 後面）", c.id, c.after));
+        good.push(format!("{}（接在 {} 後面{}）", c.id, c.after, if c.policy { "；用步驟宣告，先試政策核准" } else if c.by_steps() { "；用步驟宣告" } else { "" }));
     }
     if !good.is_empty() && out.iter().all(|i| i.level != ERR) {
-        out.push(item("flow", OK, format!("自訂段：{}；做完一律等人核准", good.join("、")), ""));
+        let tail = if flow.customs().iter().any(|c| c.policy) { "做完等核准（gate 是 policy 的先試政策核准，沒過交人）" } else { "做完一律等人核准" };
+        out.push(item("flow", OK, format!("自訂段：{}；{tail}", good.join("、")), ""));
     }
     Ok(out)
 }

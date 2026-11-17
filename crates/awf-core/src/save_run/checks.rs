@@ -383,7 +383,7 @@ pub fn plan_check_for_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, da
 }
 
 /// `sh -c <cmd>`（Python 的 `subprocess.run(cmd, shell=True)`）。
-fn shell(cmd: &str) -> std::process::Command {
+pub(super) fn shell(cmd: &str) -> std::process::Command {
     #[cfg(windows)]
     {
         let mut c = std::process::Command::new(std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()));

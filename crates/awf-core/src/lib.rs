@@ -36,6 +36,7 @@ pub mod scrub;
 pub mod spec;
 pub mod stages;
 pub mod state;
+pub mod steps;
 pub mod sync_branch;
 pub mod template;
 pub mod termre;

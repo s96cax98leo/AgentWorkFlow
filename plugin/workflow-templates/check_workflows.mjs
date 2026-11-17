@@ -85,7 +85,11 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   const errs = []
   // 使用者自己的 agent：profile 的 extensions（加進某一段）與 roles（換掉某一步）
   const prof = embedded(src) || {}
-  const extAgents = new Set([...(prof.extensions || []).map((e) => e.agent), ...Object.values(prof.roles && typeof prof.roles === 'object' ? prof.roles : {}),
+  // 用步驟宣告的自訂段與事件（flow.stages[].steps、events.<名>.steps）裡換上去的 agent（role 不是 tpm-*／dev-* 的）也算
+  const stepRoles = (list) => (Array.isArray(list) ? list : []).flatMap((s) => (s && typeof s === 'object' ? [s.role, (s.until || {}).role, ...stepRoles(s.steps)] : []))
+  const holders = [...((prof.flow || {}).stages || []), ...Object.values(prof.events && typeof prof.events === 'object' ? prof.events : {})]
+  const stepAgents = holders.flatMap((h) => stepRoles(h && h.steps)).filter((x) => typeof x === 'string' && !/^(tpm|dev)-/.test(x))
+  const extAgents = new Set([...(prof.extensions || []).map((e) => e.agent), ...Object.values(prof.roles && typeof prof.roles === 'object' ? prof.roles : {}), ...stepAgents,
     // sdlc-merge 的合併角色（awf next 從 guard.config.json 的 auto_merge.merger_role 帶進 args）也可以是使用者自己的 agent
     ...(args && typeof args.merger_role === 'string' ? [args.merger_role] : [])])
   let agents = 0

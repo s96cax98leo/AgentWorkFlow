@@ -219,7 +219,18 @@ pub(crate) fn unregistered(env: &Env, methodology: Option<&Value>) -> R<Vec<Stri
     // roles 的值：不是字串的由 profile 的語意規則擋，這裡只看字串
     let swapped: Vec<&str> = prof.and_then(|m| m.get("roles")).and_then(Value::as_object)
         .map(|r| r.values().filter_map(Value::as_str).filter(|a| !a.is_empty()).collect()).unwrap_or_default();
-    if ext.is_empty() && swapped.is_empty() {
+    // 用步驟宣告的自訂段與事件（flow.stages[].steps、events.<名>.steps）裡換上去的自己的 agent
+    let mut stepped: Vec<String> = Vec::new();
+    let lists = prof.and_then(|m| m.get("flow")).and_then(|f| f.get("stages")).and_then(Value::as_array).into_iter().flatten()
+        .chain(prof.and_then(|m| m.get("events")).and_then(Value::as_object).into_iter().flat_map(|e| e.values()));
+    for holder in lists {
+        for a in holder.get("steps").map(crate::steps::custom_agents).unwrap_or_default() {
+            if !stepped.contains(&a) {
+                stepped.push(a);
+            }
+        }
+    }
+    if ext.is_empty() && swapped.is_empty() && stepped.is_empty() {
         return Ok(Vec::new());
     }
     let g = load_json_or(env, &pj(&env.teams(), "guard.config.json"))?;
@@ -237,7 +248,57 @@ pub(crate) fn unregistered(env: &Env, methodology: Option<&Value>) -> R<Vec<Stri
             out.insert(format!("{a}（roles 換上去的）"));
         }
     }
+    // 步驟換上去的 agent：要登記；合併角色（auto_merge.merger_role）就算登記了也不能用（合併是信任邊界，只有 sdlc-merge 能派）
+    let merger = py::get(&g, "auto_merge").ok().and_then(|a| a.get("merger_role")).and_then(Value::as_str).unwrap_or_default().to_string();
+    for a in stepped {
+        if !reg.as_object().is_some_and(|r| r.contains_key(&a)) {
+            out.insert(format!("{a}（steps 換上去的）"));
+        } else if !merger.is_empty() && a == merger {
+            out.insert(format!("{a}（steps 換上去的；合併角色不能用在步驟裡）"));
+        }
+    }
     Ok(out.into_iter().collect())
+}
+
+/// profile 的事件定義（`events`）裡的佔位符也換成設定值。
+///
+/// 範本的佔位符在內嵌 profile 之前就換完了，所以 profile 裡的 `{{名稱}}` 原本會原樣留到派工單上：使用者把內建事件的定義
+/// （event.js 的 `BUILTIN_EVENTS`，文字裡帶佔位符）複製到 profile 再改時就會遇到。這裡在內嵌之前，對 `events` 底下的每個字串值做同一套代入
+/// （對 JSON 的值做，不是對序列化後的文字做，值裡的引號與反斜線不會弄壞 JSON）；設定裡沒有的名稱拒絕產生，和範本殘留佔位符時一樣。
+/// 只動 `events`：profile 其他地方的文字不是從範本複製來的，照原樣內嵌。沒有 `events`、或裡面沒有佔位符時 profile 不變。
+fn fill_events(meth: Option<Value>, cfg: &Map<String, Value>) -> A<Option<Value>> {
+    fn walk(v: &mut Value, cfg: &Map<String, Value>, left: &mut BTreeSet<String>) {
+        match v {
+            Value::String(t) if t.contains("{{") => {
+                let filled = ph_re().replace_all(t, |c: &regex::Captures| {
+                    let k = c.get(1).map(|g| g.as_str()).unwrap_or_default();
+                    match cfg.get(k).and_then(Value::as_str) {
+                        Some(val) => val.to_string(),
+                        None => {
+                            left.insert(k.to_string());
+                            c.get(0).map(|g| g.as_str()).unwrap_or_default().to_string()
+                        }
+                    }
+                });
+                *t = filled.into_owned();
+            }
+            Value::Array(a) => a.iter_mut().for_each(|x| walk(x, cfg, left)),
+            Value::Object(o) => o.values_mut().for_each(|x| walk(x, cfg, left)),
+            _ => {}
+        }
+    }
+    let Some(mut m) = meth else { return Ok(None) };
+    let mut left = BTreeSet::new();
+    if let Some(ev) = m.get_mut("events") {
+        walk(ev, cfg, &mut left);
+    }
+    if !left.is_empty() {
+        return awf_err(format!(
+            "methodology.json 的 events 有沒換掉的佔位符（.claude/teams/workflow.config 缺這些值；補上，或把文字改掉）：{}",
+            left.into_iter().collect::<Vec<_>>().join("、")
+        ));
+    }
+    Ok(Some(m))
 }
 
 /// 產生可以執行的 workflow 腳本：換佔位符、內嵌開發規範 profile；有 args 時一併內嵌（主 session 不用再傳）。
@@ -259,7 +320,7 @@ pub fn render(env: &Env, name: &str, plugin: Option<&str>, args: Option<&Value>)
             left.into_iter().collect::<Vec<_>>().join("、")
         ));
     }
-    let meth = methodology(env)?;
+    let meth = fill_events(methodology(env)?, &cfg)?;
     let missing = unregistered(env, meth.as_ref())?;
     if !missing.is_empty() {
         return awf_err(format!("methodology.json 的 extensions 有 agent 沒登記在 guard.config.json 的 extension_agents：{}（用 /agent-workflow:add-agent 設定）", missing.join("、")));

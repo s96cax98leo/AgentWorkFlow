@@ -6,7 +6,7 @@ use super::checks::{constraint_issues, intent_errors, plan_check_for_with};
 use super::decisions::{decision_errors, record_decisions, split_answer};
 use super::links::{decision_links, id_pattern, link_gaps_with, links_setting, stage_links_with, write_links, LEDGER};
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
-use super::policy::{abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors};
+use super::policy::{abandoned_error, chain_errors_with, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations_with, profile_missing, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
 use super::trace::{envelopes, model_errors_with, process_trace};
 use super::{dump, load, opt, opts, Ctx, GATED, HUMAN_ONLY, INDEX_NAME, NO_ENVELOPE, SDLC};
@@ -604,6 +604,35 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             }
         }
     }
+    // 用步驟宣告的段（自訂段的 run: steps，或事件定義的 steps）：check 與 loop until 的指令由工具執行（指令只取自 profile），
+    // 結果記進 run.json。只在這一段會是 done 時跑；指令沒過不是存檔失敗，是不能政策核准（事件沒有閘門，只提醒）
+    {
+        let (sprof2, sperr) = load_profile(ctx, profile_arg);
+        let ev_steps = if !in_sdlc && sperr.is_empty() { sprof2.get("events").and_then(|e| e.get(stage)).and_then(|e| e.get("steps")).filter(|v| !v.is_null()).cloned() } else { None };
+        let fl = flow_def.as_ref().filter(|d| d.by_steps());
+        let def_steps = fl.map(|d| d.steps.clone()).or(ev_steps);
+        let st_has = |k: &str| data.get("stages").and_then(|x| x.get(stage)).and_then(|x| x.get(k)).is_some();
+        if def_steps.is_some() || st_has("step_checks") || st_has("step_issues") {
+            let (mut issues, mut records) = (Vec::new(), Vec::new());
+            if let (Some(ds), "done") = (&def_steps, status) {
+                issues = match fl {
+                    Some(d) => super::flowsteps::static_issues(stage, d, &sprof2, result),
+                    None => crate::steps::errors(ds, &format!("events[{stage}].steps"), crate::steps::max_agents(&sprof2)).into_iter().chain(crate::steps::trace_issues(ds, result)).collect(),
+                };
+                if crate::steps::errors(ds, "steps", crate::steps::max_agents(&sprof2)).is_empty() {
+                    let (ci, cr) = super::flowsteps::step_checks(ctx, ds, target.as_deref());
+                    issues.extend(ci);
+                    records = cr;
+                }
+            }
+            for m in &issues {
+                line(err, format!("步驟：{m}（{}）", if fl.is_some_and(|d| d.policy) { "不能政策核准，交人核准" } else if fl.is_some() { "人工核准前請先確認" } else { "請確認" }));
+            }
+            let st = st_mut(&mut data, stage)?;
+            if issues.is_empty() { st.shift_remove("step_issues"); } else { st.insert("step_issues".into(), json!(issues)); }
+            if records.is_empty() { st.shift_remove("step_checks"); } else { st.insert("step_checks".into(), Value::Array(records)); }
+        }
+    }
     if let Some(def) = &flow_def {
         // 自訂段宣告的產出：缺檔列成缺件（和執行紀錄缺件一樣：不能政策核准，人工核准前會提醒）
         let lost: Vec<String> = def.artifacts.iter().filter(|a| !ctx.is_file(&pj(&pj(run, stage), a))).map(|a| format!("自訂段的產出缺檔：{stage}/{a}")).collect();
@@ -730,9 +759,15 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
         errs.extend(crate::stages::flow_tamper(&fprof, get(idx(idx(&data, "recipe")?, "resolved")?, "stages")?));
     }
     // 排在這一段前面的自訂段：recipe 點名的每一個都要做完、由人核准（只看 recipe 與核准紀錄，不靠 run.json 的標記；沒有自訂段時是空的）
-    errs.extend(crate::stages::flow_unapproved(&data, Some(stage)).into_iter().map(|e| format!("前面的段還沒過：{e}")));
+    // 政策核准的紀錄只有在現在的 profile 把那一段宣告成 run: steps＋gate: policy 時才算數（profile 讀不到、讀不懂就都不算）
+    let flow_prof = {
+        let (p, perr) = load_profile(ctx, profile_arg);
+        if perr.is_empty() { p } else { Value::Null }
+    };
+    errs.extend(crate::stages::flow_unapproved_with(&data, Some(stage), &flow_prof).into_iter().map(|e| format!("前面的段還沒過：{e}")));
     let flow_stage = is_flow_stage(&data, stage);
-    if flow_stage && by == "policy" {
+    let flow_policy = flow_stage && crate::stages::Resolved::of(&flow_prof).custom(stage).is_some_and(|d| d.policy);
+    if flow_stage && by == "policy" && !flow_policy {
         errs.push(format!("{stage} 是自訂段，一律由人核准，不能政策核准"));
     }
     if by == "policy" && note.is_empty() {
@@ -749,7 +784,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             errs.push(format!("找不到 {}，政策核准要讀該段的實際結果", pname(&f)));
         } else {
             let result = ctx.load_json(&f)?;
-            errs.extend(policy_violations(ctx, stage, &result, Some(run))?.into_iter().map(|e| format!("政策判定：{e}")));
+            errs.extend(policy_violations_with(ctx, stage, &result, Some(run), profile_arg)?.into_iter().map(|e| format!("政策判定：{e}")));
             let (cprof, cperr) = load_profile(ctx, profile_arg);
             if !cperr.is_empty() {
                 errs.push(cperr);
@@ -774,7 +809,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             errs.push(format!("{stage} 段一律由人核准，不能政策核准"));
         }
     }
-    errs.extend(chain_errors(&data, stage)?);
+    errs.extend(chain_errors_with(&data, stage, &flow_prof)?);
     if !errs.is_empty() {
         for e in errs {
             line(err, format!("不能核准：{e}"));
@@ -1020,7 +1055,11 @@ fn close_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mut S
     if truthy(get(&data, "abandoned")?) {
         errs.push(abandoned_error(&data)?);
     }
-    errs.extend(chain_errors(&data, "merge")?.into_iter().map(|e| format!("流程還沒走完：{e}")));
+    let close_prof = {
+        let (p, perr) = load_profile(ctx, "");
+        if perr.is_empty() { p } else { Value::Null }
+    };
+    errs.extend(chain_errors_with(&data, "merge", &close_prof)?.into_iter().map(|e| format!("流程還沒走完：{e}")));
     let want = get(&r, "stages")?;
     if truthy(want) && py::contains(want, "merge")? {
         let empty = json!({});

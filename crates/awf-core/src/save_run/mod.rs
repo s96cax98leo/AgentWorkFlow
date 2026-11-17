@@ -26,6 +26,7 @@ mod archive;
 mod checks;
 mod cli;
 mod decisions;
+mod flowsteps;
 mod links;
 mod policy;
 pub(crate) mod py;
@@ -42,12 +43,13 @@ pub use checks::{
 };
 pub use cli::{approve, run, stage, stage_unreadable, USAGE};
 pub use decisions::{decision_errors, record_decisions, split_answer};
+pub use flowsteps::{flow_policy_errors, step_checks};
 pub use links::{
     ac_tokens, active_links, decision_id, decision_links, full_sha, link_gaps, link_gaps_of, links_setting, noop_command, safe as ledger_safe, stage_links, test_targets, write_links, GapInput, GAP_STAGES, LEDGER,
     LEDGER_TEXT_MAX, LINK_KINDS, LINK_SCHEMA_VERSION,
 };
 pub use policy::{
-    abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors,
+    abandoned_error, chain_errors, chain_errors_with, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, policy_violations_with, profile_missing, recipe_mismatch, recipe_tamper_errors,
     required_roles_missing, EXTRA_GATE_STAGES, REVIEW_ROLES,
 };
 pub use selftest::selftest;

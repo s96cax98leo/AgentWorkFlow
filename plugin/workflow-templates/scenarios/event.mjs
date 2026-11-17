@@ -3,6 +3,7 @@
 // 自訂事件類型（profile 的 events）與上限的情境。
 import { ENV } from './_helpers.mjs'
 import { eventPrefixScenarios } from './_event-shared.mjs'
+import { FIND, VERD, labelsAre } from './_steps-shared.mjs'
 import meeting from './_event-meeting.mjs'
 import decision from './_event-decision.mjs'
 import demoCheck from './_event-demo-check.mjs'
@@ -26,6 +27,17 @@ const INCIDENT = {
   write: { ask: '寫事故回顧 {run_dir}/incident-review.md。payload 用 docs。', data: [{ label: '成立', from: 'kept' }, { label: '存疑', from: 'doubted' }] },
 }
 const withEvents = (events) => ({ events })
+// 用步驟宣告的事件類型
+const AUDIT = {
+  title: '稽核',
+  args: ['target'],
+  context: '稽核對象：{target}\nrun 目錄：{run_dir}\n範圍：{scope|全部}\n只讀。',
+  steps: [
+    { id: 'scan', kind: 'fanout', angles: [{ key: 'docs', ask: '文件和實作不一致的地方。' }, { key: 'code', ask: '沒有測試覆蓋的地方。' }] },
+    { id: 'refute', kind: 'challenge', ask: '逐則反駁，不確定判 refuted=true：' },
+    { id: 'report', kind: 'write', ask: '寫稽核報告 {run_dir}/audit.md。', data: [{ label: '成立', from: 'refute.kept' }, { label: '存疑', from: 'refute.doubted' }] },
+  ],
+}
 const item = (id) => ({ id, type: 'risk', text: 't', owner: 'o', status: 'open', refs: ['a:1'] })
 
 export default [
@@ -104,4 +116,68 @@ export default [
   // 限制文件與知識圖進共同前綴：內建類型與自訂類型各跑一次（段名就是事件類型）
   ...eventPrefixScenarios('meeting', { args: { event: 'meeting' } }).map((sc) => ({ ...sc, name: `meeting｜${sc.name}` })),
   ...eventPrefixScenarios('incident', { args: { event: 'incident', incident: 'x' }, profile: withEvents({ incident: INCIDENT }) }).map((sc) => ({ ...sc, name: `自訂類型｜${sc.name}` })),
+  // steps：事件也可以用資料宣告步驟（同一個引擎；和 gather／challenge／write 的寫法二選一）
+  {
+    name: 'steps：用步驟宣告的事件類型（fanout → challenge → write）',
+    profile: withEvents({ audit: AUDIT }), args: { event: 'audit', target: '報表頁' },
+    fakes: { 'scan:docs': FIND('docs', ['f1']), 'scan:code': FIND('code', ['f1']), refute: VERD([['scan:docs:f1', false], ['scan:code:f1', true]]) },
+    expect: (r) => {
+      const e = labelsAre(r, ['scan:docs', 'scan:code', 'refute', 'report'])
+      const o = r.out || {}
+      if (o.halted !== false || o.event !== 'audit') e.push(`不該 halted、event 要是類型名：${JSON.stringify([o.halted, o.event, o.halt_reason])}`)
+      if (!/稽核對象：報表頁/.test(r.prompts['scan:docs'] || '') || !/範圍：全部/.test(r.prompts['scan:docs'] || '')) e.push('背景沒有代入參數與預設值')
+      if (!/成立：\[\{[^\n]*scan:docs:f1/.test(r.prompts.report || '') || !/存疑：\[\{[^\n]*scan:code:f1/.test(r.prompts.report || '')) e.push('writer 的 data 沒有帶到反駁的結果')
+      if (!(o.trace || []).every((t) => /\/tmp\/run\/audit\//.test(t.record))) e.push('執行紀錄應寫在 <run_dir>/audit/')
+      return e
+    },
+  },
+  {
+    name: 'steps：缺件 → halted',
+    profile: withEvents({ audit: AUDIT }), args: { event: 'audit', target: 'x' },
+    fakes: { 'scan:docs': FIND('docs', ['f1']), 'scan:code': 'THROW' },
+    expect: (r) => (r.out && r.out.halted === true && /缺件：scan:code/.test(r.out.halt_reason || '') && !r.labels.includes('report') ? [] : [`缺件應該停下：${JSON.stringify(r.out && r.out.halt_reason)}`]),
+  },
+  {
+    name: 'steps：定義超過上限 → halted（不派工）',
+    profile: withEvents({ audit: { ...AUDIT, steps: [{ id: 'scan', kind: 'fanout', angles: Array.from({ length: 9 }, (_, i) => ({ key: `a${i}`, ask: 'x' })) }] } }), args: { event: 'audit', target: 'x' },
+    expect: (r) => (r.out && r.out.halted === true && r.out.invalid_definition === true && r.labels.length === 0 ? [] : ['超過上限應該 halted、不派工']),
+  },
+  { name: 'steps：缺必要參數就不跑', profile: withEvents({ audit: AUDIT }), args: { event: 'audit', target: '' }, throws: /缺 args\.target/ },
+  { name: 'steps：和 gather／challenge／write 混用就拒絕執行', profile: withEvents({ audit: { ...AUDIT, write: { ask: '寫' } } }), args: { event: 'audit', target: 'x' }, throws: /同時寫了 steps 與 write：兩種寫法只能選一種/ },
+  // extends：以內建類型為底，只覆寫有寫的欄位（物件深度合併、陣列取代）
+  {
+    name: 'extends：只改 writer 的問法，其餘沿用內建的 meeting',
+    profile: withEvents({ meeting: { extends: 'meeting', write: { ask: '只寫一份摘要 {run_dir}/summary.md。payload 用 docs。' } } }), args: { event: 'meeting' },
+    expect: (r) => {
+      const e = labelsAre(r, ['extract:action', 'extract:decision', 'extract:risk', 'extract:doc', 'extract:todo', 'challenge', 'write'])
+      if (!/只寫一份摘要 \/tmp\/run\/summary\.md/.test(r.prompts.write || '')) e.push('writer 的問法沒有被覆寫')
+      if (!/\n事項：/.test(r.prompts.write || '') || !/\n存疑：/.test(r.prompts.write || '')) e.push('沒覆寫的 write.data 要沿用底的（物件深度合併）')
+      if (!/每個事項都附原文位置/.test(r.prompts['extract:action'] || '')) e.push('背景要沿用底的')
+      return e
+    },
+  },
+  {
+    name: 'extends：陣列整個取代（角度只剩自己寫的）；新的類型名也可以',
+    profile: withEvents({ standup: { extends: 'meeting', title: '站會', gather: { angles: [{ key: 'blocker', type: 'issue', ask: '只列卡住的事。' }] } } }), args: { event: 'standup', source: 'standup.md' },
+    expect: (r) => {
+      const e = labelsAre(r, ['extract:blocker', 'challenge', 'write'])
+      if (!/只抽 type=issue 的事項/.test(r.prompts['extract:blocker'] || '')) e.push('底的 gather.body 要沿用（只有 angles 被取代）')
+      if (!/會議來源：standup\.md/.test(r.prompts['extract:blocker'] || '')) e.push('底的背景與必要參數要沿用')
+      if (r.out.event !== 'standup') e.push('event 要是自己的類型名')
+      return e
+    },
+  },
+  { name: 'extends：底的必要參數也要給', profile: withEvents({ standup: { extends: 'meeting' } }), args: { event: 'standup', source: '' }, throws: /缺 args\.source/ },
+  { name: 'extends：只能指內建的類型', profile: withEvents({ incident: INCIDENT, standup: { extends: 'incident' } }), args: { event: 'standup' }, throws: /extends「incident」不是內建的事件類型/ },
+  {
+    name: 'extends＋steps：沿用底的背景與參數，流程改用步驟',
+    profile: withEvents({ meeting: { extends: 'meeting', steps: [{ id: 'scan', kind: 'fanout', angles: [{ key: 'todo', ask: '只列待辦' }] }, { id: 'report', kind: 'write', ask: '寫待辦清單' }] } }), args: { event: 'meeting' },
+    fakes: { 'scan:todo': FIND('todo', ['f1']) },
+    expect: (r) => {
+      const e = labelsAre(r, ['scan:todo', 'report'])
+      if (!/每個事項都附原文位置/.test(r.prompts['scan:todo'] || '')) e.push('背景要沿用底的')
+      if (!r.out || r.out.halted !== false) e.push('不該 halted')
+      return e
+    },
+  },
 ]

@@ -11,7 +11,7 @@ pub struct Rendered {
     pub tmp: TempDir,
     /// 專案根目錄（`<tmp>/proj`）。
     pub proj: PathBuf,
-    /// 12 支腳本所在的目錄（`<tmp>/wf`）。
+    /// 13 支腳本所在的目錄（`<tmp>/wf`）。
     pub wf_dir: PathBuf,
 }
 
