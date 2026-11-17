@@ -225,7 +225,11 @@
       "ci_commands": {
         "list": "glab ci list --repo {repo} --ref {branch}",
         "failed": "glab ci trace"
-      }
+      },
+      "freeze_on": [
+        "blocker",
+        "important"
+      ]
     }
   }
 }

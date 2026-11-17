@@ -501,7 +501,8 @@
       "description": "選填：合併後監看（event-post-merge）怎麼讀 CI、什麼嚴重度要凍結自動合併。沒寫或不合法用內建值",
       "additionalProperties": false,
       "properties": {
-        "ci_commands": {"type": "object", "additionalProperties": false, "description": "watcher 讀 CI 用的指令，原樣寫進派工單（沒寫的用內建的 gh 指令）。可用 {repo}（GitHub repo）與 {branch}（base 分支）。CI 不在 GitHub Actions 的專案改這裡；指令要是唯讀的，守門規則照舊", "properties": {"list": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\r\\n`]+$", "description": "列出 base 分支的 CI 執行（沒寫用 gh run list --repo {repo} --branch {branch}）"}, "failed": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\r\\n`]+$", "description": "看失敗那一次的 log（沒寫用 gh run view --log-failed）"}}}
+        "ci_commands": {"type": "object", "additionalProperties": false, "description": "watcher 讀 CI 用的指令，原樣寫進派工單（沒寫的用內建的 gh 指令）。可用 {repo}（GitHub repo）與 {branch}（base 分支）。CI 不在 GitHub Actions 的專案改這裡；指令要是唯讀的，守門規則照舊", "properties": {"list": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\r\\n`]+$", "description": "列出 base 分支的 CI 執行（沒寫用 gh run list --repo {repo} --branch {branch}）"}, "failed": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\r\\n`]+$", "description": "看失敗那一次的 log（沒寫用 gh run view --log-failed）"}}},
+        "freeze_on": {"type": "array", "maxItems": 3, "items": {"enum": ["blocker", "important", "should_fix"]}, "description": "哪些嚴重度的問題要凍結自動合併。只能多加：blocker 一定凍結（寫不寫都算），這裡可以再加 important、should_fix。沒寫＝只有 blocker"}
       }
     },
     "constraints": {

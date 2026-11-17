@@ -63,5 +63,26 @@ export default [
     profile: { post_merge: { ci_commands: v } }, args: { gh_repo: 'acme/demo' },
     expect: (r) => (/的 CI（gh run list --repo acme\/demo --branch \S+；失敗的看 gh run view --log-failed）。/.test(r.prompts.watch || '') ? [] : ['不合法的設定要退回內建的 gh 指令']),
   })),
+  {
+    name: '可設定：post_merge.freeze_on 加 important → important 的問題也凍結（派工單要 writer 寫凍結旗標）',
+    profile: { post_merge: { freeze_on: ['important'] } },
+    fakes: { watch: ENV({ lens: 'post-merge', findings: [F('f1', 'important')] }), challenge: BLOCKER.challenge,
+      write: ENV({ documents: [{ path: '/tmp/run/給決策者.md', kind: 'for_owner', audience: 'owner' }, { path: '/tmp/runs/auto-merge.freeze.json', kind: 'other', audience: 'agents', notes: 'freeze-flag' }], rule_check: 'pass' }) },
+    expect: (r) => [
+      ...(r.out.freeze === true && r.out.freeze_flag === '/tmp/runs/auto-merge.freeze.json' && !r.out.halted ? [] : [`important 應該凍結：${JSON.stringify({ freeze: r.out.freeze, flag: r.out.freeze_flag, halted: r.out.halt_reason })}`]),
+      ...(/2\. 寫凍結旗標/.test(r.prompts.write || '') ? [] : ['writer 派工單要寫凍結旗標']),
+    ],
+  },
+  {
+    name: '可設定：沒設 freeze_on 時 important 不凍結（派工單寫「沒有 blocker」）',
+    fakes: { watch: ENV({ lens: 'post-merge', findings: [F('f1', 'important')] }), challenge: BLOCKER.challenge, write: ENV({ documents: [{ path: '/tmp/run/給決策者.md', kind: 'for_owner', audience: 'owner' }], rule_check: 'pass' }) },
+    expect: (r) => (r.out.freeze === false && !r.out.halted && /2\. 不寫凍結旗標（沒有 blocker）。/.test(r.prompts.write || '') ? [] : [`預設只有 blocker 凍結：${JSON.stringify({ freeze: r.out.freeze, halted: r.out.halt_reason })}`]),
+  },
+  ...[['想拿掉 blocker（只寫 should_fix）', ['should_fix']], ['空陣列', []], ['不是陣列', 'none'], ['不認得的值', ['info', 7]]].map(([what, v]) => ({
+    name: `可設定：post_merge.freeze_on ${what} → blocker 照樣凍結（只能多加、拿不掉）`,
+    profile: { post_merge: { freeze_on: v } },
+    fakes: { ...BLOCKER, write: ENV({ documents: [{ path: '/tmp/run/給決策者.md', kind: 'for_owner', audience: 'owner' }, { path: '/tmp/runs/auto-merge.freeze.json', kind: 'other', audience: 'agents', notes: 'freeze-flag' }], rule_check: 'pass' }) },
+    expect: (r) => (r.out.freeze === true && /2\. 寫凍結旗標/.test(r.prompts.write || '') ? [] : ['blocker 一定要凍結']),
+  })),
   ...eventPrefixScenarios('post-merge', { fakes: BLOCKER }),
 ]

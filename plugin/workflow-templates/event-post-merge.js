@@ -297,6 +297,9 @@ const RUNS = '{{RUNS_DIR}}'
 const PM = MP.post_merge && typeof MP.post_merge === 'object' && !Array.isArray(MP.post_merge) ? MP.post_merge : {}
 // 讀 CI 的指令：post_merge.ci_commands 的 list（列出 base 分支的 CI）與 failed（看失敗的 log）。各一行、300 字以內、不含反引號；
 // 可用 {repo}（GitHub repo）與 {branch}（base 分支）。沒寫或不合法的那一個用內建的 gh 指令。只是寫在派工單上的做法，守門規則照舊
+// 哪些嚴重度的問題要凍結自動合併：內建只有 blocker。post_merge.freeze_on 只能多加（important、should_fix）：blocker 拿不掉，不認得的值略過
+const FREEZE_ON = ['blocker', 'important', 'should_fix'].filter((s) => s === 'blocker' || (Array.isArray(PM.freeze_on) && PM.freeze_on.includes(s)))
+const FREEZE_WORD = FREEZE_ON.join('／')
 const CI_CMDS = PM.ci_commands && typeof PM.ci_commands === 'object' && !Array.isArray(PM.ci_commands) ? PM.ci_commands : {}
 const ciFill = (t) => t.replace(/\{repo\}/g, () => GH).replace(/\{branch\}/g, () => '{{BASE_BRANCH}}')
 const CI_LIST = ciFill(awfLine(CI_CMDS.list, 300, 'gh run list --repo {repo} --branch {branch}'))
@@ -561,7 +564,7 @@ if (!watch) { missing.push('watch'); return halt('watch', { reason: 'watcher 沒
 const fs = watch.payload.findings || []
 const problems = fs.filter((f) => ['blocker', 'important', 'should_fix'].includes(f.severity))
 if (!problems.length) return { trace: awfTrace(), event: 'post-merge', ok: true, watch, note: '{{BASE_BRANCH}} 的 CI 正常，沒有要 revert 的合併' }
-const freeze = problems.some((f) => f.severity === 'blocker')
+const freeze = problems.some((f) => FREEZE_ON.includes(f.severity))
 
 phase('Challenge')
 // 歸因被推翻只影響 revert 提案的寫法（改成「歸因未確認」），不影響凍結：寧可先凍結再查
@@ -570,7 +573,7 @@ const judged = await challengeList(problems, {
   agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing,
 })
 if (judged.lacking) {
-  return halt('challenge', { freeze_recommended: freeze, problems, watch, next: freeze ? `有 blocker：建議主 session 先凍結自動合併（寫 ${FREEZE_SRC} 指的檔）再重跑 Challenge。` : '重跑 Challenge 後再寫 revert 提案。' })
+  return halt('challenge', { freeze_recommended: freeze, problems, watch, next: freeze ? `有 ${FREEZE_WORD}：建議主 session 先凍結自動合併（寫 ${FREEZE_SRC} 指的檔）再重跑 Challenge。` : '重跑 Challenge 後再寫 revert 提案。' })
 }
 // skeptic 沒判到的歸因當成未確認（challenge 片段）
 const { challenge, kept: confirmed, doubted: unconfirmed } = judged
@@ -579,7 +582,7 @@ log(`問題 ${problems.length} 則：歸因成立 ${confirmed.length}、未確�
 phase('Write')
 const docs = await awfAgent(
   `${CTX}\n\n## 派工單\n1. 寫 revert 提案到 ${A.run_dir}/revert-proposal.md：每個歸因成立的合併 commit 一節（git revert <sha> 的範圍、影響檔案、會撤掉的需求、衝突預測、驗證方式）；歸因未確認的另列一節，寫明要人判斷。提案只是文件，不執行。\n` +
-  (freeze ? `2. 寫凍結旗標：先讀 ${FREEZE_SRC} 取得凍結檔路徑（沒有設定檔或沒設 freeze_file 時，用 awf merge-gate 的 freeze_file() 預設值，位在 ${RUNS} 下），寫入 JSON：{"frozen": true, "reason": "<一句話>", "merge_shas": [...], "proposal": "${A.run_dir}/revert-proposal.md", "lift_when": "<解除條件>"}。實際寫入的路徑列在 documents（kind=other，notes 以固定代號 freeze-flag 開頭：照抄、不翻譯，後面可以接說明）。\n` : '2. 不寫凍結旗標（沒有 blocker）。\n') +
+  (freeze ? `2. 寫凍結旗標：先讀 ${FREEZE_SRC} 取得凍結檔路徑（沒有設定檔或沒設 freeze_file 時，用 awf merge-gate 的 freeze_file() 預設值，位在 ${RUNS} 下），寫入 JSON：{"frozen": true, "reason": "<一句話>", "merge_shas": [...], "proposal": "${A.run_dir}/revert-proposal.md", "lift_when": "<解除條件>"}。實際寫入的路徑列在 documents（kind=other，notes 以固定代號 freeze-flag 開頭：照抄、不翻譯，後面可以接說明）。\n` : `2. 不寫凍結旗標（沒有 ${FREEZE_WORD}）。\n`) +
   `3. 寫給決策者版到 ${A.run_dir}/給決策者.md：發生什麼、哪個合併、建議（由人合併 revert PR／先凍結再查／判 flaky 解除），每個選項附代價。\n` +
   `4. 每份跑 awf check-rules（給決策者版加 --audience owner），全過才算完成。payload 用 docs：documents 列出每份（給決策者版 audience=owner），rule_check 填「pass」或「fail：<沒過的規則>」。\n` +
   `歸因成立：${JSON.stringify(confirmed)}\n歸因未確認：${JSON.stringify(unconfirmed)}`,
