@@ -24,9 +24,9 @@ const MP = METHODOLOGY || {}
 //   before      選填的前置步驟（依序、各派一個 tpm-researcher）：name 是結果的名字，keep＝list（只留清單）或 envelope（留整個信封），
 //               stop_if_empty 有寫時，清單是空的就正常結束並回這句話
 //   gather      各角度平行：label 是派工 label 的前綴（<label>:<角度 key>），heading 與 body 可以用 {key}、{ask}、{type} 與參數名
-//   challenge   skeptic 的派工單；only_status 有寫時只反駁這個 status 的事項
+//   challenge   skeptic 的派工單；only_status 有寫時只反駁這個 status 的事項；heading 是派工單標題（預設「派工單」，可以用參數名）
 //   after       選填的收尾步驟（寫文件之前）
-//   write       writer 的派工單；data 是附在後面的資料（from：all、kept、doubted、doubted_ids，或前置／收尾步驟的 name）；
+//   write       writer 的派工單（heading 同上）；data 是附在後面的資料（from：all、kept、doubted、doubted_ids，或前置／收尾步驟的 name）；
 //               owner_check＝true 時 writer 要交出給決策者版並通過 check_rules（規則 12）
 //   returns     回傳的鍵名：all（全部事項）、doubted（被推翻或沒被驗證的 id）、challenge（是否附 skeptic 的信封）
 const BUILTIN_EVENTS = {
@@ -752,7 +752,7 @@ if (missing.length) return halt(G.label || 'gather', { [ALL_KEY]: all })
 phase('Challenge')
 // skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑（challenge 片段）
 const targets = C.only_status ? all.filter((i) => i.status === C.only_status) : all
-const judged = await challengeList(targets, { prompt: `${CTX}\n\n## 派工單\n${fill(C.ask, A)}\n${JSON.stringify(targets)}`,
+const judged = await challengeList(targets, { prompt: `${CTX}\n\n## ${fill(C.heading || '派工單', A)}\n${fill(C.ask, A)}\n${JSON.stringify(targets)}`,
   agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing })
 if (judged.lacking) return halt('challenge', { [ALL_KEY]: all })
 const { challenge, kept, doubted } = judged
@@ -764,7 +764,7 @@ for (const s of AFTER) {
   if (!got) return halt(s.halt || s.label, { [ALL_KEY]: all })
 }
 const data = dataLines(W.data, { ...step_lists, all, kept, doubted, doubted_ids })
-const docs = await awfAgent(`${CTX}\n\n## 派工單\n${fill(W.ask, A)}${data ? `\n${data}` : ''}`,
+const docs = await awfAgent(`${CTX}\n\n## ${fill(W.heading || '派工單', A)}\n${fill(W.ask, A)}${data ? `\n${data}` : ''}`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 const result = { ...kept_steps, [ALL_KEY]: all, [DOUBT_KEY]: doubted_ids, ...(R.challenge ? { challenge } : {}) }
 if (!docs) { missing.push('write'); return halt('write', result) }
