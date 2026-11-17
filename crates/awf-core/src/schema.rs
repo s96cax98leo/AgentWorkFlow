@@ -781,6 +781,12 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             errs.push(format!("conventions.commit.check_regex 不是合法的正規式：{e}"));
         }
     }
+    // recipe 專屬的主線（conventions.branch.bases）：規則和工具用的同一個函式；鍵要是認得的 recipe
+    {
+        let mut known: Vec<String> = crate::recipe::builtin_recipes().as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+        known.extend(get(doc, "recipes").and_then(Value::as_object).map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default());
+        errs.extend(crate::layout::bases_problems(doc, Some(&known)));
+    }
     // rebase 前備份 ref 的樣式（conventions.sync.backup_ref）：規則和 awf sync-branch 用的同一個函式
     if let Some(p) = get(doc, "conventions").and_then(|c| get(c, "sync")).and_then(|s| get(s, "backup_ref")).and_then(Value::as_str) {
         if !crate::sync_branch::backup_ref_ok(p) {

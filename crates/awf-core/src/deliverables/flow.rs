@@ -167,6 +167,15 @@ pub fn pack_args(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &
     (v, notes)
 }
 
+/// run 的 args 沒有 base 時的比對基準：這個 run 的 recipe 有專屬的主線（profile 的 `conventions.branch.bases`）就用它，否則是守門設定的主線。
+fn default_base(root: &str, run: &Value) -> String {
+    let lay = crate::layout::for_project(root);
+    match crate::layout::run_base_for_project(root, run) {
+        Some(b) => format!("{}/{b}", lay.base_remote),
+        None => lay.base_ref(),
+    }
+}
+
 /// [`pack_args`]，有知識圖時 deliver 段多列「改到的檔在圖裡連到的交付文件小節」（只會多列，不會少）。
 /// `kg` 是（圖, 目標 repo 的檔在圖裡的前綴）；第三個回傳值是要寫進資料包的那一節（沒有多列就是空的）。
 pub fn pack_args_with(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &Value, paths: Option<&[String]>, kg: Option<(&crate::kg::Graph, Option<&str>)>) -> (Value, Vec<String>, Vec<String>) {
@@ -175,7 +184,7 @@ pub fn pack_args_with(stage: &str, run: &str, root: &str, repo: Option<&str>, da
     let mut owned: Vec<String> = paths.map(<[String]>::to_vec).unwrap_or_default();
     if let (None, "deliver", Some(repo)) = (paths, stage, repo) {
         let base = get(obj_or_null(get(data, "args")), "base");
-        owned = changed_paths(repo, &if truthy(base) { str_of(base) } else { crate::layout::for_project(root).base_ref() });
+        owned = changed_paths(repo, &if truthy(base) { str_of(base) } else { default_base(root, data) });
     }
     let res = affected(root, run, &owned, false, false);
     let list = |k: &str| pyfmt::items(res.get(k)).to_vec();
@@ -1070,7 +1079,7 @@ pub fn run(root: &str, argv: &[String], out: &mut String) -> i32 {
                         let base = get(obj_or_null(get(&data, "args")), "base");
                         let mut b = opt(rest, "--base");
                         if b.is_empty() {
-                            b = if truthy(base) { str_of(base) } else { crate::layout::for_project(root).base_ref() };
+                            b = if truthy(base) { str_of(base) } else { default_base(root, &data) };
                         }
                         changed_paths(&repo, &b)
                     }

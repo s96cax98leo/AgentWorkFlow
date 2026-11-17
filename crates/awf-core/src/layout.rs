@@ -149,6 +149,74 @@ pub fn current() -> Layout {
     }
 }
 
+/// 一個 profile 最多幾筆 recipe 專屬的主線。
+pub const MAX_RECIPE_BASES: usize = 40;
+
+/// recipe 名（`conventions.branch.bases` 的鍵）：小寫英數與連字號，40 字以內。
+fn recipe_key_ok(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty() && b.len() <= 40 && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+}
+
+fn bases_of(profile: &Value) -> Option<&Value> {
+    profile.get("conventions").and_then(|c| c.get("branch")).and_then(|b| b.get("bases"))
+}
+
+/// 某個 recipe 專屬的主線分支（profile 的 `conventions.branch.bases`：`{ "<recipe 名>": "<分支名>" }`）。
+/// 例：主線（`base_branch`）是整合線 develop、hotfix 要從 main 開並併回 main，就寫 `{"hotfix": "main"}`。
+/// 沒寫、整份不合規則（[`bases_problems`] 有東西）、這個 recipe 沒有列：回 None，呼叫端照原本的路用 `base_branch`。
+/// 分支名不含 remote；remote 一律是 `base_remote`。這個值不會讓任何分支變成可以直接 push。
+pub fn recipe_base(profile: &Value, recipe: &str) -> Option<String> {
+    let v = bases_of(profile)?;
+    if !bases_problems(profile, None).is_empty() {
+        return None;
+    }
+    v.get(recipe).and_then(Value::as_str).map(str::to_string)
+}
+
+/// `conventions.branch.bases` 不合規則的地方（空＝沒問題）。`known` 有給時，鍵要是其中之一（內建或 profile 自己的 recipe）。
+pub fn bases_problems(profile: &Value, known: Option<&[String]>) -> Vec<String> {
+    let at = "conventions.branch.bases";
+    let Some(v) = bases_of(profile).filter(|v| !v.is_null()) else { return Vec::new() };
+    let Some(o) = v.as_object() else { return vec![format!("{at} 要是物件（recipe 名 → 分支名）")] };
+    let mut out = Vec::new();
+    if o.len() > MAX_RECIPE_BASES {
+        out.push(format!("{at} 最多 {MAX_RECIPE_BASES} 筆"));
+    }
+    for (k, b) in o {
+        if !recipe_key_ok(k) {
+            out.push(format!("{at} 的鍵要是 recipe 名（小寫英數與連字號；收到 {}）", crate::pyfmt::repr(&Value::String(k.clone()))));
+        } else if known.is_some_and(|n| !n.contains(k)) {
+            out.push(format!("{at}.{k}：沒有這個 recipe（內建的與 profile 的 recipes 都沒有）"));
+        }
+        if !b.as_str().is_some_and(branch_ok) {
+            out.push(format!("{at}.{k} 要是分支名（英數與 . _ / -，不含 remote；收到 {}）", crate::pyfmt::repr(b)));
+        }
+    }
+    out
+}
+
+/// 一個 run 的 recipe 名：鎖在 run.json 的（`recipe.name`），plan 核准前用 `args.recipe`，都沒有就是 feature。
+pub fn run_recipe(run: &Value) -> String {
+    let pick = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    pick(run.get("recipe").and_then(|r| r.get("name"))).or_else(|| pick(run.get("args").and_then(|a| a.get("recipe")))).unwrap_or_else(|| "feature".to_string())
+}
+
+/// 這個 run 的 recipe 專屬的主線分支（讀好的 run.json 與 profile）；沒有回 None。
+pub fn run_base(profile: &Value, run: &Value) -> Option<String> {
+    recipe_base(profile, &run_recipe(run))
+}
+
+/// 讀一份 profile（methodology.json）；讀不到、不是 JSON 物件回 `Null`。
+pub fn read_profile(path: &str) -> Value {
+    std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object).unwrap_or(Value::Null)
+}
+
+/// 專案（`<root>/.claude/teams/methodology.json`）裡，這個 run 的 recipe 專屬的主線分支。
+pub fn run_base_for_project(root: &str, run: &Value) -> Option<String> {
+    run_base(&read_profile(&format!("{}/.claude/teams/methodology.json", root.trim_end_matches('/'))), run)
+}
+
 /// 守門設定的鍵 ↔ `workflow.config` 的佔位符（init 的紀錄檔要跟著 `--reconfigure` 改的那幾個）。
 pub const RECORD_KEYS: &[(&str, &str)] = &[("base_branch", "BASE_BRANCH"), ("base_remote", "BASE_REMOTE"), ("specs_dir", "SPECS_DIR"),
     ("worktrees_dir", "WORKTREES_DIR"), ("spec_templates_dir", "SPEC_TEMPLATES_DIR")];
@@ -248,6 +316,32 @@ mod tests {
         assert!(dir_ok("docs/specs") && dir_ok("_specs") && dir_ok(".specs") && dir_ok("a/b/c/d") && worktrees_ok(".wt") && !worktrees_ok("a/b"));
         assert_eq!(problems(&json!({"specs_dir": "/abs", "worktrees_dir": "a/b", "spec_templates_dir": ".git/x"})).iter().map(|x| x.0).collect::<Vec<_>>(),
             vec!["specs_dir", "worktrees_dir", "spec_templates_dir"]);
+    }
+
+    #[test]
+    fn recipe_bases() {
+        let p = |v: Value| json!({"conventions": {"branch": {"bases": v}}});
+        // 沒寫：沒有
+        for none in [Value::Null, json!({}), json!({"conventions": {"branch": {"prefix": "feature/"}}}), p(json!({})), p(Value::Null)] {
+            assert_eq!(recipe_base(&none, "hotfix"), None);
+            assert!(bases_problems(&none, None).is_empty());
+        }
+        let ok = p(json!({"hotfix": "main", "revert": "release/2.x"}));
+        assert_eq!(recipe_base(&ok, "hotfix").as_deref(), Some("main"));
+        assert_eq!(recipe_base(&ok, "revert").as_deref(), Some("release/2.x"));
+        assert_eq!(recipe_base(&ok, "feature"), None);
+        assert_eq!(run_base(&ok, &json!({"recipe": {"name": "hotfix"}, "args": {"recipe": "feature"}})).as_deref(), Some("main"), "鎖定的 recipe 優先");
+        assert_eq!(run_base(&ok, &json!({"args": {"recipe": "hotfix"}})).as_deref(), Some("main"));
+        assert_eq!(run_base(&ok, &json!({})), None, "沒有 recipe 就是 feature");
+        // 有一筆不合規則：整份不採用
+        for bad in [json!("main"), json!(["main"]), json!({"hotfix": "origin main"}), json!({"hotfix": "-x"}), json!({"hotfix": 3}), json!({"hotfix": "main", "docs": "a..b"}),
+            json!({"Hot Fix": "main"}), json!({"hotfix": "x';rm"}), json!({"hotfix": ""})] {
+            assert_eq!(recipe_base(&p(bad.clone()), "hotfix"), None, "{bad}");
+            assert!(!bases_problems(&p(bad.clone()), None).is_empty(), "{bad}");
+        }
+        let known: Vec<String> = vec!["feature".into(), "hotfix".into()];
+        assert!(bases_problems(&ok, Some(&known)).iter().any(|e| e.contains("bases.revert：沒有這個 recipe")));
+        assert!(bases_problems(&p(json!({"hotfix": "main"})), Some(&known)).is_empty());
     }
 
     #[test]
