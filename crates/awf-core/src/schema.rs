@@ -31,6 +31,11 @@ pub const EVENT_RESERVED: &[&str] = &[
     "sdlc", "brief", "pr-review", "post-merge", "merge", "debate", "run", "plan", "design", "build", "sync", "test", "deliver", "archive", "logs",
 ];
 
+/// 限制文件（profile 的 `constraints[].stages`）可以套用的段：SDLC 的七段，以及不是 event.js 的三個事件的段名。
+/// event.js 的事件（內建的 `state::EVENT_TYPES` 與 profile 的 `events`）另外算。
+pub const CONSTRAINT_SDLC_STAGES: &[&str] = &["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub const CONSTRAINT_EVENT_STAGES: &[&str] = &["brief", "pr-review", "post-merge"];
+
 /// 一個專案的 schema 目錄與設定（`.claude/teams/`）。
 pub struct Schemas {
     pub teams_dir: PathBuf,
@@ -617,6 +622,8 @@ fn outside(s: &str) -> bool {
 /// design lens、deliver 審查軸、測試模式的內建名稱（範本 sdlc-design.js、sdlc-deliver.js、sdlc-test.js 的內建定義；要和它們一致）。
 pub const BUILTIN_DESIGN_LENSES: &[&str] = &["coverage", "plan", "system-design", "delta", "rollback", "compat"];
 pub const BUILTIN_TEST_MODES: &[&str] = &["verify", "regression", "equivalence", "benchmark"];
+/// PR 審查（event-pr-review.js）內建的 lens；要和範本的 `BUILTIN_LENSES` 一致。
+pub const BUILTIN_PR_LENSES: &[&str] = &["standards", "spec", "bugs", "security", "design", "history"];
 /// profile 的 `roles` 可以換的步驟（challenge 片段的 `awfSwappable` 同一張表）。
 pub const SWAPPABLE_STEPS: &[&str] = &["plan.locate", "plan.research", "plan.challenge", "design.analyze", "design.recheck", "deliver.review", "deliver.verify"];
 
@@ -681,6 +688,16 @@ fn name_table_errors(doc: &Value, refs: bool) -> Vec<String> {
     let design = defined(lens_of("design"), "lenses.design", "ask", &mut errs);
     defined(lens_of("design_revise"), "lenses.design_revise", "ask", &mut errs);
     let deliver = defined(lens_of("deliver"), "lenses.deliver", "ask", &mut errs);
+    // PR 審查的 lens：有寫 lenses.pr_review（物件）就只看它，沒寫才用 lenses.deliver（和範本 event-pr-review.js 的 LENS_DEFS 同一套）
+    let pr_own = defined(lens_of("pr_review"), "lenses.pr_review", "ask", &mut errs);
+    let pr_review = if lens_of("pr_review").is_some_and(Value::is_object) { &pr_own } else { &deliver };
+    if refs {
+        for k in items(get(doc, "review").and_then(|r| get(r, "lenses"))).iter().filter_map(Value::as_str) {
+            if !BUILTIN_PR_LENSES.contains(&k) && !pr_review.contains(k) {
+                errs.push(format!("review.lenses 的「{k}」沒有定義（內建：{}；自己的 lens 寫在 lenses.pr_review，沒有這張表時用 lenses.deliver）", BUILTIN_PR_LENSES.join("、")));
+            }
+        }
+    }
     let modes = defined(get(doc, "test_modes"), "test_modes", "note", &mut errs);
     defined(get(doc, "research_angles"), "research_angles", "ask", &mut errs);
     if modes.contains("verify") {
@@ -748,6 +765,14 @@ fn name_table_errors(doc: &Value, refs: bool) -> Vec<String> {
             if let Some(t) = v.as_str().filter(|t| outside(t) || t.contains(['\n', '\r', '`'])) {
                 errs.push(format!("conventions.repo_docs.{k} 要是相對目標 repo 的路徑，不能是絕對路徑或含 ..（收到 {}）", t.replace(['\n', '\r'], " ")));
             }
+        }
+    }
+    // PR 審查報告的嚴重度詞（review.labels）：補上內建的之後三個要彼此不同（和範本 event-pr-review.js 的 LABELS 同一套；範本遇到重複是整組退回內建）
+    if let Some(l) = get(doc, "review").and_then(|r| get(r, "labels")).and_then(Value::as_object) {
+        let pick = |k: &str, d: &str| l.get(k).and_then(Value::as_str).unwrap_or(d).to_string();
+        let words = [pick("important", "Important"), pick("nit", "Nit"), pick("pre_existing", "Pre-existing")];
+        if words.iter().collect::<BTreeSet<_>>().len() != words.len() {
+            errs.push(format!("review.labels 的三個詞要彼此不同（沒寫的算內建的 Important、Nit、Pre-existing；收到 {}）", words.join("、")));
         }
     }
     if let Some(t) = get(doc, "briefs").and_then(|b| get(b, "record_pattern")).and_then(Value::as_str) {
@@ -933,7 +958,25 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
     for (i, c) in cons.iter().enumerate() {
         let cid = str_opt(get(c, "id"));
         let who = if get(c, "id").is_some_and(Value::is_string) { format!("constraints[{cid}]") } else { format!("constraints[{i}]") };
-        strings_of(get(c, "stages"), &format!("{who}.stages"), &mut errs);
+        let c_stages = strings_of(get(c, "stages"), &format!("{who}.stages"), &mut errs);
+        // 段名要認得（SDLC 的段、固定的事件、內建事件類型、profile 的 events 自訂的事件名）。原本由 schema 的 enum 擋，
+        // 開放事件名之後由這裡接手，所以和名稱表一樣只在 check_doc 那條路查（只跑語意規則的呼叫端行為不變：不認得的段名就是沒有任何一段套用）
+        if !typed {
+            for st in c_stages.iter().filter_map(|v| v.as_str()) {
+                let known = CONSTRAINT_SDLC_STAGES.contains(&st)
+                    || CONSTRAINT_EVENT_STAGES.contains(&st)
+                    || crate::state::EVENT_TYPES.iter().any(|(e, _)| *e == st)
+                    || obj(get(doc, "events")).is_some_and(|ev| ev.contains_key(st));
+                if !known {
+                    errs.push(format!(
+                        "{who}.stages 的「{st}」不是認得的段（SDLC：{}；事件：{}、{}，或 events 自訂的事件名）",
+                        CONSTRAINT_SDLC_STAGES.join("、"),
+                        CONSTRAINT_EVENT_STAGES.join("、"),
+                        crate::state::EVENT_TYPES.iter().map(|(e, _)| *e).collect::<Vec<_>>().join("、")
+                    ));
+                }
+            }
+        }
         strings_of(get(c, "paths"), &format!("{who}.paths"), &mut errs);
         if let Some(f) = get(c, "file").and_then(Value::as_str).filter(|f| !f.is_empty()) {
             let norm = f.replace('\\', "/");

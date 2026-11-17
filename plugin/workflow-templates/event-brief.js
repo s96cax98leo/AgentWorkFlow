@@ -22,7 +22,7 @@ const CRITERIA = /*@schema:criteria*/ {"type":"object","required":["status","sum
 
 const A = args || {}
 for (const k of ['brief', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
-// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 models、limits
+// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 models、limits、constraints，以及下面各自註明的可調值
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 /*@snippet:recipe*/
@@ -290,7 +290,8 @@ async function awfAgent(prompt, opts) {
   return null
 }
 /*@end*/
-awfInit({ run_dir: A.run_dir, stage: 'brief', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', tune: awfTune(MP) })
+// 限制文件（profile 的 constraints 把 stages 寫成這個事件的段名時）與知識圖的指示（args.kg）一起進共同前綴；兩個都沒有時前綴逐字不變
+awfInit({ run_dir: A.run_dir, stage: 'brief', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, 'brief'), kg: A.kg === true, tune: awfTune(MP) })
 // 執行核心：模型分級、失敗升級、派工數上限（I8）。上限＝profile 的 limits.max_agents（沒設用 40）；簡報正常不超過 25
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40)
 awfKernelInit({ profile: METHODOLOGY, stage: 'brief', modifiers: [], max_agents: MAX_AGENTS })
@@ -607,7 +608,12 @@ if (cycle.length) throw new Error(`相依有循環：${cycle.join('、')}`)
 log(`子任務 ${subtasks.length} 個：轉 SDLC ${toSdlc.length}、等 SDLC ${waiting.length}、本流程分 ${layers.length} 層`)
 
 // 上游相關的子任務：tpm-researcher 用上游模式（merge-tree 衝突預測、影響範圍、時間線）
-const UPSTREAM_RE = BR_KEYS ? new RegExp(BR_KEYS.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i') : /上游|upstream|PR|衝突|merge/i
+// 關鍵字：profile 的 briefs.upstream_keywords，沒寫用文件寫的四個（上游、upstream、衝突、PR；原本多了一個 merge）。不分大小寫；
+// 純英數的關鍵字整字比對（前後不能緊接英文字母），PR 才不會誤中 prompt、product、improve
+const UPSTREAM_RE = new RegExp((BR_KEYS || ['上游', 'upstream', '衝突', 'PR']).map((x) => {
+  const e = x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return /^[A-Za-z0-9]+$/.test(x) ? `(?:^|[^A-Za-z])${e}(?![A-Za-z])` : e
+}).join('|'), 'i')
 const results = []
 const claims = []
 for (const layer of layers) {

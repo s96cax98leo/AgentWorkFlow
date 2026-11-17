@@ -2,6 +2,7 @@
 // 這裡把它們合起來並補上 args.event；另外有「類型：<名>」（每種類型用預設假回傳跑一次，預算基準與合併前後的對照用）、
 // 自訂事件類型（profile 的 events）與上限的情境。
 import { ENV } from './_helpers.mjs'
+import { eventPrefixScenarios } from './_event-shared.mjs'
 import meeting from './_event-meeting.mjs'
 import decision from './_event-decision.mjs'
 import demoCheck from './_event-demo-check.mjs'
@@ -75,4 +76,32 @@ export default [
     profile: { limits: { max_agents: 3 } }, args: { event: 'meeting' },
     expect: (r) => (r.out && r.out.halted && (r.out.capped || []).length && !r.labels.includes('write') ? [] : [`到上限應該 halted 並列出沒派的：${JSON.stringify(r.out && { halted: r.out.halted, capped: r.out.capped })}`]),
   },
+  // 預設的上限是 40（和文件、其他範本一致；原本這支是 20）：6 步前置＋16 個角度＋skeptic＋writer＝24 個要派得完
+  ...[['沒寫', {}], ['不合法（0）', { max_agents: 0 }], ['不合法（負數）', { max_agents: -5 }]].map(([what, lim]) => ({
+    name: `上限：limits.max_agents ${what} → 用 40，24 個 agent 派得完`,
+    profile: { limits: { ...lim, event: { max_angles: 16, max_steps: 6 } }, ...withEvents({ incident: { ...INCIDENT,
+      before: Array.from({ length: 6 }, (_, i) => ({ name: `b${i}`, label: `b${i}`, ask: 'x' })),
+      gather: { label: 'look', angles: Array.from({ length: 16 }, (_, i) => ({ key: `a${i}`, ask: 'x' })) } } }) },
+    args: { event: 'incident', incident: 'x' },
+    expect: (r) => (r.labels.length === 24 && r.labels.includes('write') && !(r.out.capped || []).length ? [] : [`24 個都要派出、不能到上限：${r.labels.length} 個，capped=${JSON.stringify(r.out && r.out.capped)}`]),
+  })),
+  {
+    name: '可設定：challenge.heading、write.heading → skeptic 與 writer 的派工單標題照設定（可以用參數名）；沒寫時是「派工單」',
+    profile: withEvents({ incident: { ...INCIDENT, challenge: { ...INCIDENT.challenge, heading: '派工單（反駁：{incident}）' }, write: { ...INCIDENT.write, heading: '派工單（事故回顧）' } }, plain: INCIDENT }),
+    args: { event: 'incident', incident: 'INC-1' },
+    fakes: { 'look:timeline': ENV({ source: 'x', items: [item('i1')] }), 'look:cause': ENV({ source: 'x', items: [item('i1')] }) },
+    expect: (r) => [
+      ...(/\n\n## 派工單（反駁：INC-1）\n逐項反駁/.test(r.prompts.challenge || '') ? [] : ['skeptic 的派工單標題沒有照設定']),
+      ...(/\n\n## 派工單（事故回顧）\n寫事故回顧/.test(r.prompts.write || '') ? [] : ['writer 的派工單標題沒有照設定']),
+    ],
+  },
+  {
+    name: '可設定：沒寫 heading 時 skeptic 與 writer 的標題是「派工單」',
+    profile: withEvents({ incident: INCIDENT }), args: { event: 'incident', incident: 'INC-1' },
+    fakes: { 'look:timeline': ENV({ source: 'x', items: [item('i1')] }), 'look:cause': ENV({ source: 'x', items: [item('i1')] }) },
+    expect: (r) => (/\n\n## 派工單\n逐項反駁/.test(r.prompts.challenge || '') && /\n\n## 派工單\n寫事故回顧/.test(r.prompts.write || '') ? [] : ['預設的標題要是「派工單」']),
+  },
+  // 限制文件與知識圖進共同前綴：內建類型與自訂類型各跑一次（段名就是事件類型）
+  ...eventPrefixScenarios('meeting', { args: { event: 'meeting' } }).map((sc) => ({ ...sc, name: `meeting｜${sc.name}` })),
+  ...eventPrefixScenarios('incident', { args: { event: 'incident', incident: 'x' }, profile: withEvents({ incident: INCIDENT }) }).map((sc) => ({ ...sc, name: `自訂類型｜${sc.name}` })),
 ]

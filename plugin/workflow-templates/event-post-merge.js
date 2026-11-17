@@ -18,7 +18,7 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 
 const A = args || {}
 for (const k of ['repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
-// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 models、limits
+// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 models、limits、constraints，以及下面各自註明的可調值
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 /*@snippet:recipe*/
@@ -286,12 +286,24 @@ async function awfAgent(prompt, opts) {
   return null
 }
 /*@end*/
-awfInit({ run_dir: A.run_dir, stage: 'post-merge', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', tune: awfTune(MP) })
+// 限制文件（profile 的 constraints 把 stages 寫成這個事件的段名時）與知識圖的指示（args.kg）一起進共同前綴；兩個都沒有時前綴逐字不變
+awfInit({ run_dir: A.run_dir, stage: 'post-merge', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, 'post-merge'), kg: A.kg === true, tune: awfTune(MP) })
 // 執行核心：模型分級、失敗升級、派工數上限（I8）。上限＝profile 的 limits.max_agents（沒設用 40）；合併後監看正常不超過 8
 const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 40)
 awfKernelInit({ profile: METHODOLOGY, stage: 'post-merge', modifiers: [], max_agents: MAX_AGENTS })
 const GH = A.gh_repo || '{{FORK_REPO}}'
 const RUNS = '{{RUNS_DIR}}'
+// 合併後監看的可調值（profile 的 post_merge；沒寫或不合法用內建值＝原本寫死的字）
+const PM = MP.post_merge && typeof MP.post_merge === 'object' && !Array.isArray(MP.post_merge) ? MP.post_merge : {}
+// 讀 CI 的指令：post_merge.ci_commands 的 list（列出 base 分支的 CI）與 failed（看失敗的 log）。各一行、300 字以內、不含反引號；
+// 可用 {repo}（GitHub repo）與 {branch}（base 分支）。沒寫或不合法的那一個用內建的 gh 指令。只是寫在派工單上的做法，守門規則照舊
+// 哪些嚴重度的問題要凍結自動合併：內建只有 blocker。post_merge.freeze_on 只能多加（important、should_fix）：blocker 拿不掉，不認得的值略過
+const FREEZE_ON = ['blocker', 'important', 'should_fix'].filter((s) => s === 'blocker' || (Array.isArray(PM.freeze_on) && PM.freeze_on.includes(s)))
+const FREEZE_WORD = FREEZE_ON.join('／')
+const CI_CMDS = PM.ci_commands && typeof PM.ci_commands === 'object' && !Array.isArray(PM.ci_commands) ? PM.ci_commands : {}
+const ciFill = (t) => t.replace(/\{repo\}/g, () => GH).replace(/\{branch\}/g, () => '{{BASE_BRANCH}}')
+const CI_LIST = ciFill(awfLine(CI_CMDS.list, 300, 'gh run list --repo {repo} --branch {branch}'))
+const CI_FAILED = ciFill(awfLine(CI_CMDS.failed, 300, 'gh run view --log-failed'))
 const AUDIT = `${RUNS}/merge-audit.jsonl`
 // 凍結檔路徑可在 guard.config.json 的 auto_merge.freeze_file 改；workflow 不能讀檔，由 writer 先讀設定再寫，和 hook、awf merge-gate 讀同一個檔
 const FREEZE_SRC = '.claude/teams/guard.config.json 的 auto_merge.freeze_file'
@@ -545,14 +557,14 @@ const ruleCheck = (d) => {
 
 phase('Watch')
 const watch = await awfAgent(
-  `${CTX}\n\n## 派工單\n1. 讀 ${AUDIT}，找出監看範圍內 decision=merge 的紀錄。\n2. 讀 {{BASE_BRANCH}} 的 CI（gh run list --repo ${GH} --branch {{BASE_BRANCH}}；失敗的看 gh run view --log-failed）。\n3. 失敗歸因到合併 commit；每則發現的 location 寫合併 commit SHA 與 CI run URL，recommendation 寫 git revert <sha> 的範圍說明（影響檔案、會一起撤掉的需求、和之後 commit 的衝突預測）與是否凍結自動合併。\n4. {{BASE_BRANCH}} 正常就交一則 severity=info。讀不到 CI 或 merge-audit 時寫 important，說明 not_verifiable。\npayload 用 findings（lens=post-merge）。`,
+  `${CTX}\n\n## 派工單\n1. 讀 ${AUDIT}，找出監看範圍內 decision=merge 的紀錄。\n2. 讀 {{BASE_BRANCH}} 的 CI（${CI_LIST}；失敗的看 ${CI_FAILED}）。\n3. 失敗歸因到合併 commit；每則發現的 location 寫合併 commit SHA 與 CI run URL，recommendation 寫 git revert <sha> 的範圍說明（影響檔案、會一起撤掉的需求、和之後 commit 的衝突預測）與是否凍結自動合併。\n4. {{BASE_BRANCH}} 正常就交一則 severity=info。讀不到 CI 或 merge-audit 時寫 important，說明 not_verifiable。\npayload 用 findings（lens=post-merge）。`,
   { label: 'watch', phase: 'Watch', agentType: NS + 'dev-release-watcher', schema: FINDINGS },
 )
 if (!watch) { missing.push('watch'); return halt('watch', { reason: 'watcher 沒有交件；狀態不明，交主 session 判斷是否先凍結自動合併' }) }
 const fs = watch.payload.findings || []
 const problems = fs.filter((f) => ['blocker', 'important', 'should_fix'].includes(f.severity))
 if (!problems.length) return { trace: awfTrace(), event: 'post-merge', ok: true, watch, note: '{{BASE_BRANCH}} 的 CI 正常，沒有要 revert 的合併' }
-const freeze = problems.some((f) => f.severity === 'blocker')
+const freeze = problems.some((f) => FREEZE_ON.includes(f.severity))
 
 phase('Challenge')
 // 歸因被推翻只影響 revert 提案的寫法（改成「歸因未確認」），不影響凍結：寧可先凍結再查
@@ -561,7 +573,7 @@ const judged = await challengeList(problems, {
   agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing,
 })
 if (judged.lacking) {
-  return halt('challenge', { freeze_recommended: freeze, problems, watch, next: freeze ? `有 blocker：建議主 session 先凍結自動合併（寫 ${FREEZE_SRC} 指的檔）再重跑 Challenge。` : '重跑 Challenge 後再寫 revert 提案。' })
+  return halt('challenge', { freeze_recommended: freeze, problems, watch, next: freeze ? `有 ${FREEZE_WORD}：建議主 session 先凍結自動合併（寫 ${FREEZE_SRC} 指的檔）再重跑 Challenge。` : '重跑 Challenge 後再寫 revert 提案。' })
 }
 // skeptic 沒判到的歸因當成未確認（challenge 片段）
 const { challenge, kept: confirmed, doubted: unconfirmed } = judged
@@ -570,7 +582,7 @@ log(`問題 ${problems.length} 則：歸因成立 ${confirmed.length}、未確�
 phase('Write')
 const docs = await awfAgent(
   `${CTX}\n\n## 派工單\n1. 寫 revert 提案到 ${A.run_dir}/revert-proposal.md：每個歸因成立的合併 commit 一節（git revert <sha> 的範圍、影響檔案、會撤掉的需求、衝突預測、驗證方式）；歸因未確認的另列一節，寫明要人判斷。提案只是文件，不執行。\n` +
-  (freeze ? `2. 寫凍結旗標：先讀 ${FREEZE_SRC} 取得凍結檔路徑（沒有設定檔或沒設 freeze_file 時，用 awf merge-gate 的 freeze_file() 預設值，位在 ${RUNS} 下），寫入 JSON：{"frozen": true, "reason": "<一句話>", "merge_shas": [...], "proposal": "${A.run_dir}/revert-proposal.md", "lift_when": "<解除條件>"}。實際寫入的路徑列在 documents（kind=other，notes 寫「凍結旗標」）。\n` : '2. 不寫凍結旗標（沒有 blocker）。\n') +
+  (freeze ? `2. 寫凍結旗標：先讀 ${FREEZE_SRC} 取得凍結檔路徑（沒有設定檔或沒設 freeze_file 時，用 awf merge-gate 的 freeze_file() 預設值，位在 ${RUNS} 下），寫入 JSON：{"frozen": true, "reason": "<一句話>", "merge_shas": [...], "proposal": "${A.run_dir}/revert-proposal.md", "lift_when": "<解除條件>"}。實際寫入的路徑列在 documents（kind=other，notes 以固定代號 freeze-flag 開頭：照抄、不翻譯，後面可以接說明）。\n` : `2. 不寫凍結旗標（沒有 ${FREEZE_WORD}）。\n`) +
   `3. 寫給決策者版到 ${A.run_dir}/給決策者.md：發生什麼、哪個合併、建議（由人合併 revert PR／先凍結再查／判 flaky 解除），每個選項附代價。\n` +
   `4. 每份跑 awf check-rules（給決策者版加 --audience owner），全過才算完成。payload 用 docs：documents 列出每份（給決策者版 audience=owner），rule_check 填「pass」或「fail：<沒過的規則>」。\n` +
   `歸因成立：${JSON.stringify(confirmed)}\n歸因未確認：${JSON.stringify(unconfirmed)}`,
@@ -578,8 +590,11 @@ const docs = await awfAgent(
 )
 if (!docs) { missing.push('write'); return halt('write', { freeze_recommended: freeze, confirmed, unconfirmed, watch, challenge }) }
 const ruleIssue = ruleCheck(docs)
-const freezeDoc = freeze ? (docs.payload.documents || []).find((d) => /凍結/.test(d.notes || '')) : null
-const freezeIssue = freeze && !freezeDoc ? 'writer 沒有回報凍結旗標的實際路徑（documents 裡 notes 含「凍結」的那份）' : null
+// 凍結旗標那一份用固定的 ASCII 代號認（freeze-flag；不看輸出語言）。原本比對中文的「凍結」，輸出語言不是中文時會誤判成沒回報而停下；
+// 舊寫法（notes 含「凍結」）照樣認得
+const FREEZE_NOTE = /freeze[-_ ]?flag|凍結/i
+const freezeDoc = freeze ? (docs.payload.documents || []).find((d) => FREEZE_NOTE.test(d.notes || '')) : null
+const freezeIssue = freeze && !freezeDoc ? 'writer 沒有回報凍結旗標的實際路徑（documents 裡 notes 以 freeze-flag 開頭的那份）' : null
 
 return {
   trace: awfTrace(),

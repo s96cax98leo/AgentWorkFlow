@@ -1,7 +1,7 @@
 export const meta = {
   name: 'event-pr-review',
-  description: '審一個 PR 或分支（不是自己 SDLC 開發的）：各 lens 平行（預設 standards、spec、bugs、security、design、history）→ 去重 → 每批由 skeptic 反駁 → 只留信心達到門檻且未被推翻的；只產報告、不留言',
-  whenToUse: '要審 PR 或分支；args：target（PR 編號＋repo 或分支名）、repo（本機 clone 路徑）、run_dir、lenses（可省略）',
+  description: '審一個 PR 或分支（不是自己 SDLC 開發的）：各 lens 平行（預設 standards、spec、bugs、security、design、history；profile 可以加自己的 lens）→ 去重 → 每批由 skeptic 反駁 → 只留信心達到門檻且未被推翻的；只產報告、不留言',
+  whenToUse: '要審 PR 或分支；args：target（PR 編號＋repo 或分支名）、repo（本機 clone 路徑）、run_dir、lenses（可省略；陣列或逗號分隔的字串）',
   phases: [{ title: 'Review', detail: '每個 lens 一個 tpm-reviewer' }, { title: 'Verify', detail: 'tpm-skeptic' }, { title: 'Write' }],
 }
 
@@ -14,7 +14,7 @@ const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","a
 
 const A = args || {}
 for (const k of ['target', 'repo', 'run_dir']) if (!A[k]) throw new Error(`缺 args.${k}`)
-// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 models、limits
+// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 models、limits、constraints，以及下面各自註明的可調值
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 /*@snippet:recipe*/
@@ -282,7 +282,8 @@ async function awfAgent(prompt, opts) {
   return null
 }
 /*@end*/
-awfInit({ run_dir: A.run_dir, stage: 'pr-review', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', tune: awfTune(MP) })
+// 限制文件（profile 的 constraints 把 stages 寫成這個事件的段名時）與知識圖的指示（args.kg）一起進共同前綴；兩個都沒有時前綴逐字不變
+awfInit({ run_dir: A.run_dir, stage: 'pr-review', lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, 'pr-review'), kg: A.kg === true, tune: awfTune(MP) })
 // 目標 repo 的審查規範在哪：profile 的 conventions.repo_docs.review（相對路徑、不含 ..；沒寫或不合法用 REVIEW.md）
 const REVIEW_DOC = (() => { const t = awfLine(((MP.conventions || {}).repo_docs || {}).review, 200, ''); return t && !/^([\\/]|[A-Za-z]:)/.test(t) && !t.split(/[\\/]/).includes('..') ? t : 'REVIEW.md' })()
 // 執行核心：模型分級、失敗升級、派工數上限（I8）。上限＝profile 的 limits.max_agents（沒設用 40）；PR 審查正常不超過 15
@@ -290,13 +291,42 @@ const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.m
 awfKernelInit({ profile: METHODOLOGY, stage: 'pr-review', modifiers: [], max_agents: MAX_AGENTS })
 // 預設的 lens：args.lenses > profile 的 review.lenses > 內建六個
 const REVIEW = MP.review || {}
-const LENSES = A.lenses || ((Array.isArray(REVIEW.lenses) && REVIEW.lenses.length) ? [...new Set(REVIEW.lenses)] : ['standards', 'spec', 'bugs', 'security', 'design', 'history'])
+const BUILTIN_LENSES = ['standards', 'spec', 'bugs', 'security', 'design', 'history']
+// args.lenses 可以是陣列，也可以是逗號分隔的字串（awf next --set lenses=bugs,security 給的是字串）
+const ARG_LENSES = typeof A.lenses === 'string' && A.lenses.trim() ? A.lenses.split(',').map((x) => x.trim()).filter(Boolean) : A.lenses
+const LENSES = ARG_LENSES || ((Array.isArray(REVIEW.lenses) && REVIEW.lenses.length) ? [...new Set(REVIEW.lenses)] : BUILTIN_LENSES)
+// lens 的名稱表（自己的 lens 與問法）：profile 的 lenses.pr_review；沒寫這張表時用 lenses.deliver（和 sdlc-deliver 的審查軸共用一份定義）。
+// 同名的定義給內建的 lens 加上問法，新名稱可以讓 review.lenses 或 args.lenses 選用。定義不合法的略過（awfDefs），等於沒定義。
+const LENS_DEFS = (() => {
+  const l = MP.lenses && typeof MP.lenses === 'object' && !Array.isArray(MP.lenses) ? MP.lenses : {}
+  return awfDefs(l.pr_review && typeof l.pr_review === 'object' && !Array.isArray(l.pr_review) ? l.pr_review : l.deliver, 'ask')
+})()
+// 指到內建與名稱表都沒有的 lens：開工前停下交人，不默默略過（和 recipe 指到沒定義的 design lens、審查軸同一個原則）。
+// args.lenses 不是陣列、或是空陣列也一樣停下（一個 lens 都沒派的審查不能看起來像「沒有發現」）
+const BAD_LENSES = Array.isArray(LENSES) ? LENSES.filter((x) => typeof x !== 'string' || !(BUILTIN_LENSES.includes(x) || x in LENS_DEFS)) : [LENSES]
 // 審查發現的信心門檻：profile 的 review.min_confidence（0–0.8；只能調低＝留下更多發現；沒寫或不合法用 0.8）
 const REVIEW_CONF = (MP.review || {}).min_confidence
 const MIN_CONF = (typeof REVIEW_CONF === 'number' && REVIEW_CONF >= 0 && REVIEW_CONF <= 0.8) ? REVIEW_CONF : 0.8
 // 報告裡 Nit 最多列幾則：profile 的 review.max_nits（0–50；沒寫或不合法用 5）
 const MAX_NITS = (Number.isInteger(REVIEW.max_nits) && REVIEW.max_nits >= 0 && REVIEW.max_nits <= 50) ? REVIEW.max_nits : 5
-const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 gh pr diff／git diff，不 approve、不 merge、不 comment。`
+// 取 diff 的方式：profile 的 review.diff_command（一行、200 字以內；沒寫或不合法用 gh pr diff／git diff）。只是寫在派工單上的做法，守門規則照舊
+const DIFF_HOW = awfLine(REVIEW.diff_command, 200, 'gh pr diff／git diff')
+// 報告裡三個嚴重度的詞：profile 的 review.labels（important、nit、pre_existing；各 1–20 字的一行、不含 | [ ]、三個彼此不同）。
+// 沒寫的用內建的；有一個不合法就整組用內建的（Important、Nit、Pre-existing）。只改報告的寫法，信封的 severity 不變
+const LABELS = (() => {
+  const d = { important: 'Important', nit: 'Nit', pre_existing: 'Pre-existing' }
+  const v = REVIEW.labels
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return d
+  const out = {}
+  for (const k of Object.keys(d)) {
+    if (!Object.prototype.hasOwnProperty.call(v, k)) { out[k] = d[k]; continue }
+    const t = awfLine(v[k], 20, '')
+    if (!t || /[|[\]]/.test(t)) return d
+    out[k] = t
+  }
+  return new Set(Object.values(out)).size === 3 ? out : d
+})()
+const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 ${DIFF_HOW}，不 approve、不 merge、不 comment。`
 /*@snippet:challenge*/
 // ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
@@ -581,8 +611,16 @@ function dedupeFindings(groups, field) {
 const missing = []
 const halt = (stage, extra = {}) => haltMissing({ event: 'pr-review' }, stage, missing, { ...extra, trace: awfTrace() })
 
+if (Array.isArray(LENSES) && !LENSES.length) return { trace: awfTrace(), event: 'pr-review', halted: true, stage: 'review', halt_reason: 'args.lenses 是空的：至少要有一個 lens' }
+if (BAD_LENSES.length) {
+  return { trace: awfTrace(), event: 'pr-review', halted: true, stage: 'review',
+    halt_reason: `lens「${BAD_LENSES.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join('、')}」沒有定義（內建：${BUILTIN_LENSES.join('、')}；自己的 lens 寫在 methodology.json 的 lenses.pr_review，沒有這張表時用 lenses.deliver）` }
+}
+// 名稱表有定義的 lens 帶上問法；沒有定義的（內建六個）維持原本的字
+const lensAsk = (lens) => (LENS_DEFS[lens] ? `只用 ${lens} 觀點審查：${LENS_DEFS[lens].ask}\n` : `只用 ${lens} 觀點審查，`)
+
 phase('Review')
-const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n只用 ${lens} 觀點審查，依目標 repo 的 ${REVIEW_DOC} 分級，每則附 file:line 與 0–1 信心，只列 ≥${MIN_CONF}。payload 用 findings（lens=${lens}）。`,
+const reviews = await parallel(LENSES.map((lens) => () => awfAgent(`${CTX}\n\n## 派工單（lens：${lens}）\n${lensAsk(lens)}依目標 repo 的 ${REVIEW_DOC} 分級，每則附 file:line 與 0–1 信心，只列 ≥${MIN_CONF}。payload 用 findings（lens=${lens}）。`,
   { label: `review:${lens}`, phase: 'Review', agentType: NS + 'tpm-reviewer', schema: FINDINGS })))
 // 各 lens 的發現 id 各自編號，加 lens 前綴（<lens>:<id>），skeptic 的 target_id 才不會撞號
 const batches = []
@@ -611,7 +649,7 @@ const kept = dedupeFindings(reviewed, 'lens')
 log(`保留 ${kept.length} 則（去重後）`)
 
 phase('Write')
-const docs = await awfAgent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir}/review.md：依 lens 分節，每則「[Important|Nit|Pre-existing] file:line — 問題 — 建議 — 信心」，Nit 最多 ${MAX_NITS} 則。要不要貼到 PR 由使用者決定。跑 awf check-rules。\n發現：${JSON.stringify(kept)}\npayload 用 docs。`,
+const docs = await awfAgent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir}/review.md：依 lens 分節，每則「[${LABELS.important}|${LABELS.nit}|${LABELS.pre_existing}] file:line — 問題 — 建議 — 信心」，${LABELS.nit} 最多 ${MAX_NITS} 則。要不要貼到 PR 由使用者決定。跑 awf check-rules。\n發現：${JSON.stringify(kept)}\npayload 用 docs。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 if (!docs) { missing.push('write'); return halt('write', { findings: kept }) }
 

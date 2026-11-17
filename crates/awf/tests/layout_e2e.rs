@@ -149,7 +149,11 @@ fn base_branch_configured() {
         assert!(text.contains("'upstream/develop'") && !text.contains("origin/main"), "{name}.js 的預設 base 沒有跟著設定");
     }
     let pm = read(&wf.join("event-post-merge.js"));
-    assert!(pm.contains("--branch develop；") && pm.contains("讀 develop 的 CI") && !pm.contains("--branch main"), "event-post-merge.js 要看設定的主線分支");
+    // 讀 CI 的指令是可設定的樣板（post_merge.ci_commands），{branch} 在執行時代入設定的主線分支
+    assert!(
+        pm.contains(".replace(/\\{branch\\}/g, () => 'develop')") && pm.contains("讀 develop 的 CI") && !pm.contains("=> 'main'") && !pm.contains("--branch main"),
+        "event-post-merge.js 要看設定的主線分支"
+    );
 
     // 2. 乾跑通過，沒帶 base 的派工單用新值
     match dry_run(&t) {

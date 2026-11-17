@@ -320,6 +320,11 @@ pub fn workflow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage:
         }
         notes.extend(pnotes);
     }
+    // 事件的 workflow 不跑資料包：有知識圖（開得起來）時一樣帶 kg＝true，共同前綴才多一行查圖的指示
+    // （和 sdlc 各段 pack-args.json 的 kg 同一個意思）。沒有圖時沒有這個鍵，參數與產生的腳本逐字不變；只看圖在不在，不建圖
+    if prepare && !workflow.starts_with("sdlc-") && !a.contains_key("kg") && crate::kg::flow::open_root(&env.project).is_some() {
+        a.insert("kg".into(), json!(true));
+    }
     let a_val = Value::Object(a.clone());
     let (text, rnotes) = render(env, workflow, plugin, Some(&a_val))?;
     let source = find_template(env, workflow, plugin)?.1;

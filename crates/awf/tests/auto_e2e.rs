@@ -935,3 +935,29 @@ fn finished_workflow_is_not_recovered() {
     assert!(a["highlights"].get("recovered").is_none(), "{a}");
     assert!(reuse_angles(&p, run).is_empty() && p.run_json(run)["awf"].get("recovered").is_none());
 }
+
+// ------------------------------------------------------------------ 事件的 workflow：有圖時參數多一個 kg
+
+/// 事件不跑資料包：有知識圖時 `awf next` 給事件 workflow 的參數多一個 `kg: true`（共同前綴才有查圖的指示）；
+/// 沒有圖時沒有這個鍵，也不會替使用者建圖。
+#[test]
+fn event_workflows_get_kg_only_when_a_graph_exists() {
+    let args_of = |p: &Proj, run: &str, event: &str, sets: &[&str], wf: &str| -> Value {
+        let mut a = vec!["start", "--run", run, "--event", event];
+        for s in sets {
+            a.extend_from_slice(&["--set", s]);
+        }
+        let r = p.awf(&a);
+        assert_eq!(r.code, 0, "awf start（{event}）：\n{}", r.all());
+        let act = p.next(run, &[]);
+        assert_eq!(act["action"], "run_workflow", "{act}");
+        load(&p.dir.join(run).join(format!(".wf/{wf}.args.json")))
+    };
+    let with = Proj::new("ev-kg", Some(json!({"update": false})));
+    assert_eq!(with.awf(&["kg", "build"]).code, 0);
+    assert_eq!(args_of(&with, "_tpm/runs/e1", "meeting", &["source=meetings/a.md"], "event")["kg"], json!(true));
+    assert_eq!(args_of(&with, "_tpm/runs/e2", "pr-review", &["target=PR 1", "repo=."], "event-pr-review")["kg"], json!(true));
+    let without = Proj::new("ev-nokg", None);
+    assert!(args_of(&without, "_tpm/runs/e1", "meeting", &["source=meetings/a.md"], "event").get("kg").is_none());
+    assert!(!without.graph().exists(), "事件不替使用者建圖");
+}

@@ -13,7 +13,7 @@ const FINDINGS = /*@schema:findings*/ {"type":"object","required":["status","sum
 const VERDICTS = /*@schema:verdicts*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1,"maxLength":400},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","maxItems":12,"items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string","maxLength":300}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["target_id","refuted","reason"],"properties":{"target_id":{"type":"string"},"refuted":{"type":"boolean"},"reason":{"type":"string"},"counter_evidence":{"type":"string"}}}}}}}} /*@end*/
 const DOCS = /*@schema:docs*/ {"type":"object","required":["status","summary","artifacts","evidence","confidence","open_questions","derived_work","payload"],"properties":{"status":{"type":"string","enum":["done","blocked","needs_decision"]},"summary":{"type":"string","minLength":1,"maxLength":400},"artifacts":{"type":"array","items":{"type":"string"}},"evidence":{"type":"array","maxItems":12,"items":{"type":"object","required":["claim","source","result"],"properties":{"claim":{"type":"string"},"source":{"type":"string"},"result":{"type":"string","maxLength":300}}}},"confidence":{"type":"number","minimum":0,"maximum":1},"open_questions":{"type":"array","items":{"type":"object","required":["question","blocking","options","recommendation","default_applied"],"properties":{"question":{"type":"string"},"blocking":{"type":"boolean"},"why_blocking":{"type":"string"},"options":{"type":"array","items":{"type":"object","required":["choice","cost"],"properties":{"choice":{"type":"string"},"cost":{"type":"string"}}}},"recommendation":{"type":"string"},"default_applied":{"type":"string"}}}},"derived_work":{"type":"array","items":{"type":"string"}},"payload":{"type":"object","required":["documents"],"properties":{"documents":{"type":"array","minItems":1,"items":{"type":"object","required":["path","kind","audience"],"properties":{"path":{"type":"string"},"kind":{"type":"string","enum":["intent","design","spec","plan","progress","verifier","design_review","security_review","adr","exec_record","research","for_owner","pr_description","meeting_summary","other"]},"audience":{"type":"string","enum":["internal","owner","external","agents"]},"notes":{"type":"string"}}}},"rule_check":{"type":"string"}}}}} /*@end*/
 
-// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 events（自訂事件類型）、models、limits
+// 開發規範 profile：由 awf build 內嵌（專案的 .claude/teams/methodology.json）。這支只用它的 events（自訂事件類型）、models、limits、constraints
 const METHODOLOGY = /*@methodology*/ null /*@end*/
 const MP = METHODOLOGY || {}
 
@@ -24,9 +24,9 @@ const MP = METHODOLOGY || {}
 //   before      選填的前置步驟（依序、各派一個 tpm-researcher）：name 是結果的名字，keep＝list（只留清單）或 envelope（留整個信封），
 //               stop_if_empty 有寫時，清單是空的就正常結束並回這句話
 //   gather      各角度平行：label 是派工 label 的前綴（<label>:<角度 key>），heading 與 body 可以用 {key}、{ask}、{type} 與參數名
-//   challenge   skeptic 的派工單；only_status 有寫時只反駁這個 status 的事項
+//   challenge   skeptic 的派工單；only_status 有寫時只反駁這個 status 的事項；heading 是派工單標題（預設「派工單」，可以用參數名）
 //   after       選填的收尾步驟（寫文件之前）
-//   write       writer 的派工單；data 是附在後面的資料（from：all、kept、doubted、doubted_ids，或前置／收尾步驟的 name）；
+//   write       writer 的派工單（heading 同上）；data 是附在後面的資料（from：all、kept、doubted、doubted_ids，或前置／收尾步驟的 name）；
 //               owner_check＝true 時 writer 要交出給決策者版並通過 check_rules（規則 12）
 //   returns     回傳的鍵名：all（全部事項）、doubted（被推翻或沒被驗證的 id）、challenge（是否附 skeptic 的信封）
 const BUILTIN_EVENTS = {
@@ -189,7 +189,8 @@ const fill = (tpl, vars) => String(tpl || '').replace(/\{([A-Za-z_][A-Za-z0-9_]*
   const v = vars[k]
   return v === undefined || v === null || v === '' ? (d !== undefined ? d : m) : String(v)
 })
-awfInit({ run_dir: A.run_dir, stage: TYPE, lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', tune: awfTune(MP) })
+// 限制文件（profile 的 constraints 把 stages 寫成這個事件的段名時）與知識圖的指示（args.kg）一起進共同前綴；兩個都沒有時前綴逐字不變
+awfInit({ run_dir: A.run_dir, stage: TYPE, lang: '{{OUTPUT_LANGUAGE}}', rules: '.claude/teams/rules.md', constraints: awfConstraints(MP, TYPE), kg: A.kg === true, tune: awfTune(MP) })
 /*@snippet:challenge*/
 // ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
 // awf build 內嵌；不要在 workflow 裡手改，改片段後重跑 awf build。只定義函式，需要的值都用參數傳入。
@@ -689,8 +690,9 @@ async function awfAgent(prompt, opts) {
   return null
 }
 /*@end*/
-// 派工數上限（I8）：profile 的 limits.max_agents，沒設用 20（一個事件正常不超過 12）
-const MAX_AGENTS = Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.max_agents : 20
+// 派工數上限（I8）：profile 的 limits.max_agents（1 以上的整數）；沒設或不合法用 40，和文件、其他範本一致（一個事件正常不超過 12）。
+// 0 或負數不採用：執行核心會把它當成「不設上限」
+const MAX_AGENTS = awfInt(MP.limits, 'max_agents', 1, Number.MAX_SAFE_INTEGER, 40)
 awfKernelInit({ profile: METHODOLOGY, stage: TYPE, modifiers: [], max_agents: MAX_AGENTS })
 const CTX = fill(EV.context, A)
 const LIST_KEY = EV.payload === 'findings' ? 'findings' : 'items'
@@ -750,7 +752,7 @@ if (missing.length) return halt(G.label || 'gather', { [ALL_KEY]: all })
 phase('Challenge')
 // skeptic 沒判到的事項當成未驗證，和被推翻的一起列存疑（challenge 片段）
 const targets = C.only_status ? all.filter((i) => i.status === C.only_status) : all
-const judged = await challengeList(targets, { prompt: `${CTX}\n\n## 派工單\n${fill(C.ask, A)}\n${JSON.stringify(targets)}`,
+const judged = await challengeList(targets, { prompt: `${CTX}\n\n## ${fill(C.heading || '派工單', A)}\n${fill(C.ask, A)}\n${JSON.stringify(targets)}`,
   agentType: NS + 'tpm-skeptic', schema: VERDICTS, missing })
 if (judged.lacking) return halt('challenge', { [ALL_KEY]: all })
 const { challenge, kept, doubted } = judged
@@ -762,7 +764,7 @@ for (const s of AFTER) {
   if (!got) return halt(s.halt || s.label, { [ALL_KEY]: all })
 }
 const data = dataLines(W.data, { ...step_lists, all, kept, doubted, doubted_ids })
-const docs = await awfAgent(`${CTX}\n\n## 派工單\n${fill(W.ask, A)}${data ? `\n${data}` : ''}`,
+const docs = await awfAgent(`${CTX}\n\n## ${fill(W.heading || '派工單', A)}\n${fill(W.ask, A)}${data ? `\n${data}` : ''}`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 const result = { ...kept_steps, [ALL_KEY]: all, [DOUBT_KEY]: doubted_ids, ...(R.challenge ? { challenge } : {}) }
 if (!docs) { missing.push('write'); return halt('write', result) }

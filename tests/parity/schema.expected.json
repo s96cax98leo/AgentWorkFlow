@@ -422,7 +422,7 @@
    "kind": "invalid",
    "file": "golden-set/invalid/methodology-constraints-stage.json",
    "errors": [
-    "$.constraints[0].stages[0]：值 'review' 不在 ['plan', 'design', 'build', 'sync', 'test', 'deliver', 'merge']"
+    "constraints[arch].stages 的「review」不是認得的段（SDLC：plan、design、build、sync、test、deliver、merge；事件：brief、pr-review、post-merge、meeting、decision、demo-check、reqs-change、upstream，或 events 自訂的事件名）"
    ],
    "unsupported": []
   },
