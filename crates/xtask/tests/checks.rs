@@ -65,7 +65,7 @@ fn recipes_pass_on_repo() {
 fn recipes_fail_when_js_drifts() {
     let tmp = teams_copy("recipes-js");
     // JS 那一邊的 modifier 不再加段（比 Rust 鬆）
-    edit(&util::snippet_dir(tmp.path()).join("recipe.js"), "r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages))", "r.stages = recipeOrder(r.stages)");
+    edit(&util::snippet_dir(tmp.path()).join("recipe.js"), "r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages), full)", "r.stages = recipeOrder(r.stages, full)");
     let (rc, out, _) = check_recipes::run_captured(tmp.path());
     assert_eq!(rc, 1, "{out}");
     assert!(out.starts_with("recipe 一致性檢查失敗：\n") && out.contains("recipe.js 和 awf_core::recipe 不一致") && out.contains("\"stages\""), "{out}");

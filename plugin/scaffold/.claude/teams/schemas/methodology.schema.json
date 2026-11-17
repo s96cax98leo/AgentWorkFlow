@@ -344,6 +344,37 @@
         "code": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 300}, "description": "也算產品程式的路徑（原本算文件或測試的，兩邊的要求都要滿足；merge-gate 不再當成低風險）"}
       }
     },
+    "flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "選填：自己加的段（自訂段）。只能加段：內建七段不能拿掉、改名或調換；自訂段一定在 plan 之後、merge 之前，做完一律等人核准。recipe 在自己的 stages 點名（或 modifier 的 add_stages 加進來）才會跑。沒寫＝流程和原本逐字相同。用法見 docs/自訂與擴充.md〈自訂段〉",
+      "properties": {
+        "stages": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "自訂段（最多 8 個）。同一個 after 有多個時依這裡的順序",
+          "items": {
+            "type": "object",
+            "required": ["id", "after", "run", "script"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "段名（run.json 的鍵、run 目錄底下的子目錄名）。不能和內建的段、事件類型、保留名同名，彼此不重複"},
+              "after": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "接在哪一段後面：內建的段（merge 除外），或另一個自訂段。不能循環"},
+              "run": {"type": "string", "enum": ["script"], "description": "怎麼跑。這一版只有 script（自訂腳本）"},
+              "script": {"type": "string", "maxLength": 200, "pattern": "^\\.claude/flows/[^\\\\]+\\.js$", "description": "腳本：專案內的相對路徑，一定在 .claude/flows/ 底下、副檔名 .js、不能含 ..。寫法和 awf next --script 的自訂腳本一樣"},
+              "gate": {"type": "string", "enum": ["human"], "description": "閘門。這一版只有 human（沒寫也是）：做完停下等人核准，沒核准不能進下一段"},
+              "approver": {"type": "string", "minLength": 1, "maxLength": 40, "description": "誰核准（只記錄與顯示在閘門提示與狀態，不做身分驗證）"},
+              "artifacts": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 80}, "description": "這一段做完要有的檔名（放在 <run 目錄>/<段>/ 底下）。存檔時缺檔列成缺件"}
+            }
+          }
+        },
+        "labels": {
+          "type": "object",
+          "description": "給人看的段名（鍵是內建的段或自訂段的 id）。只影響顯示（閘門提示、狀態、交付文件的核准紀錄表），不影響檔名、id 與任何判定",
+          "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 20}
+        }
+      }
+    },
     "gates": {
       "type": "object",
       "description": "選填：另外加的核准閘門。plan、design、test、deliver 本來就有、拿不掉；這裡只能再加",
@@ -553,8 +584,8 @@
           "stages": {
             "type": "array",
             "minItems": 1,
-            "items": {"type": "string", "enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]},
-            "description": "要走的段；一定要含 plan（intent 不能省），會寫程式的還要有 build、deliver、merge（驗證器的語意規則）"
+            "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+            "description": "要走的段：內建七段（plan、design、build、sync、test、deliver、merge），或 flow.stages 宣告的自訂段（點名了才會跑）。一定要含 plan（intent 不能省），會寫程式的還要有 build、deliver、merge；不認得的段名由驗證器的語意規則擋"
           },
           "plan_mode": {
             "type": "string",
@@ -607,7 +638,7 @@
         "additionalProperties": false,
         "properties": {
           "description": {"type": "string", "minLength": 1},
-          "add_stages": {"type": "array", "items": {"type": "string", "enum": ["plan", "design", "build", "sync", "test", "deliver", "merge"]}},
+          "add_stages": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}, "description": "疊上這個 modifier 時加的段：內建的段，或 flow.stages 宣告的自訂段"},
           "research_angles": {"type": "array", "items": {"type": "string"}},
           "design_lenses": {"type": "array", "items": {"type": "string"}},
           "deliver_axes": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}},

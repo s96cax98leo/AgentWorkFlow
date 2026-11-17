@@ -525,9 +525,15 @@ pub fn resolve_model(profile: &Value, role: &Value, stage: &Value, suggested: &V
 
 // ------------------------------------------------------------------ recipe 解析
 
-fn order(stages: &[Value]) -> R<Vec<Value>> {
+/// 依 `full`（profile 的全部段：內建＋`flow` 宣告的自訂段，見 [`crate::stages::flow_order`]）的順序排；不在 `full` 裡的不留。
+fn order(full: &[String], stages: &[Value]) -> R<Vec<Value>> {
     for x in stages { hashable(x)?; }
-    Ok(SDLC.iter().filter(|x| has_str(stages, x)).map(|x| s(x)).collect())
+    Ok(full.iter().filter(|x| has_str(stages, x)).map(|x| s(x)).collect())
+}
+
+/// `stages` 裡不在 `full` 的字串（不是內建的段、profile 的 flow 也沒有宣告），照原順序。
+fn unknown_stages(full: &[String], stages: &[Value]) -> Vec<String> {
+    stages.iter().filter_map(Value::as_str).filter(|x| !full.iter().any(|f| f == x)).map(str::to_string).collect()
 }
 
 fn union_vec(mut out: Vec<Value>, b: &Value) -> R<Vec<Value>> {
@@ -597,7 +603,14 @@ pub fn resolve(profile: &Value, name: &Value, modifiers: &Value, size: &Value) -
     }
     let mut with_plan = vec![s("plan")];
     with_plan.extend(iter(&stages0)?);
-    let mut stages = order(&with_plan)?;
+    // profile 有 flow 時，段名要認得：內建七段，或 flow 宣告過的自訂段。不認得的不能默默略過（呼叫端看到 errors 會停下交人）。
+    // 沒有 flow 的 profile 照舊（不是內建的段名直接略過；那種 profile 由 schema 的語意規則擋），輸出和原本逐字相同
+    let full = crate::stages::flow_order(profile);
+    let has_flow = profile.get("flow").is_some_and(Value::is_object);
+    for x in unknown_stages(&full, &with_plan).into_iter().filter(|_| has_flow) {
+        errors.push(s(&format!("recipe {} 的段 {x} 不認得（不是內建的段，profile 的 flow 也沒有宣告）", str_of(&used))));
+    }
+    let mut stages = order(&full, &with_plan)?;
     if pyfmt::eq(size, &s("small")) {
         if let Some(Value::Object(sm)) = bo.get("small") {
             if let Some(v) = sm.get("research_angles") { r.insert("research_angles".into(), Value::Array(iter(v)?)); }
@@ -613,7 +626,10 @@ pub fn resolve(profile: &Value, name: &Value, modifiers: &Value, size: &Value) -
             continue;
         }
         applied.push(m.clone());
-        stages = order(&union_vec(stages, dget(md, "add_stages")?)?)?;
+        for x in unknown_stages(&full, &iter_or(dget(md, "add_stages")?)?).into_iter().filter(|_| has_flow) {
+            errors.push(s(&format!("modifier {} 的 add_stages 有不認得的段：{x}", str_of(&m))));
+        }
+        stages = order(&full, &union_vec(stages, dget(md, "add_stages")?)?)?;
         for k in ["research_angles", "design_lenses", "deliver_axes"] {
             let merged = union(&r[k], dget(md, k)?)?;
             r.insert(k.into(), Value::Array(merged));
@@ -679,11 +695,26 @@ pub fn stricter_or_equal(new: &Value, old: &Value) -> R<Vec<String>> {
 /// escalate 用：以 new 為準，再把 old 有、new 沒有的段、lens、審查軸、測試模式補回去，審查等級取較嚴者。
 /// 結果一定 stricter_or_equal 於 old 與 new。build_kinds、plan_mode 照 new（升級本來就是換一種做法）。
 pub fn merge_stricter(new: &Value, old: &Value) -> R<Value> {
+    merge_stricter_in(&Value::Null, new, old)
+}
+
+/// 同 [`merge_stricter`]，段的順序照 `profile`（內建段＋`flow` 宣告的自訂段）。
+/// 兩邊有、profile 卻沒宣告的自訂段不會被丟掉（丟掉等於少一段）：排在最後一個內建段之前，由 `stages::flow_tamper` 另外擋。
+pub fn merge_stricter_in(profile: &Value, new: &Value, old: &Value) -> R<Value> {
     let mut m = match new {
         Value::Object(o) => o.clone(),
         _ => return Err(no_attr(new, "get")),
     };
-    m.insert("stages".into(), Value::Array(order(&union(dget(new, "stages")?, dget(old, "stages")?)?)?));
+    let both = union(dget(new, "stages")?, dget(old, "stages")?)?;
+    let full = crate::stages::flow_order(profile);
+    let mut merged = order(&full, &both)?;
+    // 只有給了 profile 才保留（沒給 profile 的 merge_stricter 照舊：不是內建的段名直接略過，輸出和原本逐字相同）
+    let stray: Vec<Value> = unknown_stages(&full, &both).iter().filter(|x| crate::stages::flow_id_ok(x)).map(|x| s(x)).collect();
+    if profile.is_object() && !stray.is_empty() {
+        let at = merged.iter().rposition(|x| x.as_str() == Some(crate::stages::FLOW_NO_ANCHOR)).unwrap_or(merged.len());
+        merged.splice(at..at, stray);
+    }
+    m.insert("stages".into(), Value::Array(merged));
     for k in ["design_lenses", "deliver_axes", "research_angles"] {
         m.insert(k.into(), Value::Array(union(dget(new, k)?, dget(old, k)?)?));
     }
@@ -1292,7 +1323,7 @@ pub fn run_case(case: &Value) -> R<Value> {
     if let Some(oc) = case.get("old") {
         let old = resolve(&prof, dget(oc, "recipe")?, dget(oc, "modifiers")?, dget(oc, "size")?)?;
         out.insert("escalate_errors".into(), strings(escalate_errors(&r, &old)?));
-        let merged = merge_stricter(&r, &old)?;
+        let merged = merge_stricter_in(&prof, &r, &old)?;
         out.insert("merged_stages".into(), merged["stages"].clone());
         let ok = stricter_or_equal(&merged, &old)?.is_empty() && stricter_or_equal(&merged, &r)?.is_empty();
         out.insert("merged_ok".into(), Value::Bool(ok));
