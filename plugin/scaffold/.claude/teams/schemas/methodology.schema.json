@@ -492,6 +492,7 @@
         "min_confidence": {"type": "number", "minimum": 0, "maximum": 0.8, "description": "審查發現的信心門檻（沒寫用 0.8）。只能調低：門檻越低留下的發現越多；高於 0.8 會放掉內建本來會留的發現，不接受"},
         "max_nits": {"type": "integer", "minimum": 0, "maximum": 50, "description": "event-pr-review 的報告裡 Nit 最多列幾則（沒寫用 5）"},
         "diff_command": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n`]+$", "description": "event-pr-review 取 diff 的方式，原樣寫進每張派工單（沒寫用「gh pr diff／git diff」）。一行、不含反引號；例如不用 GitHub 的專案寫「glab mr diff 或 git diff」。只是告訴 agent 怎麼取，守門規則（不 approve、不 merge、不 comment）照舊"},
+        "labels": {"type": "object", "additionalProperties": false, "description": "event-pr-review 的報告裡三個嚴重度怎麼寫（沒寫的用內建的 Important、Nit、Pre-existing）。三個詞要彼此不同；只改報告的寫法，交件信封的 severity 不變", "properties": {"important": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[^|\\[\\]\\r\\n`]+$", "description": "重要的發現（沒寫用 Important）"}, "nit": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[^|\\[\\]\\r\\n`]+$", "description": "小問題（沒寫用 Nit；max_nits 限制的就是這一類）"}, "pre_existing": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[^|\\[\\]\\r\\n`]+$", "description": "這次改動之前就有的問題（沒寫用 Pre-existing）"}}},
         "lenses": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "event-pr-review 沒帶 args.lenses 時用哪些 lens（沒寫用內建六個：standards、spec、bugs、security、design、history）。可以寫自己定義的 lens（lenses.pr_review；沒寫那張表時用 lenses.deliver）；寫了內建與名稱表都沒有的名字，profile 判不合規則、workflow 開工前停下交人"}
       }
     },

@@ -222,7 +222,11 @@
       }
     },
     "review": {
-      "diff_command": "glab mr diff 或 git diff origin/main...HEAD"
+      "diff_command": "glab mr diff 或 git diff origin/main...HEAD",
+      "labels": {
+        "important": "必修",
+        "nit": "小建議"
+      }
     }
   }
 }

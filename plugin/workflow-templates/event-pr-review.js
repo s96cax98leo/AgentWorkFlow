@@ -311,6 +311,21 @@ const MIN_CONF = (typeof REVIEW_CONF === 'number' && REVIEW_CONF >= 0 && REVIEW_
 const MAX_NITS = (Number.isInteger(REVIEW.max_nits) && REVIEW.max_nits >= 0 && REVIEW.max_nits <= 50) ? REVIEW.max_nits : 5
 // 取 diff 的方式：profile 的 review.diff_command（一行、200 字以內；沒寫或不合法用 gh pr diff／git diff）。只是寫在派工單上的做法，守門規則照舊
 const DIFF_HOW = awfLine(REVIEW.diff_command, 200, 'gh pr diff／git diff')
+// 報告裡三個嚴重度的詞：profile 的 review.labels（important、nit、pre_existing；各 1–20 字的一行、不含 | [ ]、三個彼此不同）。
+// 沒寫的用內建的；有一個不合法就整組用內建的（Important、Nit、Pre-existing）。只改報告的寫法，信封的 severity 不變
+const LABELS = (() => {
+  const d = { important: 'Important', nit: 'Nit', pre_existing: 'Pre-existing' }
+  const v = REVIEW.labels
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return d
+  const out = {}
+  for (const k of Object.keys(d)) {
+    if (!Object.prototype.hasOwnProperty.call(v, k)) { out[k] = d[k]; continue }
+    const t = awfLine(v[k], 20, '')
+    if (!t || /[|[\]]/.test(t)) return d
+    out[k] = t
+  }
+  return new Set(Object.values(out)).size === 3 ? out : d
+})()
 const CTX = `審查目標：${A.target}\n本機 repo：${A.repo}\nrun 目錄：${A.run_dir}\n只讀：取 diff 用 ${DIFF_HOW}，不 approve、不 merge、不 comment。`
 /*@snippet:challenge*/
 // ── 片段 challenge（workflow-templates/snippets/challenge.js）：skeptic 的 verdicts 對回事項，判定哪些被推翻、哪些沒驗證到 ──
@@ -634,7 +649,7 @@ const kept = dedupeFindings(reviewed, 'lens')
 log(`保留 ${kept.length} 則（去重後）`)
 
 phase('Write')
-const docs = await awfAgent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir}/review.md：依 lens 分節，每則「[Important|Nit|Pre-existing] file:line — 問題 — 建議 — 信心」，Nit 最多 ${MAX_NITS} 則。要不要貼到 PR 由使用者決定。跑 awf check-rules。\n發現：${JSON.stringify(kept)}\npayload 用 docs。`,
+const docs = await awfAgent(`${CTX}\n\n## 派工單\n寫審查報告 ${A.run_dir}/review.md：依 lens 分節，每則「[${LABELS.important}|${LABELS.nit}|${LABELS.pre_existing}] file:line — 問題 — 建議 — 信心」，${LABELS.nit} 最多 ${MAX_NITS} 則。要不要貼到 PR 由使用者決定。跑 awf check-rules。\n發現：${JSON.stringify(kept)}\npayload 用 docs。`,
   { label: 'write', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS })
 if (!docs) { missing.push('write'); return halt('write', { findings: kept }) }
 

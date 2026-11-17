@@ -767,6 +767,14 @@ fn name_table_errors(doc: &Value, refs: bool) -> Vec<String> {
             }
         }
     }
+    // PR 審查報告的嚴重度詞（review.labels）：補上內建的之後三個要彼此不同（和範本 event-pr-review.js 的 LABELS 同一套；範本遇到重複是整組退回內建）
+    if let Some(l) = get(doc, "review").and_then(|r| get(r, "labels")).and_then(Value::as_object) {
+        let pick = |k: &str, d: &str| l.get(k).and_then(Value::as_str).unwrap_or(d).to_string();
+        let words = [pick("important", "Important"), pick("nit", "Nit"), pick("pre_existing", "Pre-existing")];
+        if words.iter().collect::<BTreeSet<_>>().len() != words.len() {
+            errs.push(format!("review.labels 的三個詞要彼此不同（沒寫的算內建的 Important、Nit、Pre-existing；收到 {}）", words.join("、")));
+        }
+    }
     if let Some(t) = get(doc, "briefs").and_then(|b| get(b, "record_pattern")).and_then(Value::as_str) {
         if t.contains(['/', '\\']) || t == "." || t == ".." {
             errs.push(format!("briefs.record_pattern 只能是檔名樣式，不能有 / 或 \\（收到 {t}）"));
