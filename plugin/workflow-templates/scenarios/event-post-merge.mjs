@@ -38,5 +38,20 @@ export default [
     fakes: { ...BLOCKER, write: ENV({ documents: [{ path: '/tmp/run/給決策者.md', kind: 'for_owner', audience: 'owner' }] }) },
     expect: halted('rule_check'),
   },
+  {
+    // 輸出語言是英文：凍結旗標用固定代號認，不靠中文字
+    name: '凍結旗標：writer 用英文輸出（notes 是 freeze-flag 開頭的英文）→ 認得、不誤判成沒回報',
+    fakes: { ...BLOCKER, write: ENV({ documents: [{ path: '/tmp/run/for-owner.md', kind: 'for_owner', audience: 'owner' }, { path: '/tmp/runs/auto-merge.freeze.json', kind: 'other', audience: 'agents', notes: 'freeze-flag: auto-merge frozen until the revert lands' }], rule_check: 'pass' }) },
+    expect: (r) => [
+      ...(r.out.halted ? [`不該 halted：${r.out.halt_reason}`] : []),
+      ...(r.out.freeze_flag === '/tmp/runs/auto-merge.freeze.json' ? [] : [`freeze_flag 應取 writer 回報的路徑：${r.out.freeze_flag}`]),
+      ...(/notes 以固定代號 freeze-flag 開頭/.test(r.prompts.write || '') ? [] : ['writer 派工單沒有要求用固定代號']),
+    ],
+  },
+  {
+    name: '凍結旗標：英文輸出但沒有任何一份的 notes 帶代號 → halted（沒回報路徑）',
+    fakes: { ...BLOCKER, write: ENV({ documents: [{ path: '/tmp/run/for-owner.md', kind: 'for_owner', audience: 'owner', notes: 'summary for the owner' }, { path: '/tmp/run/revert-proposal.md', kind: 'other', audience: 'agents', notes: 'revert proposal' }], rule_check: 'pass' }) },
+    expect: halted('freeze-flag'),
+  },
   ...eventPrefixScenarios('post-merge', { fakes: BLOCKER }),
 ]

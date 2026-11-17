@@ -571,7 +571,7 @@ log(`問題 ${problems.length} 則：歸因成立 ${confirmed.length}、未確�
 phase('Write')
 const docs = await awfAgent(
   `${CTX}\n\n## 派工單\n1. 寫 revert 提案到 ${A.run_dir}/revert-proposal.md：每個歸因成立的合併 commit 一節（git revert <sha> 的範圍、影響檔案、會撤掉的需求、衝突預測、驗證方式）；歸因未確認的另列一節，寫明要人判斷。提案只是文件，不執行。\n` +
-  (freeze ? `2. 寫凍結旗標：先讀 ${FREEZE_SRC} 取得凍結檔路徑（沒有設定檔或沒設 freeze_file 時，用 awf merge-gate 的 freeze_file() 預設值，位在 ${RUNS} 下），寫入 JSON：{"frozen": true, "reason": "<一句話>", "merge_shas": [...], "proposal": "${A.run_dir}/revert-proposal.md", "lift_when": "<解除條件>"}。實際寫入的路徑列在 documents（kind=other，notes 寫「凍結旗標」）。\n` : '2. 不寫凍結旗標（沒有 blocker）。\n') +
+  (freeze ? `2. 寫凍結旗標：先讀 ${FREEZE_SRC} 取得凍結檔路徑（沒有設定檔或沒設 freeze_file 時，用 awf merge-gate 的 freeze_file() 預設值，位在 ${RUNS} 下），寫入 JSON：{"frozen": true, "reason": "<一句話>", "merge_shas": [...], "proposal": "${A.run_dir}/revert-proposal.md", "lift_when": "<解除條件>"}。實際寫入的路徑列在 documents（kind=other，notes 以固定代號 freeze-flag 開頭：照抄、不翻譯，後面可以接說明）。\n` : '2. 不寫凍結旗標（沒有 blocker）。\n') +
   `3. 寫給決策者版到 ${A.run_dir}/給決策者.md：發生什麼、哪個合併、建議（由人合併 revert PR／先凍結再查／判 flaky 解除），每個選項附代價。\n` +
   `4. 每份跑 awf check-rules（給決策者版加 --audience owner），全過才算完成。payload 用 docs：documents 列出每份（給決策者版 audience=owner），rule_check 填「pass」或「fail：<沒過的規則>」。\n` +
   `歸因成立：${JSON.stringify(confirmed)}\n歸因未確認：${JSON.stringify(unconfirmed)}`,
@@ -579,8 +579,11 @@ const docs = await awfAgent(
 )
 if (!docs) { missing.push('write'); return halt('write', { freeze_recommended: freeze, confirmed, unconfirmed, watch, challenge }) }
 const ruleIssue = ruleCheck(docs)
-const freezeDoc = freeze ? (docs.payload.documents || []).find((d) => /凍結/.test(d.notes || '')) : null
-const freezeIssue = freeze && !freezeDoc ? 'writer 沒有回報凍結旗標的實際路徑（documents 裡 notes 含「凍結」的那份）' : null
+// 凍結旗標那一份用固定的 ASCII 代號認（freeze-flag；不看輸出語言）。原本比對中文的「凍結」，輸出語言不是中文時會誤判成沒回報而停下；
+// 舊寫法（notes 含「凍結」）照樣認得
+const FREEZE_NOTE = /freeze[-_ ]?flag|凍結/i
+const freezeDoc = freeze ? (docs.payload.documents || []).find((d) => FREEZE_NOTE.test(d.notes || '')) : null
+const freezeIssue = freeze && !freezeDoc ? 'writer 沒有回報凍結旗標的實際路徑（documents 裡 notes 以 freeze-flag 開頭的那份）' : null
 
 return {
   trace: awfTrace(),
