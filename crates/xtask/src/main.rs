@@ -14,6 +14,7 @@ const USAGE: &str = "用法：cargo xtask <指令>
   check-docs      文件裡的角色、workflow、command 數量與名單要和實際檔案一致
   check-recipes   recipe 解析：awf_core::recipe 與 snippets/recipe.js 對 golden-set/recipes 的結果要相同
   check-kernel    執行核心片段（snippets/kernel.js）的單元檢查
+  check-i18n      派工單的字串表（workflow-templates/i18n/*.json）：zh-TW＝片段的內建字、各語言的鍵與變數一致
   check-patterns  pattern 庫（snippets/patterns.js）與自訂腳本端到端
   check-budget [--update] [--budget <檔>]
                   派工數與派工單字數對 golden-set/token-budget.json（超過 10% 失敗；--update 寫回基準）
@@ -33,7 +34,7 @@ const USAGE: &str = "用法：cargo xtask <指令>
   checksums [--dir <目錄>] [--write|--check] [--require-all]
                   執行檔的 sha256 與原始碼雜湊（checksums.json；預設目錄 plugin/bin）
 
-golden、check-recipes、check-kernel、check-patterns、check-budget、check-supply、gen-legacy 可以加 --root <目錄>
+golden、check-recipes、check-kernel、check-i18n、check-patterns、check-budget、check-supply、gen-legacy 可以加 --root <目錄>
 指定 repo 根目錄（預設是這個 repo；測試用）。";
 
 fn finish((code, out, err): (i32, String, String)) -> ExitCode {
@@ -59,7 +60,7 @@ fn main() -> ExitCode {
         Some(xtask::launchers::ECHO_COMMAND) => ExitCode::from(xtask::launchers::echo_main(rest).clamp(0, 255) as u8),
         Some("check-all") => ExitCode::from(xtask::check_all::run(&xtask::repo_root(), rest).clamp(0, 255) as u8),
         Some("bench") => finish(xtask::bench::run_captured(&xtask::repo_root(), rest)),
-        Some(name @ ("golden" | "check-recipes" | "check-kernel" | "check-patterns" | "check-budget" | "check-supply" | "gen-legacy")) => {
+        Some(name @ ("golden" | "check-recipes" | "check-kernel" | "check-i18n" | "check-patterns" | "check-budget" | "check-supply" | "gen-legacy")) => {
             let (root, rest) = match xtask::util::take_opt(rest, "--root") {
                 Ok((root, rest)) => (root.map(std::path::PathBuf::from).unwrap_or_else(xtask::repo_root), rest),
                 Err(e) => {
@@ -72,6 +73,7 @@ fn main() -> ExitCode {
                 "gen-legacy" => xtask::gen_legacy::run_captured(&root, &rest),
                 "check-recipes" => xtask::check_recipes::run_captured(&root),
                 "check-kernel" => xtask::check_kernel::run_captured(&root),
+                "check-i18n" => xtask::check_i18n::run_captured(&root),
                 "check-patterns" => xtask::check_patterns::run_captured(&root),
                 "check-budget" => xtask::check_budget::run_captured(&root, &rest),
                 _ => xtask::check_supply::run_captured(&root),

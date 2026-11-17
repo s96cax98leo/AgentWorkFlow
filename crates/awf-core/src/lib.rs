@@ -15,6 +15,7 @@ pub mod deliverables;
 pub mod doctor;
 pub mod golden;
 pub mod hooks;
+pub mod i18n;
 pub mod init;
 pub mod kb;
 pub mod kg;

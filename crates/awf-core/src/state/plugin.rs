@@ -264,6 +264,8 @@ pub fn render(env: &Env, name: &str, plugin: Option<&str>, args: Option<&Value>)
     if !missing.is_empty() {
         return awf_err(format!("methodology.json 的 extensions 有 agent 沒登記在 guard.config.json 的 extension_agents：{}（用 /agent-workflow:add-agent 設定）", missing.join("、")));
     }
+    // 派工單的字串表：prompt_lang 不是 zh-TW 時內嵌語言檔（crate::i18n；沒設時內嵌的 profile 原樣）
+    let meth = crate::i18n::augment(meth.as_ref(), &i18n_dirs(env, plugin));
     let mut text = build::embed_methodology(&text, meth.as_ref());
     if let Some(a) = args {
         let line = format!("\n{ARGS_LINE}\n");
@@ -282,6 +284,11 @@ pub fn render(env: &Env, name: &str, plugin: Option<&str>, args: Option<&Value>)
         notes.push(format!("plugin 是 {pv}，專案的工具是 {tv}：跑 awf init --upgrade 讓兩邊一致（不一致時閘門工具可能不認得新版 workflow 的回傳）"));
     }
     Ok((text, notes))
+}
+
+/// 字串表（`i18n/<語言>.json`）要找的目錄，依先後：這次用的 plugin、模版自己（[`Env::template`]）。
+fn i18n_dirs(env: &Env, plugin: Option<&str>) -> Vec<std::path::PathBuf> {
+    plugin.into_iter().chain(env.template.as_deref()).map(|p| crate::template::i18n(std::path::Path::new(p))).collect()
 }
 
 /// 自訂腳本可以派的 agent_type：模版角色（不含 dev-merge-steward）加上 guard.config.json 登記過的擴充 agent。
@@ -364,6 +371,9 @@ fn render_script(env: &Env, src: &str, stage: &str, args: &Value) -> A<(String, 
         Some(Value::Number(n)) if !n.is_f64() && n.as_i64().is_some_and(|x| x > 0) || n_is_big(n) => n.to_string(),
         _ => "40".to_string(),
     };
+    // 字串表：和片段同一個來源（片段目錄旁邊的 i18n/），再找模版自己的
+    let dirs: Vec<std::path::PathBuf> = crate::i18n::beside_snippets(std::path::Path::new(&sdir)).into_iter().chain(i18n_dirs(env, None)).collect();
+    let meth = crate::i18n::augment(meth.as_ref(), &dirs);
     let js = build::dumps_compact;
     let s_js = js(&json!(stage));
     let meth_js = meth.as_ref().map(js).unwrap_or_else(|| "null".to_string());
