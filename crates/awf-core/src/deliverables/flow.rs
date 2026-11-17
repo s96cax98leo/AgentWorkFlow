@@ -191,6 +191,13 @@ pub fn pack_args_with(stage: &str, run: &str, root: &str, repo: Option<&str>, da
     let mut out = Map::new();
     // 有交付設定就寫交付摘要（給客戶看的這次交付說明）
     out.insert("summary".into(), json!(posix(&pyish::pjoin(run, &format!("deliver/{SUMMARY_NAME}")))));
+    // 交付摘要的節與讀者（設定的 summary_sections、audience）：有寫而且合規則才帶；沒帶時範本用內建的三節與「客戶」，資料包逐字不變
+    if let Some(v) = summary_sections(&cfg) {
+        out.insert("summary_sections".into(), v);
+    }
+    if let Some(a) = audience(&cfg) {
+        out.insert("audience".into(), json!(a));
+    }
     let mut aff = list("affected");
     let mut glines = Vec::new();
     if let Some((g, prefix)) = kg {
@@ -221,6 +228,25 @@ pub fn pack_args_with(stage: &str, run: &str, root: &str, repo: Option<&str>, da
         out.insert("hints".into(), Value::Array(hints));
     }
     (Value::Object(out), notes, glines)
+}
+
+/// 一行短字：前後沒有空白、沒有換行與反引號、1–`max` 個字（規則同 challenge 片段的 `awfLine`，字數以 UTF-16 單位計，和範本一致）。
+fn short_line(s: &str, max: usize) -> bool {
+    let n = s.encode_utf16().count();
+    n >= 1 && n <= max && s.trim() == s && !s.contains(['\r', '\n', '`'])
+}
+
+/// 交付摘要要有哪些節（設定的 `summary_sections`）：1–8 個、每個 40 字以內、不重複才採用；沒寫或不合規則回 `None`（範本用內建的三節）。
+pub fn summary_sections(cfg: &Value) -> Option<Value> {
+    let a = get(cfg, "summary_sections").as_array()?;
+    let names: Vec<&str> = a.iter().filter_map(Value::as_str).collect();
+    let uniq: BTreeSet<&str> = names.iter().copied().collect();
+    (!a.is_empty() && a.len() <= 8 && names.len() == a.len() && uniq.len() == a.len() && names.iter().all(|s| short_line(s, 40))).then(|| json!(names))
+}
+
+/// 交付文件的讀者（設定的 `audience`）：1–20 字的一行才採用；沒寫或不合規則回 `None`（範本用「客戶」）。
+pub fn audience(cfg: &Value) -> Option<String> {
+    get(cfg, "audience").as_str().filter(|s| short_line(s, 20)).map(str::to_string)
 }
 
 // ------------------------------------------------------------------ 需求追溯矩陣

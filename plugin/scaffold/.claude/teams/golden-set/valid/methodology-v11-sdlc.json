@@ -127,6 +127,19 @@
         "guidance": "示範客戶 ACME：先附告警截圖的連結，再寫重現步驟。",
         "tasks_rule": "先補一個重現問題的測試子任務（kind=test），修正的子任務依賴它；另補監控告警的子任務。"
       }
+    },
+    "deliverables": {
+      "enabled": true,
+      "documents": [
+        {
+          "id": "delivery-summary"
+        }
+      ],
+      "summary_sections": [
+        "交付內容",
+        "驗證方式"
+      ],
+      "audience": "內部使用單位"
     }
   }
 }

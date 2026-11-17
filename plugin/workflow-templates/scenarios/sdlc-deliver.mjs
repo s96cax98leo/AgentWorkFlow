@@ -216,4 +216,20 @@ export default [
       ]
     },
   },
+  {
+    // 交付摘要的節與讀者（交付設定的 summary_sections、audience，由 awf pack 帶進 args.deliverables）
+    name: '交付文件：沒帶 summary_sections、audience → 派工單照內建的三節與「客戶」',
+    args: { deliverables: { summary: '_tpm/runs/x/deliver/交付摘要.md' } },
+    expect: (r) => { const p = r.prompts.deliverables || ''; return /交付文件是給客戶看的正式文件/.test(p) && /用客戶讀得懂的話。/.test(p) && /交付摘要\.md：三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」，同樣遵守第 3 點。/.test(p) ? [] : ['沒設定時交付文件的派工單要和原本逐字相同'] },
+  },
+  {
+    name: '交付文件：summary_sections、audience 有帶 → 派工單照設定的節與讀者',
+    args: { deliverables: { summary: '_tpm/runs/x/deliver/交付摘要.md', summary_sections: ['交付內容', '驗證方式'], audience: '內部使用單位' } },
+    expect: (r) => { const p = r.prompts.deliverables || ''; return /交付文件是給內部使用單位看的正式文件/.test(p) && /用內部使用單位讀得懂的話。/.test(p) && /交付摘要\.md：2 個小節「交付內容」「驗證方式」，同樣遵守第 3 點。/.test(p) && !/需要客戶配合的事/.test(p) ? [] : ['交付文件的派工單沒有照 summary_sections／audience'] },
+  },
+  {
+    name: '交付文件：summary_sections 不合法（重複、有換行）、audience 太長 → 照內建',
+    args: { deliverables: { summary: '_tpm/runs/x/deliver/交付摘要.md', summary_sections: ['甲', '甲'], audience: 'x'.repeat(21) } },
+    expect: (r) => { const p = r.prompts.deliverables || ''; return /交付文件是給客戶看的正式文件/.test(p) && /三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」/.test(p) ? [] : ['不合法的 summary_sections／audience 要退回內建'] },
+  },
 ]
