@@ -293,6 +293,14 @@ const MAX_AGENTS = (Number.isInteger((MP.limits || {}).max_agents) ? MP.limits.m
 awfKernelInit({ profile: METHODOLOGY, stage: 'post-merge', modifiers: [], max_agents: MAX_AGENTS })
 const GH = A.gh_repo || '{{FORK_REPO}}'
 const RUNS = '{{RUNS_DIR}}'
+// 合併後監看的可調值（profile 的 post_merge；沒寫或不合法用內建值＝原本寫死的字）
+const PM = MP.post_merge && typeof MP.post_merge === 'object' && !Array.isArray(MP.post_merge) ? MP.post_merge : {}
+// 讀 CI 的指令：post_merge.ci_commands 的 list（列出 base 分支的 CI）與 failed（看失敗的 log）。各一行、300 字以內、不含反引號；
+// 可用 {repo}（GitHub repo）與 {branch}（base 分支）。沒寫或不合法的那一個用內建的 gh 指令。只是寫在派工單上的做法，守門規則照舊
+const CI_CMDS = PM.ci_commands && typeof PM.ci_commands === 'object' && !Array.isArray(PM.ci_commands) ? PM.ci_commands : {}
+const ciFill = (t) => t.replace(/\{repo\}/g, () => GH).replace(/\{branch\}/g, () => '{{BASE_BRANCH}}')
+const CI_LIST = ciFill(awfLine(CI_CMDS.list, 300, 'gh run list --repo {repo} --branch {branch}'))
+const CI_FAILED = ciFill(awfLine(CI_CMDS.failed, 300, 'gh run view --log-failed'))
 const AUDIT = `${RUNS}/merge-audit.jsonl`
 // 凍結檔路徑可在 guard.config.json 的 auto_merge.freeze_file 改；workflow 不能讀檔，由 writer 先讀設定再寫，和 hook、awf merge-gate 讀同一個檔
 const FREEZE_SRC = '.claude/teams/guard.config.json 的 auto_merge.freeze_file'
@@ -546,7 +554,7 @@ const ruleCheck = (d) => {
 
 phase('Watch')
 const watch = await awfAgent(
-  `${CTX}\n\n## 派工單\n1. 讀 ${AUDIT}，找出監看範圍內 decision=merge 的紀錄。\n2. 讀 {{BASE_BRANCH}} 的 CI（gh run list --repo ${GH} --branch {{BASE_BRANCH}}；失敗的看 gh run view --log-failed）。\n3. 失敗歸因到合併 commit；每則發現的 location 寫合併 commit SHA 與 CI run URL，recommendation 寫 git revert <sha> 的範圍說明（影響檔案、會一起撤掉的需求、和之後 commit 的衝突預測）與是否凍結自動合併。\n4. {{BASE_BRANCH}} 正常就交一則 severity=info。讀不到 CI 或 merge-audit 時寫 important，說明 not_verifiable。\npayload 用 findings（lens=post-merge）。`,
+  `${CTX}\n\n## 派工單\n1. 讀 ${AUDIT}，找出監看範圍內 decision=merge 的紀錄。\n2. 讀 {{BASE_BRANCH}} 的 CI（${CI_LIST}；失敗的看 ${CI_FAILED}）。\n3. 失敗歸因到合併 commit；每則發現的 location 寫合併 commit SHA 與 CI run URL，recommendation 寫 git revert <sha> 的範圍說明（影響檔案、會一起撤掉的需求、和之後 commit 的衝突預測）與是否凍結自動合併。\n4. {{BASE_BRANCH}} 正常就交一則 severity=info。讀不到 CI 或 merge-audit 時寫 important，說明 not_verifiable。\npayload 用 findings（lens=post-merge）。`,
   { label: 'watch', phase: 'Watch', agentType: NS + 'dev-release-watcher', schema: FINDINGS },
 )
 if (!watch) { missing.push('watch'); return halt('watch', { reason: 'watcher 沒有交件；狀態不明，交主 session 判斷是否先凍結自動合併' }) }
