@@ -608,7 +608,12 @@ if (cycle.length) throw new Error(`相依有循環：${cycle.join('、')}`)
 log(`子任務 ${subtasks.length} 個：轉 SDLC ${toSdlc.length}、等 SDLC ${waiting.length}、本流程分 ${layers.length} 層`)
 
 // 上游相關的子任務：tpm-researcher 用上游模式（merge-tree 衝突預測、影響範圍、時間線）
-const UPSTREAM_RE = BR_KEYS ? new RegExp(BR_KEYS.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i') : /上游|upstream|PR|衝突|merge/i
+// 關鍵字：profile 的 briefs.upstream_keywords，沒寫用文件寫的四個（上游、upstream、衝突、PR；原本多了一個 merge）。不分大小寫；
+// 純英數的關鍵字整字比對（前後不能緊接英文字母），PR 才不會誤中 prompt、product、improve
+const UPSTREAM_RE = new RegExp((BR_KEYS || ['上游', 'upstream', '衝突', 'PR']).map((x) => {
+  const e = x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return /^[A-Za-z0-9]+$/.test(x) ? `(?:^|[^A-Za-z])${e}(?![A-Za-z])` : e
+}).join('|'), 'i')
 const results = []
 const claims = []
 for (const layer of layers) {

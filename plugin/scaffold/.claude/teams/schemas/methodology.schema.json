@@ -668,7 +668,7 @@
         "outputs_section": {"type": "string", "minLength": 1, "maxLength": 40, "description": "簡報的哪一節寫產出路徑（沒寫用 §3）"},
         "acceptance_section": {"type": "string", "minLength": 1, "maxLength": 40, "description": "簡報的哪一節寫驗收標準（沒寫用 §4）"},
         "record_pattern": {"type": "string", "minLength": 1, "maxLength": 80, "description": "執行紀錄範例檔的檔名樣式，在 BRIEFS_DIR 底下（沒寫用 *_執行紀錄.md）；只能是檔名，不能有 / 或 \\"},
-        "upstream_keywords": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 40}, "description": "子任務標題含這些字（不分大小寫）就用上游模式（沒寫用 上游、upstream、PR、衝突、merge）"}
+        "upstream_keywords": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 40}, "description": "子任務標題含這些字（不分大小寫）就用上游模式（沒寫用 上游、upstream、衝突、PR）。純英數的關鍵字整字比對：前後不能緊接英文字母，PR 不會誤中 prompt"}
       }
     },
     "plan_modes": {
