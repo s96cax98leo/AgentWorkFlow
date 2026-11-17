@@ -43,4 +43,24 @@ export default [
   },
   ...roleScenarios('design.recheck', 'tpm-skeptic', /^recheck:/),
   ...kgScenarios(),
+  {
+    // 修正輪和第一輪（sdlc-design）用同一套規則：以前修正輪看不到 profile 的指引，重拆的子任務也沒被要求標 spec_refs／expected_red
+    name: '修正輪的規則和第一輪一致：profile 的指引、產出文件、拆子任務的規則（spec_refs、expected_red）都在派工單上',
+    profile: { stages: { design: { artifacts: ['design.md', 'spec.md', 'plan.md'], requirement_style: '示範客戶 ACME 的寫法', guidance: '示範客戶 ACME：架構取捨寫 ADR。' } } },
+    expect: (r) => {
+      const p = r.prompts.revise || ''
+      return [
+        ...(/修正 \S+ 的 design、spec、plan，並重新拆子任務/.test(p) && !/ADR 草稿/.test(p) ? [] : ['要修正的文件要照 stages.design.artifacts，不寫死 ADR']),
+        ...(/- 產出文件（放在 \S+\/）：design\.md、spec\.md、plan\.md/.test(p) && /- 需求／驗收條件的寫法：示範客戶 ACME 的寫法。/.test(p) && /- profile 的指引：示範客戶 ACME：架構取捨寫 ADR。/.test(p) ? [] : ['修正輪要帶 design 的產出文件、需求寫法與 profile 的指引']),
+        ...(/- 重新拆的子任務照第一輪的規則：每個子任務獨佔 owns 的檔案/.test(p) && /spec_refs/.test(p) && /expected_red/.test(p) ? [] : ['修正輪重拆子任務要帶第一輪的規則（spec_refs、expected_red）']),
+        ...(/delta spec/.test(p) ? ['不是變更需求不該出現 delta spec 的規則'] : []),
+      ]
+    },
+  },
+  {
+    name: '修正輪：變更需求（plan_mode=impact）帶 delta spec 的規則；不測試先行帶「code 不要依賴 test」',
+    profile: (p) => ({ ...p, stages: { ...(p.stages || {}), build: { ...((p.stages || {}).build || {}), test_first: false, guidance: 'x' } } }),
+    args: { recipe: 'change' },
+    expect: (r) => { const p = r.prompts.revise || ''; return /plan_mode=impact）：寫 delta spec/.test(p) && /code 子任務不要依賴 test 子任務/.test(p) ? [] : ['變更需求的修正輪要帶 delta spec 規則與 test_first=false 的說明'] },
+  },
 ]

@@ -1161,6 +1161,12 @@ fn deliverables_errors_with(d: Option<&Value>, place: &str, typed: bool) -> Vec<
             errs.push(format!("{place}.banned_terms_file 不能是機敏檔（{bt}）"));
         }
     }
+    // 交付摘要的節不能重複（schema 的檢查器沒有 uniqueItems）
+    if let Some(a) = get(d, "summary_sections").and_then(Value::as_array) {
+        for n in dup_strings(&a.iter().map(Some).collect::<Vec<_>>()) {
+            errs.push(format!("{place}.summary_sections 的「{n}」重複"));
+        }
+    }
     // 型別不對記錯誤：這幾個清單管的是路徑範圍與隱私放行，當成沒寫就檢查不到
     let docs: Vec<&Value> = objects_of(get(d, "documents"), &format!("{place}.documents"), &mut terrs);
     for n in dup_strings(&docs.iter().map(|x| get(x, "id")).collect::<Vec<_>>()) {

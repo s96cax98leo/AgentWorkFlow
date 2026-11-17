@@ -307,4 +307,19 @@ export default [
       expect: (r) => (/\nprofile 的安全審查做法：補充做法：示範客戶 ACME：另查金流回呼的簽章。\n/.test(r.prompts['security-review'] || '') && !/\/etc\/security/.test(r.prompts['security-review'] || '') ? [] : ['絕對路徑的 docs_dir 不該寫進派工單']),
     },
   ...kgScenarios(),
+    {
+      // 修正分支合進整合分支有衝突時的做法（profile 的 conventions.branch.integrate_conflicts）
+      name: '整合衝突：沒設定或不合法 → 整合修正的派工單照舊寫用中轉分支解',
+      args: { sub_plans: SUB_PLANS },
+      profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), integrate_conflicts: 'rebase' } } }),
+      fakes: { 'verify:api#1': CRIT([crit('A1', 'fail')]), 'verify:ui#1': CRIT([crit('U1', 'fail')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'fail'), crit('ui:U1', 'fail'), crit('integration:I1', 'pass')]) },
+      expect: (r) => (/\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 /.test(r.prompts['integrate:fix#1'] || '') ? [] : ['不合法的 integrate_conflicts 要退回中轉分支']),
+    },
+    {
+      name: '整合衝突：integrate_conflicts=stop → 整合修正的派工單寫中止合併、交人',
+      args: { sub_plans: SUB_PLANS },
+      profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), integrate_conflicts: 'stop' } } }),
+      fakes: { 'verify:api#1': CRIT([crit('A1', 'fail')]), 'verify:ui#1': CRIT([crit('U1', 'fail')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'fail'), crit('ui:U1', 'fail'), crit('integration:I1', 'pass')]) },
+      expect: (r) => (/\n有衝突不要自己解：git merge --abort 還原後以 needs_decision 回報衝突的檔，交人處理。合完跑 /.test(r.prompts['integrate:fix#1'] || '') ? [] : ['整合修正的派工單沒有照 integrate_conflicts=stop']),
+    },
 ]

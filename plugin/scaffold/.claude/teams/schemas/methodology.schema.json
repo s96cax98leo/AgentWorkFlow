@@ -142,7 +142,7 @@
             "roles": {"type": "object", "description": "各角色的額度（鍵是不帶命名空間的角色名）；0＝該角色不限", "additionalProperties": {"type": "integer", "minimum": 0}}
           }
         },
-        "max_agents": {"type": "integer", "minimum": 1, "description": "一支 workflow 一次執行最多派幾個 agent（沒寫用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
+        "max_agents": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "一支 workflow 一次執行最多派幾個 agent（1–1000；沒寫或不在範圍內用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
         "run_brief": {
           "type": "object",
           "description": "選填：長輸出濃縮（awf run-brief）的大小。沒寫或不合範圍的那一項用預設；完整輸出一律在 log 檔",
@@ -376,6 +376,8 @@
           "minLength": 1,
           "description": "選填：禁用字清單（一行一個正規式），交付文件出現就檢查不過"
         },
+        "summary_sections": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^\\s`]([^\\r\\n`]*[^\\s`])?$"}, "description": "選填：交付摘要要有哪些節（不能重複；沒寫用：這次交付了什麼、怎麼驗證、需要客戶配合的事）。sdlc-deliver 寫交付文件的 writer 照它寫"},
+        "audience": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[^\\s`]([^\\r\\n`]*[^\\s`])?$", "description": "選填：交付文件給誰看（寫進派工單的稱呼；沒寫用「客戶」），例如「內部使用單位」。隱私規則不因此放寬"},
         "show_approvers": {"type": "boolean", "description": "選填：功能開發紀錄的核准紀錄要不要寫核准者名字；預設 false（只寫「人工核准」或「依政策自動核准」）"},
         "privacy_allow": {
           "type": "array",
@@ -690,7 +692,7 @@
         "type": "object",
         "required": ["sections"],
         "additionalProperties": false,
-        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}, "refute": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "選填：這個 plan_mode 的 intent 交給 skeptic 反駁時的重點（沒寫用內建的）"}}
+        "properties": {"sections": {"type": "array", "items": {"type": "string"}}, "guidance": {"type": "string"}, "tasks_rule": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S", "description": "選填：沒有 design 段的 recipe 在 plan 段拆子任務時，這個 plan_mode 另外的規則（寫進 tasks 的派工單）。沒寫用內建的：只有 diagnose 有一條「先寫會失敗的重現測試、修正依賴它」；stages.build.test_first 是 false 時內建改成「修正後補回歸測試」"}, "refute": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "選填：這個 plan_mode 的 intent 交給 skeptic 反駁時的重點（沒寫用內建的）"}}
       }
     },
     "requirements": {
@@ -747,6 +749,7 @@
             "naming": {"type": "string"},
             "bases": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 100}, "description": "選填：某些 recipe 專屬的主線分支（recipe 名 → 分支名，不含 remote；remote 一律是守門設定的 base_remote）。沒列的 recipe 用守門設定的 base_branch。例：base_branch 是整合線 develop、hotfix 要從 main 開並併回 main，就寫 hotfix → main。列了的 recipe：狀態機帶給範本的 base、awf publish 的 PR 目標分支、awf recipe check-diff 與交付文件的比對基準都用它（命令列的 --base、--set base= 仍然優先）。鍵要是內建或 profile 自己的 recipe；分支名只收英數與 . _ / -。不合規則時整份不採用。這個值不會讓任何分支變成可以直接 push"},
             "integrate": {"enum": ["merge --no-ff", "merge"], "description": "選填：子任務分支合進整合分支的方式（dev-integrator 讀）。merge --no-ff＝一律留 merge commit（預設）；merge＝可以 fast-forward。只開放保留各子任務 commit 的合併方式"},
+            "integrate_conflicts": {"enum": ["transit", "in-place", "stop"], "description": "選填：子任務分支（sdlc-build）與修正分支（sdlc-test）合進整合分支有衝突時怎麼辦。transit＝照目標 repo 的規範用中轉分支解（預設）；in-place＝直接在整合分支上解；stop＝不解，中止合併、交人處理。跟上 base 的衝突（sdlc-sync）不讀這個值"},
             "patterns": {
               "type": "object",
               "description": "選填：子任務分支與修正分支的命名樣式（sdlc-build、sdlc-test 照它組分支名；worktree 目錄名不變）。一定以 <prefix><epic> 開頭（前綴照 BRANCH_PREFIX），後面先接一個 . _ - 再寫其餘（不能接 /：<prefix><epic> 分支已經存在，git 不允許它底下再開分支）；其餘只能是英數與 . _ -，不能有連續兩個點、不能以 . 或 .lock 結尾。不合規則時範本用內建樣式",

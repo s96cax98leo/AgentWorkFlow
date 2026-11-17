@@ -10,7 +10,7 @@
     "design": {
       "artifacts": ["design.md", "spec.md", "plan.md", "progress.md"],
       "requirement_style": "spec.md 的驗收條件用 EARS 句型（例：「當 <觸發> 時，系統應 <行為>」），逐條對 Story ID，數值與錯誤碼照原文；另有影響系統表、疑慮節、整合修訂與例外節。",
-      "guidance": "design.md 每個需求都寫，照 system_design 的步驟做功能層或系統層 SD；架構取捨寫 ADR（至少 2 個真實選項）。plan.md 寫任務、檔案、測試對應表；progress.md 是從 plan 拆出的清單。",
+      "guidance": "design.md 每個需求都寫，照 system_design 的步驟做功能層或系統層 SD；架構取捨寫 ADR（至少 2 個真實選項）。plan.md 寫任務、檔案、測試對應表；progress.md 是從 plan 拆出的清單。契約不夠用就以 needs_decision 回報，不自己設計新端點。",
       "system_design": {
         "source": "System Design Primer（https://github.com/donnemartin/system-design-primer，CC BY 4.0）；整理見模版 docs/系統設計方法.md",
         "steps": [

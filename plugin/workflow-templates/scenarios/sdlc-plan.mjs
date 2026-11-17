@@ -612,4 +612,53 @@ export default [
     args: { base: undefined }, fakes: FEATURE_TRIAGE,
     expect: (r) => { const ps = Object.entries(r.prompts); return [...(ps.length ? [] : ['沒有派出任何 agent']), ...ps.filter(([, p]) => !/，從 [A-Za-z0-9._-]+\/[A-Za-z0-9._\/-]+ 開）/.test(p) || /從 undefined 開/.test(p)).map(([l]) => `${l} 的派工單沒有主線分支`)] },
   },
+  {
+    // 拆子任務的規則（profile 的 plan_modes.<mode>.tasks_rule）：內建只有 diagnose 有一條
+    name: '可設定：沒設 tasks_rule → diagnose 的 tasks 派工單照內建（先寫會失敗的重現測試）',
+    // 內建那一句以測試先行為前提：明寫 test_first=true（專案的 profile 可能是不測試先行）
+    profile: { ...RP, stages: { build: { test_first: true, guidance: 'x' } } }, args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/寫成可驗證的指令）。第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。\n2\. /.test(r.prompts.tasks || '') ? [] : ['沒設定時 tasks 的派工單要和原本逐字相同']),
+  },
+  {
+    name: '可設定：plan_modes.diagnose.tasks_rule → tasks 的派工單照設定；別的 plan_mode 不受影響',
+    profile: { ...RP, plan_modes: { diagnose: { sections: ['現象', '重現步驟', '預期行為', '根因'], tasks_rule: '示範客戶 ACME 的做法：先補監控告警的子任務，再修正。' } } },
+    args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/寫成可驗證的指令）。示範客戶 ACME 的做法：先補監控告警的子任務，再修正。\n2\. /.test(r.prompts.tasks || '') && !/重現測試（kind=test）/.test(r.prompts.tasks || '') ? [] : ['tasks 的派工單沒有照 tasks_rule']),
+  },
+  {
+    name: '可設定：tasks_rule 不合法（空白、不是字串、太長）→ 照內建',
+    profile: { ...RP, plan_modes: { diagnose: { sections: ['現象', '重現步驟', '預期行為', '根因'], tasks_rule: '   ' } }, stages: { build: { test_first: true, guidance: 'x' } } },
+    args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/第一個子任務是寫會失敗的重現測試（kind=test），修正的子任務依賴它。\n2\. /.test(r.prompts.tasks || '') ? [] : ['不合法的 tasks_rule 要退回內建']),
+  },
+  {
+    // test_first=false 時 build 段忽略 code 對 test 的相依：內建那句「修正依賴重現測試」會和它矛盾，改成修正後補回歸測試
+    name: '不測試先行：stages.build.test_first=false 而且沒設 tasks_rule → diagnose 改成修正後補回歸測試',
+    profile: { ...RP, stages: { build: { test_first: false, guidance: 'x' } } },
+    args: { recipe: 'bugfix' }, fakes: { tasks: TASKS('bugfix') },
+    expect: (r) => (/寫成可驗證的指令）。這個 profile 不要求測試先行：修正的子任務不依賴測試；另拆一個補回歸測試的子任務/.test(r.prompts.tasks || '') && !/修正的子任務依賴它/.test(r.prompts.tasks || '') ? [] : ['test_first=false 時不能再要求修正依賴重現測試']),
+  },
+  {
+    // triage 的分類說法照 profile 實際的 recipes：內建那 11 種時用原本的字，增減過就列實際的清單
+    name: 'triage：recipes 是內建那 11 種 → 分類的說法和原本逐字相同',
+    profile: RP, fakes: { triage: TRIAGE('feature', 0.9) },
+    expect: (r) => (/最近的改動，判斷這是新功能、bug、需求變更、事故、重構、依賴升級、文件、測試、效能、調研或回退。只看夠分類的量/.test(r.prompts.triage || '') ? [] : ['內建 recipes 時 triage 的派工單要和原本逐字相同']),
+  },
+  {
+    name: 'triage：使用者增減過 recipes → 分類的說法列實際的清單，不拿內建的種類名',
+    profile: { ...RP, recipes: { feature: DEF.recipes.feature, bugfix: DEF.recipes.bugfix, 'acme-report': { ...DEF.recipes.docs, description: '示範客戶 ACME 的報表需求' } } },
+    fakes: { triage: TRIAGE('feature', 0.9) },
+    expect: (r) => { const p = r.prompts.triage || ''; return /最近的改動，判斷它屬於下面「可選的 recipes」的哪一種（feature、bugfix、acme-report；依各自的說明判斷）。只看夠分類的量/.test(p) && !/依賴升級、文件、測試、效能、調研或回退/.test(p) && /- acme-report：示範客戶 ACME 的報表需求/.test(p) ? [] : ['自訂 recipes 時 triage 要照實際清單問'] },
+  },
+  {
+    // 共同前綴只寫有啟用的東西：讀取預算（limits.mode）與知識層（knowledge.sources）
+    name: '前綴：沒開讀取預算、有知識層來源（內建 profile 的樣子）→ 不寫「hook 會擋超量讀取」，照樣提 awf kb query',
+    profile: (p) => ({ limits: { ...(p.limits || {}), mode: 'off' }, knowledge: { ...(p.knowledge || {}), sources: ['docs/**/*.md'] } }),
+    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context：大檔帶 offset／limit 分段讀。/.test(p) && /再用 awf kb query "<問題>" 或 Grep 找行段/.test(p) && !/超量讀取/.test(p) ? [] : ['預設 profile 的前綴不對'] },
+  },
+  {
+    name: '前綴：limits.mode=warn、沒有 knowledge.sources → 寫「hook 會擋超量讀取」，不提 awf kb query',
+    profile: (p) => ({ ...p, limits: { ...(p.limits || {}), mode: 'warn' }, knowledge: { dir: '_tpm/kb' } }),
+    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context（hook 會擋超量讀取）：大檔帶/.test(p) && /，再用 Grep 找行段，只讀那幾行/.test(p) && !/awf kb query "<問題>"/.test(p) ? [] : ['limits.mode=warn、沒有知識層來源時的前綴不對'] },
+  },
 ]

@@ -277,7 +277,7 @@ export default [
   ...recipeScenarios('build', (n) => ({
     args: n === 'bugfix' || n === 'hotfix' ? { subtasks: FIX_SUBTASKS() } : n === 'docs' ? { subtasks: [{ id: 't0', title: '改文件', kind: 'doc', owns: ['docs/a.md'], depends_on: [], acceptance: ['連結檢查通過'] }] } : n === 'test-only' ? { subtasks: SAMPLE_SUBTASKS('test') } : n === 'revert' ? { revert_commits: ['abc1234'] } : {},
     expect: n === 'revert'
-      ? (r) => Object.entries(r.prompts).filter(([l]) => l.startsWith('Implement')).every(([, p]) => /git revert --no-edit abc1234/.test(p) && !/讓已合進整合分支的驗收測試轉綠/.test(p)) ? [] : ['revert 的實作派工單要只跑 git revert abc1234']
+      ? (r) => Object.entries(r.prompts).filter(([l]) => l.startsWith('Implement')).every(([, p]) => /git revert --no-commit abc1234，再 commit 一次（commit 訊息照 profile 的格式：/.test(p) && !/--no-edit/.test(p) && !/讓已合進整合分支的驗收測試轉綠/.test(p)) ? [] : ['revert 的實作派工單要只跑 git revert --no-commit abc1234，再照 profile 的格式 commit']
       : undefined,
   })),
   {
@@ -351,4 +351,20 @@ export default [
     expect: (r) => Object.entries(r.prompts).filter(([, v]) => v && (!/〈限制對照〉一節，每個限制一列，格式固定：\| <id> \| 符合／偏離／不適用 \|/.test(v) || /Constraint trace/.test(v))).map(([k]) => `${k} 的前綴應該退回內建的用語`),
   },
   ...kgScenarios(),
+  {
+    // 合進整合分支有衝突怎麼辦（profile 的 conventions.branch.integrate_conflicts）
+    name: '整合衝突：沒設定或不合法 → 整合的派工單照舊寫用中轉分支解',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), integrate_conflicts: 'rebase' } } }),
+    expect: (r) => (/\n有衝突照目標 repo 的分支與合併規範用中轉分支解並分類。合完跑 /.test(r.prompts['integrate:layer1'] || '') ? [] : ['不合法的 integrate_conflicts 要退回中轉分支']),
+  },
+  {
+    name: '整合衝突：integrate_conflicts=in-place → 直接在整合分支上解；=stop → 不解、交人',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), integrate_conflicts: 'in-place' } } }),
+    expect: (r) => (/\n有衝突就在整合分支上直接解並分類（[^）]*）。合完跑 /.test(r.prompts['integrate:layer1'] || '') && !/中轉分支解/.test((r.prompts['integrate:layer1'] || '').split('## 派工單')[1] || '') ? [] : ['整合的派工單沒有照 integrate_conflicts=in-place']),
+  },
+  {
+    name: '整合衝突：integrate_conflicts=stop → 整合的派工單寫中止合併、交人',
+    profile: (p) => ({ conventions: { ...(p.conventions || {}), branch: { ...((p.conventions || {}).branch || {}), integrate_conflicts: 'stop' } } }),
+    expect: (r) => (/\n有衝突不要自己解：git merge --abort 還原後以 needs_decision 回報衝突的檔，交人處理。合完跑 /.test(r.prompts['integrate:layer1'] || '') ? [] : ['整合的派工單沒有照 integrate_conflicts=stop']),
+  },
 ]

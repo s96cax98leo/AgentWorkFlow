@@ -4,6 +4,51 @@
 
 ## [Unreleased]
 
+## [1.1.0]
+
+這一版把 12 支 workflow 範本與共用片段裡還寫死的值改成可設定，並修掉盤點時發現的問題。沒有新流程；沒設定新欄位時，除了下面〈行為改變〉列的幾項，流程和 1.0 相同。
+
+### 行為改變（沒改設定也會看到）
+
+- **每張派工單的共同前綴只寫有啟用的東西**：沒開讀取上限（`limits.mode`）時不再寫「hook 會擋超量讀取」；profile 沒有 `knowledge.sources` 時不再提 `awf kb query`。
+- **事件（`event.js`）的派工數上限預設從 20 改成 40**，和文件與其他範本一致；`limits.max_agents` 的上限是 1000。
+- **簡報的上游關鍵字預設少了 `merge`**（改成文件寫的四個：上游、upstream、衝突、PR），而且純英數的關鍵字改成整字比對（原本 `PR` 會誤中 prompt、product）。
+- **合併後監看的凍結旗標**改用固定代號 `freeze-flag` 辨認，不再靠中文字；輸出語言不是中文時不會誤判。舊寫法仍然認得。
+- **design 的修正輪（`sdlc-design-revise`）**現在帶第一輪的設計規則（子任務的 `spec_refs`、`expected_red` 等），要修正的文件照 `stages.design.artifacts`，不再寫死 ADR 草稿。
+- **revert 的子任務**改成 `git revert --no-commit` 後照 profile 的 commit 格式 commit（原本 `--no-edit` 會繞過格式檢查）。
+- **`test_first` 是 false 的 diagnose**：plan 段拆工不再強制先寫重現測試，改成修正後補回歸測試。
+- **改寫 `lenses.deliver.standards` 的專案**：PR 大小檢查與 `review_axes` 不再跟著消失。已經改寫 `lenses.deliver` 的專案，PR 審查（`event-pr-review`）的派工單會帶上那些問法。
+- **`sdlc-design` 的派工單**不再寫測試目錄的例子；「契約不夠用就回報、不自己設計新端點」改由內建 profile `default` 的 `stages.design.guidance` 帶入（`lightweight` 沒有這一句）。
+- **新 init 的專案**：`rules.md` 規則 19 多一句「profile 的 `conventions.branch.patterns` 有設時照它」。
+
+### 新增（都是選填，預設＝原本寫死的值）
+
+- **分支管理**：`conventions.branch.bases`（recipe → 主線分支；例如主線是 develop 時讓 hotfix 用 main，`awf next`、`awf publish`、`awf recipe check-diff`、交付文件的比對基準都跟著）、`conventions.branch.integrate_conflicts`（子任務合併有衝突時：`transit` 預設｜`in-place`｜`stop`）。plan 核准後 recipe 換成主線不同的另一種時，後面的段停下交人。`docs/自訂與擴充.md` 新增〈分支管理對照 git-flow〉。
+- **合併**：`sdlc-merge` 的合併方式跟 `guard.config.json` 的 `auto_merge.merge_method`（原本指令寫死 `--squash`，設成別的值時會被守門擋下）；`auto_merge.return_to_draft`（退回 PR 時要不要轉回 draft，預設 true）。
+- **plan**：`plan_modes.<mode>.tasks_rule`（沒有 design 段的 recipe 拆工時的額外規則）；triage 的分類照 profile 實際的 recipes。
+- **deliver**：`deliverables.summary_sections`（交付摘要的節）、`deliverables.audience`（讀者，預設「客戶」）。
+- **PR 審查**：`lenses.pr_review`（自己的 lens 與問法；沒寫用 `lenses.deliver`）、`review.lenses` 可以放自訂名稱（最多 12 個）、`review.diff_command`、`review.labels`。指到沒定義的 lens 開工前停下。
+- **合併後監看**：`post_merge.ci_commands`（讀 CI 的指令）、`post_merge.freeze_on`（除了 blocker 之外還有哪些嚴重度要建議凍結，只能多加）。
+- **事件**：四支事件範本的派工單現在帶限制文件與知識圖的指示；`constraints[].stages` 可以寫事件的段名（只做派工端，事件段沒有限制對照的閘門）；`events.<類型>.challenge.heading`、`write.heading`。
+
+### 內部
+
+- 八支 sdlc 範本重複的寫法收進 challenge 片段（`awfMaxAgents`、`awfMethNote`、`awfCommitFor`、`awfExtJob`、`awfDesignDocs` 等）。
+- CI 的長指令時限測試：除錯版在共用機器上用較短的指令，完整長度用發佈版量。
+
+### 沒做
+
+- git-flow 裡現有設定表達不了的四個環節：hotfix／release 各自的分支前綴、hotfix 合併後併回整合線的步驟、release 分支與發佈流程、tag。對照表在 `docs/自訂與擴充.md`。
+- 盤點標低優先的項目（`split_min_blocks`、`limits.rounds.reverify`、`conventions.sync.guidance` 等）。
+- agent 檔（`dev-spec-author`、`dev-integrator`、`dev-merge-steward`）裡的契約句、中轉分支、`--squash` 還是固定的文字；設成非預設值時以派工單為準。
+- 段的名單與順序、事件流程的形狀、派工單的語言仍然固定，排在下一版。
+
+### 升級步驟
+
+1. 更新 plugin：`claude plugin marketplace update agentworkflow`、`claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins`。
+2. 在專案根目錄跑 `awf init --target . --upgrade`（補 `guard.config.json` 的新鍵）。
+3. 對一下上面〈行為改變〉有沒有影響到你的專案；要維持原樣的，在 `methodology.json` 明寫對應的值。
+
 ## [1.0.0]
 
 這一版把全部工具改成一個執行檔，並把規格、知識、程式三層用連結接起來。起因：專案端要另外裝 Python、工具複製進每個專案後各自漂移；agent 有程式索引卻不用、需求整份讀；專案都在用 OpenSpec 而模版不認得。
