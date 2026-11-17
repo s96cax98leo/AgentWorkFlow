@@ -22,6 +22,8 @@ pub struct Stage {
     pub label: &'static str,
     /// 有人工閘門（原本 `save_run::GATED`）。
     pub gated: bool,
+    /// profile 的 `gates.extra` 可以另外加閘門（原本 `save_run::policy::EXTRA_GATE_STAGES`）。
+    pub extra_gate: bool,
     /// 閘門一律由人核准、不接受政策核准（原本 `save_run::HUMAN_ONLY`）。
     pub human_only: bool,
     /// 派工走執行核心，trace 每筆要有 model 與 tier（原本 `save_run::KERNEL_STAGES`）。
@@ -54,6 +56,7 @@ pub const TABLE: [Stage; 7] = [
         alt_templates: &[],
         label: "規劃",
         gated: true,
+        extra_gate: false,
         human_only: true,
         kernel: true,
         custom_script: false,
@@ -72,6 +75,7 @@ pub const TABLE: [Stage; 7] = [
         alt_templates: &["sdlc-design-revise"],
         label: "設計",
         gated: true,
+        extra_gate: false,
         human_only: false,
         kernel: true,
         custom_script: true,
@@ -90,6 +94,7 @@ pub const TABLE: [Stage; 7] = [
         alt_templates: &[],
         label: "實作",
         gated: false,
+        extra_gate: true,
         human_only: false,
         kernel: true,
         custom_script: true,
@@ -108,6 +113,7 @@ pub const TABLE: [Stage; 7] = [
         alt_templates: &[],
         label: "同步",
         gated: false,
+        extra_gate: true,
         human_only: false,
         kernel: true,
         custom_script: false,
@@ -126,6 +132,7 @@ pub const TABLE: [Stage; 7] = [
         alt_templates: &[],
         label: "驗證",
         gated: true,
+        extra_gate: false,
         human_only: false,
         kernel: true,
         custom_script: false,
@@ -144,6 +151,7 @@ pub const TABLE: [Stage; 7] = [
         alt_templates: &[],
         label: "交付",
         gated: true,
+        extra_gate: false,
         human_only: false,
         kernel: true,
         custom_script: true,
@@ -162,6 +170,7 @@ pub const TABLE: [Stage; 7] = [
         alt_templates: &[],
         label: "合併",
         gated: false,
+        extra_gate: false,
         human_only: false,
         kernel: true,
         custom_script: false,
@@ -181,6 +190,7 @@ pub const TABLE: [Stage; 7] = [
 pub enum Flag {
     All,
     Gated,
+    ExtraGate,
     HumanOnly,
     Kernel,
     CustomScript,
@@ -200,6 +210,7 @@ impl Flag {
         match self {
             Flag::All => true,
             Flag::Gated => s.gated,
+            Flag::ExtraGate => s.extra_gate,
             Flag::HumanOnly => s.human_only,
             Flag::Kernel => s.kernel,
             Flag::CustomScript => s.custom_script,
@@ -247,6 +258,7 @@ pub const fn pick<const N: usize>(f: Flag) -> [&'static str; N] {
 /// 全部段名，依 SDLC 順序。
 pub const IDS: [&str; count(Flag::All)] = pick(Flag::All);
 pub const GATED: [&str; count(Flag::Gated)] = pick(Flag::Gated);
+pub const EXTRA_GATE: [&str; count(Flag::ExtraGate)] = pick(Flag::ExtraGate);
 pub const HUMAN_ONLY: [&str; count(Flag::HumanOnly)] = pick(Flag::HumanOnly);
 pub const KERNEL: [&str; count(Flag::Kernel)] = pick(Flag::Kernel);
 pub const CUSTOM_SCRIPT: [&str; count(Flag::CustomScript)] = pick(Flag::CustomScript);
@@ -337,6 +349,7 @@ mod tests {
     #[test]
     fn flags_match_old_lists() {
         assert_eq!(GATED, ["plan", "design", "test", "deliver"]);
+        assert_eq!(EXTRA_GATE, ["build", "sync"]);
         assert_eq!(HUMAN_ONLY, ["plan"]);
         assert_eq!(KERNEL, OLD_SDLC);
         assert_eq!(CUSTOM_SCRIPT, ["design", "build", "deliver"]);

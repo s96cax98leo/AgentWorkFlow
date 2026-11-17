@@ -47,7 +47,7 @@ pub fn load_profile(ctx: &Ctx, given: &str) -> (Value, String) {
 }
 
 /// profile 的 `gates.extra` 可以加閘門的段。plan、design、test、deliver 本來就有；merge 由確定性的 merge gate 判定，不設人工閘門。
-pub const EXTRA_GATE_STAGES: [&str; 2] = ["build", "sync"];
+pub use crate::stages::EXTRA_GATE as EXTRA_GATE_STAGES;
 
 /// profile 的 `gates.extra`：另外要等核准才能往下走的段。只能加（[`super::GATED`] 的四段拿不掉）；
 /// 不是 [`EXTRA_GATE_STAGES`] 的值、型別不對、profile 是 null 都當成沒寫。
