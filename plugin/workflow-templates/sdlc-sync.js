@@ -53,6 +53,44 @@ function awfExtJob(e, ctx, phaseName, runDir, schema) {
     { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema },
   )
 }
+// ── design 段兩支範本（sdlc-design、sdlc-design-revise）共用的規則文字：第一輪與修正輪看到同一套規則 ──
+// 設計文件的名單：profile 的 stages.design.artifacts 去掉 .md（沒寫或不合法用內建的 design、spec、plan、progress）。
+// 預設在最前面加 intent（給「要讀哪些文件」用）；withIntent=false 不加（給「要修正哪些文件」用：intent 已核准、不能改）。
+function awfDesignDocs(profile, withIntent) {
+  const a = ((((profile || {}).stages || {}).design) || {}).artifacts
+  const ok = Array.isArray(a) && a.length >= 1 && a.length <= 12 && a.every((x) => typeof x === 'string' && x.trim() === x && x.length >= 1 && x.length <= 80 && !/[\r\n`]/.test(x))
+  const names = (ok ? a : ['design.md', 'spec.md', 'plan.md', 'progress.md']).map((x) => x.replace(/\.md$/i, '')).filter((n) => n !== 'intent')
+  return withIntent === false ? names : ['intent', ...names]
+}
+// 拆子任務的規則（stages.build.test_first=false 時多一句：code 子任務不要依賴 test 子任務）
+function awfSubtaskRules(profile) {
+  const note = ((((profile || {}).stages || {}).build) || {}).test_first === false ? '這個 profile 不要求測試先行：test 子任務會在實作完成後才做，code 子任務不要依賴 test 子任務。' : ''
+  return `每個子任務獨佔 owns 的檔案（不重疊），寫 depends_on 與可機械判定的 acceptance；有 spec.md 時每個子任務標 spec_refs（對應的 spec 小節，寫「spec.md#標題」，標題照抄、不能重名），實作的人只讀那幾節；某個子任務完成前一定會紅的檢查（例如等它換掉的截圖）寫在那個子任務的 expected_red，整合時不會為它停下；kind=test 的子任務擁有測試目錄；偏寬淺、沒有相依的子任務會由多個 agent 平行實作，能並行就並行，數量最小化。${note}`
+}
+// SA／SD 方法（profile 的 stages.design.system_design；預設 profile 依 System Design Primer）。沒設回空字串
+function awfSdRules(profile) {
+  const sd = ((((profile || {}).stages || {}).design) || {}).system_design || null
+  return sd
+    ? `- 系統設計（SA／SD，方法出處：${sd.source}）：\n` +
+      `  步驟：${sd.steps.join('；')}\n` +
+      `  功能層：${sd.feature_scope}\n  系統層：${sd.system_scope}\n` +
+      ((sd.topics || []).length ? `  第 4 步逐項檢查的主題：${sd.topics.join('、')}\n` : '') +
+      `  寫在：${sd.document || 'design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由'}。\n`
+    : ''
+}
+// 設計文件的規則：產出文件、需求寫法、profile 的指引、系統設計方法。dir＝文件放哪
+function awfDesignDocRules(profile, dir) {
+  const st = (((profile || {}).stages || {}).design) || {}
+  return `- 產出文件（放在 ${dir}/）：${(st.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）；架構取捨怎麼記錄依 profile 的指引，沒寫就依目標 repo 慣例。\n` +
+    `- 需求／驗收條件的寫法：${st.requirement_style || '照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文'}。\n` +
+    (st.guidance ? `- profile 的指引：${st.guidance}\n` : '') + awfSdRules(profile)
+}
+// plan_mode=impact（例如 change）：spec 只寫差異，逐條交代既有驗收條件的改／留／刪。其他 plan_mode 回空字串
+function awfDeltaRule(recipeName, planMode) {
+  return planMode === 'impact'
+    ? `- 這是變更需求（recipe ${recipeName}，plan_mode=impact）：寫 delta spec，只寫和現況不同的地方；intent 的「既有驗收條件異動」節列的每一條既有驗收條件都要標明改／留／刪與理由，新增的另列。不要重抄沒變的規格。\n`
+    : ''
+}
 // 前綴裡可調的字：awfInit({ ..., tune: awfTune(profile) })。沒給 tune、沒寫或值不合法時用預設（＝原本寫死的字），前綴逐字不變。
 // - knowledge.code_tools：程式碼優先用哪些查詢工具（最多 8 個名字；空陣列＝不提）。
 // - constraints_format：限制對照的節名與判定詞（awfConstraintFormat；沒寫或不合法是 null＝內建的字）。

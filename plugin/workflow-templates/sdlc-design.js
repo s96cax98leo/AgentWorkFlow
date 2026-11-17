@@ -56,6 +56,44 @@ function awfExtJob(e, ctx, phaseName, runDir, schema) {
     { label: `ext:${e.name}`, phase: phaseName, agentType: e.agent, schema },
   )
 }
+// ── design 段兩支範本（sdlc-design、sdlc-design-revise）共用的規則文字：第一輪與修正輪看到同一套規則 ──
+// 設計文件的名單：profile 的 stages.design.artifacts 去掉 .md（沒寫或不合法用內建的 design、spec、plan、progress）。
+// 預設在最前面加 intent（給「要讀哪些文件」用）；withIntent=false 不加（給「要修正哪些文件」用：intent 已核准、不能改）。
+function awfDesignDocs(profile, withIntent) {
+  const a = ((((profile || {}).stages || {}).design) || {}).artifacts
+  const ok = Array.isArray(a) && a.length >= 1 && a.length <= 12 && a.every((x) => typeof x === 'string' && x.trim() === x && x.length >= 1 && x.length <= 80 && !/[\r\n`]/.test(x))
+  const names = (ok ? a : ['design.md', 'spec.md', 'plan.md', 'progress.md']).map((x) => x.replace(/\.md$/i, '')).filter((n) => n !== 'intent')
+  return withIntent === false ? names : ['intent', ...names]
+}
+// 拆子任務的規則（stages.build.test_first=false 時多一句：code 子任務不要依賴 test 子任務）
+function awfSubtaskRules(profile) {
+  const note = ((((profile || {}).stages || {}).build) || {}).test_first === false ? '這個 profile 不要求測試先行：test 子任務會在實作完成後才做，code 子任務不要依賴 test 子任務。' : ''
+  return `每個子任務獨佔 owns 的檔案（不重疊），寫 depends_on 與可機械判定的 acceptance；有 spec.md 時每個子任務標 spec_refs（對應的 spec 小節，寫「spec.md#標題」，標題照抄、不能重名），實作的人只讀那幾節；某個子任務完成前一定會紅的檢查（例如等它換掉的截圖）寫在那個子任務的 expected_red，整合時不會為它停下；kind=test 的子任務擁有測試目錄；偏寬淺、沒有相依的子任務會由多個 agent 平行實作，能並行就並行，數量最小化。${note}`
+}
+// SA／SD 方法（profile 的 stages.design.system_design；預設 profile 依 System Design Primer）。沒設回空字串
+function awfSdRules(profile) {
+  const sd = ((((profile || {}).stages || {}).design) || {}).system_design || null
+  return sd
+    ? `- 系統設計（SA／SD，方法出處：${sd.source}）：\n` +
+      `  步驟：${sd.steps.join('；')}\n` +
+      `  功能層：${sd.feature_scope}\n  系統層：${sd.system_scope}\n` +
+      ((sd.topics || []).length ? `  第 4 步逐項檢查的主題：${sd.topics.join('、')}\n` : '') +
+      `  寫在：${sd.document || 'design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由'}。\n`
+    : ''
+}
+// 設計文件的規則：產出文件、需求寫法、profile 的指引、系統設計方法。dir＝文件放哪
+function awfDesignDocRules(profile, dir) {
+  const st = (((profile || {}).stages || {}).design) || {}
+  return `- 產出文件（放在 ${dir}/）：${(st.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）；架構取捨怎麼記錄依 profile 的指引，沒寫就依目標 repo 慣例。\n` +
+    `- 需求／驗收條件的寫法：${st.requirement_style || '照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文'}。\n` +
+    (st.guidance ? `- profile 的指引：${st.guidance}\n` : '') + awfSdRules(profile)
+}
+// plan_mode=impact（例如 change）：spec 只寫差異，逐條交代既有驗收條件的改／留／刪。其他 plan_mode 回空字串
+function awfDeltaRule(recipeName, planMode) {
+  return planMode === 'impact'
+    ? `- 這是變更需求（recipe ${recipeName}，plan_mode=impact）：寫 delta spec，只寫和現況不同的地方；intent 的「既有驗收條件異動」節列的每一條既有驗收條件都要標明改／留／刪與理由，新增的另列。不要重抄沒變的規格。\n`
+    : ''
+}
 // 前綴裡可調的字：awfInit({ ..., tune: awfTune(profile) })。沒給 tune、沒寫或值不合法時用預設（＝原本寫死的字），前綴逐字不變。
 // - knowledge.code_tools：程式碼優先用哪些查詢工具（最多 8 個名字；空陣列＝不提）。
 // - constraints_format：限制對照的節名與判定詞（awfConstraintFormat；沒寫或不合法是 null＝內建的字）。
@@ -572,7 +610,6 @@ awfInit({ run_dir: A.run_dir, stage: 'design', lang: '{{OUTPUT_LANGUAGE}}', rule
 // 執行核心：模型分級、失敗升級、派工數上限（I8）。上限＝profile 的 limits.max_agents（沒設用 40），design 段正常不超過 20；每個子計劃另加 3
 const MAX_AGENTS = awfMaxAgents(MP, 3 * (Number.isInteger((MP.parallelism || {}).max_sub_plans) ? MP.parallelism.max_sub_plans : 4))
 awfKernelInit({ profile: METHODOLOGY, stage: 'design', modifiers: [].concat(A.modifiers || []), max_agents: MAX_AGENTS })
-const RUN_BRIEF = '跑測試與 verify 指令一律用 awf run-brief -- <指令>，執行紀錄附它印出的完整 log 路徑。'
 const EPIC_DIR = `${A.repo}/{{WORKTREES_DIR}}/${A.epic}`
 const SPEC = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 // 交付文件（awf deliverables；資料包工具放進 args.deliverables）：專案要交的文件需要 design.md 先留哪些小節。沒有交付設定時 args 沒有這個鍵
@@ -592,25 +629,14 @@ const KG_NOTE = A.kg === true
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：${A.run_dir}\nintent.md 已由使用者核准，不得修改。\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '') + DELIV_NOTE + KG_NOTE
 
-const TEST_NOTE = ((MP.stages || {}).build || {}).test_first === false ? '這個 profile 不要求測試先行：test 子任務會在實作完成後才做，code 子任務不要依賴 test 子任務。' : ''
-const SUBTASK_RULES = `每個子任務獨佔 owns 的檔案（不重疊），寫 depends_on 與可機械判定的 acceptance；有 spec.md 時每個子任務標 spec_refs（對應的 spec 小節，寫「spec.md#標題」，標題照抄、不能重名），實作的人只讀那幾節；某個子任務完成前一定會紅的檢查（例如等它換掉的截圖）寫在那個子任務的 expected_red，整合時不會為它停下；kind=test 的子任務擁有測試目錄；偏寬淺、沒有相依的子任務會由多個 agent 平行實作，能並行就並行，數量最小化。${TEST_NOTE}`
+// 拆子任務、設計文件、系統設計、delta spec 的規則文字在 challenge 片段（sdlc-design-revise 的修正輪用同一套）
+const SUBTASK_RULES = awfSubtaskRules(MP)
 // SA／SD 方法（profile 的 stages.design.system_design；預設 profile 依 System Design Primer）。沒設就不套用
 const SD = STAGE.system_design || null
-const SD_RULES = SD
-  ? `- 系統設計（SA／SD，方法出處：${SD.source}）：\n` +
-    `  步驟：${SD.steps.join('；')}\n` +
-    `  功能層：${SD.feature_scope}\n  系統層：${SD.system_scope}\n` +
-    ((SD.topics || []).length ? `  第 4 步逐項檢查的主題：${SD.topics.join('、')}\n` : '') +
-    `  寫在：${SD.document || 'design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由'}。\n`
-  : ''
-const DOC_RULES = (dir) =>
-  `- 產出文件（放在 ${dir}/）：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）；架構取捨怎麼記錄依 profile 的指引，沒寫就依目標 repo 慣例。\n` +
-  `- 需求／驗收條件的寫法：${STAGE.requirement_style || '照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文'}。\n` +
-  (STAGE.guidance ? `- profile 的指引：${STAGE.guidance}\n` : '') + SD_RULES
+const SD_RULES = awfSdRules(MP)
+const DOC_RULES = (dir) => awfDesignDocRules(MP, dir)
 // plan_mode=impact（例如 change）：spec 只寫差異，逐條交代既有驗收條件的改／留／刪
-const DELTA_RULE = R.plan_mode === 'impact'
-  ? `- 這是變更需求（recipe ${R.name}，plan_mode=impact）：寫 delta spec，只寫和現況不同的地方；intent 的「既有驗收條件異動」節列的每一條既有驗收條件都要標明改／留／刪與理由，新增的另列。不要重抄沒變的規格。\n`
-  : ''
+const DELTA_RULE = awfDeltaRule(R.name, R.plan_mode)
 const COMMIT = `commit（${commitFor('docs', A.epic)}；結尾 {{ATTRIBUTION_LINE}}）。不 push。`
 // PR 大小（profile 的 conventions.pr_size）：第一輪就依上限規劃拆 PR，不要等 design-revise 或 deliver 才發現太大
 const PR_SIZE = CONV.pr_size || {}
@@ -805,7 +831,7 @@ LENS_DEFS.push(
 const LENSES = R.design_lenses.map((k) => (USER_LENS[k] ? { key: k, ask: USER_LENS[k].ask } : LENS_DEFS.find((l) => l.key === k))).filter(Boolean)
 if (SUBS.length) LENSES.push({ key: 'sub-plans', ask: `子計劃之間：各子計劃的 spec 合起來有沒有涵蓋 intent 的全部範圍、有沒有重複或互相矛盾的驗收條件？介面（端點、事件、型別）兩邊的寫法一致嗎？跨子計劃的相依有沒有反映在子任務的 depends_on？總覽 spec 的整合驗收條件夠不夠？` })
 const checks = await parallel([...LENSES.map((l) => () => awfAgent(
-  `${CTX}\n\n## 派工單（一致性檢查：${l.key}）\n讀 ${SPEC}/ 下的 intent、design、spec、plan、progress${SUBS.length ? `、outline.md 與 sub/<id>/ 的子計劃文件` : ''}與子任務：\n${JSON.stringify(design.payload)}\n${l.ask}\n每個問題一則 verdict（target_id 寫文件與節名），refuted=true 表示「這份設計在此處有問題」。`,
+  `${CTX}\n\n## 派工單（一致性檢查：${l.key}）\n讀 ${SPEC}/ 下的 ${awfDesignDocs(MP).join('、')}${SUBS.length ? `、outline.md 與 sub/<id>/ 的子計劃文件` : ''}與子任務：\n${JSON.stringify(design.payload)}\n${l.ask}\n每個問題一則 verdict（target_id 寫文件與節名），refuted=true 表示「這份設計在此處有問題」。`,
   { label: `analyze:${l.key}`, phase: 'Analyze', ...awfStep(MP, 'design.analyze', NS), schema: VERDICTS },
 )), ...EXT.map((e) => extJob(e, `${CTX}\n設計文件在 ${SPEC}/（intent、spec、plan${SUBS.length ? '、outline.md、sub/<id>/' : ''}），子任務：${JSON.stringify(design.payload)}`, 'Analyze'))])
 const analysis = checks.slice(0, LENSES.length)

@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob, awfDesignDocs, awfSubtaskRules, awfSdRules, awfDesignDocRules, awfDeltaRule }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -195,5 +195,13 @@ const need = (c, m) => { if (!c) errs.push(m) }
   t = k.awfTrace()
   need(seen.length === 1 && seen[0][1].label === 'ext:acme-audit' && seen[0][1].agentType === 'acme:auditor' && seen[0][1].phase === 'Research' && seen[0][1].schema.type === 'object' && seen[0][0].includes('## 派工單（擴充 agent：acme-audit）\n查示範客戶 ACME 的規範\n只讀不改') && seen[0][0].includes('_runs/r1/ext-acme-audit.md') && seen[0][0].includes('lens=acme-audit'), `awfExtJob 的派工單或 opts 不對：${JSON.stringify(seen[0] && seen[0][1])}`)
   need(t.length === 1 && (await ej11()) === null && k.awfCapped().join() === 'ext:acme-audit#2', 'awfExtJob 要經過執行核心（派工數上限）')
+  // 1.1：design 兩支範本共用的規則文字
+  const dd = (a, w) => k.awfDesignDocs({ stages: { design: { artifacts: a } } }, w).join('、')
+  need(k.awfDesignDocs(null).join('、') === 'intent、design、spec、plan、progress' && k.awfDesignDocs(null, false).join('、') === 'design、spec、plan、progress' && dd(['spec.md', 'plan.md']) === 'intent、spec、plan' && dd(['spec.md', 'plan.md'], false) === 'spec、plan' && dd(['intent.md', 'SPEC.MD', 'adr']) === 'intent、SPEC、adr' && dd([]) === 'intent、design、spec、plan、progress' && dd(['a\nb']) === 'intent、design、spec、plan、progress' && dd('spec.md') === 'intent、design、spec、plan、progress' && dd([7]) === 'intent、design、spec、plan、progress', 'awfDesignDocs 的判斷不對')
+  need(/數量最小化。$/.test(k.awfSubtaskRules(null)) && /spec_refs/.test(k.awfSubtaskRules({})) && /expected_red/.test(k.awfSubtaskRules({})) && /code 子任務不要依賴 test 子任務。$/.test(k.awfSubtaskRules({ stages: { build: { test_first: false } } })) && !/不要求測試先行/.test(k.awfSubtaskRules({ stages: { build: { test_first: true } } })), 'awfSubtaskRules 的字不對')
+  const sd11 = { source: 'S', steps: ['一', '二'], feature_scope: 'F', system_scope: 'Y' }
+  need(k.awfSdRules(null) === '' && k.awfSdRules({ stages: { design: { system_design: null } } }) === '' && k.awfSdRules({ stages: { design: { system_design: sd11 } } }) === '- 系統設計（SA／SD，方法出處：S）：\n  步驟：一；二\n  功能層：F\n  系統層：Y\n  寫在：design.md 的「系統設計」節，第一行寫這次是功能層還是系統層與判斷理由。\n' && /第 4 步逐項檢查的主題：甲、乙\n  寫在：D。\n$/.test(k.awfSdRules({ stages: { design: { system_design: { ...sd11, topics: ['甲', '乙'], document: 'D' } } } })), 'awfSdRules 的字不對')
+  need(k.awfDesignDocRules(null, 'specs/x') === '- 產出文件（放在 specs/x/）：spec.md、plan.md（profile 沒列的不必寫）；架構取捨怎麼記錄依 profile 的指引，沒寫就依目標 repo 慣例。\n- 需求／驗收條件的寫法：照目標 repo 既有的 spec 寫法；每條可機械判定，逐條對到需求 ID，數值與錯誤碼照原文。\n' && /：a\.md（profile 沒列的不必寫）[^\n]*\n- 需求／驗收條件的寫法：R。\n- profile 的指引：G\n- 系統設計/.test(k.awfDesignDocRules({ stages: { design: { artifacts: ['a.md'], requirement_style: 'R', guidance: 'G', system_design: sd11 } } }, 'd')), 'awfDesignDocRules 的字不對')
+  need(k.awfDeltaRule('change', 'impact').startsWith('- 這是變更需求（recipe change，plan_mode=impact）：寫 delta spec') && k.awfDeltaRule('feature', 'feature') === '' && k.awfDeltaRule('change', undefined) === '', 'awfDeltaRule 的判斷不對')
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })
