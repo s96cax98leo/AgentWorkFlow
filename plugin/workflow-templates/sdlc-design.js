@@ -710,8 +710,7 @@ if (!SUBS.length) {
   design = await awfAgent(
     `${CTX}\n\n## 派工單（SDLC 第 2 段 Design）\n依 ${SPEC}/intent.md 與 ${EPIC_DIR}/{{SPEC_TEMPLATES_DIR}}/：\n` +
     DOC_RULES(SPEC) + DELTA_RULE + PR_RULE +
-    `- 拆子任務（payload subtasks）：${SUBTASK_RULES}\n- ${COMMIT}\n` +
-    `契約不夠用就以 needs_decision 回報，不自己設計新端點。`,
+    `- 拆子任務（payload subtasks）：${SUBTASK_RULES}\n- ${COMMIT}`,
     { label: 'design', phase: 'Design', agentType: NS + 'dev-spec-author', schema: SUBTASKS },
   )
 } else {
@@ -759,10 +758,9 @@ if (!SUBS.length) {
     `${CTX}\n\n## 派工單（彙整子計劃）\n${SUBS.length} 個子計劃已平行規劃完成，文件在 ${SPEC}/sub/<id>/，大綱在 ${SPEC}/outline.md。\n` +
     `1. 核對子計劃之間的介面（interfaces、契約、共用型別）是否一致，檔案所有權有沒有重疊或漏掉的檔案；有落差就修正對應子計劃的文件。\n` +
     `2. 在 ${SPEC}/ 寫總覽：${(STAGE.artifacts || ['spec.md', 'plan.md']).join('、')}（profile 沒列的不必寫）。總覽的 spec 只放跨子計劃的整合驗收條件，並連到各子計劃的 spec；plan 寫子計劃的順序與相依。${SD ? '總覽另寫跨子計劃的系統設計（子計劃之間的資料流、一致性、失敗處理與取捨），照下面的方法；各子計劃只寫自己範圍內的部分。' : ''}\n` +
-    SD_RULES + DELTA_RULE + PR_RULE +
+    (STAGE.guidance ? `- profile 的指引：${STAGE.guidance}\n` : '') + SD_RULES + DELTA_RULE + PR_RULE +
     `3. payload subtasks 交「完整的最終子任務清單」：下面草稿的子任務一個都不能少（可以修正內容；要拿掉必須在 open_questions 寫明子任務 id 與理由），保留 sub_plan 欄位；需要跨子計劃的整合子任務時，id 以「int-」開頭、sub_plan=integration。${SUBTASK_RULES}\n` +
-    `4. ${COMMIT}（commit 內容包含 outline.md 與全部子計劃文件。）\n` +
-    `契約不夠用就以 needs_decision 回報，不自己設計新端點。\n\n` +
+    `4. ${COMMIT}（commit 內容包含 outline.md 與全部子計劃文件。）\n\n` +
     `## 子計劃\n${SUBS.map(subBrief).join('\n\n')}\n\n## 子任務草稿（相依已展開）\n${JSON.stringify(draft)}`,
     { label: 'consolidate', phase: 'Consolidate', agentType: NS + 'dev-spec-author', schema: SUBTASKS },
   )
