@@ -92,10 +92,19 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(!/限制文件/.test(k.awfPrefix()), '沒有限制時前綴不該多出規則')
   // 可調的值（1.0）：沒寫或不合法一律用預設；前綴在沒有 tune、沒有 kg 時逐字不變
   need(k.awfInt({ n: 5 }, 'n', 1, 9, 3) === 5 && k.awfInt({ n: 0 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 10 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 2.5 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: '5' }, 'n', 1, 9, 3) === 3 && k.awfInt(null, 'n', 1, 9, 3) === 3 && k.awfInt('x', 'n', 1, 9, 3) === 3, 'awfInt 的範圍或型別判斷不對')
-  const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12, constraints_format: null })
+  const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12, constraints_format: null, read_hook: false, kb: false })
   need(JSON.stringify(k.awfTune(null)) === T0 && JSON.stringify(k.awfTune({})) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: 'graft' }, limits: { envelope: { summary_chars: 401, evidence_items: 2 } } })) === T0, `awfTune 的預設不對：${JSON.stringify(k.awfTune(null))}`)
   need(JSON.stringify(k.awfTune({ knowledge: { code_tools: ['a', 'a'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: ['x\ny'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: Array.from({ length: 9 }, (_, i) => `t${i}`) } })) === T0, 'code_tools 重複、含換行或超過 8 個要退回預設')
-  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3, constraints_format: null }), 'awfTune 沒有採用合法的設定')
+  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3, constraints_format: null, read_hook: false, kb: false }), 'awfTune 沒有採用合法的設定')
+  // 1.1：讀取預算與知識層沒啟用時，前綴不寫「hook 會擋超量讀取」與 awf kb query
+  const flags = (p) => { const t = k.awfTune(p); return `${t.read_hook},${t.kb}` }
+  need(flags({ limits: { mode: 'enforce' }, knowledge: { sources: ['docs/**/*.md'] } }) === 'true,true' && flags({ limits: { mode: 'warn' } }) === 'true,false' && flags({ limits: { mode: 'off' }, knowledge: { sources: [] } }) === 'false,false' && flags({ limits: { mode: 'x' }, knowledge: { sources: 'docs' } }) === 'false,false' && flags({ knowledge: { sources: [' ', 7] } }) === 'false,false', 'awfTune 的 read_hook／kb 判斷不對')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' })
+  need(/- 省 context：大檔帶 offset／limit 分段讀。/.test(k.awfPrefix()) && /，再用 Grep 找行段，只讀那幾行/.test(k.awfPrefix()) && !/超量讀取|awf kb query/.test(k.awfPrefix()), '沒啟用讀取預算、沒設知識層時前綴不該提 hook 與 awf kb query')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', tune: k.awfTune({ limits: { mode: 'warn' }, knowledge: { sources: ['docs/**/*.md'] } }) })
+  need(/- 省 context（hook 會擋超量讀取）：大檔帶/.test(k.awfPrefix()) && /，再用 awf kb query "<問題>" 或 Grep 找行段，只讀那幾行/.test(k.awfPrefix()), '啟用讀取預算、有知識層來源時前綴要照寫')
+  const TL11 = [{ id: 'c1', file: 'docs/a.md', note: '', paths: [], table: false }]
+  need(/先用 awf kb query 或 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11)) && /先用 awf kb query 或 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11, null, true)) && /；先用 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11, null, false)), 'awfConstraintRule 的 kb 參數不對')
   const SIX = '產出、驗證'
   const rs = (v) => k.awfRecordSections({ stages: { deliver: { record_sections: v } } }, SIX)
   need(rs(['甲', '乙']) === '甲、乙' && rs([]) === SIX && rs(['甲', '甲']) === SIX && rs(['甲\n乙']) === SIX && rs([' 甲']) === SIX && rs(['x'.repeat(41)]) === SIX && rs('甲') === SIX && rs(Array.from({ length: 13 }, (_, i) => `節${i}`)) === SIX && k.awfRecordSections(null, SIX) === SIX, 'awfRecordSections 的判斷不對')

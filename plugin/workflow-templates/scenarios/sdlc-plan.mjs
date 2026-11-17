@@ -649,4 +649,14 @@ export default [
     fakes: { triage: TRIAGE('feature', 0.9) },
     expect: (r) => { const p = r.prompts.triage || ''; return /最近的改動，判斷它屬於下面「可選的 recipes」的哪一種（feature、bugfix、acme-report；依各自的說明判斷）。只看夠分類的量/.test(p) && !/依賴升級、文件、測試、效能、調研或回退/.test(p) && /- acme-report：示範客戶 ACME 的報表需求/.test(p) ? [] : ['自訂 recipes 時 triage 要照實際清單問'] },
   },
+  {
+    // 共同前綴只寫有啟用的東西：讀取預算（limits.mode）與知識層（knowledge.sources）
+    name: '前綴：預設 profile（沒開讀取預算、有知識層來源）→ 不寫「hook 會擋超量讀取」，照樣提 awf kb query',
+    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context：大檔帶 offset／limit 分段讀。/.test(p) && /再用 awf kb query "<問題>" 或 Grep 找行段/.test(p) && !/超量讀取/.test(p) ? [] : ['預設 profile 的前綴不對'] },
+  },
+  {
+    name: '前綴：limits.mode=warn、沒有 knowledge.sources → 寫「hook 會擋超量讀取」，不提 awf kb query',
+    profile: (p) => ({ ...p, limits: { ...(p.limits || {}), mode: 'warn' }, knowledge: { dir: '_tpm/kb' } }),
+    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context（hook 會擋超量讀取）：大檔帶/.test(p) && /，再用 Grep 找行段，只讀那幾行/.test(p) && !/awf kb query "<問題>"/.test(p) ? [] : ['limits.mode=warn、沒有知識層來源時的前綴不對'] },
+  },
 ]
