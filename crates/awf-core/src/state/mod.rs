@@ -596,7 +596,7 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
             if unreadable_wf_meta(env, &want, since) {
                 return unreadable("紀錄檔不是讀得懂的 JSON");
             }
-            return awf_err("找不到這一段 workflow 的回傳（它還沒跑完，或這版 Claude Code 的存放位置變了）。把 Workflow 的回傳存成 JSON 檔，用 --output <檔> 指定");
+            return awf_err(args::wf_meta_missing(env, &want));
         };
         let mut r = py::get(&m, "result")?.clone();
         if let Value::String(t) = &r {
