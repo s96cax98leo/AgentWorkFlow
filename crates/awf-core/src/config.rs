@@ -779,6 +779,80 @@ pub fn limits(ws: &str) -> Option<Limits> {
     })
 }
 
+/// 輪數預算的模式（methodology.json 的 `limits.turns.mode`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnMode {
+    Off,
+    Warn,
+    Enforce,
+}
+
+/// 輪數預算設定（methodology.json 的 `limits.turns`）。和讀取預算（[`limits`]）各自獨立：`limits.mode` 沒寫時這個照樣有效。
+#[derive(Debug, Clone)]
+pub struct Turns {
+    pub mode: TurnMode,
+    pub default: u64,
+    pub roles: Vec<(String, u64)>,
+}
+
+/// 沒寫 `limits.turns` 時的門檻（工具呼叫次數）。
+pub const TURNS_DEFAULT: u64 = 50;
+/// 門檻的上下限：超出範圍的值一律退回預設。
+pub const TURNS_MIN: u64 = 10;
+pub const TURNS_MAX: u64 = 500;
+
+impl Turns {
+    /// 預設：只提醒、門檻 [`TURNS_DEFAULT`]。
+    pub fn builtin() -> Turns {
+        Turns { mode: TurnMode::Warn, default: TURNS_DEFAULT, roles: Vec::new() }
+    }
+
+    /// 這個角色的門檻。
+    pub fn threshold(&self, role: &str) -> u64 {
+        self.roles.iter().find(|(r, _)| r == role).map(|(_, n)| *n).unwrap_or(self.default)
+    }
+}
+
+fn turn_int(v: Option<&Value>) -> Option<u64> {
+    match v {
+        Some(Value::Number(n)) => n.as_u64().filter(|n| (TURNS_MIN..=TURNS_MAX).contains(n)),
+        _ => None,
+    }
+}
+
+/// 讀 `limits.turns`。沒有 methodology.json、讀不懂、沒寫或寫錯：一律退回預設（warn、50）；個別欄位不合法只退回那一欄。
+pub fn turns(ws: &str) -> Turns {
+    let mut out = Turns::builtin();
+    let path = methodology_path(ws);
+    let Ok(text) = read_text(&path) else { return out };
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let Ok(data) = serde_json::from_str::<Value>(text) else { return out };
+    let Ok(data) = crate::profile::resolve_str(&path, data) else { return out };
+    let Some(t) = data.get("limits").and_then(|l| l.get("turns")).and_then(Value::as_object) else { return out };
+    out.mode = match t.get("mode").and_then(Value::as_str) {
+        Some("off") => TurnMode::Off,
+        Some("enforce") => TurnMode::Enforce,
+        _ => TurnMode::Warn,
+    };
+    if let Some(n) = turn_int(t.get("default")) {
+        out.default = n;
+    }
+    if let Some(Value::Object(roles)) = t.get("roles") {
+        for (k, v) in roles {
+            let Some(n) = turn_int(Some(v)) else { continue };
+            if k.is_empty() || k.starts_with('_') {
+                continue;
+            }
+            let name = alias(role_name(py::strip(k))).to_string();
+            match out.roles.iter_mut().find(|(r, _)| *r == name) {
+                Some(slot) => slot.1 = n,
+                None => out.roles.push((name, n)),
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
