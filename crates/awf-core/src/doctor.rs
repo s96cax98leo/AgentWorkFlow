@@ -473,6 +473,8 @@ fn text_at<'a>(v: Option<&'a Value>, keys: &[&str]) -> &'a str {
 }
 
 /// 1. `models.mode` 是 inherit（或沒有 `models`）：每個 agent 都用主對話的模型。
+/// 實測這是 token 用量最大的一項（定位、整理這類輕的工作也用最強的模型），所以是 warn；
+/// 訊息列出改成 auto 之後各等級實際會用的模型（profile 的 `models.tiers`，沒寫的用內建對照）。
 fn check_models(env: &Env) -> Part {
     let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
     let models = prof.get("models").filter(|m| m.is_object());
@@ -481,11 +483,15 @@ fn check_models(env: &Env) -> Part {
         return Ok(Vec::new());
     }
     let why = if models.is_none() { "methodology.json 沒有 models" } else { "models.mode 是 inherit" };
+    let tiers: Vec<String> = crate::recipe::TIERS.iter().map(|t| {
+        let m = crate::recipe::tier_model(&prof, &json!(t)).unwrap_or_default();
+        format!("{t}→{}", if m.is_empty() { "沿用主對話模型" } else { m.as_str() })
+    }).collect();
     Ok(vec![item(
         "models",
-        INFO,
-        format!("{why}：每個 agent 都用主對話的模型，定位、整理這類輕的工作也一樣，成本比分級高"),
-        "想省成本：把 models.mode 改成 auto（輕的工作用較小的模型，審查與合併有下限，不會降）；沒有 models 時先跑 awf init --target <這個專案> --upgrade --adopt-new-fields。欄位說明見 docs/自訂與擴充.md",
+        WARN,
+        format!("{why}：每個 agent 都用主對話的模型，定位、整理這類輕的工作也一樣，token 成本比分級高。改成 auto 後各等級用的模型：{}（合併、安全審查、plan 段的 intent 與反駁有內建下限，不會降）", tiers.join("、")),
+        "在專案根目錄跑 awf init --target . --reconfigure models，選 auto；或直接把 .claude/teams/methodology.json 的 models.mode 改成 \"auto\"（沒有 models 時加 \"models\": {\"mode\": \"auto\"}，tiers 不寫就用上面的對照）。欄位說明見 docs/自訂與擴充.md",
     )])
 }
 
@@ -739,6 +745,34 @@ fn check_recent_runs(env: &Env) -> Part {
     )])
 }
 
+// ------------------------------------------------------------------ 知識圖的暫存檔（1.2）
+/// 6. 知識圖目錄裡有 `graph.db.tmp-<pid>`：建圖中斷（程序被砍掉）留下的，一份就是整張圖的大小。
+/// 沒有圖的目錄、讀不到設定都不列（那是別的檢查的事）。只讀：看 pid 還在不在也只是查詢。
+fn check_kg_tmp(env: &Env) -> Part {
+    let Ok(lay) = crate::kg::layout(Some(&env.project), None, None, None) else { return Ok(Vec::new()) };
+    let left = crate::kg::build::leftover_tmps(&lay.db);
+    if left.is_empty() {
+        return Ok(Vec::new());
+    }
+    let total: u64 = left.iter().map(|t| t.bytes).sum();
+    let db = Path::new(&lay.db).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let dir = if pyish::is_under(&lay.dir, &env.project) { pyish::relpath(&lay.dir, &env.project) } else { lay.dir.clone() };
+    let list: Vec<String> = left.iter().map(|t| {
+        let state = match crate::kg::build::pid_alive(t.pid) {
+            Some(false) => "程序已結束",
+            Some(true) => "程序還在，可能正在建圖",
+            None => "看不出程序還在不在",
+        };
+        format!("{}（{}，{state}）", t.name, crate::kg::build::human_bytes(t.bytes))
+    }).collect();
+    Ok(vec![item(
+        "kg-tmp",
+        WARN,
+        format!("知識圖目錄 {dir} 有 {} 份建圖中斷留下的暫存檔，共 {}：{}", left.len(), crate::kg::build::human_bytes(total), list.join("、")),
+        format!("跑一次 awf kg build：會先清掉程序已結束的那幾份（還在跑或看不出來的不動）；確定沒有 awf kg build 在跑時，也可以手動刪 {dir}/{db}.tmp-*"),
+    )])
+}
+
 // ------------------------------------------------------------------ 主流程
 pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> Vec<Item> {
     let mut out = check_env(which);
@@ -766,10 +800,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 14] = [
+    let parts: [&dyn Fn() -> Part; 15] = [
         &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
         &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
-        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env), &|| check_prompt_lang(env, plugin),
+        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env), &|| check_prompt_lang(env, plugin), &|| check_kg_tmp(env),
     ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查
@@ -1085,13 +1119,25 @@ fn selftest_in(root: &Path) -> i32 {
     w("proj/_tpm/kb/kb.sqlite", "x");
     let r = doctor();
     let mo = find(&r, "models");
-    check("體檢：models.mode 是 inherit → 說明，修法提到 auto", mo.level == INFO && mo.fix.contains("auto") && !ids(&r, None).contains(&"kb".to_string()), format!("{r:?}"));
+    check("體檢：models.mode 是 inherit → 警告，列出各等級的模型，修法提到 auto 與 --reconfigure models", mo.level == WARN && mo.fix.contains("auto") && mo.fix.contains("--reconfigure models") && mo.msg.contains("light→haiku") && !ids(&r, None).contains(&"kb".to_string()), format!("{r:?}"));
     set_prof(&|m| {
         if let Some(o) = m.as_object_mut() {
             o.shift_remove("models");
         }
     });
     check("體檢：沒有 models（等同 inherit）→ 說明", find(&doctor(), "models").msg.contains("沒有 models"), String::new());
+    // 知識圖的暫存檔（1.2）：建圖中斷留下的 graph.db.tmp-<pid>，列大小與修法；沒有時不列
+    {
+        check("暫存檔：沒有時不列", !ids(&doctor(), None).contains(&"kg-tmp".to_string()), String::new());
+        let gone = std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" }).args(if cfg!(windows) { &["/C", "exit"][..] } else { &[][..] })
+            .spawn().and_then(|mut c| { let id = c.id(); c.wait().map(|_| id) }).unwrap_or(0);
+        let tmp = format!("proj/_tpm/kb/graph.db.tmp-{gone}");
+        w(&tmp, &"x".repeat(2048));
+        let r = doctor();
+        let k = find(&r, "kg-tmp");
+        check("暫存檔：有 graph.db.tmp-<pid> → 警告，列大小、修法提到 awf kg build", k.level == WARN && k.msg.contains("2.0 KB") && k.fix.contains("awf kg build"), format!("{r:?}"));
+        let _ = std::fs::remove_file(root.join(&tmp));
+    }
     set_prof(&|_| {});
     let _ = std::fs::create_dir_all(root.join("proj/openspec/specs"));
     let r = doctor();

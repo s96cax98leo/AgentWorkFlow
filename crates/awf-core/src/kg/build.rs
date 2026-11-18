@@ -641,6 +641,119 @@ fn rm(p: &str) {
     let _ = std::fs::remove_file(format!("{p}-journal"));
 }
 
+// ------------------------------------------------------------------ 中斷留下的暫存檔
+// 建圖寫在 `<db>.tmp-<pid>`（SQLite 另有 `-journal`／`-wal`／`-shm`），完成才 rename 成正本；
+// 程序被砍掉（外層逾時、關掉終端機）時暫存檔留在原地，下一次建圖用的是自己的 pid，不會清到。
+// 沒有鎖檔：只能看檔名裡的 pid 那個程序還在不在。確定不在才刪；看不出來（或還在）只提示。
+
+/// 一份留下的暫存檔（同一個 pid 的主檔與 SQLite 旁檔合起來算）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LeftoverTmp {
+    /// 主檔名（`graph.db.tmp-<pid>`），不含目錄。
+    pub name: String,
+    pub pid: u32,
+    /// 主檔與旁檔的總位元組數。
+    pub bytes: u64,
+    /// 檔案的完整路徑（主檔與旁檔）。
+    pub files: Vec<String>,
+}
+
+/// `<db>.tmp-<pid>[-journal|-wal|-shm]` 的 pid；不是這個樣子回 None。
+fn tmp_pid(file: &str, db_name: &str) -> Option<u32> {
+    let rest = file.strip_prefix(db_name)?.strip_prefix(".tmp-")?;
+    let digits = ["-journal", "-wal", "-shm"].iter().find_map(|s| rest.strip_suffix(s)).unwrap_or(rest);
+    if digits.is_empty() || digits.len() > 10 || !digits.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// 圖所在目錄裡留下的暫存檔（不含這個程序自己的），依 pid 排序。讀不到目錄回空。
+pub fn leftover_tmps(db: &str) -> Vec<LeftoverTmp> {
+    let p = Path::new(db);
+    let (Some(dir), Some(db_name)) = (p.parent(), p.file_name().and_then(|n| n.to_str())) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let me = std::process::id();
+    let mut by_pid: std::collections::BTreeMap<u32, LeftoverTmp> = std::collections::BTreeMap::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(pid) = tmp_pid(&name, db_name) else { continue };
+        if pid == me || !e.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let bytes = e.metadata().map(|m| m.len()).unwrap_or(0);
+        let t = by_pid.entry(pid).or_insert_with(|| LeftoverTmp { name: format!("{db_name}.tmp-{pid}"), pid, bytes: 0, files: Vec::new() });
+        t.bytes += bytes;
+        t.files.push(e.path().to_string_lossy().into_owned());
+    }
+    by_pid.into_values().collect()
+}
+
+/// 那個 pid 的程序還在不在：Some(true) 在、Some(false) 確定不在、None 看不出來。
+/// pid 可能被別的程序重用，所以「在」只代表不能刪，不代表還在建圖。
+pub fn pid_alive(pid: u32) -> Option<bool> {
+    if pid == 0 {
+        return None;
+    }
+    if cfg!(windows) {
+        let out = std::process::Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        // 有這個程序時每列是 "名稱","pid",…；沒有時是一行（依系統語言）不含引號包住的 pid 的說明
+        let needle = format!("\"{pid}\"");
+        return Some(String::from_utf8_lossy(&out.stdout).contains(&needle));
+    }
+    let out = std::process::Command::new("kill").args(["-0", &pid.to_string()]).stdin(std::process::Stdio::null()).output().ok()?;
+    if out.status.success() {
+        return Some(true);
+    }
+    // 不在：ESRCH（No such process）；權限不夠（EPERM）代表程序在、只是不是我們的
+    let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
+    if err.contains("no such process") {
+        Some(false)
+    } else if err.contains("not permitted") {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// 建圖前清掉確定沒在跑的那幾份暫存檔；回寫給使用者看的說明（刪了哪些、哪些沒刪）。任何錯誤都只略過。
+pub fn clean_leftover_tmps(db: &str) -> Vec<String> {
+    let mut notes = Vec::new();
+    for t in leftover_tmps(db) {
+        match pid_alive(t.pid) {
+            Some(false) => {
+                let mut ok = true;
+                for f in &t.files {
+                    ok &= std::fs::remove_file(f).is_ok();
+                }
+                if ok {
+                    notes.push(format!("清掉上一次建圖中斷留下的暫存檔 {}（{}）", t.name, human_bytes(t.bytes)));
+                } else {
+                    notes.push(format!("上一次建圖中斷留下的暫存檔 {} 刪不掉（{}），請手動刪除", t.name, human_bytes(t.bytes)));
+                }
+            }
+            Some(true) => notes.push(format!("暫存檔 {}（{}）的程序（pid {}）還在，可能另一個 awf kg build 正在跑，沒有刪", t.name, human_bytes(t.bytes), t.pid)),
+            None => notes.push(format!("看不出暫存檔 {}（{}）的程序（pid {}）還在不在，沒有刪；確定沒有 awf kg build 在跑時可以手動刪除", t.name, human_bytes(t.bytes), t.pid)),
+        }
+    }
+    notes
+}
+
+/// 1536 → "1.5 KB"；給說明用。
+pub fn human_bytes(n: u64) -> String {
+    const U: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < U.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 { format!("{n} B") } else { format!("{v:.1} {}", U[i]) }
+}
+
 fn run(con: &Connection, lay: &Layout, full: bool, clock: &Clock, rep: &mut BuildReport) -> Result<bool, Fail> {
     let before = store::meta(con)?;
     store::set_meta(con, "index_state", store::STATE_BUILDING)?;
@@ -706,11 +819,12 @@ pub fn build(o: &BuildOpts) -> Result<BuildReport, String> {
     pyish::mkdir_p(&lay.dir).map_err(|err| format!("建不出目錄 {}（{}）", lay.dir, err.msg))?;
     let tmp = format!("{}.tmp-{}", lay.db, std::process::id());
     rm(&tmp);
+    let leftover_notes = clean_leftover_tmps(&lay.db);
     let prev_ok = !o.full && Path::new(&lay.db).is_file() && store::open_ro(&lay.db).and_then(|c| store::meta(&c)).is_ok_and(|m| store::usable(&m).is_ok());
     if prev_ok {
         std::fs::copy(&lay.db, &tmp).map_err(|err| format!("複製上一版的圖失敗（{err}）"))?;
     }
-    let mut rep = BuildReport { outcome: Outcome::Updated, db: lay.db.clone(), files: 0, changed: 0, removed: 0, nodes: 0, edges: 0, unresolved: 0, skipped: Vec::new(), bad_links: 0, notes: lay.notes.clone() };
+    let mut rep = BuildReport { outcome: Outcome::Updated, db: lay.db.clone(), files: 0, changed: 0, removed: 0, nodes: 0, edges: 0, unresolved: 0, skipped: Vec::new(), bad_links: 0, notes: lay.notes.iter().chain(&leftover_notes).cloned().collect() };
     let result = store::open_rw(&tmp, !prev_ok).map_err(Fail::Msg).and_then(|con| {
         let r = run(&con, &lay, o.full || !prev_ok, &clock, &mut rep);
         drop(con);
@@ -751,5 +865,40 @@ mod tests {
         assert_eq!(toks("export_invoice"), vec!["export", "invoice", "export", "invoice"]);
         assert_eq!(toks("HTTPServer"), vec!["httpserver", "http", "server"]);
         assert_eq!(ticks("看 `src/a.ts` 與 `billing/export-invoice#csv`，不是 `x`、`a b/c`"), vec!["src/a.ts", "billing/export-invoice#csv"]);
+    }
+
+    #[test]
+    fn leftovers() {
+        assert_eq!(tmp_pid("graph.db.tmp-123", "graph.db"), Some(123));
+        assert_eq!(tmp_pid("graph.db.tmp-123-journal", "graph.db"), Some(123));
+        assert_eq!(tmp_pid("graph.db.tmp-123-wal", "graph.db"), Some(123));
+        for bad in ["graph.db", "graph.db.tmp-", "graph.db.tmp-x1", "graph.db.tmp-1-old", "other.db.tmp-1", "graph.db.tmp-99999999999"] {
+            assert_eq!(tmp_pid(bad, "graph.db"), None, "{bad}");
+        }
+        if !cfg!(windows) {
+            assert_eq!(pid_alive(std::process::id()), Some(true));
+        }
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(1536), "1.5 KB");
+        let d = std::env::temp_dir().join(format!("awf-kg-leftover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let db = d.join("graph.db");
+        // 一個確定不在的 pid：先跑一個馬上結束的子程序，拿它的 pid
+        let gone = std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" }).args(if cfg!(windows) { &["/C", "exit"][..] } else { &[][..] })
+            .spawn().and_then(|mut c| { let id = c.id(); c.wait().map(|_| id) }).unwrap();
+        for f in [format!("graph.db.tmp-{gone}"), format!("graph.db.tmp-{gone}-journal"), format!("graph.db.tmp-{}", std::process::id()), "graph.db.tmp-x".into()] {
+            std::fs::write(d.join(f), "abc").unwrap();
+        }
+        let l = leftover_tmps(&db.to_string_lossy());
+        assert_eq!(l.len(), 1, "{l:?}");
+        assert_eq!((l[0].pid, l[0].bytes, l[0].files.len()), (gone, 6, 2));
+        if pid_alive(gone) == Some(false) {
+            let notes = clean_leftover_tmps(&db.to_string_lossy());
+            assert!(notes[0].starts_with("清掉"), "{notes:?}");
+            assert!(leftover_tmps(&db.to_string_lossy()).is_empty());
+            assert!(d.join(format!("graph.db.tmp-{}", std::process::id())).is_file(), "自己的不歸這裡管");
+        }
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
