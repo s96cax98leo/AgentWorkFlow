@@ -394,7 +394,15 @@ pub fn check_policy(ctx: &Ctx, run_dir: Option<&str>, stage: &str) -> R<String> 
     }
     // 自訂段（profile 的 flow）一定在 merge 之前：recipe 點名的每一個都要做完、由人核准才能推（含排在 deliver 後面的）。
     // 沒有自訂段時是空的。chain_errors 也會查排在 --stage 之前的；這裡另外擋「deliver 之後、merge 之前」的與政策核准的紀錄
-    let flow_pending = crate::stages::flow_unapproved(&data, Some(crate::stages::FLOW_NO_ANCHOR));
+    // 政策核准的自訂段：只有現在的 profile 把它宣告成 run: steps＋gate: policy 才算數（沒有自訂段時不讀 profile）
+    let customs = crate::stages::run_customs(&data);
+    let flow_prof = if customs.is_empty() {
+        Value::Null
+    } else {
+        let (p, perr) = save_run::load_profile(ctx, "");
+        if perr.is_empty() { p } else { Value::Null }
+    };
+    let flow_pending = crate::stages::flow_unapproved_with(&data, Some(crate::stages::FLOW_NO_ANCHOR), &flow_prof);
     if !flow_pending.is_empty() {
         return refused(format!("recipe {name} 的自訂段還沒過：{}", flow_pending.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
     }
@@ -428,7 +436,23 @@ pub fn check_policy(ctx: &Ctx, run_dir: Option<&str>, stage: &str) -> R<String> 
         v if v.is_object() => v,
         _ => &empty,
     };
-    let chain = save_run::chain_errors(&data, stage)?;
+    let chain = save_run::chain_errors_with(&data, stage, &flow_prof)?;
+    // 政策核准的自訂段：重跑同一套政策判定（含由工具重跑步驟的指令；run.json 的紀錄不採信）
+    for c in &customs {
+        let a2 = stages.get(c.as_str()).and_then(|s| s.get("approved"));
+        let by_policy = a2.is_some_and(|a| a.get("by").and_then(Value::as_str) == Some("policy") || a.get("kind").and_then(Value::as_str) == Some("policy"));
+        if !by_policy {
+            continue;
+        }
+        let result = match load_json(ctx, &pyish::pjoin(run_dir, &format!("{c}.json")))? {
+            Ok(v) => v,
+            Err(e) => return refused(format!("政策核准要讀 {c}.json，讀不到：{e}")),
+        };
+        let errs = save_run::policy_violations(ctx, c, &result, Some(run_dir))?;
+        if !errs.is_empty() {
+            return refused(format!("自訂段 {c} 政策判定不通過：{}", errs.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
+        }
+    }
     if !chain.is_empty() {
         return refused(format!("recipe 閘門鏈（{name}）不完整：{}", chain.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
     }

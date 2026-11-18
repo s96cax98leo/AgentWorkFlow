@@ -154,6 +154,13 @@ pub fn required_roles_missing(data: &Value, stage: &str, result: &Value) -> R<Ve
 /// - test 段：必須有 verifier 的 criteria payload；任何一條 result 不是 pass 或 anti_cheat 非空都不行。
 /// - 給了 run 目錄而回傳帶 trace 時：重新核對紀錄檔（不採信 run.json 的 missing_records），缺了不行。
 pub fn policy_violations(ctx: &Ctx, stage: &str, result: &Value, run: Option<&str>) -> R<Vec<String>> {
+    policy_violations_with(ctx, stage, result, run, "")
+}
+
+/// 同 [`policy_violations`]；`profile` 是 `--profile` 的值（空字串＝用專案的 profile）。只有自訂段用得到 profile：
+/// 那一段在 profile 是 `run: "steps"`＋`gate: "policy"` 時，改查 [`super::flowsteps::flow_policy_errors`]（含由工具重跑指令）；
+/// 其餘的自訂段（含 profile 讀不到、讀不懂）照舊一律由人核准。
+pub fn policy_violations_with(ctx: &Ctx, stage: &str, result: &Value, run: Option<&str>, profile: &str) -> R<Vec<String>> {
     let mut errs: Vec<String> = Vec::new();
     if HUMAN_ONLY.contains(&stage) {
         errs.push(format!("{stage} 段一律由人核准（rules.md 規則 16），不能政策核准"));
@@ -257,7 +264,15 @@ pub fn policy_violations(ctx: &Ctx, stage: &str, result: &Value, run: Option<&st
                 && (crate::stages::run_customs(&data).iter().any(|c| c == stage)
                     || data.get("stages").and_then(|s| s.get(stage)).and_then(|s| s.get("flow")) == Some(&Value::Bool(true)));
             if flow_stage {
-                errs.push(format!("{stage} 是自訂段，一律由人核准，不能政策核准"));
+                let (prof, perr) = load_profile(ctx, profile);
+                let def = if perr.is_empty() { crate::stages::Resolved::of(&prof).custom(stage).filter(|d| d.policy).cloned() } else { None };
+                match def {
+                    Some(def) => {
+                        let repo = super::flowsteps::target_of(&data)?;
+                        errs.extend(super::flowsteps::flow_policy_errors(ctx, stage, &def, &prof, result, repo.as_deref()).into_iter().map(|e| format!("步驟：{e}")));
+                    }
+                    None => errs.push(format!("{stage} 是自訂段，一律由人核准，不能政策核准")),
+                }
             }
             if has_recipe(&data)? && (SDLC.contains(&stage) || flow_stage) && stage != "plan" {
                 if !has_trace {
@@ -346,6 +361,13 @@ pub fn followup_run_errors(ctx: &Ctx, frun: &str) -> R<String> {
 /// - recipe 有、run.json 卻沒有的段判錯（缺段）；只有沒有 recipe 的舊 run 容許缺 sync（加 sync 段之前建立的 run）。
 /// - recipe 有、run.json 卻標 skipped 也判錯（兩邊不一致，可能被手改）。
 pub fn chain_errors(run_or_stages: &Value, stage: &str) -> R<Vec<String>> {
+    chain_errors_with(run_or_stages, stage, &NULL)
+}
+
+/// 同 [`chain_errors`]；`profile` 是現在的 methodology.json（讀不到給 null）。只影響一件事：前面的自訂段的核准紀錄是政策核准時，
+/// 那一段在 profile 要是 `run: "steps"`＋`gate: "policy"` 才採信；其餘（含 null 的 profile）和 [`chain_errors`] 一樣不採信。
+pub fn chain_errors_with(run_or_stages: &Value, stage: &str, profile: &Value) -> R<Vec<String>> {
+    let flow = crate::stages::Resolved::of(profile);
     // 這個 run 的自訂段（profile 的 flow）：鎖定的 recipe 點名了、而且存檔時標了 flow 的段。
     // recipe 裡其他不認得的名字照舊略過（和原本逐字相同）；「點名了卻沒有標記或沒核准」由 stages::flow_unapproved 另外擋（核准、推送、merge gate 都會查）
     let marked = |c: &str| run_or_stages.get("stages").and_then(|s| s.get(c)).and_then(|s| s.get("flow")) == Some(&Value::Bool(true));
@@ -394,7 +416,10 @@ pub fn chain_errors(run_or_stages: &Value, stage: &str) -> R<Vec<String>> {
         } else if (custom || truthy(get(ps, "gate")?)) && !truthy(get(ps, "approved")?) {
             // 自訂段一律有閘門：不看 run.json 自己記的 gate（被改成 false 也一樣要核准）
             errs.push(format!("前面的 {prev} 段還沒核准"));
-        } else if custom && (get(get(ps, "approved")?, "by")?.as_str() == Some("policy") || get(get(ps, "approved")?, "kind")?.as_str() == Some("policy")) {
+        } else if custom
+            && (get(get(ps, "approved")?, "by")?.as_str() == Some("policy") || get(get(ps, "approved")?, "kind")?.as_str() == Some("policy"))
+            && !flow.custom(prev).is_some_and(|d| d.policy)
+        {
             errs.push(format!("前面的 {prev} 段是自訂段，核准紀錄卻是政策核准（自訂段一律由人核准），不採信"));
         }
     }

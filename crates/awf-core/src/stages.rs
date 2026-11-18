@@ -332,10 +332,18 @@ use serde_json::Value;
 pub const FLOW_MAX: usize = 8;
 /// 自訂段的腳本要放在專案的這個目錄底下（team agent 寫不到）。
 pub const FLOW_DIR: &str = ".claude/flows/";
-/// 這一版 `run` 只收這個值。
+/// `run` 的值：自訂腳本（使用者自己寫 JS）。
 pub const FLOW_RUN: &str = "script";
-/// 這一版 `gate` 只收這個值：自訂段做完一律停下等人核准。
+/// `run` 的值：用資料宣告步驟（`steps`；引擎是 `flow-steps.js` 與 steps 片段，規則在 [`crate::steps`]）。
+pub const FLOW_RUN_STEPS: &str = "steps";
+/// `gate` 的預設值：做完停下等人核准。`run: "script"` 只收這個值。
 pub const FLOW_GATE: &str = "human";
+/// `gate` 的另一個值，只有 `run: "steps"` 可以用：做完先試政策核准（條件見 `save_run::flow_policy_errors`），沒過就交人。
+pub const FLOW_GATE_POLICY: &str = "policy";
+/// `run: "steps"` 的自訂段用的範本名（`plugin/workflow-templates/flow-steps.js`）。
+pub const FLOW_STEPS_TEMPLATE: &str = "flow-steps";
+/// `run: "steps"` 的自訂段可以寫的背景文字（每張派工單開頭）最多幾個字。
+pub const FLOW_CONTEXT_MAX: usize = 4000;
 pub const FLOW_APPROVER_MAX: usize = 40;
 pub const FLOW_LABEL_MAX: usize = 20;
 pub const FLOW_ARTIFACTS_MAX: usize = 8;
@@ -380,6 +388,19 @@ pub struct Custom {
     pub approver: String,
     /// 做完要有的產出檔名（`<run>/<段>/<檔名>`）。
     pub artifacts: Vec<String>,
+    /// 用資料宣告的步驟（`run: "steps"` 才有；其餘是 null）。合不合規則由 [`crate::steps::errors`] 判，這裡只是原樣帶著。
+    pub steps: Value,
+    /// 可以政策核准：`run` 是 steps 而且 `gate` 明寫 policy。其餘（含讀不懂的值）一律由人核准。
+    pub policy: bool,
+    /// 這一筆宣告原樣（算指紋用，[`crate::steps::def_sha`]）。
+    pub raw: Value,
+}
+
+impl Custom {
+    /// 是不是用步驟宣告的段（`run: "steps"`）。
+    pub fn by_steps(&self) -> bool {
+        !self.steps.is_null()
+    }
 }
 
 /// 內建表加上 profile 的自訂段。
@@ -408,10 +429,15 @@ impl Resolved {
                 continue;
             }
             let text = |k: &str| x.get(k).and_then(Value::as_str).unwrap_or_default();
+            // run 是 steps：沒有腳本，步驟原樣帶著（沒寫 steps 時給空陣列，用到的地方會因為定義不合規則停下）
+            let by_steps = text("run") == FLOW_RUN_STEPS;
             listed.push(Custom {
                 id: id.to_string(),
                 after: after.to_string(),
-                script: Some(text("script")).filter(|p| flow_script_ok(p)).unwrap_or_default().to_string(),
+                steps: if by_steps { x.get("steps").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Array(Vec::new())) } else { Value::Null },
+                policy: by_steps && text("gate") == FLOW_GATE_POLICY,
+                raw: x.clone(),
+                script: Some(text("script")).filter(|p| !by_steps && flow_script_ok(p)).unwrap_or_default().to_string(),
                 approver: Some(text("approver")).filter(|a| flow_text_ok(a, FLOW_APPROVER_MAX)).map(str::trim).unwrap_or_default().to_string(),
                 artifacts: x.get("artifacts").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|a| flow_artifact_ok(a)).take(FLOW_ARTIFACTS_MAX).map(str::to_string).collect(),
             });
@@ -543,8 +569,16 @@ pub fn flow_tamper(profile: &Value, resolved_stages: &Value) -> Vec<String> {
 }
 
 /// 這個 run 鎖定的 recipe 點名的自訂段裡，還沒「做完而且由人核准」的（run.json 的 `stages`；不靠 profile）。
-/// `before`：只看排在這一段之前的（None＝全部）。publish 與 merge-gate 用：自訂段沒過就不能推、不能合。
+/// `before`：只看排在這一段之前的（None＝全部）。政策核准的紀錄一律不算（等同 [`flow_unapproved_with`] 給 null 的 profile）。
 pub fn flow_unapproved(run: &Value, before: Option<&str>) -> Vec<String> {
+    flow_unapproved_with(run, before, &Value::Null)
+}
+
+/// 同 [`flow_unapproved`]，另外認「可以政策核准的自訂段」：`profile`（現在的 methodology.json；讀不到給 null）裡
+/// 這一段是 `run: "steps"`＋`gate: "policy"` 時，政策核准的紀錄才算數；其餘的自訂段仍然只認人的核准。
+/// publish、merge-gate、核准與 `awf next` 用：自訂段沒過就不能推、不能合、不能進下一段。
+pub fn flow_unapproved_with(run: &Value, before: Option<&str>, profile: &Value) -> Vec<String> {
+    let flow = Resolved::of(profile);
     let want = run.get("recipe").and_then(|r| r.get("resolved")).and_then(|r| r.get("stages")).cloned().unwrap_or(Value::Null);
     let named = customs_in(&want);
     if named.is_empty() {
@@ -561,9 +595,15 @@ pub fn flow_unapproved(run: &Value, before: Option<&str>) -> Vec<String> {
         let status = st.and_then(|s| s.get("status")).and_then(Value::as_str).unwrap_or("沒有這一段");
         let ap = st.and_then(|s| s.get("approved"));
         let human = ap.is_some_and(|a| a.get("by").and_then(Value::as_str).is_some_and(|b| !b.is_empty() && b != "policy") && a.get("kind").and_then(Value::as_str) != Some("policy"));
+        let by_policy = ap.is_some_and(|a| a.is_object() && (a.get("by").and_then(Value::as_str) == Some("policy") || a.get("kind").and_then(Value::as_str) == Some("policy")));
+        let policy_ok = flow.custom(&c).is_some_and(|d| d.policy);
         if status != "done" {
             out.push(format!("自訂段 {c} 狀態是 {status}，還沒 done"));
-        } else if !human {
+        } else if human || (by_policy && policy_ok) {
+            // 人核准了；或這一段在 profile 明寫可以政策核准，而且有政策核准的紀錄
+        } else if policy_ok {
+            out.push(format!("自訂段 {c} 還沒核准（政策核准沒過時由人核准）"));
+        } else {
             out.push(format!("自訂段 {c} 還沒有人核准（自訂段一律由人核准）"));
         }
     }
@@ -655,6 +695,18 @@ mod tests {
         assert_eq!(flow_unapproved(&run(json!({"status": "done", "approved": {"by": "policy", "kind": "policy"}})), None).len(), 1);
         assert!(flow_unapproved(&run(json!({"status": "done", "approved": {"by": "pm", "kind": "human"}})), None).is_empty());
         assert!(flow_unapproved(&run(json!({"status": "pending"})), Some("test")).is_empty());
+        // 政策核准的紀錄：只有 profile 把這一段宣告成 run: steps＋gate: policy 才算數
+        let policy = run(json!({"status": "done", "approved": {"by": "policy", "kind": "policy"}}));
+        let steps = json!([{"id": "c", "kind": "check", "command": "true"}]);
+        let prof = |gate: &str, how: &str| json!({"flow": {"stages": [{"id": "uat", "after": "test", "run": how, "steps": steps, "script": ".claude/flows/uat.js", "gate": gate}]}});
+        assert!(flow_unapproved_with(&policy, None, &prof("policy", "steps")).is_empty());
+        assert_eq!(flow_unapproved_with(&policy, None, &prof("human", "steps")).len(), 1);
+        assert_eq!(flow_unapproved_with(&policy, None, &prof("policy", "script")).len(), 1, "腳本跑的段就算寫了 gate: policy 也不算");
+        assert_eq!(flow_unapproved_with(&policy, None, &Value::Null).len(), 1);
+        assert!(flow_unapproved_with(&run(json!({"status": "done"})), None, &prof("policy", "steps"))[0].contains("還沒核准"));
+        let r = Resolved::of(&prof("policy", "steps"));
+        assert!(r.custom("uat").is_some_and(|c| c.by_steps() && c.policy && c.script.is_empty()));
+        assert!(Resolved::of(&prof("policy", "script")).custom("uat").is_some_and(|c| !c.by_steps() && !c.policy && c.script == ".claude/flows/uat.js"));
         assert_eq!(flow_unapproved(&run(json!({"status": "pending"})), Some("merge")).len(), 1);
     }
 

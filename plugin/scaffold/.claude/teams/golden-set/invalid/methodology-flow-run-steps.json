@@ -1,6 +1,8 @@
 {
- "_說明": "run 這一版只收 script",
+ "_說明": "run 是 steps 卻寫了 script、沒有 steps",
  "schema": "methodology",
+ "semantic": true,
+ "expect": "steps 必填",
  "data": {
   "name": "acme-demo",
   "description": "示範客戶 ACME 的 profile 範例：需求來自 issue，PR 上限 400 行、檔數不限",

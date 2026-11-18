@@ -428,7 +428,7 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
     t
 }
 
-/// 產生的 12 支腳本用 node 乾跑（check_workflows.mjs 載入 plugin/workflow-templates/scenarios/ 的情境）。沒有 node 就略過。
+/// 產生的 13 支腳本用 node 乾跑（check_workflows.mjs 載入 plugin/workflow-templates/scenarios/ 的情境）。沒有 node 就略過。
 fn dry_run(st: &Stage) -> Option<String> {
     if std::process::Command::new("node").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
         return None;
@@ -488,5 +488,5 @@ fn state_matches_python() {
     assert!(t.runs >= 400, "指令步數不對：{}", t.runs);
     assert!(t.calls >= 70, "函式呼叫數不對：{}", t.calls);
     assert!(t.bad.is_empty(), "{} 步不同（共 {} 步）：\n{}", t.bad.len(), t.runs + t.calls, t.bad.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
-    assert_eq!(rendered, 12, "render --all 要產生 12 支腳本");
+    assert_eq!(rendered, 13, "render --all 要產生 13 支腳本");
 }

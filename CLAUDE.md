@@ -62,7 +62,7 @@ cargo xtask checksums [--write|--check]          # 執行檔的 sha256 與原始
 ```bash
 awf init --target <專案> [--hooks plugin|project] [--answers <答案.json>] [--defaults] [--upgrade [--adopt-new-fields]]
 awf init --detect --target <專案> [--json]    # 只偵測、只印（訪談用）；awf init --target <專案> --reconfigure [--answers <檔>] 改已 init 專案的設定 [--source <模版>]
-awf render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 12 支 workflow 腳本
+awf render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 13 支 workflow 腳本
 node plugin/workflow-templates/check_workflows.mjs --project <專案> --wf-dir <目錄>   # 乾跑所有 workflow（含 plugin/workflow-templates/scenarios/*.mjs 的情境）
 awf build [--check]   # 只處理專案的覆寫檔（.claude/workflows/*.js）；在模版 repo 裡處理 plugin/workflow-templates/
 awf check-agents --plugin-dir <AgentWorkFlow>/plugin           # 檢查 tpm-*／dev-* agent 格式（16 個：14 個核心角色＋2 個舊名薄殼）
@@ -152,7 +152,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### 執行核心、模型分級與省 context（0.4）
 
-- **執行核心**：`plugin/workflow-templates/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限。**12 支 workflow 的派工都走它**（`save_run::KERNEL_STAGES` 是全部七段）；片段裡的派工（`challengeList`、`verifyFindings`）用 challenge 片段的 `awfDispatch`，啟用核心後也經過核心。上限＝`limits.max_agents`（沒寫用 40），design 另加 `3×max_sub_plans`、build 另加 `4×子任務數`、test 另加 `4×子計劃數`；到上限不再派、trace 記一筆 `capped: true`，`save_run::process_trace` 列成缺件並說明。`AWF_NO_RETRY`（dev-integrator、dev-merge-steward：有副作用）與 `retry: false` 的派工不自動重派。新寫的派工一律用 `awfAgent`。
+- **執行核心**：`plugin/workflow-templates/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限。**13 支 workflow 的派工都走它**（`save_run::KERNEL_STAGES` 是全部七段）；片段裡的派工（`challengeList`、`verifyFindings`）用 challenge 片段的 `awfDispatch`，啟用核心後也經過核心。上限＝`limits.max_agents`（沒寫用 40），design 另加 `3×max_sub_plans`、build 另加 `4×子任務數`、test 另加 `4×子計劃數`；到上限不再派、trace 記一筆 `capped: true`，`save_run::process_trace` 列成缺件並說明。`AWF_NO_RETRY`（dev-integrator、dev-merge-steward：有副作用）與 `retry: false` 的派工不自動重派。新寫的派工一律用 `awfAgent`。
 - **pattern 庫（0.5）**：`plugin/workflow-templates/snippets/patterns.js`（`@requires: challenge, recipe, kernel`）。六個函式 `awfFanOut`、`awfClassifyAct`、`awfAdversarial`、`awfGenerateFilter`、`awfTournament`、`awfLoop`，都走 `awfAgent`、都要給 `max`（沒給 throw）；超過上限、缺件、跑滿輪數一律回 `halted`。內建的 12 支範本沒有引用它（各自的流程已經寫好），目前給自訂腳本用。測試在 `cargo xtask check-patterns`。
 - **自訂腳本（0.5）**：`awf next --script <檔>`（`custom_action`、`render_custom`）只開放 design、build、deliver（`script::STAGES`）。`awf script` 做靜態檢查（`check`：直接用 `agent()`、未登記角色、無上限迴圈、return 沒帶 trace、改寫核心）並把 preamble 接在 meta 後面；核心的 `roles` 白名單在執行時再擋一次。`assemble` 把腳本內容包成函式：用參數遮蔽 `agent`、`tryAgent`、`awfState` 等名字（`SHADOWED`），回傳的 `stage`、`recipe`、`trace` 由外層覆寫（靜態檢查只是提早發現，這層才是擋）。`awf done` 把 `custom_script`（來源與 sha1）放進結果，`save_run::policy_violations` 看到就拒絕政策核准。排序與閘門鏈照舊。
 - **非標準結果一律交人（0.5）**：覆寫檔或舊副本跑的段（`override_script`）、`done --output` 手動給的結果（`manual_output`）、自訂腳本（`custom_script`）都不能政策核准。標記記在 run.json 的 `awf.nonstandard[段]`，要等標準腳本的回傳從 workflow 紀錄取得才解除。`find_wf_meta` 不採用修改時間在未來的紀錄，同一支腳本在這次 next 之後有兩筆以上就不猜、交人。`stage_args` 對 `subtasks`、`sub_plans`、`branch` 以前段結果為準（`--set` 蓋不掉）。

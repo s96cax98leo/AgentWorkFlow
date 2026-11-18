@@ -1699,7 +1699,12 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
         let tamper = recipe_tamper_errors(&teams, &data, Some(meth.as_str())).map_err(Fail::Crash)?;
         if !tamper.is_empty() { return Err(Fail::Input(first(&tamper, 3).join("；"))); }
         // 自訂段（profile 的 flow）一定在 merge 之前：recipe 點名的每一個都要做完、由人核准（沒有自訂段時是空的）
-        let flow_pending = crate::stages::flow_unapproved(&data, None);
+        // 政策核准的紀錄只有現在的 profile 把那一段宣告成 run: steps＋gate: policy 才算數（profile 不合規則就都不算）
+        let flow_prof = {
+            let p = crate::layout::read_profile(&meth);
+            if crate::stages::run_customs(&data).is_empty() || !crate::schema::methodology_errors(&p).is_empty() { Value::Null } else { p }
+        };
+        let flow_pending = crate::stages::flow_unapproved_with(&data, None, &flow_prof);
         if !flow_pending.is_empty() { return Err(Fail::Input(format!("--recipe {p} 的自訂段還沒過：{}", first(&flow_pending, 5).join("；")))); }
         inp.recipe = Some(r.clone());
         if inp.requirements_source.starts_with("openspec:") {

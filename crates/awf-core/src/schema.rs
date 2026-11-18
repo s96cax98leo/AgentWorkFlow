@@ -799,10 +799,18 @@ fn dup_strings(vals: &[Option<&Value>]) -> BTreeSet<String> {
 /// 讀法在 [`crate::stages::Resolved`]；這裡擋的是「宣告本身不合規則」：
 /// - id：小寫英數與連字號、字母開頭、32 字以內；不能和內建的段、保留名（[`event_reserved`]）、內建或自訂的事件類型同名；不重複；最多 8 個。
 /// - after：內建的段（merge 除外）或另一個自訂段；指得到、不循環。所以自訂段一定在 plan 之後、merge 之前。
-/// - run 只收 script；script 在 `.claude/flows/` 底下、副檔名 `.js`、不含 `..`。
-/// - gate 只收 human（沒寫也是 human）：自訂段做完一律等人核准。
+/// - run 是 script（自訂腳本）或 steps（用資料宣告步驟）。script：`script` 必填，在 `.claude/flows/` 底下、副檔名 `.js`、不含 `..`，
+///   不能寫 steps、context。steps：`steps` 必填（規則在 [`crate::steps::errors`]），不能寫 script。
+/// - gate 是 human（沒寫也是）或 policy；policy 只有 run 是 steps 才能寫：自訂腳本跑出來的結果一律等人核准。
 /// - labels 的鍵只能是內建的段或宣告過的自訂段。
 pub fn flow_errors(doc: &Value) -> Vec<String> {
+    flow_errors_inner(doc)
+}
+
+/// 事件定義裡「原本的寫法」的鍵：和 `steps` 二選一（要和 event.js 的 `FLOW_KEYS` 一致）。
+pub const EVENT_FLOW_KEYS: [&str; 7] = ["payload", "before", "gather", "challenge", "after", "write", "returns"];
+
+fn flow_errors_inner(doc: &Value) -> Vec<String> {
     use crate::stages as st;
     let Some(flow) = get(doc, "flow").filter(|f| !f.is_null()) else { return Vec::new() };
     let Some(fo) = flow.as_object() else { return vec![format!("flow 要是物件（收到 {}）", type_name(flow))] };
@@ -833,7 +841,7 @@ pub fn flow_errors(doc: &Value) -> Vec<String> {
             Some(id) if st::flow_id_ok(id) => format!("flow.stages[{id}]"),
             _ => format!("flow.stages[{i}]"),
         };
-        for k in xo.keys().filter(|k| !["id", "after", "run", "script", "gate", "approver", "artifacts"].contains(&k.as_str())) {
+        for k in xo.keys().filter(|k| !["id", "after", "run", "script", "steps", "context", "gate", "approver", "artifacts"].contains(&k.as_str())) {
             errs.push(format!("{who} 不認得的欄位：{k}"));
         }
         let mut id_ok = false;
@@ -859,20 +867,43 @@ pub fn flow_errors(doc: &Value) -> Vec<String> {
                 }
             }
         }
+        let by_steps = xo.get("run").and_then(Value::as_str) == Some(st::FLOW_RUN_STEPS);
         match xo.get("run") {
-            Some(Value::String(r)) if r == st::FLOW_RUN => {}
-            Some(other) => errs.push(format!("{who}.run 這一版只收 \"{}\"（收到 {}）", st::FLOW_RUN, str_of(other))),
-            None => errs.push(format!("{who}.run 必填（這一版只收 \"{}\"）", st::FLOW_RUN)),
+            Some(Value::String(r)) if r == st::FLOW_RUN || r == st::FLOW_RUN_STEPS => {}
+            Some(other) => errs.push(format!("{who}.run 只收 \"{}\" 或 \"{}\"（收到 {}）", st::FLOW_RUN, st::FLOW_RUN_STEPS, str_of(other))),
+            None => errs.push(format!("{who}.run 必填（\"{}\" 或 \"{}\"）", st::FLOW_RUN, st::FLOW_RUN_STEPS)),
         }
-        match xo.get("script").and_then(Value::as_str) {
-            Some(p) if st::flow_script_ok(p) => {}
-            Some(p) => errs.push(format!("{who}.script 要是專案內的相對路徑、在 {} 底下、副檔名 .js、不能含 ..（收到 {p}）", st::FLOW_DIR)),
-            None => errs.push(format!("{who}.script 必填，要是字串")),
+        if by_steps {
+            if xo.contains_key("script") {
+                errs.push(format!("{who}：run 是 steps 時不能寫 script（兩種跑法只能選一種）"));
+            }
+            match xo.get("steps") {
+                None | Some(Value::Null) => errs.push(format!("{who}.steps 必填（run 是 steps）")),
+                Some(steps) => errs.extend(crate::steps::errors(steps, &format!("{who}.steps"), crate::steps::max_agents(doc))),
+            }
+            match xo.get("context") {
+                None => {}
+                Some(Value::String(c)) if !c.trim().is_empty() && c.encode_utf16().count() <= st::FLOW_CONTEXT_MAX => {}
+                Some(_) => errs.push(format!("{who}.context 要是字串（{} 字以內）", st::FLOW_CONTEXT_MAX)),
+            }
+        } else {
+            for k in ["steps", "context"] {
+                if xo.contains_key(k) {
+                    errs.push(format!("{who}：run 是 steps 才能寫 {k}"));
+                }
+            }
+            match xo.get("script").and_then(Value::as_str) {
+                Some(p) if st::flow_script_ok(p) => {}
+                Some(p) => errs.push(format!("{who}.script 要是專案內的相對路徑、在 {} 底下、副檔名 .js、不能含 ..（收到 {p}）", st::FLOW_DIR)),
+                None => errs.push(format!("{who}.script 必填，要是字串")),
+            }
         }
         match xo.get("gate") {
             None => {}
             Some(Value::String(g)) if g == st::FLOW_GATE => {}
-            Some(other) => errs.push(format!("{who}.gate 這一版只收 \"{}\"（收到 {}）：自訂段做完一律等人核准", st::FLOW_GATE, str_of(other))),
+            Some(Value::String(g)) if g == st::FLOW_GATE_POLICY && by_steps => {}
+            Some(Value::String(g)) if g == st::FLOW_GATE_POLICY => errs.push(format!("{who}.gate 的 \"{g}\" 只有 run 是 steps 才能用：自訂腳本跑出來的結果一律等人核准")),
+            Some(other) => errs.push(format!("{who}.gate 只收 \"{}\" 或 \"{}\"（收到 {}）", st::FLOW_GATE, st::FLOW_GATE_POLICY, str_of(other))),
         }
         match xo.get("approver") {
             None => {}
@@ -1026,6 +1057,36 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
                 terrs.push(format!("events[{name}] 要是物件（收到 {}）", type_name(ev)));
                 continue;
             }
+            // extends：以內建類型為底（合併在範本裡做：物件深度合併、陣列取代）；steps：用資料宣告步驟（規則在 crate::steps），
+            // 和 gather／challenge／write 的寫法二選一。必要欄位原本由 JSON Schema 的 required 擋，開放這兩種寫法之後由這裡接手
+            let ext = get(ev, "extends");
+            if let Some(x) = ext {
+                if !x.as_str().is_some_and(|n| crate::state::EVENT_TYPES.iter().any(|(e, _)| *e == n)) {
+                    let names: Vec<&str> = crate::state::EVENT_TYPES.iter().map(|(e, _)| *e).collect();
+                    errs.push(format!("events[{name}].extends 要是內建的事件類型（{}）；不能指自訂的類型、不能串接", names.join("、")));
+                }
+            }
+            let ev_steps = get(ev, "steps");
+            if let Some(st) = ev_steps {
+                let mixed: Vec<&str> = EVENT_FLOW_KEYS.iter().copied().filter(|k| get(ev, k).is_some()).collect();
+                if !mixed.is_empty() {
+                    errs.push(format!("events[{name}] 同時寫了 steps 與 {}：兩種寫法只能選一種", mixed.join("、")));
+                }
+                errs.extend(crate::steps::errors(st, &format!("events[{name}].steps"), crate::steps::max_agents(doc)));
+            }
+            if ext.is_none() {
+                let need: &[&str] = if ev_steps.is_some() { &["context"] } else { &["context", "gather", "challenge", "write"] };
+                let lack: Vec<&str> = need.iter().copied().filter(|k| get(ev, k).is_none()).collect();
+                if !lack.is_empty() {
+                    errs.push(format!("events[{name}] 缺 {}（沒有用 extends 時必填；用 steps 的寫法只要 context）", lack.join("、")));
+                }
+                // 這三項原本由 JSON Schema 的 required 擋；extends 可以只覆寫一部分，所以 schema 放掉、沒有 extends 時由這裡擋
+                for (part, key) in [("gather", "angles"), ("challenge", "ask"), ("write", "ask")] {
+                    if get(ev, part).is_some_and(|p| p.is_object() && get(p, key).is_none()) {
+                        errs.push(format!("events[{name}].{part} 缺 {key}"));
+                    }
+                }
+            }
             // 型別先看過：角度、前後步驟、data 都要是物件的陣列（型別不對時上限、重複、from 都檢查不到）
             let angles = objects_of(get(ev, "gather").and_then(|g| get(g, "angles")), &format!("events[{name}].gather.angles"), &mut terrs);
             let before_steps = objects_of(get(ev, "before"), &format!("events[{name}].before"), &mut terrs);
@@ -1044,6 +1105,10 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
             }
             if event_reserved(name) {
                 errs.push(format!("events 不能用「{name}」當事件名（已經是別的流程或 SDLC 的段）"));
+            }
+            // 用 extends 的定義只寫了要覆寫的部分：name、label、data 的 from、回傳鍵要合併之後才看得出來（範本執行時檢查），這裡不對半份定義下判斷
+            if ext.is_some() {
+                continue;
             }
             let steps: Vec<&Value> = before_steps.iter().chain(after_steps.iter()).copied().collect();
             let names: Vec<String> = steps.iter().map(|s| str_opt(get(s, "name"))).collect();

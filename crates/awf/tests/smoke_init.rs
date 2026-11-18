@@ -10,7 +10,7 @@
 //! | `check_placeholders`：佔位符雙向一致 | `placeholders_match_example` | 自己掃 scaffold（不 import init.py）；init 自算的兩個鍵寫在這裡 |
 //! | `check_tools`：golden-set | 沒有對應 | `awf` 沒有跑 golden-set 的子指令（`run.py` 不再複製進專案）；正反例由 awf-core 的測試跑 |
 //! | `check_tools`：`build.py --check` | `fresh_init`（`awf build --check`） | 片段從模版找（專案沒有 tools/snippets） |
-//! | `check_tools`：預設沒有 `.claude/workflows/`、`render --all` 產生 12 支 | `fresh_init`（`awf render --all`） | 相同 |
+//! | `check_tools`：預設沒有 `.claude/workflows/`、`render --all` 產生 13 支 | `fresh_init`（`awf render --all`） | 相同 |
 //! | `check_tools`：`check_workflows.mjs` 乾跑（有 node 才跑） | `fresh_init` | `.mjs` 用模版的那一份（`plugin/workflow-templates/`，不在專案） |
 //! | `check_tools`：有 `--selftest` 的工具全部跑 | `fresh_init`（`SELFTESTS` 列的子指令） | `awf state --selftest` 在沒 init 的目錄跑（`fresh_init`），在 init 過的專案裡另由 `state_selftest_in_project` 跑（片段從模版找） |
 //! | `check_tools`：`check_agents.py --plugin-dir` | `fresh_init`（`awf check-agents`） | 相同 |
@@ -34,9 +34,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::{json, Value};
 
 const EXE: &str = env!("CARGO_BIN_EXE_awf");
-const WORKFLOWS: [&str; 12] = [
+const WORKFLOWS: [&str; 13] = [
     "sdlc-plan", "sdlc-design", "sdlc-design-revise", "sdlc-build", "sdlc-sync", "sdlc-test", "sdlc-deliver", "sdlc-merge",
     "event", "event-brief", "event-pr-review", "event-post-merge",
+    "flow-steps",
 ];
 const REQUIRED: [&str; 10] = [
     "CLAUDE.md",

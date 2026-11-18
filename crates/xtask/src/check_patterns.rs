@@ -19,6 +19,9 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 const JS: &str = include_str!("js/patterns.cjs");
+/// 步驟引擎（`snippets/steps.js`）的測試本體。
+const STEPS_JS: &str = include_str!("js/steps.cjs");
+const STEPS_SNIPPETS: [&str; 4] = ["challenge", "recipe", "kernel", "steps"];
 const RUN_JS: &str = include_str!("js/patterns_run.cjs");
 const SNIPPETS: [&str; 4] = ["challenge", "recipe", "kernel", "patterns"];
 const NS: &str = "agent-workflow:";
@@ -282,5 +285,15 @@ pub fn run_captured(root: &Path) -> Captured {
         let out = format!("{}{}", r.stdout, r.stderr);
         return (1, format!("check_patterns：沒通過\n{}\n", pyutil::strip(&out)), String::new());
     }
-    (0, "check_patterns：六個 pattern 的上限、正常、達上限、缺件，核心上限與角色白名單，以及自訂腳本端到端都正確\n".into(), String::new())
+    // 步驟引擎（flow-steps.js 與 event.js 的 steps 寫法共用）：每種步驟的正常、達上限、缺件，loop 的第二輪過與跑滿輪數
+    let files: Vec<_> = STEPS_SNIPPETS.iter().map(|n| dir.join(format!("{n}.js"))).collect();
+    let r = match util::node_eval(&node, STEPS_JS, &files, None) {
+        Ok(r) => r,
+        Err(e) => return (1, format!("check_patterns：步驟引擎沒通過\n{e}\n"), String::new()),
+    };
+    if r.code != 0 {
+        let out = format!("{}{}", r.stdout, r.stderr);
+        return (1, format!("check_patterns：步驟引擎沒通過\n{}\n", pyutil::strip(&out)), String::new());
+    }
+    (0, "check_patterns：六個 pattern 的上限、正常、達上限、缺件，核心上限與角色白名單，自訂腳本端到端，以及步驟引擎五種步驟的正常、達上限、缺件都正確\n".into(), String::new())
 }

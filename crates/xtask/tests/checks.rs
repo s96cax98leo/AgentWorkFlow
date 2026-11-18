@@ -137,7 +137,7 @@ fn patterns_pass_on_repo() {
     let (rc, out, err) = check_patterns::run_captured(&root());
     assert_eq!(
         (rc, out.as_str()),
-        (0, "check_patterns：六個 pattern 的上限、正常、達上限、缺件，核心上限與角色白名單，以及自訂腳本端到端都正確\n"),
+        (0, "check_patterns：六個 pattern 的上限、正常、達上限、缺件，核心上限與角色白名單，自訂腳本端到端，以及步驟引擎五種步驟的正常、達上限、缺件都正確\n"),
         "{err}"
     );
 }
