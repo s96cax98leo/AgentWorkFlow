@@ -1,0 +1,127 @@
+{
+ "_說明": "recipe 與 modifier 點名了沒宣告的段（或宣告不算數：接在 merge 後面、彼此循環）：記在 errors、不排進 stages，呼叫端要停下交人",
+ "profile": {
+  "recipes": {
+   "feature": {
+    "description": "示範",
+    "stages": [
+     "plan",
+     "design",
+     "build",
+     "sync",
+     "test",
+     "ghost",
+     "late",
+     "loop-a",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "feature",
+    "research_angles": [
+     "requirement"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan"
+    ],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify"
+     ]
+    },
+    "deliver_axes": [
+     "spec",
+     "bugs"
+    ]
+   }
+  },
+  "modifiers": {
+   "odd": {
+    "description": "指到沒宣告的段",
+    "add_stages": [
+     "phantom",
+     "design"
+    ]
+   }
+  },
+  "flow": {
+   "stages": [
+    {
+     "id": "late",
+     "after": "merge",
+     "run": "script",
+     "script": ".claude/flows/late.js",
+     "gate": "human"
+    },
+    {
+     "id": "loop-a",
+     "after": "loop-b",
+     "run": "script",
+     "script": ".claude/flows/a.js",
+     "gate": "human"
+    },
+    {
+     "id": "loop-b",
+     "after": "loop-a",
+     "run": "script",
+     "script": ".claude/flows/b.js",
+     "gate": "human"
+    }
+   ]
+  }
+ },
+ "recipe": "feature",
+ "modifiers": [
+  "odd"
+ ],
+ "expect": {
+  "name": "feature",
+  "stages": [
+   "plan",
+   "design",
+   "build",
+   "sync",
+   "test",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "feature",
+  "research_angles": [
+   "requirement"
+  ],
+  "design_lenses": [
+   "coverage",
+   "plan"
+  ],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify"
+   ]
+  },
+  "deliver_axes": [
+   "spec",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [
+   "odd"
+  ],
+  "errors": [
+   "recipe feature 的段 ghost 不認得（不是內建的段，profile 的 flow 也沒有宣告）",
+   "recipe feature 的段 late 不認得（不是內建的段，profile 的 flow 也沒有宣告）",
+   "recipe feature 的段 loop-a 不認得（不是內建的段，profile 的 flow 也沒有宣告）",
+   "modifier odd 的 add_stages 有不認得的段：phantom"
+  ]
+ }
+}

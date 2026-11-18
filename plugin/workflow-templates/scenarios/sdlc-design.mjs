@@ -1,5 +1,5 @@
 // sdlc-design.js 的乾跑情境：走預設乾跑碰不到的分支。
-import { ENV, SUB_PLANS, extScenario, recipeScenarios, kgScenarios, withFeature, roleScenarios } from './_helpers.mjs'
+import { ENV, SUB_PLANS, extScenario, recipeScenarios, kgScenarios, withFeature, roleScenarios, i18nScenarios } from './_helpers.mjs'
 
 export default [
     extScenario('ext:db2'),
@@ -7,7 +7,7 @@ export default [
       name: 'profile 有系統設計方法',
       profile: { stages: { design: { artifacts: ['design.md', 'spec.md', 'plan.md'], requirement_style: 'x', guidance: 'x',
         system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設', '4 擴展與取捨'], feature_scope: '功能層要寫', system_scope: '系統層要寫', topics: ['CAP'] } } } },
-      fakes: { design: (base, prompt) => { if (!/系統設計（SA／SD/.test(prompt) || !/4 擴展與取捨/.test(prompt)) throw new Error('design 派工單沒帶系統設計方法'); return ENV(base.payload)(base) } },
+      fakes: { design: (base, prompt) => { if (!/系統設計（SA／SD|System design \(SA\/SD/.test(prompt) || !/4 擴展與取捨/.test(prompt)) throw new Error('design 派工單沒帶系統設計方法'); return ENV(base.payload)(base) } },
       expect: (r) => (r.labels.includes('analyze:system-design') ? [] : [`沒有派出 system-design lens：${r.labels.join(',')}`]),
     },
     {
@@ -205,6 +205,7 @@ export default [
   },
   ...roleScenarios('design.analyze', 'tpm-skeptic', /^analyze:/),
   ...kgScenarios(),
+  ...i18nScenarios('design'),
   {
     // 「契約不夠用就回報、不自己設計新端點」是 contract-first 的做法：範本不寫，由 profile 的 stages.design.guidance 帶（內建 default profile 有這一句）
     name: '做法不寫死：profile 的 guidance 沒有契約那一句 → 設計的派工單不出現；guidance 有寫 → 照 guidance 出現',

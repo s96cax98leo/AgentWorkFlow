@@ -11,7 +11,7 @@ pub struct Rendered {
     pub tmp: TempDir,
     /// 專案根目錄（`<tmp>/proj`）。
     pub proj: PathBuf,
-    /// 12 支腳本所在的目錄（`<tmp>/wf`）。
+    /// 13 支腳本所在的目錄（`<tmp>/wf`）。
     pub wf_dir: PathBuf,
 }
 
@@ -49,7 +49,21 @@ pub fn state_env(root: &Path, proj: &Path) -> awf_core::state::Env {
 
 /// init 之後產生全部腳本（等同在專案裡 `awf render --all --out <wf> --plugin-dir <root>/plugin`）。
 pub fn rendered(root: &Path, prefix: &str) -> Result<Rendered, String> {
+    rendered_with(root, prefix, None)
+}
+
+/// 同 [`rendered`]；`patch` 有給時先把它的鍵蓋進專案的 methodology.json（最外層逐鍵取代），再產生腳本。
+pub fn rendered_with(root: &Path, prefix: &str, patch: Option<&serde_json::Value>) -> Result<Rendered, String> {
     let (tmp, proj) = init_default(root, prefix)?;
+    if let Some(serde_json::Value::Object(p)) = patch {
+        let f = proj.join(".claude").join("teams").join("methodology.json");
+        let mut m = util::read_json(&f)?;
+        let o = m.as_object_mut().ok_or("methodology.json 不是 JSON 物件")?;
+        for (k, v) in p {
+            o.insert(k.clone(), v.clone());
+        }
+        std::fs::write(&f, format!("{}\n", serde_json::to_string_pretty(&m).unwrap_or_default())).map_err(|e| format!("寫不了 methodology.json：{e}"))?;
+    }
     let wf_dir = tmp.path().join("wf");
     let argv: Vec<String> = vec!["render".into(), "--all".into(), "--out".into(), posix(&wf_dir), "--plugin-dir".into(), posix(&root.join("plugin"))];
     let (code, out, err) = awf_core::state::run_captured(&argv, &state_env(root, &proj));

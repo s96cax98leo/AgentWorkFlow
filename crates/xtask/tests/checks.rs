@@ -65,7 +65,7 @@ fn recipes_pass_on_repo() {
 fn recipes_fail_when_js_drifts() {
     let tmp = teams_copy("recipes-js");
     // JS 那一邊的 modifier 不再加段（比 Rust 鬆）
-    edit(&util::snippet_dir(tmp.path()).join("recipe.js"), "r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages))", "r.stages = recipeOrder(r.stages)");
+    edit(&util::snippet_dir(tmp.path()).join("recipe.js"), "r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages), full)", "r.stages = recipeOrder(r.stages, full)");
     let (rc, out, _) = check_recipes::run_captured(tmp.path());
     assert_eq!(rc, 1, "{out}");
     assert!(out.starts_with("recipe 一致性檢查失敗：\n") && out.contains("recipe.js 和 awf_core::recipe 不一致") && out.contains("\"stages\""), "{out}");
@@ -137,7 +137,7 @@ fn patterns_pass_on_repo() {
     let (rc, out, err) = check_patterns::run_captured(&root());
     assert_eq!(
         (rc, out.as_str()),
-        (0, "check_patterns：六個 pattern 的上限、正常、達上限、缺件，核心上限與角色白名單，以及自訂腳本端到端都正確\n"),
+        (0, "check_patterns：六個 pattern 的上限、正常、達上限、缺件，核心上限與角色白名單，自訂腳本端到端，以及步驟引擎五種步驟的正常、達上限、缺件都正確\n"),
         "{err}"
     );
 }

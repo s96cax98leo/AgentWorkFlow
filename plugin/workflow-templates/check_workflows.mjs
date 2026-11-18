@@ -5,6 +5,9 @@
 //   3. 用依 schema 產生的假回傳把腳本從頭跑到尾，確定沒有 runtime 錯誤
 //   4. 每張派工單都有 rules.md（含〈專案規則〉）、輸出語言，最後一行是「執行紀錄檔：<路徑>.md」；回傳帶 trace，筆數＝實際派出數
 //   5. 印出乾跑經過的 phase（例如 sdlc-build 依開發規範 profile 的 build.test_first 走 Red 或 Tests，smoke_init 用它確認開關有效）
+//   6. 派工單的語言（profile 的 prompt_lang 不是 zh-TW，awf 把語言檔內嵌在 profile 的 _prompt_strings）：第 4 項改用字串表的字比對，
+//      每張派工單要以那個語言的共同前綴開頭；情境的 expect 多半比對中文本文，這時略過（標 langSafe: true 的照跑），
+//      改由 AWF_LANG_BASELINE=<預設語言乾跑的 AWF_SCENARIO_REPORT> 逐情境核對派出的 label、phase、模型、halted、回傳和預設語言完全相同
 // 這支檔在 plugin 的 workflow-templates/ 裡，情境在旁邊的 scenarios/。
 // 用法：node "<plugin>/workflow-templates/check_workflows.mjs" [--project <專案目錄>] [--wf-dir <產生好的 workflow 目錄>] [--agents-dir <dir>]
 //   --project：專案根目錄（檢查擴充 agent 的定義檔 <專案>/.claude/agents/<名>.md 時用）；沒給用環境變數 CLAUDE_PROJECT_DIR，再沒有用目前目錄
@@ -52,6 +55,31 @@ const PROMPT_RULES = [
   ['最後一行「執行紀錄檔：<路徑>.md」', /執行紀錄檔：\S+\/\S+\.md\s*$/],
 ]
 
+// 派工單的字串表：i18n/zh-TW.json（＝片段 awfText() 的內建字）疊上內嵌 profile 的 _prompt_strings（語言檔）與 prompt_overrides
+const ZH = (() => { try { return JSON.parse(readFileSync(join(here, 'i18n', 'zh-TW.json'), 'utf8')) } catch { return {} } })()
+// 片段 awfStrings 的規則：prefix.rules 要留 {rules}、{lang}，record.tail 要留 {record} 而且以它結尾，否則不採用
+const keepsVars = (k, v) => k === 'prefix.rules' ? v.includes('{rules}') && v.includes('{lang}') : k === 'record.tail' ? v.endsWith('{record}') : true
+const effStrings = (prof) => {
+  const out = { ...ZH }
+  for (const src of [prof && prof._prompt_strings, prof && prof.prompt_overrides]) {
+    if (src && typeof src === 'object' && !Array.isArray(src)) for (const k of Object.keys(ZH)) if (typeof src[k] === 'string' && src[k] && keepsVars(k, src[k])) out[k] = src[k]
+  }
+  return out
+}
+const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// 字串表的一個字串 → 正規式：{變數} 換成 vars 給的樣式（沒給的換成任意字）
+const tplRe = (tpl, vars) => String(tpl).split(/(\{[A-Za-z0-9_]+\})/).map((part) => {
+  const m = part.match(/^\{([A-Za-z0-9_]+)\}$/)
+  return m ? (vars[m[1]] || '[^\\n]*?') : reEsc(part)
+}).join('')
+// 第 4 項：字串表的 prefix.rules 與 record.tail 是內建的字時照原本的比對（訊息逐字不變）；換了語言或被蓋掉時依字串表比對，rules.md 一定要在
+const promptRules = (S) => (S['prefix.rules'] === ZH['prefix.rules'] && S['record.tail'] === ZH['record.tail']) ? PROMPT_RULES : [
+  ['rules.md', /\.claude\/teams\/rules\.md/],
+  ['rules.md 與輸出語言（字串表 prefix.rules）', new RegExp(tplRe(S['prefix.rules'], { rules: '\\.claude\\/teams\\/rules\\.md', lang: '[^\\n]*' }))],
+  ['最後一行指定執行紀錄檔（字串表 record.tail）', new RegExp(tplRe(S['record.tail'], { record: '\\S+\\/\\S+\\.md' }) + '\\s*$')],
+]
+const LANG_BASE = (() => { const f = process.env.AWF_LANG_BASELINE; if (!f) return null; try { return JSON.parse(readFileSync(f, 'utf8')) } catch (e) { console.log(`AWF_LANG_BASELINE 讀不懂：${e.message}`); process.exit(1) } })()
+
 function fake(schema) {
   if (!schema) return 'text'
   if (schema.enum) return schema.enum[0]
@@ -85,7 +113,14 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
   const errs = []
   // 使用者自己的 agent：profile 的 extensions（加進某一段）與 roles（換掉某一步）
   const prof = embedded(src) || {}
-  const extAgents = new Set([...(prof.extensions || []).map((e) => e.agent), ...Object.values(prof.roles && typeof prof.roles === 'object' ? prof.roles : {}),
+  const strings = effStrings(prof)
+  const rules = promptRules(strings)
+  const langMode = !!(prof._prompt_strings && typeof prof._prompt_strings === 'object')
+  // 用步驟宣告的自訂段與事件（flow.stages[].steps、events.<名>.steps）裡換上去的 agent（role 不是 tpm-*／dev-* 的）也算
+  const stepRoles = (list) => (Array.isArray(list) ? list : []).flatMap((s) => (s && typeof s === 'object' ? [s.role, (s.until || {}).role, ...stepRoles(s.steps)] : []))
+  const holders = [...((prof.flow || {}).stages || []), ...Object.values(prof.events && typeof prof.events === 'object' ? prof.events : {})]
+  const stepAgents = holders.flatMap((h) => stepRoles(h && h.steps)).filter((x) => typeof x === 'string' && !/^(tpm|dev)-/.test(x))
+  const extAgents = new Set([...(prof.extensions || []).map((e) => e.agent), ...Object.values(prof.roles && typeof prof.roles === 'object' ? prof.roles : {}), ...stepAgents,
     // sdlc-merge 的合併角色（awf next 從 guard.config.json 的 auto_merge.merger_role 帶進 args）也可以是使用者自己的 agent
     ...(args && typeof args.merger_role === 'string' ? [args.merger_role] : [])])
   let agents = 0
@@ -104,8 +139,10 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
       if (typeof prompt !== 'string' || !prompt) errs.push('agent() 的 prompt 空白')
       else {
         // I3／I6：每張派工單都要有 rules.md（含〈專案規則〉）、輸出語言，最後一行指定執行紀錄檔（challenge 片段的 awfInit／tryAgent 會加）
-        const lack = PROMPT_RULES.filter(([, rx]) => !rx.test(prompt)).map(([k]) => k)
+        const lack = rules.filter(([, rx]) => !rx.test(prompt)).map(([k]) => k)
         if (lack.length) errs.push(`agent ${opts.label} 的派工單缺 ${lack.join('、')}（workflow 開頭要呼叫 awfInit，agent 一律透過 tryAgent 派）`)
+        // 換了語言：共同前綴要是那個語言的字
+        if (langMode && !prompt.startsWith(`${strings['prefix.heading']}\n`)) errs.push(`agent ${opts.label} 的派工單沒有用字串表的共同前綴開頭（${strings['prefix.heading']}）`)
       }
       if (opts.phase && !titles.has(opts.phase)) errs.push(`opts.phase「${opts.phase}」不在 meta.phases`)
       if (opts.agentType && extAgents.has(opts.agentType)) {
@@ -141,7 +178,7 @@ async function dryRun(src, titles, args, fakes, virtualAgents = []) {
       else if (out.trace.some((t) => !t.record)) errs.push('trace 有沒有執行紀錄檔路徑的項目')
     }
   } catch (e) { errs.push(`乾跑失敗：${e.message}`) }
-  return { errs, agents, visited, labels, prompts, calls, out }
+  return { errs, agents, visited, labels, prompts, calls, out, langMode, strings }
 }
 
 // 情境放在 scenarios/<workflow>.mjs（export default 陣列），每支 workflow 一檔，平行修改不互相衝突
@@ -154,6 +191,8 @@ if (existsSync(scDir)) for (const f of readdirSync(scDir).filter((x) => x.endsWi
 // AWF_SCENARIO_REPORT=<檔>：把每個情境的結果（派出的 label、派工單、halted）寫成 JSON，給計畫的驗證腳本用
 const report = {}
 let failed = 0
+let langSkipped = 0
+let langCompared = 0
 for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
   // 換行統一成 \n：Windows 上的檔案可能是 CRLF
   const src = readFileSync(join(wfDir, f), 'utf8').replace(/\r\n/g, '\n')
@@ -184,8 +223,21 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
     agents += r.agents
     r.visited.forEach((t) => { if (!visited.includes(t)) visited.push(t) })
     errs.push(...r.errs.map((e) => (sc.name ? `[情境：${sc.name}] ${e}` : e)))
-    const scErrs = [...r.errs, ...(sc.expect ? sc.expect(r) : [])]
-    if (sc.expect) errs.push(...sc.expect(r).map((e) => `[情境：${sc.name}] ${e}`))
+    // 換了語言：expect 多半比對中文本文，只跑標 langSafe 的；其餘由 AWF_LANG_BASELINE 的逐情境核對頂替
+    const runExpect = sc.expect && (!r.langMode || sc.langSafe)
+    if (sc.expect && !runExpect) langSkipped++
+    const exp = runExpect ? sc.expect(r) : []
+    if (r.langMode && LANG_BASE) {
+      const b = ((LANG_BASE[f] || {}).scenarios || []).find((x) => x.name === sc.name)
+      if (!b) exp.push('預設語言的乾跑報告沒有這個情境')
+      else {
+        const cur = { labels: r.labels, visited: r.visited, calls: r.calls, halted: !!(r.out && r.out.halted), out: r.out && typeof r.out === 'object' ? JSON.parse(JSON.stringify(r.out)) : null }
+        for (const k of Object.keys(cur)) if (JSON.stringify(cur[k]) !== JSON.stringify(b[k])) exp.push(`換了語言後 ${k} 和預設語言不同（語言只能改派工單的字）`)
+        langCompared++
+      }
+    }
+    const scErrs = [...r.errs, ...exp]
+    errs.push(...exp.map((e) => `[情境：${sc.name}] ${e}`))
     report[f] = report[f] || { phases: [...titles], scenarios: [] }
     report[f].scenarios.push({ name: sc.name, ok: scErrs.length === 0, halted: !!(r.out && r.out.halted), labels: r.labels, visited: r.visited, prompts: r.prompts, calls: r.calls, out: r.out && typeof r.out === 'object' ? JSON.parse(JSON.stringify(r.out)) : null })
   }
@@ -193,5 +245,6 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.js')).sort()) {
   else console.log(`ok   ${f}（乾跑 ${agents} 個 agent；phases: ${visited.join('→') || '-'}）`)
 }
 if (process.env.AWF_SCENARIO_REPORT) writeFileSync(process.env.AWF_SCENARIO_REPORT, JSON.stringify(report))
+if (langSkipped || langCompared) console.log(`換了派工單語言：略過 ${langSkipped} 個比對中文本文的 expect，${langCompared} 個情境和預設語言的乾跑逐項核對`)
 console.log(failed ? `workflow 檢查：${failed} 支有問題` : 'workflow 檢查：全部通過')
 process.exit(failed ? 1 : 0)

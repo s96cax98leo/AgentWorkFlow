@@ -136,7 +136,9 @@ pub fn run_all(here: &Path) -> Vec<CaseResult> {
     let mut out = Vec::new();
     let mut one = |kind: &'static str, path: &Path, wrap: bool| {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let case = read_json(path).map(|v| if wrap { serde_json::json!({"schema": "methodology", "data": v}) } else { v });
+        // profile（內建與專案的）照繼承（extends）合併後再驗；沒有 extends 時原樣
+        let case = read_json(path).and_then(|v| if wrap { crate::profile::resolve_file(path, v) } else { Ok(v) })
+            .map(|v| if wrap { serde_json::json!({"schema": "methodology", "data": v}) } else { v });
         out.push(match case {
             Ok(c) => run_case(&teams, kind, name, &c),
             Err(e) => CaseResult { kind, name, semantic: false, errors: 0, schema_errors: 0, problems: vec![e] },

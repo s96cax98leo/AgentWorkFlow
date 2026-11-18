@@ -28,9 +28,9 @@ mod selftest;
 
 pub use crate::kb::PyErr;
 pub use args::{apply_sets, current_session, deliverables_sync, find_wf_meta, run_pack, stage_args, transcripts_root, unreadable_wf_meta};
-pub use machine::{carry, custom_action, decide, envelopes, gate_action, halted_action, handoff_text, highlights, provisional, text_of, try_policy, workflow_action};
+pub use machine::{carry, custom_action, decide, envelopes, flow_action, gate_action, halted_action, handoff_text, highlights, is_flow, provisional, text_of, try_policy, workflow_action};
 pub(crate) use plugin::{override_re, unregistered, version as plugin_version};
-pub use plugin::{custom_roles, find_plugin, find_template, plugin_candidates, read_config, render, render_custom, workflow_names, Candidate};
+pub use plugin::{custom_roles, find_plugin, find_template, plugin_candidates, read_config, render, render_custom, render_flow, workflow_names, Candidate};
 pub use selftest::selftest;
 
 use crate::kb::pyish;
@@ -47,7 +47,7 @@ pub const EVENT_TYPES: [(&str, &[&str]); 5] =
 const FIXED_EVENTS: [(&str, &str, &str); 4] =
     [("brief", "event-brief", "brief"), ("pr-review", "event-pr-review", "pr-review"), ("post-merge", "event-post-merge", "post-merge"), ("merge", "sdlc-merge", "merge")];
 /// 每支 workflow 的必要參數（event.js 另外要該事件類型的參數）。
-pub const REQUIRED: [(&str, &[&str]); 12] = [
+pub const REQUIRED: [(&str, &[&str]); 13] = [
     ("sdlc-plan", &["repo", "epic", "requirement", "run_dir"]),
     ("sdlc-design", &["repo", "epic", "run_dir"]),
     ("sdlc-design-revise", &["repo", "epic", "run_dir", "decisions", "issues"]),
@@ -60,6 +60,8 @@ pub const REQUIRED: [(&str, &[&str]); 12] = [
     ("event-post-merge", &["repo", "run_dir"]),
     ("event-pr-review", &["target", "repo", "run_dir"]),
     ("event", &["event", "run_dir"]),
+    // 用步驟宣告的自訂段（profile 的 flow.stages[].run 是 steps）；不是事件，由狀態機在走到那一段時產生
+    ("flow-steps", &["stage", "run_dir"]),
 ];
 pub const HINTS: [(&str, &str); 15] = [
     ("repo", "目標 repo（我方的本機 clone）"),
@@ -336,12 +338,14 @@ pub(crate) fn hint(k: &str) -> &'static str {
 }
 
 pub(crate) fn stage_workflow(stage: &str) -> String {
-    format!("sdlc-{stage}")
+    crate::stages::template_of(stage).map_or_else(|| format!("sdlc-{stage}"), str::to_string)
 }
 
 /// profile（methodology.json）的 events：使用者自訂的事件類型。讀不懂就當沒有。
 pub fn profile_events(env: &Env) -> py::R<Map<String, Value>> {
-    let m = load_json(env, &pyish::pjoin(&env.teams(), "methodology.json"))?;
+    let file = pyish::pjoin(&env.teams(), "methodology.json");
+    // 繼承（extends）解析失敗照「讀不懂」當沒有（產生腳本時 plugin::methodology 會報錯停下）
+    let m = load_json(env, &file)?.and_then(|v| crate::profile::resolve_str(&file, v).ok());
     let mut out = Map::new();
     if let Some(Value::Object(ev)) = m.as_ref().and_then(|m| m.as_object()).and_then(|m| m.get("events")) {
         for (k, v) in ev {
@@ -370,6 +374,12 @@ pub fn event_route(env: &Env, event: &str) -> py::R<Option<(String, String)>> {
 /// event.js 這個事件類型的必要參數：profile 有定義就照它的 args，否則用內建的。
 pub fn event_required(env: &Env, event: &str) -> py::R<Vec<String>> {
     if let Some(d) = profile_events(env)?.get(event) {
+        // extends：沒有自己寫 args 時用底（內建類型）的必要參數；有寫就整個取代（陣列不合併，和範本的合併規則一致）
+        if d.get("args").is_none() {
+            if let Some(base) = d.get("extends").and_then(Value::as_str).and_then(builtin_type) {
+                return Ok(base.iter().map(|x| x.to_string()).collect());
+            }
+        }
         let a = py::get(d, "args")?;
         return Ok(py::iter_or(a)?.iter().filter_map(|x| x.as_str().map(str::to_string)).collect());
     }
@@ -525,6 +535,10 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
                 mark.insert(k.to_string(), v.clone());
             }
         }
+        // 用步驟宣告的自訂段：段名與定義的指紋跟著 pending 走，awf done 從 workflow 紀錄取得結果時寫進結果（不算非標準）
+        if let Some(v) = act.get("steps").filter(|v| py::truthy(v)) {
+            pending.insert("steps".to_string(), v.clone());
+        }
         let stage = py::s(py::idx(&act, "stage")?);
         // 中斷回收只認「交出去當時的 session」的 transcript，所以在會回收的那一種動作（SDLC 的 plan 段、標準腳本）記下來。
         // 認不出 session 就不寫（之後也就不回收）；其他動作的 pending 不變
@@ -629,6 +643,15 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
         marks.insert("manual_output".into(), json!(true));
     }
     let mut result = result;
+    // 用步驟宣告的自訂段的標記（flow_steps）只由這裡寫：workflow 自己回傳的同名欄位一律拿掉；
+    // 只有「標準腳本、回傳取自 workflow 紀錄」時才寫上 awf next 當時記下的段名與定義指紋
+    if let Value::Object(m) = &mut result {
+        m.shift_remove("flow_steps");
+        let own = py::get(&mine, "steps")?;
+        if marks.is_empty() && meta.is_some() && own.is_object() {
+            m.insert("flow_steps".into(), own.clone());
+        }
+    }
     if !marks.is_empty() {
         let mut m = match &result {
             Value::Object(o) => o.clone(),

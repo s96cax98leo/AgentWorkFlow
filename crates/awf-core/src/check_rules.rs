@@ -146,8 +146,14 @@ impl Ctx {
 
     /// 開發規範 profile 的 commit 標題格式；沒有 profile、沒設或設 null 時回 None。寫壞時多回一行警告。
     fn commit_regex(&self) -> (Option<(FRegex, String)>, Option<String>) {
-        let rx = std::fs::read_to_string(&self.methodology).ok()
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        let prof = std::fs::read_to_string(&self.methodology).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        // 繼承（extends）解析失敗：照「讀不懂」略過格式檢查，但要說（沒有 extends 時輸出不變）
+        let prof = match prof.map(|v| crate::profile::resolve_file(&self.methodology, v)) {
+            Some(Err(e)) => return (None, Some(format!("警告：{} 的 extends 讀不懂（{e}），略過格式檢查", norm(&self.methodology.to_string_lossy())))),
+            Some(Ok(v)) => Some(v),
+            None => None,
+        };
+        let rx = prof
             .and_then(|v| v.get("conventions").and_then(|c| c.get("commit")).and_then(|c| c.get("check_regex")).cloned());
         let Some(Value::String(rx)) = rx else { return (None, None) };
         if pyish::is_blank(&rx) {

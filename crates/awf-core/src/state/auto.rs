@@ -74,7 +74,8 @@ pub fn auto_cfg(profile: &Value) -> AutoCfg {
 /// 專案的 profile（`<專案>/.claude/teams/methodology.json`）；讀不到、讀不懂都回 Null。hook 也用這個，所以不經過任何會印訊息的路徑。
 pub fn read_profile(project: &str) -> Value {
     let file = pyish::pjoin(project, ".claude/teams/methodology.json");
-    std::fs::read(&file).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object).unwrap_or(Value::Null)
+    std::fs::read(&file).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| crate::profile::resolve_str(&file, v).ok()).filter(Value::is_object).unwrap_or(Value::Null)
 }
 
 /// 圖所在的目錄（絕對路徑）：profile 的 `knowledge.dir`，沒有就是 `_tpm/kb`。只做字串運算，不碰檔案系統。

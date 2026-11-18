@@ -222,6 +222,8 @@ fn requirements_outside(root: &Path) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for file in [".claude/teams/methodology.json", ".claude/teams/guard.config.json"] {
         let Some(doc) = read_small(root, file).and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+        // profile 的繼承（extends）：用合併後的；解析失敗當作讀不懂（略過）
+        let Ok(doc) = (if file.ends_with("methodology.json") { crate::profile::resolve_file(&root.join(file), doc) } else { Ok(doc) }) else { continue };
         let Some(p) = doc.pointer("/requirements/path").and_then(Value::as_str) else { continue };
         let norm = p.replace('\\', "/");
         let abs = Path::new(p).is_absolute() || norm.starts_with('/');

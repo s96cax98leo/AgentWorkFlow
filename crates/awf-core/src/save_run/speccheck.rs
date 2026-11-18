@@ -285,7 +285,7 @@ pub fn baseline_drift(stage: &str, data: &Value, conf: &spec::SourceCfg, opened:
 /// design、test、deliver 段的規格檢查。回傳問題清單（空＝沒問題）；`approve --by policy` 重算，不過就拒絕，人工核准只警告。
 /// `data` 是 run.json（取核准時記下的規格基準）。
 pub fn spec_issues(stage: &str, result: &Value, sc: &Result<SpecCtx, String>, data: &Value) -> R<Vec<String>> {
-    if !matches!(stage, "design" | "test" | "deliver") {
+    if !crate::stages::has(stage, crate::stages::Flag::SpecCheck) {
         return Ok(Vec::new());
     }
     let sc = match sc {

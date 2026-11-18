@@ -100,7 +100,7 @@ model: inherit
 
 ## 6. 驗證
 ```bash
-awf render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 12 支腳本
+awf render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 13 支腳本
 node <plugin>/workflow-templates/check_workflows.mjs --project . --wf-dir _tpm/wf-check   # 確認擴充 agent 會被派出、定義檔存在（<plugin> 是 plugin 目錄）
 awf doctor                             # methodology.json 合法（doctor 會用 schema 驗）
 ```

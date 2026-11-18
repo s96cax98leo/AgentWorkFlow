@@ -26,6 +26,7 @@ mod archive;
 mod checks;
 mod cli;
 mod decisions;
+mod flowsteps;
 mod links;
 mod policy;
 pub(crate) mod py;
@@ -42,12 +43,13 @@ pub use checks::{
 };
 pub use cli::{approve, run, stage, stage_unreadable, USAGE};
 pub use decisions::{decision_errors, record_decisions, split_answer};
+pub use flowsteps::{flow_policy_errors, step_checks};
 pub use links::{
     ac_tokens, active_links, decision_id, decision_links, full_sha, link_gaps, link_gaps_of, links_setting, noop_command, safe as ledger_safe, stage_links, test_targets, write_links, GapInput, GAP_STAGES, LEDGER,
     LEDGER_TEXT_MAX, LINK_KINDS, LINK_SCHEMA_VERSION,
 };
 pub use policy::{
-    abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors,
+    abandoned_error, chain_errors, chain_errors_with, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, load_profile_for, mods, policy_violations, policy_violations_with, profile_missing, recipe_mismatch, recipe_tamper_errors,
     required_roles_missing, EXTRA_GATE_STAGES, REVIEW_ROLES,
 };
 pub use selftest::selftest;
@@ -62,11 +64,11 @@ use py::R;
 use serde_json::Value;
 
 /// sync（跟上 base）在 build 與 test 之間，沒有人工閘門：之後的 test 會重新驗證同步後的 head。
-pub const SDLC: [&str; 7] = ["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub use crate::stages::IDS as SDLC;
 /// merge 段不設人工閘門：合併與否由確定性的 merge gate 判定，它前面的 deliver 段仍要核准。
-pub const GATED: [&str; 4] = ["plan", "design", "test", "deliver"];
+pub use crate::stages::GATED;
 /// plan 閘門一律由人核准（rules.md 規則 16），不接受政策核准。
-pub const HUMAN_ONLY: [&str; 1] = ["plan"];
+pub use crate::stages::HUMAN_ONLY;
 /// workflow 回傳裡「值是 null 也正常」的欄位（不是 agent 的交件）；其他位置出現 null 一律當 agent 缺件。
 pub const NULL_OK_KEYS: [&str; 8] = ["gate", "halt_reason", "reason", "problem", "next", "summary", "rest", "head_sha"];
 /// 不是 agent 交件的結構（trace 是派工紀錄、recipe 是分類結果），不在裡面找缺件的 null。
@@ -81,7 +83,7 @@ pub const BLOCKING_SEVERITIES: [&str; 2] = ["blocker", "important"];
 /// `awf save-run status --json` 的格式版本：只加欄位時不變，欄位改名、移除或換意思才遞增（相容承諾見 docs/監控與整合.md）。
 pub const STATUS_SCHEMA_VERSION: u64 = 1;
 /// 已經改用執行核心（kernel 片段）的段：profile 有設 models 時，trace 每筆都要有 model 與 tier。0.5 起 SDLC 每一段都是。
-pub const KERNEL_STAGES: [&str; 7] = ["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub use crate::stages::KERNEL as KERNEL_STAGES;
 
 /// 執行環境：所有路徑都明確給，不看行程的目前目錄。
 #[derive(Debug, Clone)]

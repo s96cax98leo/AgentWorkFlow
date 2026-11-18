@@ -35,7 +35,7 @@
 18. **commit**：格式照開發規範 profile 的 `conventions.commit`（預設 profile 是 Conventional Commits、scope 放 Story ID）；結尾署名行 `{{ATTRIBUTION_LINE}}`。`awf check-rules --git` 檢查署名行；profile 有設 `check_regex` 時也檢查標題格式。
 19. **分支**：新分支只用 `guard.config.json` 的 `allowed_branch_prefixes`（{{ALLOWED_BRANCH_PREFIXES}}）；子任務分支 `{{BRANCH_PREFIX}}<epic>--<sub>`（profile 的 `conventions.branch.patterns` 有設時照它），各開 worktree，檔案所有權不重疊；整合用整合分支，依相依順序合併。不 force push、不 `--no-verify`。建議的分支名不合規時改用允許的前綴並註明。
 20. **測試失敗就改程式，不改測試**；不加 skip、fixme、retry，不放寬斷言。上游測試不改；例外要{{DECISION_OWNER}}核准，並記錄在 spec 的「整合修訂與例外」。
-21. **改寫 commit 歷史前留備份分支**；改寫後更新文件中引用的 SHA。
+21. **改寫 commit 歷史前留備份**：優先用備份 ref `git update-ref refs/backup/<分支，/ 換成 ->-<日期> HEAD`（和 `awf sync-branch` 的 rebase 備份同一個命名，profile 的 `conventions.sync.backup_ref` 可改）；要用分支時用 `git branch backup/<分支>-<日期>`（只在本機建立、不切過去開發、不推送；不受規則 19 的前綴限制）。改寫後更新文件中引用的 SHA。
 
 ### 交件
 22. **每個 agent 都以 JSON 信封交件**（`.claude/teams/schemas/envelope.schema.json`）：

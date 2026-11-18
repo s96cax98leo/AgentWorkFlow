@@ -322,7 +322,8 @@ pub fn model_errors_with(stage: &str, result: &Value, profile: &Value, modifiers
             }
         }
         if tier.is_null() || tier.as_str() == Some("") {
-            if KERNEL_STAGES.contains(&stage) {
+            // 自訂段（profile 的 flow）的腳本一樣由執行核心派工
+            if KERNEL_STAGES.contains(&stage) || crate::stages::Resolved::of(profile).is_custom(stage) {
                 errs.push(format!("{label} 的 trace 沒有 model／tier（profile 有設 models，這一段的派工都要經過執行核心）"));
             }
             continue;

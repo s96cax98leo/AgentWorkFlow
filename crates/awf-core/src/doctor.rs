@@ -334,19 +334,44 @@ fn check_config(env: &Env) -> Part {
     } else if !meth.as_ref().is_some_and(Value::is_object) {
         out.push(item("methodology", ERR, "methodology.json 不是合法的 JSON 物件", "修正 JSON 語法（常見：多了結尾逗號、少了引號）"));
     } else if let Some(m) = &meth {
-        let checked = match schema_teams(env) {
-            Some(t) => Schemas::new(t).check_doc(m, "methodology"),
-            None => Err("找不到 schemas/methodology.schema.json".to_string()),
+        // 繼承（extends）：列出繼承鏈，驗的是合併後的結果（錯誤標上來源）；沒有 extends 時不多列、輸出不變
+        let inherited = if crate::profile::has_extends(m) {
+            match crate::profile::inspect_with(Path::new(&mf), env.template.as_deref().map(Path::new)) {
+                Ok(r) => {
+                    if let Some(r) = &r {
+                        out.push(item("profile-extends", INFO, format!("methodology.json 的繼承鏈：{}（後面的覆寫前面的）", r.sources.join(" → ")), ""));
+                    }
+                    Ok(r)
+                }
+                Err(e) => {
+                    out.push(item("profile-extends", ERR, format!("methodology.json 的繼承（extends）讀不懂：{e}"),
+                        "extends 每一項要是內建 profile 的名字（例如 default、lightweight），或 .claude/teams/ 底下的 .json 相對路徑；不能循環，最多 4 層"));
+                    Err(())
+                }
+            }
+        } else {
+            Ok(None)
         };
-        match checked {
-            Err(e) => out.push(item("methodology", WARN, format!("methodology.json 沒辦法驗證：驗證器跑不起來（{e}）"), "跑 awf init --target <這個專案> --upgrade 補齊工具與 schema")),
-            Ok(errs) if !errs.is_empty() => out.push(item(
-                "methodology",
-                ERR,
-                format!("methodology.json 有 {} 個問題：{}{}", errs.len(), errs.iter().take(5).cloned().collect::<Vec<_>>().join("；"), if errs.len() > 5 { "…" } else { "" }),
-                "照訊息修正；欄位說明見模版的 docs/自訂與擴充.md",
-            )),
-            Ok(_) => out.push(item("methodology", OK, "methodology.json 通過 schema 與語意規則", "")),
+        if let Ok(inherited) = inherited {
+            let merged = inherited.as_ref().map_or(m, |r| &r.value);
+            let checked = match schema_teams(env) {
+                Some(t) => Schemas::new(t).check_doc(merged, "methodology"),
+                None => Err("找不到 schemas/methodology.schema.json".to_string()),
+            };
+            let checked = match (checked, &inherited) {
+                (Ok(errs), Some(r)) if !errs.is_empty() => Ok(crate::profile::blame(&errs, r)),
+                (c, _) => c,
+            };
+            match checked {
+                Err(e) => out.push(item("methodology", WARN, format!("methodology.json 沒辦法驗證：驗證器跑不起來（{e}）"), "跑 awf init --target <這個專案> --upgrade 補齊工具與 schema")),
+                Ok(errs) if !errs.is_empty() => out.push(item(
+                    "methodology",
+                    ERR,
+                    format!("methodology.json 有 {} 個問題：{}{}", errs.len(), errs.iter().take(5).cloned().collect::<Vec<_>>().join("；"), if errs.len() > 5 { "…" } else { "" }),
+                    "照訊息修正；欄位說明見模版的 docs/自訂與擴充.md",
+                )),
+                Ok(_) => out.push(item("methodology", OK, "methodology.json 通過 schema 與語意規則", "")),
+            }
         }
     }
     let gf = pyish::pjoin(&teams, "guard.config.json");
@@ -367,6 +392,8 @@ fn check_config(env: &Env) -> Part {
     if !is_file(&pyish::pjoin(&teams, "workflow.config")) {
         out.push(item("config", WARN, "沒有 .claude/teams/workflow.config：workflow 範本的佔位符沒有值可以換，awf next 會拒絕", "跑 awf init --target <這個專案> --upgrade"));
     }
+    // 有繼承時看合併後的 extensions／roles（繼承讀不懂時上面已經報過，這裡照原樣看檔案自己的）
+    let meth = meth.map(|m| if crate::profile::has_extends(&m) { crate::profile::resolve_str(&mf, m.clone()).unwrap_or(m) } else { m });
     if meth.as_ref().is_some_and(Value::is_object) {
         let miss = state::unregistered(env, meth.as_ref()).map_err(py_err)?;
         if !miss.is_empty() {
@@ -429,7 +456,8 @@ fn check_overrides(env: &Env, plugin: Option<&str>) -> Part {
 
 /// 專案的 profile（讀不懂回 None：那是 `check_config` 的事）。
 fn profile_of(env: &Env) -> Option<Value> {
-    load_json(&pyish::pjoin(&env.teams(), "methodology.json")).filter(Value::is_object)
+    let file = pyish::pjoin(&env.teams(), "methodology.json");
+    load_json(&file).and_then(|v| crate::profile::resolve_str(&file, v).ok()).filter(Value::is_object)
 }
 
 fn guard_of(env: &Env) -> Option<Value> {
@@ -445,6 +473,8 @@ fn text_at<'a>(v: Option<&'a Value>, keys: &[&str]) -> &'a str {
 }
 
 /// 1. `models.mode` 是 inherit（或沒有 `models`）：每個 agent 都用主對話的模型。
+/// 實測這是 token 用量最大的一項（定位、整理這類輕的工作也用最強的模型），所以是 warn；
+/// 訊息列出改成 auto 之後各等級實際會用的模型（profile 的 `models.tiers`，沒寫的用內建對照）。
 fn check_models(env: &Env) -> Part {
     let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
     let models = prof.get("models").filter(|m| m.is_object());
@@ -453,12 +483,32 @@ fn check_models(env: &Env) -> Part {
         return Ok(Vec::new());
     }
     let why = if models.is_none() { "methodology.json 沒有 models" } else { "models.mode 是 inherit" };
+    let tiers: Vec<String> = crate::recipe::TIERS.iter().map(|t| {
+        let m = crate::recipe::tier_model(&prof, &json!(t)).unwrap_or_default();
+        format!("{t}→{}", if m.is_empty() { "沿用主對話模型" } else { m.as_str() })
+    }).collect();
     Ok(vec![item(
         "models",
-        INFO,
-        format!("{why}：每個 agent 都用主對話的模型，定位、整理這類輕的工作也一樣，成本比分級高"),
-        "想省成本：把 models.mode 改成 auto（輕的工作用較小的模型，審查與合併有下限，不會降）；沒有 models 時先跑 awf init --target <這個專案> --upgrade --adopt-new-fields。欄位說明見 docs/自訂與擴充.md",
+        WARN,
+        format!("{why}：每個 agent 都用主對話的模型，定位、整理這類輕的工作也一樣，token 成本比分級高。改成 auto 後各等級用的模型：{}（合併、安全審查、plan 段的 intent 與反駁有內建下限，不會降）", tiers.join("、")),
+        "在專案根目錄跑 awf init --target . --reconfigure models，選 auto；或直接把 .claude/teams/methodology.json 的 models.mode 改成 \"auto\"（沒有 models 時加 \"models\": {\"mode\": \"auto\"}，tiers 不寫就用上面的對照）。欄位說明見 docs/自訂與擴充.md",
     )])
+}
+
+/// 派工單的語言（profile 的 `prompt_lang`）：寫了 zh-TW 以外的語言，plugin 卻沒有那份字串表（或讀不懂）時提示；
+/// 這時派工單退回內建的 zh-TW。沒寫、是 zh-TW、找得到時不列。
+fn check_prompt_lang(env: &Env, plugin: Option<&str>) -> Part {
+    let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
+    let dirs: Vec<std::path::PathBuf> = plugin.into_iter().chain(env.template.as_deref()).map(|p| crate::template::i18n(std::path::Path::new(p))).collect();
+    Ok(match crate::i18n::lang_problem(&prof, &dirs) {
+        None => Vec::new(),
+        Some(why) => vec![item(
+            "prompt-lang",
+            WARN,
+            format!("{why}：派工單的固定文字退回內建的 zh-TW"),
+            "把 prompt_lang 改成 plugin 的 workflow-templates/i18n/ 有的語言（內建 zh-TW、en），或拿掉這個鍵；個別的字可以用 prompt_overrides 蓋",
+        )],
+    })
 }
 
 /// 主線分支（guard.config.json 的 `base_branch`、`base_remote`）：寫了但不合規則，或主線分支不在受保護分支裡。
@@ -516,6 +566,62 @@ fn check_ci(env: &Env) -> Part {
         Some((msg, fix)) => vec![item("ci", WARN, msg, fix)],
         None => vec![item("ci", OK, format!("{rel} 和 profile 的 ci 一致"), "")],
     })
+}
+
+/// 自訂段（profile 的 `flow`）：宣告不合規則、腳本不存在或沒通過檢查、宣告了但沒有 recipe 點名。
+/// profile 沒有 `flow` 時不列任何項目。
+fn check_flow(env: &Env) -> Part {
+    let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
+    if prof.get("flow").is_none_or(Value::is_null) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let errs = crate::schema::flow_errors(&prof);
+    if !errs.is_empty() {
+        out.push(item(
+            "flow",
+            ERR,
+            format!("methodology.json 的 flow（自訂段）不合規則：{}{}", errs.iter().take(5).cloned().collect::<Vec<_>>().join("；"), if errs.len() > 5 { format!("；…（共 {} 則）", errs.len()) } else { String::new() }),
+            "照 docs/自訂與擴充.md〈自訂段〉修正；修好之前，點名這些段的 recipe 在 plan 段就會被擋下",
+        ));
+    }
+    let flow = crate::stages::Resolved::of(&prof);
+    let named = |id: &str| {
+        [("recipes", "stages"), ("modifiers", "add_stages")].iter().any(|(table, key)| {
+            prof.get(*table).and_then(Value::as_object).is_some_and(|t| t.values().any(|d| d.get(*key).and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(id)))))
+        })
+    };
+    let mut good: Vec<String> = Vec::new();
+    for c in flow.customs() {
+        if !c.by_steps() && c.script.is_empty() {
+            continue; // 路徑不合規則：上面那一項已經列了
+        }
+        // 用步驟宣告的段沒有腳本：定義的規則在上面那一項（flow_errors）查過了，這裡只看有沒有被點名
+        let src = pyish::pjoin(&env.project, &c.script);
+        if !c.by_steps() && !is_file(&src) {
+            out.push(item("flow", ERR, format!("自訂段 {} 的腳本 {} 不存在", c.id, c.script), format!("把腳本放到 {}（寫法同 awf next --script 的自訂腳本，先用 awf script check 檢查）；走到這一段時 awf next 會停下", c.script)));
+            continue;
+        }
+        match if c.by_steps() { Ok(()) } else { state::render_flow(env, &src, &c.id, &json!({})).map(|_| ()) } {
+            Ok(()) => {}
+            Err(Fail::Awf(msg)) => {
+                let brief: String = msg.split('\n').take(4).collect::<Vec<_>>().join(" ");
+                out.push(item("flow", ERR, format!("自訂段 {} 的腳本 {} 不能用：{brief}", c.id, c.script), format!("跑 awf script check {} 看完整的清單並修正；走到這一段時 awf next 會停下", c.script)));
+                continue;
+            }
+            Err(Fail::Py(e)) => return Err((e.class.to_string(), e.msg)),
+        }
+        if !named(&c.id) {
+            out.push(item("flow", INFO, format!("自訂段 {} 宣告了，但沒有任何 recipe 的 stages 或 modifier 的 add_stages 點名它：不會跑", c.id), format!("要跑就把 \"{}\" 加進對應 recipe 的 stages（位置不重要，順序照 flow 的 after）", c.id)));
+            continue;
+        }
+        good.push(format!("{}（接在 {} 後面{}）", c.id, c.after, if c.policy { "；用步驟宣告，先試政策核准" } else if c.by_steps() { "；用步驟宣告" } else { "" }));
+    }
+    if !good.is_empty() && out.iter().all(|i| i.level != ERR) {
+        let tail = if flow.customs().iter().any(|c| c.policy) { "做完等核准（gate 是 policy 的先試政策核准，沒過交人）" } else { "做完一律等人核准" };
+        out.push(item("flow", OK, format!("自訂段：{}；{tail}", good.join("、")), ""));
+    }
+    Ok(out)
 }
 
 /// 2. 知識庫沒建：`<knowledge.dir>/kb.sqlite` 不存在。
@@ -641,6 +747,34 @@ fn check_recent_runs(env: &Env) -> Part {
     )])
 }
 
+// ------------------------------------------------------------------ 知識圖的暫存檔（1.2）
+/// 6. 知識圖目錄裡有 `graph.db.tmp-<pid>`：建圖中斷（程序被砍掉）留下的，一份就是整張圖的大小。
+/// 沒有圖的目錄、讀不到設定都不列（那是別的檢查的事）。只讀：看 pid 還在不在也只是查詢。
+fn check_kg_tmp(env: &Env) -> Part {
+    let Ok(lay) = crate::kg::layout(Some(&env.project), None, None, None) else { return Ok(Vec::new()) };
+    let left = crate::kg::build::leftover_tmps(&lay.db);
+    if left.is_empty() {
+        return Ok(Vec::new());
+    }
+    let total: u64 = left.iter().map(|t| t.bytes).sum();
+    let db = Path::new(&lay.db).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let dir = if pyish::is_under(&lay.dir, &env.project) { pyish::relpath(&lay.dir, &env.project) } else { lay.dir.clone() };
+    let list: Vec<String> = left.iter().map(|t| {
+        let state = match crate::kg::build::pid_alive(t.pid) {
+            Some(false) => "程序已結束",
+            Some(true) => "程序還在，可能正在建圖",
+            None => "看不出程序還在不在",
+        };
+        format!("{}（{}，{state}）", t.name, crate::kg::build::human_bytes(t.bytes))
+    }).collect();
+    Ok(vec![item(
+        "kg-tmp",
+        WARN,
+        format!("知識圖目錄 {dir} 有 {} 份建圖中斷留下的暫存檔，共 {}：{}", left.len(), crate::kg::build::human_bytes(total), list.join("、")),
+        format!("跑一次 awf kg build：會先清掉程序已結束的那幾份（還在跑或看不出來的不動）；確定沒有 awf kg build 在跑時，也可以手動刪 {dir}/{db}.tmp-*"),
+    )])
+}
+
 // ------------------------------------------------------------------ 主流程
 pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> Vec<Item> {
     let mut out = check_env(which);
@@ -668,10 +802,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 12] = [
+    let parts: [&dyn Fn() -> Part; 15] = [
         &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
         &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
-        &|| check_ci(env), &|| check_base_branch(env),
+        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env), &|| check_prompt_lang(env, plugin), &|| check_kg_tmp(env),
     ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查
@@ -987,13 +1121,25 @@ fn selftest_in(root: &Path) -> i32 {
     w("proj/_tpm/kb/kb.sqlite", "x");
     let r = doctor();
     let mo = find(&r, "models");
-    check("體檢：models.mode 是 inherit → 說明，修法提到 auto", mo.level == INFO && mo.fix.contains("auto") && !ids(&r, None).contains(&"kb".to_string()), format!("{r:?}"));
+    check("體檢：models.mode 是 inherit → 警告，列出各等級的模型，修法提到 auto 與 --reconfigure models", mo.level == WARN && mo.fix.contains("auto") && mo.fix.contains("--reconfigure models") && mo.msg.contains("light→haiku") && !ids(&r, None).contains(&"kb".to_string()), format!("{r:?}"));
     set_prof(&|m| {
         if let Some(o) = m.as_object_mut() {
             o.shift_remove("models");
         }
     });
     check("體檢：沒有 models（等同 inherit）→ 說明", find(&doctor(), "models").msg.contains("沒有 models"), String::new());
+    // 知識圖的暫存檔（1.2）：建圖中斷留下的 graph.db.tmp-<pid>，列大小與修法；沒有時不列
+    {
+        check("暫存檔：沒有時不列", !ids(&doctor(), None).contains(&"kg-tmp".to_string()), String::new());
+        let gone = std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" }).args(if cfg!(windows) { &["/C", "exit"][..] } else { &[][..] })
+            .spawn().and_then(|mut c| { let id = c.id(); c.wait().map(|_| id) }).unwrap_or(0);
+        let tmp = format!("proj/_tpm/kb/graph.db.tmp-{gone}");
+        w(&tmp, &"x".repeat(2048));
+        let r = doctor();
+        let k = find(&r, "kg-tmp");
+        check("暫存檔：有 graph.db.tmp-<pid> → 警告，列大小、修法提到 awf kg build", k.level == WARN && k.msg.contains("2.0 KB") && k.fix.contains("awf kg build"), format!("{r:?}"));
+        let _ = std::fs::remove_file(root.join(&tmp));
+    }
     set_prof(&|_| {});
     let _ = std::fs::create_dir_all(root.join("proj/openspec/specs"));
     let r = doctor();

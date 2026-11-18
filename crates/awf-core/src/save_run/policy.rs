@@ -36,10 +36,16 @@ pub fn load_profile(ctx: &Ctx, given: &str) -> (Value, String) {
         Ok(p) => p,
         Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{}", e.msg)),
     };
+    // 繼承（extends）：解析失敗＝profile 讀不懂（fail-closed），不當作沒有 extends
+    let prof = match crate::profile::resolve_str(&ctx.abs(&path), prof) {
+        Ok(p) => p,
+        Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{e}")),
+    };
     if !prof.is_object() {
         return (Value::Null, format!("開發規範 profile {path} 不是 JSON 物件"));
     }
     let errs = schema::methodology_errors(&prof);
+    let errs = if errs.is_empty() { errs } else { crate::profile::blame_path(std::path::Path::new(&ctx.abs(&path)), errs) };
     if !errs.is_empty() {
         return (Value::Null, format!("開發規範 profile {path} 不合規則：{}", errs.iter().take(3).cloned().collect::<Vec<_>>().join("；")));
     }
@@ -47,7 +53,7 @@ pub fn load_profile(ctx: &Ctx, given: &str) -> (Value, String) {
 }
 
 /// profile 的 `gates.extra` 可以加閘門的段。plan、design、test、deliver 本來就有；merge 由確定性的 merge gate 判定，不設人工閘門。
-pub const EXTRA_GATE_STAGES: [&str; 2] = ["build", "sync"];
+pub use crate::stages::EXTRA_GATE as EXTRA_GATE_STAGES;
 
 /// profile 的 `gates.extra`：另外要等核准才能往下走的段。只能加（[`super::GATED`] 的四段拿不掉）；
 /// 不是 [`EXTRA_GATE_STAGES`] 的值、型別不對、profile 是 null 都當成沒寫。
@@ -148,6 +154,13 @@ pub fn required_roles_missing(data: &Value, stage: &str, result: &Value) -> R<Ve
 /// - test 段：必須有 verifier 的 criteria payload；任何一條 result 不是 pass 或 anti_cheat 非空都不行。
 /// - 給了 run 目錄而回傳帶 trace 時：重新核對紀錄檔（不採信 run.json 的 missing_records），缺了不行。
 pub fn policy_violations(ctx: &Ctx, stage: &str, result: &Value, run: Option<&str>) -> R<Vec<String>> {
+    policy_violations_with(ctx, stage, result, run, "")
+}
+
+/// 同 [`policy_violations`]；`profile` 是 `--profile` 的值（空字串＝用專案的 profile）。只有自訂段用得到 profile：
+/// 那一段在 profile 是 `run: "steps"`＋`gate: "policy"` 時，改查 [`super::flowsteps::flow_policy_errors`]（含由工具重跑指令）；
+/// 其餘的自訂段（含 profile 讀不到、讀不懂）照舊一律由人核准。
+pub fn policy_violations_with(ctx: &Ctx, stage: &str, result: &Value, run: Option<&str>, profile: &str) -> R<Vec<String>> {
     let mut errs: Vec<String> = Vec::new();
     if HUMAN_ONLY.contains(&stage) {
         errs.push(format!("{stage} 段一律由人核准（rules.md 規則 16），不能政策核准"));
@@ -245,7 +258,23 @@ pub fn policy_violations(ctx: &Ctx, stage: &str, result: &Value, run: Option<&st
             Err(e) => return Err(e),
         };
         if let Some(data) = data {
-            if has_recipe(&data)? && SDLC.contains(&stage) && stage != "plan" {
+            // 自訂段（profile 的 flow）：一律由人核准；recipe、trace 的核對和內建段一樣
+            let flow_stage = !SDLC.contains(&stage)
+                && data.get("stages").is_some_and(|s| s.get("plan").is_some())
+                && (crate::stages::run_customs(&data).iter().any(|c| c == stage)
+                    || data.get("stages").and_then(|s| s.get(stage)).and_then(|s| s.get("flow")) == Some(&Value::Bool(true)));
+            if flow_stage {
+                let (prof, perr) = load_profile(ctx, profile);
+                let def = if perr.is_empty() { crate::stages::Resolved::of(&prof).custom(stage).filter(|d| d.policy).cloned() } else { None };
+                match def {
+                    Some(def) => {
+                        let repo = super::flowsteps::target_of(&data)?;
+                        errs.extend(super::flowsteps::flow_policy_errors(ctx, stage, &def, &prof, result, repo.as_deref()).into_iter().map(|e| format!("步驟：{e}")));
+                    }
+                    None => errs.push(format!("{stage} 是自訂段，一律由人核准，不能政策核准")),
+                }
+            }
+            if has_recipe(&data)? && (SDLC.contains(&stage) || flow_stage) && stage != "plan" {
                 if !has_trace {
                     errs.push("執行紀錄缺件：這個 run 有 recipe，回傳卻沒有 trace（無法核對每個 agent 的紀錄）".to_string());
                 }
@@ -300,6 +329,8 @@ pub fn recipe_tamper_errors(ctx: &Ctx, data: &Value, profile: &str) -> R<Vec<Str
         loose.push("followup 被拿掉".to_string());
     }
     errs.extend(loose.into_iter().map(|e| format!("run.json 的 recipe.resolved 比 {name} 的定義鬆（手改過？）：{e}")));
+    // 自訂段（profile 的 flow）：點名的段要還在 profile 裡、順序要照 profile（resolved 沒有自訂段時不做事）
+    errs.extend(crate::stages::flow_tamper(&prof, get(res, "stages")?));
     Ok(errs)
 }
 
@@ -330,7 +361,20 @@ pub fn followup_run_errors(ctx: &Ctx, frun: &str) -> R<String> {
 /// - recipe 有、run.json 卻沒有的段判錯（缺段）；只有沒有 recipe 的舊 run 容許缺 sync（加 sync 段之前建立的 run）。
 /// - recipe 有、run.json 卻標 skipped 也判錯（兩邊不一致，可能被手改）。
 pub fn chain_errors(run_or_stages: &Value, stage: &str) -> R<Vec<String>> {
-    let Some(pos) = SDLC.iter().position(|x| *x == stage) else { return Ok(Vec::new()) };
+    chain_errors_with(run_or_stages, stage, &NULL)
+}
+
+/// 同 [`chain_errors`]；`profile` 是現在的 methodology.json（讀不到給 null）。只影響一件事：前面的自訂段的核准紀錄是政策核准時，
+/// 那一段在 profile 要是 `run: "steps"`＋`gate: "policy"` 才採信；其餘（含 null 的 profile）和 [`chain_errors`] 一樣不採信。
+pub fn chain_errors_with(run_or_stages: &Value, stage: &str, profile: &Value) -> R<Vec<String>> {
+    let flow = crate::stages::Resolved::of(profile);
+    // 這個 run 的自訂段（profile 的 flow）：鎖定的 recipe 點名了、而且存檔時標了 flow 的段。
+    // recipe 裡其他不認得的名字照舊略過（和原本逐字相同）；「點名了卻沒有標記或沒核准」由 stages::flow_unapproved 另外擋（核准、推送、merge gate 都會查）
+    let marked = |c: &str| run_or_stages.get("stages").and_then(|s| s.get(c)).and_then(|s| s.get("flow")) == Some(&Value::Bool(true));
+    let customs: Vec<String> = crate::stages::run_customs(run_or_stages).into_iter().filter(|c| marked(c)).collect();
+    if !SDLC.contains(&stage) && !customs.iter().any(|c| c == stage) {
+        return Ok(Vec::new());
+    }
     let is_run = get(run_or_stages, "stages")?.is_object();
     let wrapped;
     let data = if is_run {
@@ -344,8 +388,18 @@ pub fn chain_errors(run_or_stages: &Value, stage: &str) -> R<Vec<String>> {
     let r = recipe::recipe_of_run(data).map_err(py::from_recipe)?;
     let want = get(&r, "stages")?;
     let name = s(get(&r, "name")?);
+    // 這個 run 的完整順序：SDLC 加上 recipe 點名的自訂段（沒有自訂段時就是 SDLC）
+    let order: Vec<String> = crate::stages::run_order(want).into_iter().filter(|x| SDLC.contains(&x.as_str()) || customs.iter().any(|c| c == x)).collect();
+    let Some(pos) = order.iter().position(|x| x == stage) else { return Ok(Vec::new()) };
     let mut errs = Vec::new();
-    for prev in SDLC.iter().take(pos) {
+    // 自訂段一定在 merge 之前：排到 merge 後面的（run.json 被手改）不採信
+    let merge_at = order.iter().position(|x| x == crate::stages::FLOW_NO_ANCHOR).unwrap_or(order.len());
+    for late in order.iter().skip(merge_at + 1) {
+        errs.push(format!("自訂段 {late} 排在 merge 之後（run.json 的 recipe 被手改過？），不採信"));
+    }
+    for prev in order.iter().take(pos) {
+        let prev = &prev.as_str();
+        let custom = !SDLC.contains(prev);
         if !truthy(want) || !py::contains(want, prev)? {
             continue;
         }
@@ -359,8 +413,14 @@ pub fn chain_errors(run_or_stages: &Value, stage: &str) -> R<Vec<String>> {
             errs.push(format!("recipe {name} 要有 {prev} 段，run.json 卻標成 skipped（不一致）"));
         } else if get(ps, "status")?.as_str() != Some("done") {
             errs.push(format!("前面的 {prev} 段狀態是 {}，還沒 done", s(get(ps, "status")?)));
-        } else if truthy(get(ps, "gate")?) && !truthy(get(ps, "approved")?) {
+        } else if (custom || truthy(get(ps, "gate")?)) && !truthy(get(ps, "approved")?) {
+            // 自訂段一律有閘門：不看 run.json 自己記的 gate（被改成 false 也一樣要核准）
             errs.push(format!("前面的 {prev} 段還沒核准"));
+        } else if custom
+            && (get(get(ps, "approved")?, "by")?.as_str() == Some("policy") || get(get(ps, "approved")?, "kind")?.as_str() == Some("policy"))
+            && !flow.custom(prev).is_some_and(|d| d.policy)
+        {
+            errs.push(format!("前面的 {prev} 段是自訂段，核准紀錄卻是政策核准（自訂段一律由人核准），不採信"));
         }
     }
     Ok(errs)
