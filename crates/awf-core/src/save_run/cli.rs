@@ -162,6 +162,8 @@ pub fn run(ctx: &Ctx, argv: &[String], stdin: &mut dyn FnMut() -> R<String>, out
     if argv.first().map(String::as_str) == Some("--selftest") {
         return super::selftest::selftest(ctx, out);
     }
+    let swapped = status_json_first(argv);
+    let argv = swapped.as_deref().unwrap_or(argv);
     match dispatch(ctx, argv, stdin, out, err) {
         Ok(code) => code,
         Err(e) => {
@@ -1188,4 +1190,23 @@ fn status_cmd(ctx: &Ctx, run: &str, argv: &[String], data: &Value, out: &mut Str
     let nxt = next_stage(data)?.filter(|n| !n.is_empty());
     line(out, format!("下一步：{}", nxt.as_deref().unwrap_or("全部完成")));
     Ok(0)
+}
+
+/// `status --json <run>` 與 `status <run> --json` 都收（1.2）：只把緊跟在 status 後面的 --json 挪到最後，其他子指令不動。
+fn status_json_first(argv: &[String]) -> Option<Vec<String>> {
+    (argv.len() >= 3 && argv[0] == "status" && argv[1] == "--json").then(|| [&argv[..1], &argv[2..], &argv[1..2]].concat())
+}
+
+#[cfg(test)]
+mod status_args_tests {
+    use super::status_json_first;
+
+    #[test]
+    fn json_before_run() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(status_json_first(&v(&["status", "--json", "r"])), Some(v(&["status", "r", "--json"])));
+        assert_eq!(status_json_first(&v(&["status", "r", "--json"])), None);
+        assert_eq!(status_json_first(&v(&["status", "--json"])), None);
+        assert_eq!(status_json_first(&v(&["approve", "--json", "r"])), None);
+    }
 }

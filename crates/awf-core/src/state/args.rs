@@ -445,6 +445,22 @@ pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, Str
     Ok(hits.pop().map(|(_, m, f)| (m, f)))
 }
 
+/// `awf done` 找不到回傳時的說明（1.2）：寫出找了哪裡、比對哪支腳本，讓人分得出是「還沒跑完」還是「這段不是 next 排的」。
+/// 只是說明，不改找法（[`find_wf_meta`]）。`script` 是空字串＝run.json 的 pending 沒有腳本路徑：
+/// [`find_wf_meta`] 這時一筆都不會採用，所以直接說要先 `awf next --retry`。
+pub fn wf_meta_missing(env: &Env, script: &str) -> String {
+    const OUTPUT: &str = "已經有 Workflow 的回傳的話，把它存成 JSON 檔，用 --output <檔> 指定";
+    if script.is_empty() {
+        return format!("找不到這一段 workflow 的回傳：這一段不是由 `awf next` 排的，或是直接用了 halted 輸出裡的 retry 物件；請先跑 `awf next --retry`。{OUTPUT}");
+    }
+    let root = transcripts_root(env).unwrap_or_else(|_| "（Claude Code 的專案紀錄目錄找不到）".to_string());
+    let shown = pyish::resolve(&env.abs(script)).unwrap_or_else(|_| script.to_string());
+    format!(
+        "找不到這一段 workflow 的回傳（它還沒跑完，或這版 Claude Code 的存放位置變了）。找的位置：{}（這次 awf next 之後寫的、scriptPath 指到同一支腳本的）；比對的腳本：{shown}。{OUTPUT}",
+        pj(&pj(&root, "*"), "workflows/wf_*.json")
+    )
+}
+
 /// 這次 next 之後有沒有「讀不懂、但內容提到這支腳本」的 workflow 紀錄檔：
 /// [`find_wf_meta`] 只採用讀得懂的紀錄，整份讀不懂（NaN、超大整數、沒寫完）的會被當成沒有。
 /// 這裡把它找出來，讓 `awf done` 分得出「找不到」與「找到但讀不懂」。任何錯誤都回 false。
