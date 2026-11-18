@@ -655,11 +655,11 @@ export default [
     // 共同前綴只寫有啟用的東西：讀取預算（limits.mode）與知識層（knowledge.sources）
     name: '前綴：沒開讀取預算、有知識層來源（內建 profile 的樣子）→ 不寫「hook 會擋超量讀取」，照樣提 awf kb query',
     profile: (p) => ({ limits: { ...(p.limits || {}), mode: 'off' }, knowledge: { ...(p.knowledge || {}), sources: ['docs/**/*.md'] } }),
-    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context：大檔帶 offset／limit 分段讀。/.test(p) && /再用 awf kb query "<問題>" 或 Grep 找行段/.test(p) && !/超量讀取/.test(p) ? [] : ['預設 profile 的前綴不對'] },
+    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context：先看 /.test(p) && /不夠再 Grep 或 awf kb query[；。]/.test(p) && /不用 cat／head／tail 印整檔/.test(p) && !/超量讀取/.test(p) ? [] : ['預設 profile 的前綴不對'] },
   },
   {
     name: '前綴：limits.mode=warn、沒有 knowledge.sources → 寫「hook 會擋超量讀取」，不提 awf kb query',
     profile: (p) => ({ ...p, limits: { ...(p.limits || {}), mode: 'warn' }, knowledge: { dir: '_tpm/kb' } }),
-    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context（hook 會擋超量讀取）：大檔帶/.test(p) && /，再用 Grep 找行段，只讀那幾行/.test(p) && !/awf kb query "<問題>"/.test(p) ? [] : ['limits.mode=warn、沒有知識層來源時的前綴不對'] },
+    expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context（hook 會擋超量讀取）：先看 /.test(p) && /不夠再 Grep[；。]/.test(p) && !/awf kb query/.test(p) ? [] : ['limits.mode=warn、沒有知識層來源時的前綴不對'] },
   },
 ]
