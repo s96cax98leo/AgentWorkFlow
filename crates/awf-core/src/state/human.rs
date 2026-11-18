@@ -467,7 +467,6 @@ pub fn local_merge(env: &Env, run: &str, run_arg: &str, data: &mut Value, argv: 
         "base": t.base, "branch": t.branch, "by": by, "at": at, "checks": list, "skipped_subtasks": hm::skipped_subtasks(data),
         "gate": "本機合併：由人合併，工具只核對（閘門鏈、審過的 commit、diff 形狀、凍結旗標）",
     });
-    super::write(&pj(run, "merge.json"), &format!("{}\n", py::dumps(&result, Some(2))))?;
     // 稽核紀錄是合併的證據：寫不進去就不算完成（和 merge gate 一樣）
     let runs = crate::publish::load_config(&env.project).map(|c| c.runs_dir)?;
     let audit = pj(&pyish::pjoin(&env.project, &runs), "merge-audit.jsonl");
@@ -479,6 +478,7 @@ pub fn local_merge(env: &Env, run: &str, run_arg: &str, data: &mut Value, argv: 
         let line = format!("{}\n", crate::recipe::dumps(&rec, None));
         std::fs::OpenOptions::new().append(true).create(true).open(&audit).and_then(|mut f| f.write_all(line.as_bytes())).map_err(|e| crate::kb::PyErr::os(&e, &audit))?;
     }
+    super::write(&pj(run, "merge.json"), &format!("{}\n", py::dumps(&result, Some(2))))?;
     let st = py::obj_mut(data.get_mut("stages").and_then(|s| s.get_mut("merge")).ok_or_else(|| py::key_err("merge"))?)?;
     st.insert("status".into(), json!("done"));
     st.insert("envelopes".into(), json!(0));
