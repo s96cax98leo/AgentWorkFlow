@@ -9,9 +9,56 @@ use crate::pyfmt;
 use serde_json::{json, Map, Value};
 
 /// 結果裡由 awf 自己加的標記（比對 workflow 回傳時不算內容）。
-const MARK_KEYS: [&str; 6] = ["custom_script", "override_script", "manual_output", "edited_output", "flow_steps", "skipped_subtasks"];
+const MARK_KEYS: [&str; 7] = ["custom_script", "override_script", "manual_output", "edited_output", "edited_script", "flow_steps", "skipped_subtasks"];
 /// 上一份結果有、重存時不能默默拿掉的「非標準」標記。
-const STICKY_MARKS: [&str; 4] = ["custom_script", "override_script", "manual_output", "edited_output"];
+const STICKY_MARKS: [&str; 5] = ["custom_script", "override_script", "manual_output", "edited_output", "edited_script"];
+
+// ------------------------------------------------------------------ 產生的腳本有沒有被改過
+/// 腳本檔內容的 sha1（逐位元組，不做任何正規化：改一個字就不同）。讀不到、不是 utf-8 回 None。
+pub fn script_sha1(path: &str) -> Option<String> {
+    let raw = std::fs::read(path).ok()?;
+    Some(crate::pack::sha1_text(std::str::from_utf8(&raw).ok()?))
+}
+
+/// `awf done` 取得 workflow 的回傳時：確認跑的是 `awf next` 產生的那一支腳本。確認不了就回標記（結果會標成 `edited_script`）。
+/// - `expected`：`awf next` 產生腳本當時記下的雜湊（`awf.pending.script_sha1`；沒有 pending 的退路用 `awf.last_script[段]`）。
+///   沒有記下的雜湊＝確認不了（舊版 awf 排的 pending 也是：重新 `awf next --retry` 就有）。
+/// - 腳本檔：不在、讀不到、內容和記下的不同，都算。
+/// - workflow 紀錄的 `script` 欄位（Claude Code 存的「實際執行的腳本內容」；格式沒承諾穩定，有而且是字串才比）：
+///   和記下的不同也算——這樣「改了再跑、跑完把檔改回去」也抓得到。紀錄沒有這個欄位時只剩檔案比對，那種情況偵測不到。
+///
+/// 已知限制：workflow 紀錄檔本身是主 session 寫得到的位置，整筆偽造的紀錄這裡分不出來（和 [`find_wf_meta`] 相同的限制）。
+pub fn script_edited(expected: Option<&str>, file: &str, meta: &Value) -> Option<Value> {
+    let short = |t: &str| pyish::take(t, 12).to_string();
+    let Some(want) = expected.filter(|e| !e.is_empty()) else {
+        return Some(json!({"why": "awf next 沒有記下這支腳本的雜湊，無法確認", "expected": ""}));
+    };
+    let on_disk = script_sha1(file);
+    let ran = meta.get("script").and_then(Value::as_str).map(crate::pack::sha1_text);
+    let why = match (&on_disk, &ran) {
+        (None, _) => "腳本檔不在或讀不到",
+        (Some(f), _) if f != want => "腳本檔的內容和 awf next 產生的不同",
+        (_, Some(r)) if r != want => "workflow 紀錄裡實際執行的腳本和 awf next 產生的不同",
+        _ => return None,
+    };
+    let mut m = Map::new();
+    m.insert("why".into(), json!(why));
+    m.insert("expected".into(), json!(short(want)));
+    m.insert("file".into(), json!(on_disk.as_deref().map_or_else(|| "missing".to_string(), short)));
+    if let Some(r) = &ran {
+        m.insert("record".into(), json!(short(r)));
+    }
+    Some(Value::Object(m))
+}
+
+/// 給人看的一句說明（`awf done` 的輸出、閘門動作的 say 共用）。
+pub fn edited_note(stage: &str, mark: &Value) -> String {
+    let why = crate::hooks::safe::text(mark.get("why").and_then(Value::as_str).unwrap_or_default(), 80);
+    format!(
+        "{stage} 段的腳本在 awf next 產生後被改過（{why}）：這一段的結果標成非標準（edited_script），要由人核准、不能政策核准。\
+         要回到標準結果，用 awf next --retry 重新產生腳本再跑（已經有結果、在等核准的段加 --stage {stage} --workflow <這一段的 workflow 名>），不要手改 .wf/ 底下的腳本"
+    )
+}
 
 fn simple_name(t: &str) -> bool {
     !t.is_empty() && t != "." && t != ".." && !t.contains(['/', '\\', '\0'])

@@ -122,7 +122,7 @@ pub fn highlights(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str
             h.insert("provisional".into(), Value::Array(prov));
         }
     }
-    for k in ["missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans", "custom_script", "override_script", "manual_output", "waves"] {
+    for k in ["missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans", "custom_script", "override_script", "manual_output", "edited_script", "waves"] {
         if let Some(v) = res.get(k).filter(|v| present(v)) {
             h.insert(k.to_string(), v.clone());
         }
@@ -288,6 +288,11 @@ pub fn gate_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &st
         "approve": format!("{NEXT_CMD} approve --run {run_arg} {stage} --by <誰核准的> [--answer \"<問題>=<答覆>\"]… [--accept-defaults]"),
         "cost": format!("awf cost --project . --run-dir {run_arg}"),
     });
+    // 產生的腳本被改過（awf done 標的 edited_script）：說明放在最前面（沒有標記時這個動作逐字不變）
+    if let Some(e) = act.get("highlights").and_then(|h| h.get("edited_script")).cloned() {
+        let say = format!("{}。{}", human::edited_note(stage, &e), py::s(py::idx(&act, "say")?));
+        py::obj_mut(&mut act)?.insert("say".into(), json!(say));
+    }
     // 自訂段（profile 的 flow）與給人看的段名：有才加欄位（沒有 flow 的專案這個動作逐字不變）
     let flow = flow_of(env);
     let m = py::obj_mut(&mut act)?;

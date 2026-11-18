@@ -927,6 +927,101 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
         r7b.get("override_script").is_none() && r7b.get("manual_output").is_none() && w.load(d7)["awf"]["nonstandard"].get("plan").is_none(),
         r7b.to_string(),
     );
+    // 1.2：awf next 產生的腳本被手改之後才執行 → 非標準結果（edited_script）
+    {
+        let d10 = "_runs/done10";
+        w.start(d10, "需求", &[]);
+        w.call(&["next", "--run", d10]);
+        let run10 = w.run(d10);
+        let sp10 = pj(&run10, ".wf/sdlc-plan.js");
+        let made = read(&sp10);
+        let plan10 = || load_json(&w.env, &pj(&run10, "plan.json")).ok().flatten().unwrap_or_else(|| json!({}));
+        let age = |name: &str| set_mtime(&pj(&sess, &format!("{name}.json")), Some(1e9));
+        let rec_s = |name: &str, script: &str| put(&pj(&sess, &format!("{name}.json")), &jd(&json!({"runId": name, "scriptPath": sp10, "script": script, "status": "completed", "result": real})));
+        let sha = w.load(d10)["awf"]["pending"]["script_sha1"].as_str().unwrap_or_default().to_string();
+        t.check("腳本雜湊：next 把產生的腳本的 sha1 記在 awf.pending.script_sha1", sha.len() == 40 && sha == pack::sha1_text(&made), sha.clone());
+        rec("wf_a10", &sp10, &real);
+        let (_, out, _) = w.call(&["done", "--run", d10, "--no-next"]);
+        t.check(
+            "腳本雜湊：沒改過 → 沒有標記，雜湊留在 awf.last_script",
+            plan10().get("edited_script").is_none() && !out.contains("被改過") && w.load(d10)["awf"]["last_script"]["plan"] == sha.as_str() && w.load(d10)["awf"].get("nonstandard").is_none_or(|n| n.get("plan").is_none()),
+            out,
+        );
+        age("wf_a10");
+        // 改了再跑
+        w.call(&["next", "--run", d10, "--retry"]);
+        put(&sp10, &format!("{made}\n// 手改\n"));
+        rec("wf_b10", &sp10, &real);
+        let (_, out, _) = w.call(&["done", "--run", d10, "--no-next"]);
+        let r = plan10();
+        let pvp = |v: &Value| sr::policy_violations(&w.ctx, "design", v, None).unwrap_or_default();
+        t.check(
+            "腳本雜湊：腳本被改過 → 結果標 edited_script、記在 awf.nonstandard、done 印出說明、政策核准被拒",
+            r["edited_script"]["why"].as_str().is_some_and(|x| x.contains("腳本檔的內容")) && r["edited_script"]["expected"].as_str().is_some_and(|x| sha.starts_with(x) && x.len() == 12)
+                && w.load(d10)["awf"]["nonstandard"]["plan"]["edited"].is_object() && out.contains("被改過") && out.contains("awf next --retry") && pvp(&r).iter().any(|e| e.contains("被改過")),
+            format!("{out} {r}"),
+        );
+        let hl = highlights(&w.env, &run10, d10, &w.load(d10), "plan").unwrap_or(Value::Null);
+        t.check("腳本雜湊：閘門重點列出 edited_script", hl["edited_script"].is_object(), hl.to_string());
+        age("wf_b10");
+        // 標記不會因為改用 --output 而掉
+        w.call(&["next", "--run", d10, "--retry"]);
+        w.call(&["done", "--run", d10, "--output", &out_file, "--no-next"]);
+        let r = plan10();
+        t.check("腳本雜湊：之後改用 --output 存，edited_script 的標記還在", r["edited_script"].is_object() && r["manual_output"] == true, r.to_string());
+        // 檔被刪
+        w.call(&["next", "--run", d10, "--retry"]);
+        rec("wf_c10", &sp10, &real);
+        let _ = std::fs::remove_file(&sp10);
+        w.call(&["done", "--run", d10, "--no-next"]);
+        let r = plan10();
+        t.check("腳本雜湊：腳本檔被刪 → 標記", r["edited_script"]["file"] == "missing" && pvp(&r).iter().any(|e| e.contains("被改過")), r.to_string());
+        age("wf_c10");
+        // 改了再跑、跑完改回去：workflow 紀錄有實際執行的腳本內容時抓得到
+        w.call(&["next", "--run", d10, "--retry"]);
+        rec_s("wf_d10", &format!("{}\n// 手改\n", read(&sp10)));
+        w.call(&["done", "--run", d10, "--no-next"]);
+        let r = plan10();
+        t.check("腳本雜湊：檔案沒變、但紀錄裡實際執行的腳本不同 → 標記", r["edited_script"]["why"].as_str().is_some_and(|x| x.contains("紀錄")) && r["edited_script"]["record"].is_string(), r.to_string());
+        age("wf_d10");
+        // --retry 重新產生、正常跑：解除
+        w.call(&["next", "--run", d10, "--retry"]);
+        rec_s("wf_e10", &read(&sp10));
+        let (_, out, _) = w.call(&["done", "--run", d10, "--no-next"]);
+        let r = plan10();
+        t.check(
+            "腳本雜湊：next --retry 重新產生腳本、照跑 → 標記解除",
+            r.get("edited_script").is_none() && r.get("manual_output").is_none() && w.load(d10)["awf"]["nonstandard"].get("plan").is_none() && !out.contains("被改過"),
+            format!("{out} {r}"),
+        );
+        // 沒有 pending 的退路（直接重跑上一次的腳本）：用 awf.last_script 確認；腳本改過就標記
+        age("wf_e10");
+        rec("wf_f10", &sp10, &real);
+        set_mtime(&pj(&sess, "wf_f10.json"), None);
+        let (c1, out1, _) = w.call(&["done", "--run", d10, "--stage", "plan", "--no-next"]);
+        let r1 = plan10();
+        age("wf_f10");
+        put(&sp10, &format!("{}\n// 手改\n", read(&sp10)));
+        rec("wf_g10", &sp10, &real);
+        set_mtime(&pj(&sess, "wf_g10.json"), None);
+        w.call(&["done", "--run", d10, "--stage", "plan", "--no-next"]);
+        let r2 = plan10();
+        t.check(
+            "腳本雜湊：沒有 pending 的退路——腳本沒改不標記，改過就標記",
+            c1 <= 1 && w.load(d10)["stages"]["plan"]["wf_run"]["id"] == "wf_g10" && r1.get("edited_script").is_none() && r2["edited_script"].is_object(),
+            format!("{out1} {r1} {r2}"),
+        );
+        let mut data = w.load(d10);
+        if let Some(a) = data["awf"].as_object_mut() {
+            a.shift_remove("last_script");
+        }
+        w.dump(d10, &data);
+        age("wf_g10");
+        rec("wf_h10", &sp10, &real);
+        set_mtime(&pj(&sess, "wf_h10.json"), None);
+        w.call(&["done", "--run", d10, "--stage", "plan", "--no-next"]);
+        t.check("腳本雜湊：沒有記下的雜湊（確認不了）→ 當成非標準", plan10()["edited_script"]["why"].as_str().is_some_and(|x| x.contains("無法確認")), plan10().to_string());
+    }
     // 審查 8、9
     w.call(&["start", "--run", "_runs/ev8", "--event", "meeting", "--set", "source=notes.md"]);
     let (c, out, _) = w.call(&["next", "--run", "_runs/ev8", "--workflow", "sdlc-merge"]);

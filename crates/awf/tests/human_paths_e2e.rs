@@ -468,6 +468,7 @@ fn a5_done_after_rerunning_the_old_script() {
     let d = p.run_json(run);
     assert_eq!((d["stages"]["plan"]["status"].as_str(), d["stages"]["plan"]["wf_run"]["id"].as_str()), (Some("done"), Some("wf_2")), "{d}");
     assert!(load(&p.dir.join(run).join("plan.json")).get("manual_output").is_none());
+    assert!(load(&p.dir.join(run).join("plan.json")).get("edited_script").is_none(), "舊腳本沒被改過（和上一次 next 產生的相同）：退路取得的仍是標準結果");
 
     // 兩筆以上：不猜，交人
     let run2 = "_tpm/runs/r2";
@@ -487,6 +488,69 @@ fn a5_done_after_rerunning_the_old_script() {
     // 已經 done 的段沒有 pending 時不走退路
     let r = p.awf(&["done", "--run", run, "--stage", "plan", "--no-next"]);
     assert!(r.code != 0 && r.all().contains("找不到這一段 workflow 的回傳"), "{}", r.all());
+}
+
+/// A6：`awf next` 產生的腳本被手改之後才執行 → 非標準結果：政策核准被拒、人可以核准；重新產生腳本照跑才回到標準結果。
+#[test]
+fn a6_edited_script_is_marked_nonstandard() {
+    let p = Proj::new("a6");
+    let run = "_tpm/runs/r1";
+    p.plan_approved(run);
+    let a = p.walk_to(run, "run_workflow:test", SHA);
+    let script = a["script"].as_str().unwrap().to_string();
+    let sha = p.run_json(run)["awf"]["pending"]["script_sha1"].as_str().expect("next 要記下腳本的雜湊").to_string();
+    assert_eq!(sha.len(), 40);
+    // 主 session 手改腳本再執行
+    let file = p.dir.join(&script);
+    let made = std::fs::read_to_string(&file).unwrap();
+    put(&file, &format!("{made}\n// 手改：少派一個 agent\n"));
+    p.record("wf_t1", &script, &p.result(run, "test", SHA));
+    let r = p.awf(&["done", "--run", run, "--no-next"]);
+    assert_eq!(r.code, 0, "改過的腳本跑出來的結果照樣能存：{}", r.all());
+    assert!(r.all().contains("被改過") && r.all().contains("awf next --retry"), "{}", r.all());
+    let saved = load(&p.dir.join(run).join("test.json"));
+    assert!(saved["edited_script"]["why"].as_str().is_some_and(|w| w.contains("腳本檔的內容")), "{saved}");
+    assert!(p.run_json(run)["awf"]["nonstandard"]["test"]["edited"].is_object());
+    // 閘門：說明與重點都列出；政策核准被拒、人可以核准
+    let g = p.next(run, &[]);
+    assert_eq!((g["action"].as_str(), g["stage"].as_str()), (Some("gate"), Some("test")), "{g}");
+    assert!(g["highlights"]["edited_script"].is_object() && g["say"].as_str().is_some_and(|x| x.contains("被改過")), "{g}");
+    let r = p.awf(&["save-run", "approve", run, "test", "--by", "policy", "--at", "2026-11-18T00:00:00Z", "--note", "x"]);
+    assert!(r.code != 0 && r.all().contains("被改過"), "{}", r.all());
+    assert!(p.run_json(run)["stages"]["test"].get("approved").is_none());
+    // 把標記從結果檔拿掉再直接存：拿不掉
+    let mut stripped = saved.clone();
+    stripped.as_object_mut().unwrap().remove("edited_script");
+    let r = p.awf_in(&["save-run", "stage", run, "test"], Some(&stripped.to_string()));
+    assert_eq!(r.code, 0, "{}", r.all());
+    assert!(load(&p.dir.join(run).join("test.json"))["edited_script"].is_object(), "直接重存不會把非標準變回標準：{}", r.all());
+    // 重新產生腳本、照跑：回到標準結果
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let a = p.next(run, &["--stage", "test", "--workflow", "sdlc-test", "--retry"]);
+    assert_eq!(a["action"], "run_workflow", "{a}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), made, "next 重新產生的腳本和原本的相同");
+    p.record("wf_t2", &script, &p.result(run, "test", SHA));
+    let r = p.awf(&["done", "--run", run, "--no-next"]);
+    assert_eq!(r.code, 0, "{}", r.all());
+    assert!(!r.all().contains("被改過"), "{}", r.all());
+    assert!(load(&p.dir.join(run).join("test.json")).get("edited_script").is_none());
+    assert!(p.run_json(run)["awf"]["nonstandard"].get("test").is_none());
+    let r = p.approve(run, "test", &["--by", "human"]);
+    assert_eq!(r.code, 0, "{}", r.all());
+
+    // 同樣的情況、人直接核准非標準的結果：可以
+    let run2 = "_tpm/runs/r2";
+    p.plan_approved(run2);
+    let a = p.walk_to(run2, "run_workflow:test", SHA);
+    let script = a["script"].as_str().unwrap().to_string();
+    put(&p.dir.join(&script), "// 整支換掉\n");
+    p.record("wf_t3", &script, &p.result(run2, "test", SHA));
+    assert_eq!(p.awf(&["done", "--run", run2, "--no-next"]).code, 0);
+    assert!(load(&p.dir.join(run2).join("test.json"))["edited_script"].is_object());
+    let r = p.awf(&["save-run", "approve", run2, "test", "--by", "policy", "--at", "2026-11-18T00:00:00Z", "--note", "x"]);
+    assert!(r.code != 0 && r.all().contains("被改過"), "{}", r.all());
+    let r = p.approve(run2, "test", &["--by", "human"]);
+    assert_eq!(r.code, 0, "人可以核准非標準的結果：{}", r.all());
 }
 
 /// B：本機合併從 deliver 核准走到結案。

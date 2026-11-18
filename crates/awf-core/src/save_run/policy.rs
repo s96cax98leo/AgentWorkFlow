@@ -147,7 +147,8 @@ pub fn required_roles_missing(data: &Value, stage: &str, result: &Value) -> R<Ve
 /// - plan 段一律由人核准（rules.md 規則 16），政策核准一律不行。
 /// - 一份信封都沒有、或回傳裡有 null（agent 缺件）不行：缺件不是「沒有發現」（rules.md 規則 26）。
 /// - 回傳標了 halted（流程中斷）不行。
-/// - 回傳帶 custom_script（自訂腳本）、override_script（覆寫檔或舊副本）、manual_output（手動給的結果）不行：一律由人核准。
+/// - 回傳帶 custom_script（自訂腳本）、override_script（覆寫檔或舊副本）、manual_output（手動給的結果）、
+///   edited_script（產生的腳本被改過）、edited_output（存的結果和實際回傳不一致）不行：一律由人核准。
 /// - 任何信封的 open_questions 有 blocking=true 不行。
 /// - 任何 findings payload 有 blocker／important 等級的發現不行。
 /// - 任何 verdicts payload 有 refuted 不是 false（skeptic 推翻了該段的產出）不行。
@@ -179,6 +180,10 @@ pub fn policy_violations_with(ctx: &Ctx, stage: &str, result: &Value, run: Optio
         }
         if truthy(field("manual_output")) {
             errs.push("這一段的結果是用 awf done --output 手動給的（不是 awf 從 workflow 紀錄取得的）：要由人核准".to_string());
+        }
+        if truthy(field("edited_script")) {
+            let why = field("edited_script").get("why").and_then(Value::as_str).unwrap_or_default();
+            errs.push(format!("這一段跑的腳本在 awf next 產生後被改過（{}）：要由人核准；要回到標準結果，用 awf next --retry 重新產生腳本再跑", py::take(why, 80)));
         }
         if truthy(field("edited_output")) {
             errs.push(format!("這一段存下來的結果和 workflow 實際回傳的不一致（{}）：要由人核准", py::take(&s(field("edited_output")), 160)));

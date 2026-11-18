@@ -539,6 +539,10 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
         }
         pending.insert("at".into(), json!(env.now_iso()));
         pending.insert("since".into(), json!(env.now_ts()));
+        // 產生的腳本的雜湊：awf done 用它確認跑的是這一支（手改過的腳本＝非標準結果）。讀不到就不記，done 會當成確認不了
+        if let Some(h) = act.get("script").and_then(Value::as_str).and_then(|sp| human::script_sha1(&if pyish::is_abs(sp) { sp.to_string() } else { pyish::pjoin(&env.project, sp) })) {
+            pending.insert("script_sha1".into(), json!(h));
+        }
         let mut mark = Map::new();
         for k in ["custom", "override"] {
             if let Some(v) = act.get(k).filter(|v| py::truthy(v)) {
@@ -583,6 +587,7 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     let src = opt(argv, "--output");
     let mut meta: Option<(Value, String)> = None;
     let mut fallback = false;
+    let mut edited: Option<Value> = None;
     let result: Value;
     if !src.is_empty() {
         match load_json(env, &py::pp(src))? {
@@ -652,6 +657,10 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
             return awf_err(format!("workflow 沒有回傳物件（status={}）：{mf}。它可能還在跑，或中途失敗；失敗就重跑這一段", py::s(py::get(&m, "status")?)));
         }
         result = r;
+        // 跑的是不是 awf next 產生的那一支腳本：退路（沒有 pending）用上一次 done 留下的雜湊
+        let aw = or_obj(py::get(&data, "awf")?);
+        let expected = if fallback { py::get(&or_obj(py::get(&aw, "last_script")?), &stage)?.clone() } else { py::get(&pend, "script_sha1")?.clone() };
+        edited = human::script_edited(expected.as_str(), &want, &m);
         meta = Some((m, mf));
     }
     // 不是「標準腳本、而且回傳是 awf 自己從 transcript 找到的」，就在結果裡留標記；save_run 看到標記不給政策核准
@@ -669,6 +678,16 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     }
     if meta.is_none() {
         marks.insert("manual_output".into(), json!(true));
+    }
+    // 腳本被改過：這一次確認不了的，或上一次標過、這次又是手動給的結果（標記不會因為換成 --output 而掉）
+    match &edited {
+        Some(e) => {
+            marks.insert("edited_script".into(), e.clone());
+        }
+        None if meta.is_none() && py::truthy(py::get(&sticky, "edited")?) => {
+            marks.insert("edited_script".into(), py::idx(&sticky, "edited")?.clone());
+        }
+        None => {}
     }
     let mut result = result;
     // 用步驟宣告的自訂段的標記（flow_steps）只由這裡寫：workflow 自己回傳的同名欄位一律拿掉；
@@ -703,7 +722,12 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
         }
         result = Value::Object(m);
     }
-    if meta.is_some() && !py::truthy(py::get(&mine, "custom")?) && !py::truthy(py::get(&mine, "override")?) && py::truthy(&sticky) {
+    if let Some(e) = &edited {
+        // 記在 run.json：之後就算改用 --output 重存，這一段跑過被改過的腳本的事實也還在（標準腳本的回傳從紀錄取得才解除）
+        let ns = py::obj_mut(setdefault_obj(&mut data, "awf")?.entry("nonstandard".to_string()).or_insert_with(|| json!({})))?;
+        py::obj_mut(ns.entry(stage.clone()).or_insert_with(|| json!({})))?.insert("edited".into(), e.clone());
+        sr::dump(&ctx, run, &data)?;
+    } else if meta.is_some() && !py::truthy(py::get(&mine, "custom")?) && !py::truthy(py::get(&mine, "override")?) && py::truthy(&sticky) {
         // 這次是標準腳本、回傳取自 transcript：解除標記
         if let Some(aw) = data.get_mut("awf").filter(|a| py::truthy(a)) {
             match aw.get_mut("nonstandard") {
@@ -722,6 +746,9 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     let st_now = py::get(py::idx(&data, "stages")?, &stage)?.clone();
     out.push_str(rstrip(&merge_stage_output(&stage, &st_now, &o, &e)));
     out.push('\n');
+    if let Some(e) = &edited {
+        out.push_str(&format!("注意：{}\n", human::edited_note(&stage, e)));
+    }
     if let Some(Value::Object(st)) = data.get_mut("stages").and_then(|s| s.get_mut(&stage)) {
         match &meta {
             Some((m, mf)) => {
@@ -737,6 +764,13 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     }
     match data.get_mut("awf") {
         Some(Value::Object(aw)) => {
+            // 這一段最後一次由 awf next 產生的腳本的雜湊留下來：沒有 pending 的退路（直接重跑上一次的腳本）靠它確認腳本沒被改過
+            let kept = aw.get("pending").filter(|p| p.get("stage").and_then(Value::as_str) == Some(stage.as_str())).and_then(|p| p.get("script_sha1")).cloned();
+            if let Some(h) = kept {
+                if let Value::Object(ls) = aw.entry("last_script".to_string()).or_insert_with(|| json!({})) {
+                    ls.insert(stage.clone(), h);
+                }
+            }
             aw.shift_remove("pending");
         }
         Some(other) if py::truthy(other) => return Err(Fail::Py(py::attr_err(other, "pop"))),
