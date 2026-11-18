@@ -112,6 +112,11 @@ pub fn snippets(root: &Path) -> PathBuf {
     workflow_templates(root).join("snippets")
 }
 
+/// 派工單的字串表（`<語言>.json`，見 [`crate::i18n`]）。
+pub fn i18n(root: &Path) -> PathBuf {
+    workflow_templates(root).join("i18n")
+}
+
 /// 乾跑的情境檔。
 pub fn scenarios(root: &Path) -> PathBuf {
     workflow_templates(root).join("scenarios")

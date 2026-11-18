@@ -1280,6 +1280,8 @@ fn methodology_errors_with(doc: &Value, typed: bool) -> Vec<String> {
     if let Some(ci) = get(doc, "ci").filter(|s| !s.is_null()) {
         errs.extend(crate::ci::config_errors(ci));
     }
+    // ── 派工單的字串表（prompt_lang、prompt_overrides）：規則在 crate::i18n ──
+    errs.extend(crate::i18n::profile_errors(doc, typed));
     errs
 }
 

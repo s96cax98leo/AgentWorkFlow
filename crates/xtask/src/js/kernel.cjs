@@ -2,7 +2,7 @@
 // 用法：node -e <本檔> <片段檔…>；stdout 是失敗訊息的 JSON 陣列（空的＝通過）。
 const fs = require('fs')
 const src = process.argv.slice(1).map((f) => fs.readFileSync(f, 'utf8')).join('\n')
-const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob, awfDesignDocs, awfSubtaskRules, awfSdRules, awfDesignDocRules, awfDeltaRule, awfIntegrateConflicts }')
+const make = new Function('agent', 'log', src + '\nreturn { awfInit, awfKernelInit, awfAgent, awfTrace, awfCapped, challengeList, awfDispatch, awfConstraints, awfConstraintLines, awfPrefix, awfPathOverlap , awfInt, awfTune, awfRecordSections, awfDefs, awfLine, awfBranchPattern, awfBranch, awfStep, awfSwappable, awfConstraintFormat, awfConstraintRule, awfIntegrate, awfQuestionOptions, awfMaxAgents, awfMethNote, awfCommitFor, awfExtJob, awfDesignDocs, awfSubtaskRules, awfSdRules, awfDesignDocRules, awfDeltaRule, awfIntegrateConflicts, awfText, awfFill, awfStrings }')
 const PROFILE = { models: { mode: 'auto', tiers: { light: 'haiku', standard: 'sonnet', strong: 'inherit' }, defaults: { '*': 'standard' }, floors: {} } }
 const env = (s) => ({ status: 'done', summary: s, payload: { ok: true } })
 const errs = []
@@ -92,10 +92,12 @@ const need = (c, m) => { if (!c) errs.push(m) }
   need(!/限制文件/.test(k.awfPrefix()), '沒有限制時前綴不該多出規則')
   // 可調的值（1.0）：沒寫或不合法一律用預設；前綴在沒有 tune、沒有 kg 時逐字不變
   need(k.awfInt({ n: 5 }, 'n', 1, 9, 3) === 5 && k.awfInt({ n: 0 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 10 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: 2.5 }, 'n', 1, 9, 3) === 3 && k.awfInt({ n: '5' }, 'n', 1, 9, 3) === 3 && k.awfInt(null, 'n', 1, 9, 3) === 3 && k.awfInt('x', 'n', 1, 9, 3) === 3, 'awfInt 的範圍或型別判斷不對')
+  // awfTune 另帶 strings（字串表）：這幾項只比其餘的值，字串表在下面另外測
+  const tj = (t) => { const { strings, ...rest } = t; return JSON.stringify(rest) }
   const T0 = JSON.stringify({ code_tools: ['graft', 'codegraph'], summary_chars: 400, evidence_items: 12, constraints_format: null, read_hook: false, kb: false })
-  need(JSON.stringify(k.awfTune(null)) === T0 && JSON.stringify(k.awfTune({})) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: 'graft' }, limits: { envelope: { summary_chars: 401, evidence_items: 2 } } })) === T0, `awfTune 的預設不對：${JSON.stringify(k.awfTune(null))}`)
-  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: ['a', 'a'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: ['x\ny'] } })) === T0 && JSON.stringify(k.awfTune({ knowledge: { code_tools: Array.from({ length: 9 }, (_, i) => `t${i}`) } })) === T0, 'code_tools 重複、含換行或超過 8 個要退回預設')
-  need(JSON.stringify(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3, constraints_format: null, read_hook: false, kb: false }), 'awfTune 沒有採用合法的設定')
+  need(tj(k.awfTune(null)) === T0 && tj(k.awfTune({})) === T0 && tj(k.awfTune({ knowledge: { code_tools: 'graft' }, limits: { envelope: { summary_chars: 401, evidence_items: 2 } } })) === T0, `awfTune 的預設不對：${tj(k.awfTune(null))}`)
+  need(tj(k.awfTune({ knowledge: { code_tools: ['a', 'a'] } })) === T0 && tj(k.awfTune({ knowledge: { code_tools: ['x\ny'] } })) === T0 && tj(k.awfTune({ knowledge: { code_tools: Array.from({ length: 9 }, (_, i) => `t${i}`) } })) === T0, 'code_tools 重複、含換行或超過 8 個要退回預設')
+  need(tj(k.awfTune({ knowledge: { code_tools: [] }, limits: { envelope: { summary_chars: 100, evidence_items: 3 } } })) === JSON.stringify({ code_tools: [], summary_chars: 100, evidence_items: 3, constraints_format: null, read_hook: false, kb: false }), 'awfTune 沒有採用合法的設定')
   // 1.1：讀取預算與知識層沒啟用時，前綴不寫「hook 會擋超量讀取」與 awf kb query
   const flags = (p) => { const t = k.awfTune(p); return `${t.read_hook},${t.kb}` }
   need(flags({ limits: { mode: 'enforce' }, knowledge: { sources: ['docs/**/*.md'] } }) === 'true,true' && flags({ limits: { mode: 'warn' } }) === 'true,false' && flags({ limits: { mode: 'off' }, knowledge: { sources: [] } }) === 'false,false' && flags({ limits: { mode: 'x' }, knowledge: { sources: 'docs' } }) === 'false,false' && flags({ knowledge: { sources: [' ', 7] } }) === 'false,false', 'awfTune 的 read_hook／kb 判斷不對')
@@ -215,5 +217,17 @@ const need = (c, m) => { if (!c) errs.push(m) }
   const ic = (v) => k.awfIntegrateConflicts({ conventions: { branch: { integrate_conflicts: v } } })
   const TRANSIT = '有衝突照目標 repo 的分支與合併規範用中轉分支解並分類'
   need(ic('transit') === TRANSIT && ic(undefined) === TRANSIT && ic('rebase') === TRANSIT && ic(' stop') === TRANSIT && ic(1) === TRANSIT && k.awfIntegrateConflicts(null) === TRANSIT && /^有衝突就在整合分支上直接解並分類/.test(ic('in-place')) && /^有衝突不要自己解：git merge --abort/.test(ic('stop')), 'awfIntegrateConflicts 的判斷不對')
+  // 1.2：派工單的字串表（prompt_lang、prompt_overrides）。沒設時字串表＝awfText()，前綴逐字不變
+  const TX = k.awfText()
+  need(JSON.stringify(k.awfStrings(null)) === JSON.stringify(TX) && JSON.stringify(k.awfTune({}).strings) === JSON.stringify(TX) && JSON.stringify(k.awfStrings({ prompt_lang: 'en' })) === JSON.stringify(TX), '沒有內嵌語言檔、沒有 prompt_overrides 時字串表要是內建的字')
+  need(k.awfFill('a{x}b{y}{z}', { x: 1, y: '{z}' }) === 'a1b{z}{z}' && k.awfFill('{x}', { x: undefined }) === 'undefined' && k.awfFill('{a-b}{ }', {}) === '{a-b}{ }' && k.awfFill('{__proto__}', {}) === '{__proto__}', 'awfFill：代入的值不再展開、找不到的變數保留原樣')
+  const ST = k.awfStrings({ _prompt_strings: { 'prefix.heading': '## Common', 'prefix.nope': 'x', 'prefix.kb': '' }, prompt_overrides: { 'prefix.heading': '## ACME', 'prefix.external': 'y'.repeat(2001), 'record.tail': '紀錄：{record}（必寫）', 'prefix.rules': '只讀 {rules}' } })
+  need(ST['prefix.heading'] === '## ACME' && !('prefix.nope' in ST) && ST['prefix.kb'] === TX['prefix.kb'] && ST['prefix.external'] === TX['prefix.external'] && ST['record.tail'] === TX['record.tail'] && ST['prefix.rules'] === TX['prefix.rules'], `awfStrings 的疊法或規則不對：${JSON.stringify(ST).slice(0, 300)}`)
+  need(k.awfStrings({ _prompt_strings: { 'prefix.heading': '## Common' } })['prefix.heading'] === '## Common' && k.awfStrings({ prompt_overrides: { 'record.tail': 'Record: {record}' } })['record.tail'] === 'Record: {record}', 'awfStrings 沒有採用合法的字')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'en', tune: k.awfTune({ _prompt_strings: { 'prefix.heading': '## Common', 'prefix.context': '- Background: {run_dir}/context.md' } }) })
+  need(k.awfPrefix().startsWith('## Common\n- 必讀 .claude/teams/rules.md') && k.awfPrefix().includes('\n- Background: _runs/r1/context.md\n'), `前綴沒有照字串表：${k.awfPrefix().slice(0, 200)}`)
+  need(k.awfConstraintLines([{ id: 'c', file: 'a.md', note: 'n', paths: ['x', 'y'], table: true }], { ...TX, 'constraint.line': '* {id}={file}{note}{paths}{table}', 'sep.list': ', ' }) === '* c=a.md：n（只適用於碰到 x, y 的部分）（要對照）', 'awfConstraintLines 要用給的字串表')
+  k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' })
+  need(k.awfConstraintLines([{ id: 'c', file: 'a.md', note: '', paths: [], table: false }]) === '  - [c] a.md' && k.awfDeltaRule('change', 'impact').startsWith('- 這是變更需求'), '沒給字串表時用內建的字')
   process.stdout.write(JSON.stringify(errs))
 })().catch((e) => { process.stdout.write(JSON.stringify([`例外：${e && e.stack || e}`])) })
