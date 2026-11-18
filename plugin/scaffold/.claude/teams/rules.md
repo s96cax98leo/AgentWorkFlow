@@ -35,13 +35,13 @@
 18. **commit**：格式照開發規範 profile 的 `conventions.commit`（預設 profile 是 Conventional Commits、scope 放 Story ID）；結尾署名行 `{{ATTRIBUTION_LINE}}`。`awf check-rules --git` 檢查署名行；profile 有設 `check_regex` 時也檢查標題格式。
 19. **分支**：新分支只用 `guard.config.json` 的 `allowed_branch_prefixes`（{{ALLOWED_BRANCH_PREFIXES}}）；子任務分支 `{{BRANCH_PREFIX}}<epic>--<sub>`（profile 的 `conventions.branch.patterns` 有設時照它），各開 worktree，檔案所有權不重疊；整合用整合分支，依相依順序合併。不 force push、不 `--no-verify`。建議的分支名不合規時改用允許的前綴並註明。
 20. **測試失敗就改程式，不改測試**；不加 skip、fixme、retry，不放寬斷言。上游測試不改；例外要{{DECISION_OWNER}}核准，並記錄在 spec 的「整合修訂與例外」。
-21. **改寫 commit 歷史前留備份分支**；改寫後更新文件中引用的 SHA。
+21. **改寫 commit 歷史前留備份**：優先用備份 ref `git update-ref refs/backup/<分支，/ 換成 ->-<日期> HEAD`（和 `awf sync-branch` 的 rebase 備份同一個命名，profile 的 `conventions.sync.backup_ref` 可改）；要用分支時用 `git branch backup/<分支>-<日期>`（只在本機建立、不切過去開發、不推送；不受規則 19 的前綴限制）。改寫後更新文件中引用的 SHA。
 
 ### 交件
 22. **每個 agent 都以 JSON 信封交件**（`.claude/teams/schemas/envelope.schema.json`）：
     - Workflow 裡由 `schema` 強制。
     - 用 Agent 工具派出時，回報最後要附一個 ```json 區塊，`awf hook envelope` 會驗證。
-23. **成果一律寫成檔案，信封只放路徑。** 有 blocking 問題時 `status` 不能是 `done`；blocking 問題要附選項與代價（預設 2–3 個；開發規範 profile 的 `conventions.questions.options` 有設時照它）。只有「不決定就做不下去」或會改規格、放寬驗收、做不可逆動作的問題才標 blocking；其餘的照你建議的選項先做，在 `default_applied` 寫明做了什麼，由人在下一個閘門一次確認。同一次交件的問題一次列完，不要一輪只報一題：撞到一類失敗（例如兩則測試平行會互撞、同一種寫法的錯）時，先在你負責的範圍掃過同類再回報，列出全部。
+23. **成果一律寫成檔案，信封只放路徑。** 有 blocking 問題時 `status` 不能是 `done`；blocking 問題要附選項與代價（預設 2–3 個；開發規範 profile 的 `conventions.questions.options` 有設時照它）。只有「不決定就做不下去」或會改規格、放寬驗收、做不可逆動作的問題才標 blocking；其餘的照你建議的選項先做，在 `default_applied` 寫明做了什麼，由人在下一個閘門一次確認。blocking 的問題可以加 `risk`：照建議做錯了容易改回來、影響小的標 `low`；不可逆，或涉及刪資料、對外介面、權限、金流的標 `high`；拿不準就不標（當 high）。同一次交件的問題一次列完，不要一輪只報一題：撞到一類失敗（例如兩則測試平行會互撞、同一種寫法的錯）時，先在你負責的範圍掃過同類再回報，列出全部。
 24. **審查者只讀，只看證據，不採信作者的自述。** 慣例類的審查標準（PR 大小、code style、commit 格式、分支命名）引用開發規範 profile 的 `conventions`，profile 設為 null 的項目不檢查。 退回最多 2 次，超過交給人；無人值守時改為 park（寫進 run.json 並通知{{DECISION_OWNER}}，方式見規則 11，不等待）。合併通道裡不確定就 hold：agent 的發現只能讓結果變嚴，skeptic 不得推翻 blocker／important。
 25. **派工單自足**：目標、依據檔、硬規則、驗收、回覆格式都寫在派工單裡，使用輸出語言。
 26. **缺件不是「沒有發現」**：workflow 裡任何 agent 沒交件（回 null、信封不合格、執行失敗或 throw）時，該項記為 missing，不得當成空清單、「沒有差異」或「沒有被推翻」。審查、反駁、比對類的步驟缺件時，結果一律 hold，workflow 回傳 `halted: true`，`halt_reason` 寫出缺了哪個 agent（label）；其他步驟缺件時也要在回傳裡列出，不得默默略過。由 workflow 的確定性核對與 `check_workflows.mjs` 的缺件情境檢查。

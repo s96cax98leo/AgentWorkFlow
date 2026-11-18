@@ -85,7 +85,7 @@ fn nonempty_list(v: &Value) -> bool {
 }
 
 /// 已存檔的拆工：design 的 payload.subtasks，否則 plan 的 subtasks。
-fn subtasks(env: &Env, run: &str) -> R<Value> {
+pub(crate) fn subtasks(env: &Env, run: &str) -> R<Value> {
     let d = stage_result(env, run, "design")?;
     if let Some(Value::Object(design)) = d.get("design") {
         if let Some(Value::Object(p)) = design.get("payload") {
@@ -181,9 +181,33 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
         let list: Vec<Value> = m.split(',').filter(|x| !x.is_empty()).map(|x| json!(x)).collect();
         a.insert("modifiers".into(), Value::Array(list));
     }
+    if workflow == "sdlc-plan" {
+        // 修正輪的答覆只由 awf next --revise 帶（取自 run.json 與決策記憶）：--set 給的 answers 不採用
+        if a.shift_remove("answers").is_some() {
+            notes.push("忽略 --set 的 answers：plan 修正輪的答覆由 awf next --revise 從 run.json 與決策記憶帶入".to_string());
+        }
+        if let Some(list) = super::human::revise_answers(data) {
+            a.insert("answers".into(), Value::Array(list.clone()));
+            if !sr::has_recipe(data)? {
+                // run.json 沒有 recipe（沒有 recipes 的舊 profile）：用上一輪 plan.json 回傳的，範本才不會重跑 triage；--set 給的不採用
+                let prev = stage_result(env, run, "plan")?;
+                let rec = prev.get("recipe").cloned().unwrap_or(Value::Null);
+                if let Some(name) = rec.get("name").filter(|n| n.as_str().is_some_and(|x| !x.is_empty())) {
+                    a.insert("recipe".into(), name.clone());
+                    a.insert("modifiers".into(), Value::Array(py::iter_or(py::get(&rec, "modifiers")?)?));
+                    match rec.get("size").filter(|x| py::truthy(x)) {
+                        Some(sz) => a.insert("size".into(), sz.clone()),
+                        None => a.shift_remove("size"),
+                    };
+                }
+            }
+        }
+    }
     // recipe 專屬的主線（profile 的 conventions.branch.bases）：這個 run 的 recipe 有列、而且沒有用 --base／--set base= 指定時，
     // 這一段的 base 用它（範本的 A.base 沒給時是守門設定的主線）。沒設定時整段不做，args 和以前逐字相同
-    if workflow.starts_with("sdlc-") && s_or(py::get(data, "event")?) == "sdlc" && !a.get("base").is_some_and(|b| !blank(b)) {
+    // 自訂段（profile 的 flow；workflow 名是 flow-<段>）和 sdlc 各段一樣帶 recipe 的主線與中轉分支
+    let flow_wf = workflow.starts_with("flow-");
+    if (workflow.starts_with("sdlc-") || flow_wf) && s_or(py::get(data, "event")?) == "sdlc" && !a.get("base").is_some_and(|b| !blank(b)) {
         let name = a.get("recipe").and_then(Value::as_str).filter(|n| !n.is_empty()).unwrap_or("feature").to_string();
         let profile = crate::layout::read_profile(&pj(&env.teams(), "methodology.json"));
         if let Some(b) = crate::layout::recipe_base(&profile, &name) {
@@ -192,11 +216,11 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
             a.insert("base".into(), json!(want));
         }
     }
-    if workflow.starts_with("sdlc-") && workflow != "sdlc-merge" {
+    if (workflow.starts_with("sdlc-") && workflow != "sdlc-merge") || flow_wf {
         let sync = stage_result(env, run, "sync")?;
         let default = format!("{}{}", read_config(env)?.get("BRANCH_PREFIX").and_then(Value::as_str).unwrap_or_default(), a.get("epic").map(s_or).unwrap_or_default());
         if let Some(head) = sync.get("head_branch").and_then(Value::as_str).filter(|h| !h.is_empty() && *h != default) {
-            if ["build", "test", "deliver", "sync"].contains(&stage) {
+            if crate::stages::has(stage, crate::stages::Flag::TransitBranch) || flow_wf {
                 if let Some(b) = a.get("branch").filter(|b| !blank(b) && b.as_str() != Some(head)) {
                     notes.push(format!("忽略 --set 的 branch={}：sync 走過中轉分支，以它回報的 {head} 為準", py::s(b)));
                 }
@@ -238,6 +262,11 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
                     a.insert("subtasks".into(), derived);
                 }
             }
+        }
+        // 人決定略過的子任務（awf next --retry --skip-subtask）：不管是續跑還是整份重做都拿掉；沒有略過時不做事
+        let gone = super::human::drop_skipped(data, &mut a);
+        if !gone.is_empty() {
+            notes.push(format!("略過子任務（人決定的，記在 run.json）：{}", gone.join("、")));
         }
         if !a.get("subtasks").is_some_and(py::truthy) {
             a.shift_remove("subtasks");
@@ -402,6 +431,11 @@ fn names_in(dir: &str) -> Vec<String> {
 /// 最近一次用這支腳本跑的 workflow 紀錄（`<session>/workflows/wf_<id>.json`；格式沒承諾穩定）：（內容, 檔案路徑）。
 /// 只採用可信的：修改時間不在未來；這次 next 之後用同一支腳本跑的只有一筆。有兩筆以上時分不出哪一筆是真的，回 `Fail::Awf` 交人。
 pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, String)>> {
+    find_wf_meta_except(env, script, since, "")
+}
+
+/// 同 [`find_wf_meta`]；`seen` 不是空的時，run id 是它的那一筆不算（已經存過的結果，不會被當成這一次的）。
+pub(crate) fn find_wf_meta_except(env: &Env, script: &str, since: f64, seen: &str) -> A<Option<(Value, String)>> {
     let want = if script.is_empty() { None } else { Some(pyish::resolve(&env.abs(script))?) };
     let root = transcripts_root(env)?;
     let now = env.now_ts();
@@ -422,7 +456,8 @@ pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, Str
                 let Some(meta) = load_json(env, &f)? else { continue };
                 let (Some(sp), Some(want)) = (meta.as_object().and_then(|m| m.get("scriptPath")).and_then(Value::as_str), want.as_ref()) else { continue };
                 let same = pyish::resolve(&pyish::pjoin(&env.project, sp)).is_ok_and(|p| &p == want);
-                if same {
+                let old = !seen.is_empty() && meta.get("runId").and_then(Value::as_str).filter(|r| !r.is_empty()).unwrap_or_else(|| name.strip_suffix(".json").unwrap_or(&name)) == seen;
+                if same && !old {
                     hits.push((mt, meta, f));
                 }
             }
@@ -441,6 +476,22 @@ pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, Str
         ));
     }
     Ok(hits.pop().map(|(_, m, f)| (m, f)))
+}
+
+/// `awf done` 找不到回傳時的說明（1.2）：寫出找了哪裡、比對哪支腳本，讓人分得出是「還沒跑完」還是「這段不是 next 排的」。
+/// 只是說明，不改找法（[`find_wf_meta`]）。`script` 是空字串＝run.json 的 pending 沒有腳本路徑：
+/// [`find_wf_meta`] 這時一筆都不會採用，所以直接說要先 `awf next --retry`。
+pub fn wf_meta_missing(env: &Env, script: &str) -> String {
+    const OUTPUT: &str = "已經有 Workflow 的回傳的話，把它存成 JSON 檔，用 --output <檔> 指定";
+    if script.is_empty() {
+        return format!("找不到這一段 workflow 的回傳：這一段不是由 `awf next` 排的，或是直接用了 halted 輸出裡的 retry 物件；請先跑 `awf next --retry`。{OUTPUT}");
+    }
+    let root = transcripts_root(env).unwrap_or_else(|_| "（Claude Code 的專案紀錄目錄找不到）".to_string());
+    let shown = pyish::resolve(&env.abs(script)).unwrap_or_else(|_| script.to_string());
+    format!(
+        "找不到這一段 workflow 的回傳（它還沒跑完，或這版 Claude Code 的存放位置變了）。找的位置：{}（這次 awf next 之後寫的、scriptPath 指到同一支腳本的）；比對的腳本：{shown}。{OUTPUT}",
+        pj(&pj(&root, "*"), "workflows/wf_*.json")
+    )
 }
 
 /// 這次 next 之後有沒有「讀不懂、但內容提到這支腳本」的 workflow 紀錄檔：

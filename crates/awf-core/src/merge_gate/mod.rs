@@ -585,6 +585,8 @@ fn methodology_requirements(proj: &str) -> Result<Value, Fail> {
         Err(JsonErr::Decode(_)) => return Ok(Value::Null),
         Err(e) => return Err(Fail::Input(format!("讀不到 {path}：{e}"))),
     };
+    // 繼承（extends）解析失敗：hold（不當作沒有 extends，也不默默改用守門設定的需求來源）
+    let data = crate::profile::resolve_str(&path, data).map_err(|e| Fail::Input(format!("讀不到 {path}：{e}")))?;
     let rc = g(&data, "requirements");
     Ok(if rc.is_object() { rc.clone() } else { Value::Null })
 }
@@ -1484,8 +1486,14 @@ fn load_profile_for(teams: &str, given: Option<&str>) -> (Value, String) {
         Ok(p) => p,
         Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{e}")),
     };
+    // 繼承（extends）：解析失敗＝profile 讀不懂（fail-closed）
+    let prof = match crate::profile::resolve_str(&path, prof) {
+        Ok(p) => p,
+        Err(e) => return (Value::Null, format!("讀不到開發規範 profile {path}：{e}")),
+    };
     if !prof.is_object() { return (Value::Null, format!("開發規範 profile {path} 不是 JSON 物件")); }
     let errs = schema::methodology_errors(&prof);
+    let errs = if errs.is_empty() { errs } else { crate::profile::blame_path(std::path::Path::new(&path), errs) };
     if !errs.is_empty() { return (Value::Null, format!("開發規範 profile {path} 不合規則：{}", first(&errs, 3).join("；"))); }
     (prof, String::new())
 }
@@ -1518,6 +1526,8 @@ fn recipe_tamper_errors(teams: &str, data: &Value, profile: Option<&str>) -> Res
     if flag(res, "publishable") && !flag(&base, "publishable") { loose.push("publishable 被改成 true".into()); }
     if truthy(g(&base, "followup")) && !truthy(g(res, "followup")) { loose.push("followup 被拿掉".into()); }
     errs.extend(loose.into_iter().map(|e| format!("run.json 的 recipe.resolved 比 {name} 的定義鬆（手改過？）：{e}")));
+    // 自訂段（profile 的 flow）：點名的段要還在 profile 裡、順序要照 profile（resolved 沒有自訂段時不做事）
+    errs.extend(crate::stages::flow_tamper(&prof, g(res, "stages")));
     Ok(errs)
 }
 
@@ -1664,6 +1674,7 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
     // 專案加的路徑分類：只取 profile 的 diff_classes_extra 這一個鍵（profile 不存在、讀不懂或沒寫這個鍵＝沒設定，照舊）
     inp.diff_extra = pyutil::read_text(&pyutil::join(proj, ".claude/teams/methodology.json")).ok()
         .and_then(|t| pyjson::loads(&t).ok())
+        .and_then(|p| crate::profile::resolve_str(&pyutil::join(proj, ".claude/teams/methodology.json"), p).ok())
         .and_then(|p| p.get("diff_classes_extra").filter(|v| !v.is_null()).cloned());
     attempt((|| {
         let Some(p) = a.truthy("--recipe") else { return Ok(()) };
@@ -1687,6 +1698,19 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
         if !PathBuf::from(&meth).is_file() { return Err(Fail::Input(crate::save_run::profile_missing(&meth))); }
         let tamper = recipe_tamper_errors(&teams, &data, Some(meth.as_str())).map_err(Fail::Crash)?;
         if !tamper.is_empty() { return Err(Fail::Input(first(&tamper, 3).join("；"))); }
+        // 自訂段（profile 的 flow）一定在 merge 之前：recipe 點名的每一個都要做完、由人核准（沒有自訂段時是空的）
+        // 政策核准的紀錄只有現在的 profile 把那一段宣告成 run: steps＋gate: policy 才算數（profile 不合規則就都不算）
+        let flow_prof = {
+            let p = crate::layout::read_profile(&meth);
+            if crate::stages::run_customs(&data).is_empty() || !crate::schema::methodology_errors(&p).is_empty() { Value::Null } else { p }
+        };
+        let flow_pending = crate::stages::flow_unapproved_with(&data, None, &flow_prof);
+        if !flow_pending.is_empty() { return Err(Fail::Input(format!("--recipe {p} 的自訂段還沒過：{}", first(&flow_pending, 5).join("；")))); }
+        // 還沒有人確認的暫定做法、被略過的子任務：都不是 agent 能自己合併的情況，交人（沒有這些紀錄時不多做事）
+        let unconfirmed = crate::save_run::human::unconfirmed_of(&data);
+        if !unconfirmed.is_empty() { return Err(Fail::Input(format!("--recipe {p} 還有 {} 項暫定做法沒有人確認過：{}", unconfirmed.len(), first(&unconfirmed, 3).join("；")))); }
+        let skipped = crate::save_run::human::skipped_subtasks(&data);
+        if !skipped.is_empty() { return Err(Fail::Input(format!("--recipe {p} 有子任務被略過（{}）：要不要合併由人決定，agent 不合併", skipped.join("、")))); }
         inp.recipe = Some(r.clone());
         if inp.requirements_source.starts_with("openspec:") {
             let (rc, _) = requirements_config(cfg, proj)?;

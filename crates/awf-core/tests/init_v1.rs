@@ -255,7 +255,7 @@ fn a_snippets_come_from_the_project_first_then_the_template() {
     let wf = p.join(".claude/workflows/sdlc-plan.js");
     let ver = json_of(&repo().join("plugin/.claude-plugin/plugin.json"))["version"].as_str().expect("version").to_string();
     assert!(read(&wf).ends_with(&format!("// awf-override: {ver}\n")), "覆寫檔結尾要有標記");
-    assert_eq!(files_under(&p.join(".claude/workflows")).len(), 12);
+    assert_eq!(files_under(&p.join(".claude/workflows")).len(), 13);
     let with_tpl = Paths::project_with(&p, Some(tpl_snips.clone()));
     let (code, out, err) = build::run_captured(&["--check".to_string()], &with_tpl);
     assert_eq!(code, 0, "有模版的片段：--check 要過\n{out}{err}");

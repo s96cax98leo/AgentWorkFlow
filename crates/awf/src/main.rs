@@ -8,7 +8,7 @@ fn usage() -> &'static str {
     "用法：awf <子指令> [參數…]
 
   --version        版本與原始碼雜湊
-  --help           這份說明
+  --help、help     這份說明
 
 流程（主 session 用）：
   start            開一個新的 run，回第一個動作
@@ -69,7 +69,7 @@ fn main() -> ExitCode {
             println!("awf {} (source {})", awf_core::VERSION, SOURCE_HASH);
             ExitCode::SUCCESS
         }
-        None | Some("-h") | Some("--help") => {
+        None | Some("-h") | Some("--help") | Some("help") => {
             print!("{}", usage());
             ExitCode::SUCCESS
         }

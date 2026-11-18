@@ -14,9 +14,9 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 /// 限制文件可以套用的段。
-pub const CONSTRAINT_STAGES: &[&str] = &["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub const CONSTRAINT_STAGES: &[&str] = &crate::stages::CONSTRAINT;
 /// 簡寫沒寫段時的預設。
-pub const CONSTRAINT_DEFAULT_STAGES: &[&str] = &["design", "deliver"];
+pub const CONSTRAINT_DEFAULT_STAGES: &[&str] = &crate::stages::CONSTRAINT_DEFAULT;
 /// 讀取上限的模式。
 pub const LIMIT_MODES: &[&str] = &["off", "warn", "enforce"];
 /// 分支怎麼跟上 base。
@@ -88,7 +88,8 @@ pub fn load_profile(site: &Site, name: &str) -> R<Value> {
         Err(e) => return crash(format!("讀不到 profile {}：{}", p.shown, e.msg())),
     };
     match pyjson::loads(&text) {
-        Ok(v) => Ok(v),
+        // 有繼承（extends）的 profile 用合併後的（init 寫成專案的 methodology.json 時本來就是整份寫入）；沒有時原樣
+        Ok(v) => crate::profile::resolve_file(&p.real, v).or_else(|e| die(format!("profile {} 的繼承（extends）讀不懂：{e}", p.shown))),
         Err(e) => die(format!("profile {} 不是合法 JSON：{e}", p.shown)),
     }
 }
@@ -586,14 +587,38 @@ pub fn profile_upgrade(con: &mut Console, site: &Site, meth: &Path, adopt: bool)
             return Ok(1);
         }
     };
-    let Some(proj) = proj.as_object() else {
+    let Some(raw) = proj.as_object() else {
         con.say(&format!("警告：{shown} 不是 JSON 物件，沒有比對 profile 欄位"));
         return Ok(1);
     };
+    // 繼承（extends）：比對與驗證用合併後的值；不把繼承來的值寫回檔案（不攤平、extends 保留）
+    let inherits = crate::profile::has_extends(&proj);
+    let merged = if inherits {
+        match crate::profile::resolve_file(meth, proj.clone()) {
+            Ok(Value::Object(o)) => o,
+            Ok(_) => {
+                con.say(&format!("警告：{shown} 合併繼承（extends）後不是 JSON 物件，沒有比對 profile 欄位"));
+                return Ok(1);
+            }
+            Err(e) => {
+                con.say(&format!("警告：{shown} 的繼承（extends）讀不懂（{e}），沒有比對 profile 欄位"));
+                return Ok(1);
+            }
+        }
+    } else {
+        raw.clone()
+    };
+    let proj = &merged;
     let names = profile_names(site);
+    // 有繼承時，name 不是內建的名字就比 extends 裡最右邊的內建 profile（例：extends ["lightweight"] 比 lightweight）
+    let inherited_builtin = raw.get(crate::profile::KEY).and_then(|e| match e {
+        Value::String(s) => Some(vec![s.clone()]),
+        Value::Array(a) => Some(a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()),
+        _ => None,
+    }).and_then(|items| items.into_iter().rev().find(|n| names.iter().any(|x| x == n)));
     let name = match proj.get("name").and_then(Value::as_str) {
         Some(n) if names.iter().any(|x| x == n) => n.to_string(),
-        _ => "default".to_string(),
+        _ => inherited_builtin.unwrap_or_else(|| "default".to_string()),
     };
     let base = load_profile(site, &name)?;
     let Some(base) = base.as_object() else { return crash(format!("內建 profile {name} 要是 JSON 物件")) };
@@ -608,6 +633,10 @@ pub fn profile_upgrade(con: &mut Console, site: &Site, meth: &Path, adopt: bool)
         if !adopt {
             con.say("  加 --adopt-new-fields 補上（只補缺的，既有值不改）；不補時 workflow 照缺省行為走。");
         }
+    }
+    if adopt && !miss.is_empty() && inherits {
+        con.say("  methodology.json 有 extends（繼承）：--adopt-new-fields 不自動補（補進檔案會蓋過之後繼承來的值），沒有寫回。缺的欄位請寫在被繼承的檔或 methodology.json 自己。");
+        return Ok(1);
     }
     if adopt && !miss.is_empty() {
         let mut new = proj.clone();

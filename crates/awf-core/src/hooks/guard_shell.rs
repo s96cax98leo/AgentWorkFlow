@@ -36,7 +36,8 @@ re!(GH_ACCOUNT_WRITE, concat!(
     r"gist\s+(?:create|new|edit|delete|rename)|auth\s+(?:login|logout|refresh|setup-git|switch))\b"));
 re!(GH_INNER_REPO, r#"(\bgh(?:\.exe)?(?:\s+[a-z][\w-]*)?)\s+((?:-R|--repo)(?:\s+|=)(?:"[^"]*"|'[^']*'|[^\s;&|]+))(?=\s+[a-z])"#, "i");
 re!(GH_API_WRITE, r#"\bgh(?:\.exe)?\s+api\b(?=.*(?:-X\s*|--method[\s=]+)["']?(?:POST|PATCH|PUT|DELETE)|.*\s(?:-f|-F|--field|--raw-field|--input)[\s=])"#, "i");
-re!(DESTRUCTIVE, r"\b(rm|mv|cp|sed\s+-i|git\s+(commit|checkout|reset|merge|pull|stash|clean)|tee|>)\b");
+// merge-base、merge-tree 是唯讀的 git 子指令（字首剛好是 merge），不算
+re!(DESTRUCTIVE, r"\b(rm|mv|cp|sed\s+-i|git\s+(commit|checkout|reset|merge(?!-(?:base|tree)\b)|pull|stash|clean)|tee|>)\b");
 re!(GH_PR_MERGE, r"\bgh(?:\.exe)?\s+pr\s+merge\b", "i");
 re!(GH_PR_REVIEW, r"\bgh(?:\.exe)?\s+pr\s+review\b", "i");
 re!(API_CLIENT, r"(?:^|[\s/\\(&;|`])(?:gh(?:\.exe)?\s+api|curl(?:\.exe)?|wget(?:\.exe)?|https?|xh|invoke-restmethod|irm|invoke-webrequest|iwr)(?=\s|$)", "i");
@@ -56,7 +57,7 @@ re!(PR_URL, r"^https?://[^/]+/([\w.-]+/[\w.-]+)/pull/(\d+)(?:[/?#].*)?$");
 re!(SUBST, r"\$\(|`|<\(|\$\{");
 re!(SHELL_WRITE, concat!(
     r"(?<![&<>=-])>(?!&)|\b(?:rm|mv|cp|tee|truncate|dd|install|ln|touch|chmod|sed\s+-i|perl\s+-p?i)\b",
-    r#"|\bgit\s+(?:checkout|restore|rm|mv|stash|reset)\b|open\([^)]*["'][wax+]|write_text|write_bytes|writelines|\.write\(|unlink|os\.remove|shutil\."#,
+    r#"|\bgit\s+(?:checkout|restore|rm|mv|stash|reset|merge-file)\b|open\([^)]*["'][wax+]|write_text|write_bytes|writelines|\.write\(|unlink|os\.remove|shutil\."#,
     r"|set-content|add-content|out-file|new-item|remove-item|clear-content|copy-item|move-item|rename-item"), "i");
 re!(STATE_FRAGMENT, r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config|methodology\W{0,16}\.json", "i");
 re!(WRITE_API, r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.write\b|write_text|write_bytes|>>?|\bFile\.(?:write|open)|out-file|set-content|add-content", "i");
@@ -89,6 +90,20 @@ const TREE_PROTECTED: &[(&str, &[&str])] = &[(".github", &["workflows"]), (".cla
 /// 只收字面值（值裡沒有 `$`、反引號、指令替換），最多 16 個變數、每個值最多 256 字；不追第二層。
 /// 展開的結果只拿來多跑一次規則（原本的指令照樣跑），所以只會更嚴。
 pub fn expand_simple_vars(cmd: &str, is_ps: bool) -> Option<String> {
+    expand_vars(cmd, is_ps).map(|e| e.text)
+}
+
+/// [`expand_simple_vars`] 的結果，加上「展開後的指令和 shell 實際看到的值一定相同」的判斷。
+pub struct Expanded {
+    pub text: String,
+    /// 每個被換掉的變數：整條指令裡只賦值一次、賦值是最外層的獨立一句（在開頭或 `;`／換行之後，後面接 `;`、`&&`、換行或結尾；
+    /// 前面沒有括號、管線或 `&`：不在子 shell、不是條件賦值、不是只給下一個指令的環境變數）、每次使用都在賦值之後、
+    /// 名字沒有在別處出現（`read`、`for`、`unset`、`+=` 之類）。只有這時才能拿展開後的判定代替原本「看不到值」的判定。
+    pub ordered: bool,
+}
+
+/// 同 [`expand_simple_vars`]，另外回 [`Expanded::ordered`]。
+pub fn expand_vars(cmd: &str, is_ps: bool) -> Option<Expanded> {
     use std::sync::OnceLock;
     static SH: OnceLock<regex::Regex> = OnceLock::new();
     static PS: OnceLock<regex::Regex> = OnceLock::new();
@@ -101,13 +116,19 @@ pub fn expand_simple_vars(cmd: &str, is_ps: bool) -> Option<String> {
         SH.get_or_init(|| regex::Regex::new(r#"(?:^|[;&|\n(]|\b(?:export|local|declare|readonly|typeset)\s)\s*([A-Za-z_]\w*)=(?:"([^"$`\\]{0,256})"|'([^']{0,256})'|([^\s;&|()<>"'`$\\]{0,256}))(?:[\s;&|)]|$)"#).expect("固定的正規式"))
     };
     let mut vars: Vec<(String, String)> = Vec::new();
+    // 每一次賦值：（名字, 名字的位置, 這一句是不是最外層的獨立賦值）
+    let mut assigns: Vec<(String, usize, bool)> = Vec::new();
     let mut at = 0;
     while let Some(m) = re.captures_at(cmd, at) {
         let whole = m.get(0)?;
-        let name = m.get(1)?.as_str().to_string();
-        let val = m.get(2).or_else(|| m.get(3)).or_else(|| m.get(4)).map(|v| v.as_str().to_string()).unwrap_or_default();
+        let name_m = m.get(1)?;
+        let name = name_m.as_str().to_string();
+        let vm = m.get(2).or_else(|| m.get(3)).or_else(|| m.get(4));
+        let val = vm.map(|v| v.as_str().to_string()).unwrap_or_default();
         // 結尾的分隔字元留給下一個賦值當開頭
         at = if whole.end() > whole.start() + 1 { whole.end() - 1 } else { whole.end() };
+        let val_end = vm.map(|v| v.end() + usize::from(m.get(4).is_none())).unwrap_or(whole.end());
+        assigns.push((name.clone(), name_m.start(), standalone_assign(cmd, name_m.start(), val_end, is_ps)));
         if !val.is_empty() && !vars.iter().any(|(n, _)| *n == name) {
             vars.push((name, val));
             if vars.len() >= 16 {
@@ -125,6 +146,8 @@ pub fn expand_simple_vars(cmd: &str, is_ps: bool) -> Option<String> {
     let b = cmd.as_bytes();
     let mut i = 0;
     let mut changed = false;
+    let mut ordered = true;
+    let mut uses: Vec<(String, usize)> = Vec::new();
     while i < b.len() {
         if b[i] == b'$' {
             let rest = &cmd[i + 1..];
@@ -141,7 +164,14 @@ pub fn expand_simple_vars(cmd: &str, is_ps: bool) -> Option<String> {
             let assigning = is_ps && body[n..].trim_start().starts_with('=') && !body[n..].trim_start().starts_with("==");
             if n > 0 && closed && !assigning {
                 let found = vars.iter().find(|(k, _)| if is_ps { k.eq_ignore_ascii_case(name) } else { k == name });
-                if let Some((_, v)) = found {
+                if let Some((k, v)) = found {
+                    let same = |a: &str| if is_ps { a.eq_ignore_ascii_case(k) } else { a == k };
+                    let mine: Vec<&(String, usize, bool)> = assigns.iter().filter(|(a, _, _)| same(a)).collect();
+                    ordered &= mine.len() == 1 && mine[0].2 && mine[0].1 < i;
+                    match uses.iter_mut().find(|(a, _)| same(a)) {
+                        Some(u) => u.1 += 1,
+                        None => uses.push((k.clone(), 1)),
+                    }
                     out.push_str(v);
                     i += 1 + usize::from(braced) + skip_env + n + usize::from(braced);
                     changed = true;
@@ -153,7 +183,65 @@ pub fn expand_simple_vars(cmd: &str, is_ps: bool) -> Option<String> {
         out.push(ch);
         i += ch.len_utf8();
     }
-    if changed { Some(out) } else { None }
+    if !changed {
+        return None;
+    }
+    // 名字只能出現在那一次賦值和各次使用（`read L`、`for L in`、`unset L`、`L+=x` 都會讓實際的值和展開的不同）
+    for (k, n) in &uses {
+        ordered &= word_count(cmd, k, is_ps) == n + 1;
+    }
+    Some(Expanded { text: out, ordered })
+}
+
+/// `cmd` 在 `name_at` 的賦值是不是最外層的獨立一句：前面只有空白（與 export 之類的宣告字），接在開頭或 `;`／換行之後，
+/// 前面整段沒有括號、大括號、管線、`&`、反引號；值後面接 `;`、`&&`、換行或結尾（不是只給下一個指令的環境變數）。
+fn standalone_assign(cmd: &str, name_at: usize, val_end: usize, is_ps: bool) -> bool {
+    let mut start = name_at;
+    if is_ps {
+        let head = &cmd[..name_at];
+        let head = head.strip_suffix("env:").or_else(|| head.strip_suffix("ENV:")).or_else(|| head.strip_suffix("Env:")).unwrap_or(head);
+        match head.strip_suffix('$') {
+            Some(h) => start = h.len(),
+            None => return false,
+        }
+    }
+    let before = &cmd[..start];
+    if before.contains(['(', ')', '{', '}', '|', '&', '`']) {
+        return false;
+    }
+    let mut lead = before.trim_end_matches([' ', '\t']);
+    if !is_ps {
+        for w in ["export", "local", "declare", "readonly", "typeset"] {
+            if let Some(l) = lead.strip_suffix(w) {
+                if l.is_empty() || l.ends_with([' ', '\t', ';', '\n']) {
+                    lead = l.trim_end_matches([' ', '\t']);
+                    break;
+                }
+            }
+        }
+    }
+    if !(lead.is_empty() || lead.ends_with([';', '\n'])) {
+        return false;
+    }
+    let after = cmd.get(val_end.min(cmd.len())..).unwrap_or("").trim_start_matches([' ', '\t']);
+    after.is_empty() || after.starts_with([';', '\n', '\r']) || after.starts_with("&&")
+}
+
+/// `name` 在 `cmd` 裡當成一個完整的字出現幾次（前後不是英數或底線）。
+fn word_count(cmd: &str, name: &str, is_ps: bool) -> usize {
+    let (hay, needle) = if is_ps { (cmd.to_ascii_lowercase(), name.to_ascii_lowercase()) } else { (cmd.to_string(), name.to_string()) };
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+    let mut n = 0;
+    let mut from = 0;
+    while let Some(i) = hay[from..].find(&needle) {
+        let s = from + i;
+        let e = s + needle.len();
+        if !word(hay[..s].chars().next_back()) && !word(hay[e..].chars().next()) {
+            n += 1;
+        }
+        from = e;
+    }
+    n
 }
 re!(NULL_REDIR, r"\d?>>?\s*/dev/null|\d?>>?\s*\$null|\d>&\d", "i");
 re!(HARMLESS, r"[\d&]?>>?\s*/dev/null\b|[\d&]?>>?\s*\$null\b|\d?>&\d", "i");
@@ -171,7 +259,10 @@ re!(RECORD_WRITE_CMD, concat!(
     r"|\bwget\b(?!.*(?:\s-[a-zA-Z]*O\s*-(?:\s|$)|--output-document[=\s]+-(?:\s|$)))",
     r"|\bfind\b.*\s-(?:delete|fprint\w*|fls)(?=\s|$)",
     r"|(?:^|\s)-outfile(?=[\s:]|$)|\[(?:system\.)?io\.file\]::",
-    r"|\bgit\s+(?:checkout|switch|restore|reset|stash|clean|rm|mv|commit|merge|pull|rebase|cherry-pick|revert|am|clone|init|",
+    // 唯讀的 git 子指令不算：merge-base、merge-tree（字首剛好是 merge；merge-tree --write-tree 只寫物件庫，不動工作區與分支）、
+    // rebase --show-current-patch（只印）。merge-file 不放行：-p 可以是 -L 的值、也可以躲在註解裡，分不出來
+    r"|\bgit\s+(?:checkout|switch|restore|reset|stash|clean|rm|mv|commit|merge(?!-(?:base|tree)\b)|pull|",
+    r"rebase(?!\s+--show-current-patch(?=\s|$))|cherry-pick|revert|am|clone|init|",
     r"checkout-index|read-tree|update-index|worktree\s+(?:add|remove|move)|apply(?!.*\s--(?:check|stat|numstat|summary)\b))\b"), "i");
 re!(INTERP_WRITE, concat!(
     r#"\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?["'](?:[rbt]*[wax+]|\s*\+?>)"#,
@@ -191,6 +282,8 @@ re!(TEAM_CONFIG_MKDIR, r"(?:^|[\s;&|(`])(?:mkdir|md|rmdir)(?:\.exe)?(?=\s|$)", "
 re!(MULTI_SLASH, r"(?<![:/])[/\\\\]{2,}");
 re!(TEAMS_REL, r#"(?:^|[\s"'=])\.?[/\\\\]?(?:teams|workflows)(?:[/\\\\]|\s|$)"#);
 re!(CI_TARGET, r#"(?:^|[/\\\s"'=])\.github[/\\]workflows(?:[/\\"']|\s|$)"#, "i");
+re!(FLOW_TARGET, r#"(?:^|[/\\\s"'=])\.claude[/\\]flows(?:[/\\"']|\s|$)"#, "i");
+re!(FLOW_REL, r#"(?:^|[\s"'=])\.?[/\\]?flows(?:[/\\"']|\s|$)"#, "i");
 re!(CI_REL, r#"(?:^|[\s"'=])\.?[/\\]?workflows(?:[/\\"']|\s|$)"#, "i");
 re!(CLAUDE_PROJECTS_TARGET, r#"(?:^|[/\\\s"'=(:])\.claude[/\\]projects(?:[/\\"')]|\s|$)"#, "i");
 re!(PROJECT_ENV_SET, concat!(
@@ -215,7 +308,7 @@ pub fn all_patterns() -> Vec<&'static Re> {
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
-         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &GRAPH_DB, &SQLITE_CLI, &CLAUDE_PROJECTS_TARGET, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
+         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &FLOW_TARGET, &FLOW_REL, &GRAPH_DB, &SQLITE_CLI, &CLAUDE_PROJECTS_TARGET, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
 }
 
@@ -232,6 +325,8 @@ const GREP_LIKE: &[&str] = &["grep", "egrep", "fgrep", "rg", "ag", "select-strin
 const VAR_EXPAND_MAX: usize = 16 * 1024;
 /// 展開後多跑的那一次在輸入上的記號（只在行程內用）。
 const EXPANDED_MARK: &str = "_awf_expanded";
+/// 原本的指令那一次的記號：變數都能可靠展開，展開後的那一次已經通過（只在行程內用）。
+const VARS_CHECKED: &str = "_awf_vars_checked";
 const CD_CMDS: &[&str] = &["cd", "pushd", "chdir", "set-location", "sl", "push-location"];
 const EXEC_FORWARDERS: &[&str] = &["xargs", "parallel", "watch", "find", "fd", "entr", "flock", "chronic", "unbuffer", "script", "su", "doas", "runuser", "setsid"];
 
@@ -541,6 +636,20 @@ fn new_branches(seg: &str) -> Vec<String> {
     out
 }
 
+/// rules.md 規則 21 的備份分支：`git branch backup/<名> [<起點>]`（只在本機建立、不切過去、不帶任何選項）。
+/// 不受 allowed_branch_prefixes 限制；checkout -b／switch -c／worktree add -b、`-f` 覆寫、推送照舊。
+const BACKUP_BRANCH_PREFIX: &str = "backup/";
+
+fn local_backup_branch(seg: &str, branch: &str) -> bool {
+    if !branch.starts_with(BACKUP_BRANCH_PREFIX) || branch.len() <= BACKUP_BRANCH_PREFIX.len() {
+        return false;
+    }
+    let toks = tokens(seg);
+    let Some(gi) = toks.iter().position(|t| t == "git") else { return false };
+    let t = &toks[gi + 1..];
+    t.first().is_some_and(|f| f == "branch") && t.len() <= 3 && t[1..].iter().all(|a| !a.starts_with('-'))
+}
+
 /// team agent 執行 <tool>.py 的寫入子指令時回傳子指令名；唯讀的子指令、沒有參數回 None。
 fn save_run_write(seg: &str, tool: &str, readonly: &[&str], depth: usize) -> Option<String> {
     let toks = shlex_tokens(seg);
@@ -600,6 +709,153 @@ fn save_run_write(seg: &str, tool: &str, readonly: &[&str], depth: usize) -> Opt
         }
     }
     None
+}
+
+/// 把只讀的 `open(…)` 呼叫的 `open` 換成 `_ro_`（括號裡的路徑原樣留著）。只讀＝Python 的 `open(路徑)`、`open(路徑, 'r'／'rb'／'rt')`、
+/// `io.open`／`codecs.open` 同樣寫法，或方法形式 `….open()`、`….open('r')`（`Path.open`）；其餘參數只能是 encoding、errors、newline、
+/// buffering。模式不是字面值、帶 opener、`os.open`、括號沒有關、看不懂的一律不換（照舊當寫入）。
+fn mask_read_opens(s: &str) -> String {
+    if !s.contains("open") {
+        return s.to_string();
+    }
+    let ch: Vec<char> = s.chars().collect();
+    let n = ch.len();
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < n {
+        let is_open = i + 4 <= n && ch[i..i + 4].iter().collect::<String>() == "open" && (i == 0 || !word(ch[i - 1])) && (i + 4 == n || !word(ch[i + 4]));
+        if is_open {
+            let mut k = i + 4;
+            while k < n && (ch[k] == ' ' || ch[k] == '\t') {
+                k += 1;
+            }
+            if k < n && ch[k] == '(' {
+                if let Some(end) = call_end(&ch, k + 1) {
+                    let recv: String = ch[..i].iter().collect();
+                    let method = recv.ends_with('.') && !recv.ends_with("io.") && !recv.ends_with("codecs.");
+                    let os_open = recv.ends_with("os.") || recv.ends_with("posix.");
+                    let args = split_args(&ch[k + 1..end]);
+                    if !os_open && read_only_open(&args, method) {
+                        out.push_str("_ro_");
+                        i += 4;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(ch[i]);
+        i += 1;
+    }
+    out
+}
+
+/// 從括號裡的第一個字元找配對的右括號（引號裡的不算）；沒有回 None。
+fn call_end(ch: &[char], mut i: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut q = '\0';
+    while i < ch.len() {
+        let c = ch[i];
+        if q != '\0' {
+            if c == '\\' {
+                i += 2;
+                continue;
+            }
+            if c == q {
+                q = '\0';
+            }
+        } else if c == '\'' || c == '"' {
+            q = c;
+        } else if c == '(' || c == '[' || c == '{' {
+            depth += 1;
+        } else if c == ')' || c == ']' || c == '}' {
+            if depth == 0 {
+                return if c == ')' { Some(i) } else { None };
+            }
+            depth -= 1;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 括號裡的參數依最外層的逗號切開（去頭尾空白；空的丟掉）。
+fn split_args(ch: &[char]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    let mut q = '\0';
+    let mut i = 0;
+    while i < ch.len() {
+        let c = ch[i];
+        if q != '\0' {
+            cur.push(c);
+            if c == '\\' && i + 1 < ch.len() {
+                cur.push(ch[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == q {
+                q = '\0';
+            }
+        } else if c == '\'' || c == '"' {
+            q = c;
+            cur.push(c);
+        } else if matches!(c, '(' | '[' | '{') {
+            depth += 1;
+            cur.push(c);
+        } else if matches!(c, ')' | ']' | '}') {
+            depth = depth.saturating_sub(1);
+            cur.push(c);
+        } else if c == ',' && depth == 0 {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+        i += 1;
+    }
+    out.push(cur);
+    out.into_iter().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).collect()
+}
+
+/// 字面值的唯讀模式：'r'、"rb"、'rt'、'U'（大小寫照 Python，只收這幾個字母）。
+fn read_mode_literal(a: &str) -> bool {
+    let a = a.trim();
+    let body = a.strip_prefix('\'').and_then(|b| b.strip_suffix('\'')).or_else(|| a.strip_prefix('"').and_then(|b| b.strip_suffix('"')));
+    body.is_some_and(|b| !b.is_empty() && b.chars().all(|c| matches!(c, 'r' | 'b' | 't' | 'U')))
+}
+
+fn read_only_open(args: &[String], method: bool) -> bool {
+    let mut pos = 0usize;
+    for a in args {
+        // 解包的參數（*a、**k）看不出模式是什麼：不算只讀
+        if a.trim_start().starts_with('*') {
+            return false;
+        }
+        let kw = a.split_once('=').filter(|(k, _)| {
+            let k = k.trim();
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !a.contains("==")
+        });
+        if let Some((k, v)) = kw {
+            match k.trim() {
+                "mode" => {
+                    if !read_mode_literal(v) {
+                        return false;
+                    }
+                }
+                "encoding" | "errors" | "newline" | "buffering" => {}
+                _ => return false,
+            }
+            continue;
+        }
+        // 位置參數：函式形式是（路徑, 模式, buffering, encoding…）；方法形式（Path.open）是（模式, buffering, encoding…）
+        let mode_slot = if method { 0 } else { 1 };
+        if pos == mode_slot && !read_mode_literal(a) {
+            return false;
+        }
+        pos += 1;
+    }
+    true
 }
 
 /// `hay` 裡有沒有把 `needle` 當路徑寫出來（前後是路徑的邊界，不是別的名字的一部分）。太短的不比（容易誤判）。
@@ -964,7 +1220,8 @@ impl Guard {
             fold(&format!("{rel}/")).starts_with(&fold(runs))
         };
         let near_runs = in_runs_cwd || (!runs.is_empty() && fold(&norm(seg)).contains(&fold(runs.trim_end_matches('/'))));
-        let probe = NULL_REDIR.replace_all(seg, " ");
+        // 只讀的 open(…)（沒有模式、或模式只有 r／b／t）不算寫入的跡象；路徑照樣留著給檔名比對
+        let probe = mask_read_opens(&NULL_REDIR.replace_all(seg, " "));
         let writes = |p: &str| WRITE_API.is_match(p) || SHELL_WRITE.is_match(p);
         if RUN_INDEX_FRAGMENT.is_match(&probe) && writes(&probe) {
             return Ok(true);
@@ -977,7 +1234,7 @@ impl Guard {
     }
 
     /// run_brief.py 的 --log 要明確寫在 runs_dir 底下、副檔名 .log。
-    fn run_brief_problem(&self, toks: &[String], base: &str) -> R<Option<String>> {
+    fn run_brief_problem(&self, toks: &[String], base: &str, vars_ok: bool) -> R<Option<String>> {
         if toks.first().is_some_and(|t| t == "--selftest") {
             return Ok(None);
         }
@@ -998,6 +1255,14 @@ impl Guard {
             return Ok(Some(format!("要帶 --log {runs}<run>/<段>/logs/<label>.log")));
         }
         let raw = li.and_then(|i| toks.get(i + 1)).cloned().unwrap_or_default();
+        if vars_ok && raw.contains('$') {
+            // 同一條指令裡可靠賦值過的變數（`L=…; awf run-brief --log $L/x.log`）：展開後的那一次已經用實際路徑檢查過這一條
+            return Ok(None);
+        }
+        if raw.contains(['$', '`']) {
+            // 看不到實際路徑（`_tpm/runs/$X.log` 的 X 可以是 ../../ 開頭）
+            return Ok(Some(format!("--log 只能是 {runs} 底下的 .log（{raw}）")));
+        }
         let rel = self.rel_to_workspace(&self.resolve_arg(base, &raw)?)?;
         match rel {
             Some(r) if r.starts_with(runs.as_str()) && r.ends_with(".log") => Ok(None),
@@ -1033,11 +1298,12 @@ impl Guard {
     }
 
     /// 只寫執行紀錄的角色：這段 shell 有沒有寫檔；有就回傳理由。巢狀的指令遞迴檢查。
-    fn record_shell_write(&self, seg: &str, base: &str, depth: usize) -> R<Option<String>> {
+    fn record_shell_write(&self, seg: &str, base: &str, depth: usize, vars_ok: bool) -> R<Option<String>> {
         if depth > 4 {
             return Ok(Some("巢狀太深，無法確認".into()));
         }
-        let probe = strip_harmless(&QUOTED.replace_all(seg, " "));
+        // git -C x、git -c k=v 這類全域選項先拿掉（`git -C repo merge x` 和 `git merge x` 一樣是寫入）
+        let probe = strip_harmless(&QUOTED.replace_all(&GIT_GLOBAL_OPTS.replace_all(seg, "git "), " "));
         if RECORD_REDIRECT.is_match(&probe) {
             return Ok(Some("> 重導".into()));
         }
@@ -1055,11 +1321,11 @@ impl Guard {
         if let Some(rb) = toks.iter().position(|t| basename_lower(t) == "run_brief.py") {
             if rb == 0 || INTERP.is_match(&toks[..rb].join(" ")) {
                 let rest = &toks[rb + 1..];
-                if let Some(bad) = self.run_brief_problem(rest, base)? {
+                if let Some(bad) = self.run_brief_problem(rest, base, vars_ok)? {
                     return Ok(Some(format!("awf run-brief {bad}")));
                 }
                 if let Some(d) = rest.iter().position(|t| t == "--") {
-                    return self.record_shell_write(&ps::join(&rest[d + 1..]), base, depth + 1);
+                    return self.record_shell_write(&ps::join(&rest[d + 1..]), base, depth + 1, vars_ok);
                 }
                 return Ok(None);
             }
@@ -1069,11 +1335,11 @@ impl Guard {
             if !c.direct {
                 return Ok(Some("awf run-brief 要直接執行（不能經轉呼叫或變數）".into()));
             }
-            if let Some(bad) = self.run_brief_problem(&c.args, base)? {
+            if let Some(bad) = self.run_brief_problem(&c.args, base, vars_ok)? {
                 return Ok(Some(format!("awf run-brief {bad}")));
             }
             if let Some(d) = c.args.iter().position(|t| t == "--") {
-                return self.record_shell_write(&ps::join(&c.args[d + 1..]), base, depth + 1);
+                return self.record_shell_write(&ps::join(&c.args[d + 1..]), base, depth + 1, vars_ok);
             }
             return Ok(None);
         }
@@ -1081,7 +1347,7 @@ impl Guard {
             for (k, t) in args.iter().enumerate() {
                 if is_dash_c(t) && k + 1 < args.len() {
                     for inner in segments(&args[k + 1]) {
-                        if let Some(why) = self.record_shell_write(&inner, base, depth + 1)? {
+                        if let Some(why) = self.record_shell_write(&inner, base, depth + 1, vars_ok)? {
                             return Ok(Some(why));
                         }
                     }
@@ -1097,7 +1363,7 @@ impl Guard {
                 }
                 if matches!(low.as_str(), "-c" | "-command" | "/c" | "/k") && k + 1 < args.len() {
                     for inner in ps_segments(&args[k + 1..].join(" ")) {
-                        if let Some(why) = self.record_shell_write(&inner, base, depth + 1)? {
+                        if let Some(why) = self.record_shell_write(&inner, base, depth + 1, vars_ok)? {
                             return Ok(Some(why));
                         }
                     }
@@ -1107,7 +1373,7 @@ impl Guard {
         }
         if matches!(name.as_str(), "eval" | "invoke-expression" | "iex") {
             for inner in segments(&args.join(" ")) {
-                if let Some(why) = self.record_shell_write(&inner, base, depth + 1)? {
+                if let Some(why) = self.record_shell_write(&inner, base, depth + 1, vars_ok)? {
                     return Ok(Some(why));
                 }
             }
@@ -1120,7 +1386,7 @@ impl Guard {
         for (ic, nested_ps) in awf_cli::hidden_shells(&all) {
             let inner = if nested_ps { ps_segments(&ic) } else { segments(&ic) };
             for s in inner {
-                if let Some(why) = self.record_shell_write(&s, base, depth + 1)? {
+                if let Some(why) = self.record_shell_write(&s, base, depth + 1, vars_ok)? {
                     return Ok(Some(why));
                 }
             }
@@ -1141,7 +1407,7 @@ impl Guard {
     /// Bash／PowerShell 段落是否寫入受保護檔。
     fn shell_writes_protected(&self, seg: &str) -> R<Option<String>> {
         let Some(hit) = self.protected_target(seg, false)? else { return Ok(None) };
-        let probe = NULL_REDIR.replace_all(seg, " ");
+        let probe = mask_read_opens(&NULL_REDIR.replace_all(seg, " "));
         Ok(if SHELL_WRITE.is_match(&probe) { Some(hit) } else { None })
     }
 
@@ -1160,7 +1426,7 @@ impl Guard {
         if !inside && !TEAM_CONFIG_TARGET.is_match(&probe) {
             return Ok(false);
         }
-        let probe = NULL_REDIR.replace_all(&probe, " ");
+        let probe = mask_read_opens(&NULL_REDIR.replace_all(&probe, " "));
         Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
     }
 
@@ -1170,6 +1436,22 @@ impl Guard {
         let here = self.folded_here(cwd)?;
         let inside = here.contains("/.github/workflows/") || (here.ends_with("/.github/") && CI_REL.is_match(&probe));
         if !inside && !CI_TARGET.is_match(&probe) {
+            return Ok(false);
+        }
+        let probe = NULL_REDIR.replace_all(&probe, " ");
+        Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    }
+
+    /// shell 寫入某個專案的 `.claude/flows/`（自訂段的腳本；盡力而為，判法比照 [`Self::shell_writes_ci`]）。
+    fn shell_writes_flow(&self, seg: &str, cwd: &str) -> R<bool> {
+        let here = self.folded_here(cwd)?;
+        let inside_dir = here.contains("/.claude/flows/");
+        if !inside_dir && !seg.to_ascii_lowercase().contains("flows") {
+            return Ok(false);
+        }
+        let probe = MULTI_SLASH.replace_all(&norm(seg), "/");
+        let inside = inside_dir || (here.ends_with("/.claude/") && FLOW_REL.is_match(&probe));
+        if !inside && !FLOW_TARGET.is_match(&probe) {
             return Ok(false);
         }
         let probe = NULL_REDIR.replace_all(&probe, " ");
@@ -1338,11 +1620,17 @@ impl Guard {
         if let Some(Value::String(cmd)) = data.get("tool_input").and_then(|t| t.get("command")) {
             if cmd.len() <= VAR_EXPAND_MAX {
                 let is_ps = data.get("tool_name").and_then(Value::as_str) == Some("PowerShell");
-                if let Some(x) = expand_simple_vars(cmd, is_ps) {
+                if let Some(x) = expand_vars(cmd, is_ps) {
                     let mut d = data.clone();
-                    d["tool_input"]["command"] = Value::String(x);
+                    d["tool_input"]["command"] = Value::String(x.text);
                     d[EXPANDED_MARK] = Value::Bool(true);
                     self.check_shell_rules_once(&d)?;
+                    if x.ordered {
+                        // 展開後的那一次已經用實際的值檢查過 awf run-brief --log 的路徑：原本的指令那一次不再因為「看不到值」擋
+                        let mut o = data.clone();
+                        o[VARS_CHECKED] = Value::Bool(true);
+                        return self.check_shell_rules_once(&o);
+                    }
                 }
             }
         }
@@ -1361,6 +1649,7 @@ impl Guard {
         }
         let tool = data.get("tool_name").and_then(Value::as_str).unwrap_or("");
         let is_ps = tool == "PowerShell";
+        let vars_ok = data.get(VARS_CHECKED).is_some();
         let segs: Vec<String> = if is_ps {
             let s = ps_segments(&cmd);
             cmd = s.join(" ; "); // 正規化後的指令（Set-Location 已換成 cd）
@@ -1391,18 +1680,36 @@ impl Guard {
         // 套同一套規則（比對 token 的規則在切詞後看不到它們）。內層的 cd 不影響外層；PowerShell 的 $(…) 在拆段時已經展開。
         let mut subst_over = false;
         if !is_ps {
-            for i in 0..outer {
-                if !subst::has_subst(&segs[i]) {
+            // 界線加了引號的 heredoc（`<<'EOF'`）內文不做指令替換：內層指令從去掉這些內文的指令抽（內文的各行照樣當段落跑其他規則）
+            let stripped: Option<(Vec<String>, Vec<String>)> = match subst::strip_quoted_heredocs(&cmd) {
+                Some(s) => {
+                    let ss: Vec<String> = segments(&s).iter().map(|x| canon_gh(x)).collect();
+                    let (_, bs) = self.seg_dirs_base(&ss, &cwd)?;
+                    Some((ss, bs))
+                }
+                None => None,
+            };
+            let (src, src_bases): (&[String], &[String]) = match &stripped {
+                Some((ss, bs)) => (ss, bs),
+                None => (&segs[..outer], &bases[..]),
+            };
+            let mut found: Vec<(Vec<String>, String)> = Vec::new();
+            let mut total = 0usize;
+            for i in 0..src.len() {
+                if !subst::has_subst(&src[i]) {
                     continue;
                 }
-                let (inner, over) = subst::inner_segments(&segs[i]);
+                let (inner, over) = subst::inner_segments(&src[i]);
                 subst_over |= over;
-                if segs.len() - outer + inner.len() > subst::MAX_INNER {
+                total += inner.len();
+                if total > subst::MAX_INNER {
                     subst_over = true;
                     break;
                 }
-                let inner: Vec<String> = inner.iter().map(|s| canon_gh(s)).collect();
-                dirs.extend(self.seg_dirs(&inner, &bases[i])?);
+                found.push((inner.iter().map(|s| canon_gh(s)).collect(), src_bases[i].clone()));
+            }
+            for (inner, base) in found {
+                dirs.extend(self.seg_dirs(&inner, &base)?);
                 segs.extend(inner);
             }
         }
@@ -1472,7 +1779,7 @@ impl Guard {
             if git_rules {
                 let prefixes = &cfg.allowed_branch_prefixes;
                 for b in new_branches(seg) {
-                    if !prefixes.is_empty() && !prefixes.iter().any(|p| b.starts_with(p.as_str())) {
+                    if !prefixes.is_empty() && !prefixes.iter().any(|p| b.starts_with(p.as_str())) && !local_backup_branch(seg, &b) {
                         return Err(self.block(&format!("分支名 {b} 不在允許的前綴（{}）；改用允許的前綴並在回報註明", prefixes.join("、"))));
                     }
                 }
@@ -1554,13 +1861,13 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
                 }
             }
             if record_only {
-                if let Some(why) = self.record_shell_write(seg, d, 0)? {
+                if let Some(why) = self.record_shell_write(seg, d, 0, vars_ok)? {
                     return Err(self.block(&format!("{agent} 是唯讀角色（只有 Write 能寫 {runs_label}<run>/<段>/<label>.md 的執行紀錄），不能用 shell 寫檔\
 （{why}）；指令輸出直接摘進執行紀錄、丟 /dev/null，長輸出用 awf run-brief --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
                 }
             }
             if broken_ro {
-                if let Some(why) = self.record_shell_write(seg, d, 0)? {
+                if let Some(why) = self.record_shell_write(seg, d, 0, vars_ok)? {
                     return Err(self.block(&format!("{agent} 的寫入先全部擋下（{why}）：守門設定讀不懂時，不知道哪些路徑可以寫；唯讀的指令照常，\
 長輸出用 awf run-brief --log {}<run>/<段>/logs/<label>.log -- <指令>", self.runs)));
                 }
@@ -1584,6 +1891,10 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
             if team && self.shell_writes_ci(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（CI 檔決定哪些檢查會跑，只由人或主 session 改，\
 例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）")));
+            }
+            if team && self.shell_writes_flow(seg, d)? {
+                return Err(self.block(&format!("{agent} 不能寫 .claude/flows/ 底下的檔（自訂段的腳本決定那一段怎麼跑，只由人或主 session 改；可以讀。\
+需要改就寫進交件的 open_questions；讀它的指令不要和寫入寫在同一段）")));
             }
             if team {
                 if let Some(name) = self.shell_moves_tree(seg, d)? {
@@ -1716,6 +2027,43 @@ mod tests {
         for r in all_patterns() {
             assert!(r.compiles(), "樣式編不過：{}", r.source());
         }
+    }
+
+    #[test]
+    fn read_only_opens() {
+        let masked = |s: &str| mask_read_opens(s) != s;
+        for ro in [r#"json.load(open("a/run.json"))"#, r#"open('x', 'rb')"#, r#"open("x", mode="r", encoding="utf-8")"#, r#"Path("x").open()"#,
+            r#"Path("x").open('r')"#, r#"io.open("x", "rt")"#, r#"open(os.path.join(d, "run.json"))"#] {
+            assert!(masked(ro), "應該算只讀：{ro}");
+        }
+        for w in [r#"open("x", "w")"#, r#"open("x", mode="a")"#, r#"open("x", m)"#, r#"Path("x").open("w")"#, r#"os.open("x", os.O_WRONLY)"#,
+            r#"open("x", opener=f)"#, r#"open("x", "r+")"#, r#"open("x""#, r#"reopen("x")"#] {
+            assert!(!masked(w), "不該算只讀：{w}");
+        }
+        assert_eq!(mask_read_opens(r#"d=open("run.json").read();open("run.json","w")"#), r#"d=_ro_("run.json").read();open("run.json","w")"#);
+    }
+
+    #[test]
+    fn vars_ordered() {
+        let o = |s: &str| expand_vars(s, false).map(|e| e.ordered);
+        assert_eq!(o("L=_tpm/runs/r; awf run-brief --log $L/x.log"), Some(true));
+        assert_eq!(o("export L=_tpm/runs/r && awf run-brief --log ${L}/x.log"), Some(true));
+        for bad in ["L=a awf x $L", "awf x $L; L=a", "L=a; L=b; awf $L", "(L=a); awf $L", "true || L=a; awf $L", "L=a; read L; awf $L", "cd x && L=a; awf $L"] {
+            assert_eq!(o(bad), Some(false), "{bad}");
+        }
+        assert_eq!(expand_vars("$L = 'a'; awf x $L", true).map(|e| e.ordered), Some(true));
+        assert_eq!(expand_vars("$L = 'a'; $l = 'b'; awf x $L", true).map(|e| e.ordered), Some(false));
+        assert_eq!(expand_simple_vars("L=a; echo $L", false).as_deref(), Some("L=a; echo a"));
+    }
+
+    #[test]
+    fn backup_branches() {
+        assert!(local_backup_branch("git branch backup/x-1", "backup/x-1"));
+        assert!(local_backup_branch("git -C repo branch backup/x main", "backup/x"));
+        assert!(!local_backup_branch("git branch -f backup/x", "backup/x"));
+        assert!(!local_backup_branch("git checkout -b backup/x", "backup/x"));
+        assert!(!local_backup_branch("git branch backup/", "backup/"));
+        assert!(!local_backup_branch("git branch feature/x", "feature/x"));
     }
 
     #[test]

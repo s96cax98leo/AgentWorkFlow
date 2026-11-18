@@ -177,7 +177,9 @@ const RULES: &[Case] = &[
     ("awf save-run close _tpm/runs/r", DEV, BLOCK, Sh::Both),
     ("awf save-run abandon _tpm/runs/r", DEV, BLOCK, Sh::Both),
     ("awf save-run escalate _tpm/runs/r", STEW, BLOCK, Sh::Both),
-    ("awf save-run --help", DEV, BLOCK, Sh::Both),
+    // 1.2：只印說明、不讀不寫（實測這類被擋後 agent 只是白花一輪）；帶其他參數的照樣擋。
+    ("awf save-run --help", DEV, ALLOW, Sh::Both),
+    ("awf save-run approve --help _tpm/runs/r --stage plan --by human", DEV, BLOCK, Sh::Both),
     ("awf save-run status _tpm/runs/r", DEV, ALLOW, Sh::Both),
     ("awf save-run --selftest", DEV, ALLOW, Sh::Both),
     ("awf save-run approve _tpm/runs/r --stage plan --by human", MAIN, ALLOW, Sh::Both),

@@ -44,7 +44,10 @@
           "missing_records": {"type": "integer", "minimum": 0},
           "skipped": {"type": "boolean", "description": "recipe 跳過的段（這個需求類型不跑這一段）"},
           "spec_issues": {"type": "integer", "minimum": 0, "description": "規格檢查的問題數（需求來源是 openspec 才會有）"},
-          "link_gaps": {"type": "integer", "minimum": 0, "description": "連結不齊的條數（profile 有 links 才會有）"}
+          "link_gaps": {"type": "integer", "minimum": 0, "description": "連結不齊的條數（profile 有 links 才會有）"},
+          "custom": {"type": "boolean", "description": "自訂段（profile 的 flow 加的段）才有，值是 true"},
+          "approver": {"type": "string", "description": "自訂段宣告的核准者（只供顯示，不是實際核准的人；實際核准紀錄看 approved）"},
+          "label": {"type": "string", "description": "給人看的段名（profile 的 flow.labels 有設才有）"}
         }
       }
     },

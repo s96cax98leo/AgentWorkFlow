@@ -302,9 +302,10 @@ fn m1_methodology_other_lists_of_wrong_type_are_errors() {
     assert!(has(&e(json!({"events": {"mine": {"write": {"data": ["a"]}}}})), "write.data[0]"));
     assert!(has(&e(json!({"events": {"mine": "不是物件"}})), "events"));
     assert!(has(&e(json!({"deliverables": {"enabled": true, "documents": ["a"]}})), "documents[0]"));
-    // 沒寫、null、正確的型別：沒有多的錯誤
+    // 沒寫、null、正確的型別：沒有多的錯誤。事件的必填欄位（context、challenge.ask、write.ask）1.2 起由語意規則檢查
+    // （schema 為了 extends 的半份定義不再要求），所以這裡的事件寫完整
     let ok = json!({"stages": {"deliver": {"record_sections": ["a", "b"]}}, "knowledge": {"code_tools": ["graft"], "repos": [{"id": "a", "path": "../a", "sources": ["src/**"]}]},
-        "extensions": [{"name": "x", "agent": "me:x", "stage": "test", "instructions": "i"}], "events": {"mine": {"gather": {"angles": [{"key": "a", "ask": "q"}], "data": []}, "before": [], "after": null, "write": {"data": []}}},
+        "extensions": [{"name": "x", "agent": "me:x", "stage": "test", "instructions": "i"}], "events": {"mine": {"context": "c", "gather": {"angles": [{"key": "a", "ask": "q"}], "data": []}, "before": [], "after": null, "challenge": {"ask": "q"}, "write": {"ask": "w", "data": []}}},
         "deliverables": {"enabled": false, "documents": [{"id": "d", "sources": ["docs/**"]}], "privacy_allow": ["ACME"]}});
     assert_eq!(e(ok), Vec::<String>::new());
     assert_eq!(e(json!({"knowledge": null, "extensions": null, "events": null, "deliverables": null})), Vec::<String>::new());

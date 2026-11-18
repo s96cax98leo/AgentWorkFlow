@@ -1,7 +1,7 @@
 ---
 name: dev-acceptance-tester
 description: AI-native SDLC 第 3 段：依 spec 驗收條件寫驗收測試。開發規範 profile 要求測試先行時（預設 profile）在實作前寫會失敗的測試並確認失敗理由；不要求時在實作合併後補驗證測試。sdlc-build 用；使用者說「補驗收測試」「先寫 E2E」時也用。只寫測試，不寫產品程式。
-tools: Read, Grep, Glob, Bash, Edit, Write, Skill
+tools: Read, Grep, Glob, Bash, Edit, Write
 model: inherit
 skills: []
 ---
@@ -29,7 +29,6 @@ skills: []
 
 ## 工作方式
 - **依開發規範 profile 工作**：做法與慣例（產出文件、需求寫法、測試時機、commit 格式、code style、PR 大小、文件格式）以派工單帶來的 profile 為準，原文在專案的 `.claude/teams/methodology.json`（init 時依使用者的習慣產生）。本檔提到的特定做法都只是預設 profile 的範例；派工單與 profile 不一致時以派工單為準，沒有 profile 時照目標 repo 既有慣例。
-- profile 要求測試先行、環境有 `tdd` skill 時用 Skill 工具載入。
 - 目標 repo 有自己的驗收測試角色定義或 E2E 設定（例如 `.claude/agents/acceptance-tester.md`、`e2e/playwright.config.ts`）時，照它的寫法。
 - 回報附「驗收條件 → 層級 → 測試 ID → 檔案」對應表。
 

@@ -309,6 +309,8 @@ pub fn status_snapshot(ctx: &Ctx, run: &str, data: &Value) -> R<Value> {
     let count_of = |v: &Value| v.as_array().map_or(0, Vec::len);
     // 先讀 stages（run.json 形狀不對時的錯誤照舊由它報），再看 recipe 的段表
     let items = stage_items(data)?;
+    // 給人看的段名（profile 的 flow.labels）：只影響顯示；profile 讀不到就沒有
+    let flow = crate::stages::Resolved::of(&ctx.load_json(&ctx.profile).unwrap_or(Value::Null));
     let recipe_stages: Option<Vec<Value>> =
         if has_recipe(data)? { get(get(data, "recipe")?, "resolved")?.get("stages").and_then(Value::as_array).cloned() } else { None };
     for (name, st) in items {
@@ -337,6 +339,16 @@ pub fn status_snapshot(ctx: &Ctx, run: &str, data: &Value) -> R<Value> {
         row.insert("skipped".into(), json!(get(st, "status")?.as_str() == Some("skipped") || off_recipe));
         row.insert("spec_issues".into(), json!(count_of(get(st, "spec_issues")?)));
         row.insert("link_gaps".into(), json!(count_of(get(st, "link_gaps")?)));
+        // 自訂段與給人看的段名：只在有的時候加欄位（沒有 flow 的專案輸出不變）
+        if st.get("flow") == Some(&Value::Bool(true)) {
+            row.insert("custom".into(), json!(true));
+            if let Some(a) = st.get("approver").and_then(Value::as_str).filter(|a| !a.is_empty()) {
+                row.insert("approver".into(), json!(a));
+            }
+        }
+        if let Some(l) = flow.own_label(name) {
+            row.insert("label".into(), json!(l));
+        }
         stages.push(Value::Object(row));
     }
     let abandoned = get(data, "abandoned")?;

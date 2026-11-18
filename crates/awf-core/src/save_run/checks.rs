@@ -250,6 +250,38 @@ pub fn plan_check_issues(ctx: &Ctx, result: &Value, spec: Option<&str>) -> R<Vec
 
 /// 同 [`plan_check_issues`]；`pat` 是驗收條件編號的樣式（[`criteria_pattern`]），None 用內建的「AC-…」。
 pub fn plan_check_issues_with(ctx: &Ctx, result: &Value, spec: Option<&str>, pat: Option<&Re>) -> R<Vec<String>> {
+    let specs: Vec<String> = spec.map(|p| vec![p.to_string()]).unwrap_or_default();
+    plan_check_issues_specs(ctx, result, &specs, pat)
+}
+
+/// 這個 epic 要對照的 spec 檔：彙整的 `<spec 目錄>/spec.md`，加上每個子計劃的 `sub/<id>/spec.md`（依 id 排序）。
+/// 回傳（workflow 的 `sub_plans`）列了子計劃而且 id 都是單純的目錄名時只認列出來的（改版後留下的舊目錄不算）；
+/// 沒列或有一個 id 不單純就掃 `sub/` 底下全部有 spec.md 的目錄。不存在的檔不列。
+pub fn spec_files(spec_dir: &str, result: &Value) -> Vec<String> {
+    let is_file = |p: &str| std::path::Path::new(p).is_file();
+    let plain = |id: &str| !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']);
+    let listed: Vec<String> = match result.get("sub_plans") {
+        Some(Value::Array(a)) => a.iter().filter_map(|x| x.get("id").and_then(Value::as_str).map(str::to_string)).collect(),
+        _ => Vec::new(),
+    };
+    let mut ids: Vec<String> = if !listed.is_empty() && listed.iter().all(|i| plain(i)) {
+        listed
+    } else {
+        std::fs::read_dir(pj(spec_dir, "sub"))
+            .map(|rd| rd.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).filter(|n| plain(n)).collect())
+            .unwrap_or_default()
+    };
+    ids.sort();
+    ids.dedup();
+    let mut out: Vec<String> = vec![pj(spec_dir, "spec.md")];
+    out.extend(ids.iter().map(|i| pj(spec_dir, &format!("sub/{i}/spec.md"))));
+    out.retain(|p| is_file(p));
+    out
+}
+
+/// 同 [`plan_check_issues_with`]，但 spec 可以有多份（有子計劃時每個子計劃各一份）：驗收條件的編號取全部檔案的聯集。
+/// 不存在的檔略過；一份都沒有就不做 spec 對照。
+pub fn plan_check_issues_specs(ctx: &Ctx, result: &Value, specs: &[String], pat: Option<&Re>) -> R<Vec<String>> {
     let subs = result_subtasks(result);
     if subs.is_empty() {
         return Ok(Vec::new());
@@ -319,8 +351,12 @@ pub fn plan_check_issues_with(ctx: &Ctx, result: &Value, spec: Option<&str>, pat
             errs.push(format!("子任務 {i}（{}）沒有 owns：不知道它可以改哪些檔", s(kind)));
         }
     }
-    if let Some(spec) = spec.filter(|p| ctx.is_file(p)) {
-        let mut in_spec: Vec<String> = ctx.read_text_lossy(spec).map(|t| ids_with(&t, pat)).unwrap_or_default();
+    let specs: Vec<&String> = specs.iter().filter(|p| ctx.is_file(p)).collect();
+    if !specs.is_empty() {
+        let mut in_spec: Vec<String> = Vec::new();
+        for spec in &specs {
+            in_spec.extend(ctx.read_text_lossy(spec).map(|t| ids_with(&t, pat)).unwrap_or_default());
+        }
         in_spec.sort();
         in_spec.dedup();
         let mut used: Vec<String> = Vec::new();
@@ -355,7 +391,7 @@ pub fn plan_check_for(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &
 
 /// 同 [`plan_check_for`]；`profile` 有 `stages.design.criteria_id_pattern` 時用它認驗收條件編號（寫壞了列成問題）。
 pub fn plan_check_for_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &Value, profile: &Value) -> R<Vec<String>> {
-    if !matches!(stage, "plan" | "design") {
+    if !crate::stages::has(stage, crate::stages::Flag::PlanCheck) {
         return Ok(Vec::new());
     }
     let (pat, pat_err) = match criteria_pattern(profile) {
@@ -370,7 +406,9 @@ pub fn plan_check_for_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, da
         epic = if truthy(args) { s_or(get(args, "epic")?, "") } else { String::new() };
     }
     let sd = pack::spec_dir(repo.as_deref(), &epic, "", &ctx.pack_root);
-    let mut issues = plan_check_issues_with(ctx, result, sd.map(|d| pj(&d, "spec.md")).as_deref(), pat.as_ref())?;
+    // 有子計劃時每個子計劃的 spec.md 都要對照（只看彙整的那一份會漏掉子計劃裡沒人對應的驗收條件）
+    let specs = sd.map(|d| spec_files(&d, result)).unwrap_or_default();
+    let mut issues = plan_check_issues_specs(ctx, result, &specs, pat.as_ref())?;
     if let Some(e) = pat_err {
         issues.push(format!("{e}：驗收條件的編號認不出來，spec 對照改用內建的「AC-…」樣式（請修正 profile）"));
     }
@@ -383,7 +421,7 @@ pub fn plan_check_for_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, da
 }
 
 /// `sh -c <cmd>`（Python 的 `subprocess.run(cmd, shell=True)`）。
-fn shell(cmd: &str) -> std::process::Command {
+pub(super) fn shell(cmd: &str) -> std::process::Command {
     #[cfg(windows)]
     {
         let mut c = std::process::Command::new(std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()));
@@ -546,5 +584,68 @@ mod timeout_tests {
         for bad in [json!(0), json!(3601), json!(-5), json!(1.5), json!("60"), json!(null)] {
             assert_eq!(constraint_timeout(&json!({"timeout": bad})), CONSTRAINT_CHECK_TIMEOUT);
         }
+    }
+}
+
+#[cfg(test)]
+mod sub_plan_spec_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> String {
+        let d = std::env::temp_dir().join(format!("awf-plan-check-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.to_str().unwrap().replace('\\', "/")
+    }
+
+    fn put(p: &str, text: &str) {
+        std::fs::create_dir_all(std::path::Path::new(p).parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+
+    fn sub(id: &str, acc: &[&str]) -> Value {
+        json!({"id": id, "title": id, "kind": "code", "owns": [format!("src/{id}.rs")], "depends_on": [], "acceptance": acc})
+    }
+
+    /// 有子計劃時，每個子計劃的 spec.md 都要對照：子計劃 spec 裡沒人對應的驗收條件要列出來，
+    /// 子任務引用的是子計劃 spec 的編號時不算「spec 沒有」。
+    #[test]
+    fn sub_plan_specs_are_all_checked() {
+        let d = tmp("subs");
+        let sd = format!("{d}/specs/e1");
+        put(&format!("{sd}/spec.md"), "# 彙整\n- AC-1 整合後可以登入\n");
+        put(&format!("{sd}/sub/api/spec.md"), "# api\n- AC-API-1 回 200\n- AC-API-2 回 401\n");
+        put(&format!("{sd}/sub/web/spec.md"), "# web\n- AC-WEB-1 顯示錯誤\n");
+        put(&format!("{sd}/sub/old/notes.md"), "沒有 spec.md 的目錄不算\n");
+        let cx = Ctx::new(&d, &d);
+        let result = json!({"stage": "design", "subtasks": [sub("t1", &["AC-1 通過", "AC-API-1 通過"]), sub("t2", &["AC-WEB-1 通過"])]});
+        let files = spec_files(&sd, &result);
+        assert_eq!(files, vec![format!("{sd}/spec.md"), format!("{sd}/sub/api/spec.md"), format!("{sd}/sub/web/spec.md")]);
+        let issues = plan_check_issues_specs(&cx, &result, &files, None).unwrap();
+        assert!(issues.iter().any(|x| x.contains("沒有任何子任務對應：AC-API-2")), "{issues:?}");
+        assert!(!issues.iter().any(|x| x.contains("spec 沒有的驗收條件")), "{issues:?}");
+        // 只看彙整的 spec.md（原本的行為）會漏掉 AC-API-2
+        let old = plan_check_issues_with(&cx, &result, Some(&format!("{sd}/spec.md")), None).unwrap();
+        assert!(!old.iter().any(|x| x.contains("AC-API-2")), "{old:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 回傳列了子計劃時只認列出來的（改版後留下的舊目錄不算）；沒有彙整的 spec.md、只有子計劃的也要比。
+    #[test]
+    fn listed_sub_plans_win_over_leftover_dirs() {
+        let d = tmp("listed");
+        let sd = format!("{d}/specs/e1");
+        put(&format!("{sd}/sub/api/spec.md"), "- AC-API-1 回 200\n- AC-API-2 回 401\n");
+        put(&format!("{sd}/sub/gone/spec.md"), "- AC-GONE-1 已經不做\n");
+        let cx = Ctx::new(&d, &d);
+        let result = json!({"stage": "design", "sub_plans": [{"id": "api"}], "subtasks": [sub("t1", &["AC-API-1 通過"])]});
+        let files = spec_files(&sd, &result);
+        assert_eq!(files, vec![format!("{sd}/sub/api/spec.md")]);
+        let issues = plan_check_issues_specs(&cx, &result, &files, None).unwrap();
+        assert!(issues.iter().any(|x| x.contains("沒有任何子任務對應：AC-API-2")) && !issues.iter().any(|x| x.contains("GONE")), "{issues:?}");
+        // 子計劃 id 不是單純的目錄名（想指到別處）就不採用那份清單，退回掃目錄
+        let odd = json!({"sub_plans": [{"id": "../../x"}], "subtasks": [sub("t1", &["AC-API-1 通過"])]});
+        assert_eq!(spec_files(&sd, &odd).len(), 2);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

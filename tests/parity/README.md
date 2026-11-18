@@ -18,7 +18,7 @@
 | `pack.expected.json` | 資料包、調研重用、決策記憶：585 步劇本與 1,389 個函式探測；已知差異 4 步列在 `pack_parity.rs` 的 `KNOWN` | `pack_parity` |
 | `init.expected.json` | `awf init`：112 個案例、246 次執行（每個選項、既有專案的保護、升級的各種情況、互動問答），比輸出與整棵目標目錄 | `init_parity` |
 | `save_run.expected.json` | 閘門：2,305 步劇本（每一條拒絕與違規理由各有案例）與 4,062 個函式探測；和 0.x 不同的 9 項列在 `save_run_parity.rs` 的 `STRICTER`（只會更嚴）與 `KNOWN` | `save_run_parity` |
-| `state.expected.json` | 狀態機：1,019 步劇本（468 個指令、75 個函式呼叫；每種動作、每段與事件類型、續跑、政策核准、非標準結果、覆寫檔），12 支腳本的雜湊；不同的 8 項列在 `state_parity.rs` 的 `STRICTER` 與 `KNOWN` | `state_parity` |
+| `state.expected.json` | 狀態機：1,019 步劇本（468 個指令、75 個函式呼叫；每種動作、每段與事件類型、續跑、政策核准、非標準結果、覆寫檔），13 支腳本的雜湊；不同的 8 項列在 `state_parity.rs` 的 `STRICTER` 與 `KNOWN` | `state_parity` |
 | `publish.expected.json` | 推送工具：110 個指令、325 個函式探測、73 個 git 步驟（只用暫存 bare repo 與假 `gh`）；較嚴的 7 項列在 `publish_parity.rs` 的 `STRICTER` | `publish_parity` |
 | `watch.expected.json` | watcher：83 次 tick（11 種事件都走到）、512 個函式探測、27 個指令；較嚴的 4 項列在 `watch_parity.rs` 的 `STRICTER` | `watch_parity` |
 | `doctor.expected.json` | 安裝檢查：70 次檢查（項目、文字版、JSON 版、結束碼）與 25 個函式探測；0.x 才有的 `python`、`hooks-compile` 兩項在錄的時候就濾掉；1.0 加的體檢五項（只提示）重錄過 | `doctor_parity` |
@@ -28,7 +28,7 @@ hook 的案例不在這裡：在 `tests/hooks/`（`cases.jsonl`、`fixtures.json
 ## 格式
 
 - 每個檔是一份 JSON：照順序做的劇本（檔案操作、指令、只能在程式內呼叫的函式）與不碰檔案的函式探測；各檔的欄位見對應測試檔開頭的說明。
-- 會變動的內容換成記號再比：暫存路徑 `@TMP@`、模版的位置 `@SRC@`、耗時數字 `@MS@`、隨 git 版本變動的錯誤文字 `@GIT@`。
+- 會變動的內容換成記號再比：暫存路徑 `@TMP@`、模版的位置 `@SRC@`、耗時數字 `@MS@`、隨 git 版本變動的錯誤文字 `@GIT@`、`awf next` 產生的腳本的雜湊 `@SHA1@`（run.json 的 `awf.pending.script_sha1`、`awf.last_script`：腳本內嵌暫存目錄的絕對路徑，每次不同；只有 `state.expected.json`）。
 - 劇本裡的時間是固定的，測試不取系統時間。
 
 ## 怎麼更新

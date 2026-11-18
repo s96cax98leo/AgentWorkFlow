@@ -62,7 +62,7 @@ cargo xtask checksums [--write|--check]          # 執行檔的 sha256 與原始
 ```bash
 awf init --target <專案> [--hooks plugin|project] [--answers <答案.json>] [--defaults] [--upgrade [--adopt-new-fields]]
 awf init --detect --target <專案> [--json]    # 只偵測、只印（訪談用）；awf init --target <專案> --reconfigure [--answers <檔>] 改已 init 專案的設定 [--source <模版>]
-awf render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 12 支 workflow 腳本
+awf render --all --out <目錄> [--plugin-dir <AgentWorkFlow>/plugin]   # 產生 13 支 workflow 腳本
 node plugin/workflow-templates/check_workflows.mjs --project <專案> --wf-dir <目錄>   # 乾跑所有 workflow（含 plugin/workflow-templates/scenarios/*.mjs 的情境）
 awf build [--check]   # 只處理專案的覆寫檔（.claude/workflows/*.js）；在模版 repo 裡處理 plugin/workflow-templates/
 awf check-agents --plugin-dir <AgentWorkFlow>/plugin           # 檢查 tpm-*／dev-* agent 格式（16 個：14 個核心角色＋2 個舊名薄殼）
@@ -124,7 +124,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 **改了 schema 或 profile 就要重跑 `awf build`**，並在 `golden-set/valid|invalid/` 補正例與反例。不要手改內嵌進去的 JSON。
 
-多支 workflow 共用的程式放在 `plugin/workflow-templates/snippets/<名>.js`（目前有 `challenge`、`review-skeptic`、`layers`、`recipe`、`kernel`、`patterns`），workflow 裡寫片段標記 `/*@snippet:<名>*/ … /*@end*/`，由 `awf build` 把片段內容內嵌在標記之間（標記保留，可重跑）。`awf build --check` 會偵測片段和 workflow 內嵌內容的漂移。片段的規則見下一節〈Workflow 腳本的限制〉。
+多支 workflow 共用的程式放在 `plugin/workflow-templates/snippets/<名>.js`（目前有 `challenge`、`review-skeptic`、`layers`、`recipe`、`kernel`、`patterns`、`steps`），workflow 裡寫片段標記 `/*@snippet:<名>*/ … /*@end*/`，由 `awf build` 把片段內容內嵌在標記之間（標記保留，可重跑）。`awf build --check` 會偵測片段和 workflow 內嵌內容的漂移。片段的規則見下一節〈Workflow 腳本的限制〉。
 
 ### methodology profile
 
@@ -152,7 +152,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 
 ### 執行核心、模型分級與省 context（0.4）
 
-- **執行核心**：`plugin/workflow-templates/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限。**12 支 workflow 的派工都走它**（`save_run::KERNEL_STAGES` 是全部七段）；片段裡的派工（`challengeList`、`verifyFindings`）用 challenge 片段的 `awfDispatch`，啟用核心後也經過核心。上限＝`limits.max_agents`（沒寫用 40），design 另加 `3×max_sub_plans`、build 另加 `4×子任務數`、test 另加 `4×子計劃數`；到上限不再派、trace 記一筆 `capped: true`，`save_run::process_trace` 列成缺件並說明。`AWF_NO_RETRY`（dev-integrator、dev-merge-steward：有副作用）與 `retry: false` 的派工不自動重派。新寫的派工一律用 `awfAgent`。
+- **執行核心**：`plugin/workflow-templates/snippets/kernel.js`（`@requires: challenge, recipe`）。`awfAgent` 包住 `tryAgent`，做模型解析、失敗升級一次（`mode: auto` 才升；被取代的 trace 標 `superseded`）、派工數上限。**13 支 workflow 的派工都走它**（`save_run::KERNEL_STAGES` 是全部七段）；片段裡的派工（`challengeList`、`verifyFindings`）用 challenge 片段的 `awfDispatch`，啟用核心後也經過核心。上限＝`limits.max_agents`（沒寫用 40），design 另加 `3×max_sub_plans`、build 另加 `4×子任務數`、test 另加 `4×子計劃數`；到上限不再派、trace 記一筆 `capped: true`，`save_run::process_trace` 列成缺件並說明。`AWF_NO_RETRY`（dev-integrator、dev-merge-steward：有副作用）與 `retry: false` 的派工不自動重派。新寫的派工一律用 `awfAgent`。
 - **pattern 庫（0.5）**：`plugin/workflow-templates/snippets/patterns.js`（`@requires: challenge, recipe, kernel`）。六個函式 `awfFanOut`、`awfClassifyAct`、`awfAdversarial`、`awfGenerateFilter`、`awfTournament`、`awfLoop`，都走 `awfAgent`、都要給 `max`（沒給 throw）；超過上限、缺件、跑滿輪數一律回 `halted`。內建的 12 支範本沒有引用它（各自的流程已經寫好），目前給自訂腳本用。測試在 `cargo xtask check-patterns`。
 - **自訂腳本（0.5）**：`awf next --script <檔>`（`custom_action`、`render_custom`）只開放 design、build、deliver（`script::STAGES`）。`awf script` 做靜態檢查（`check`：直接用 `agent()`、未登記角色、無上限迴圈、return 沒帶 trace、改寫核心）並把 preamble 接在 meta 後面；核心的 `roles` 白名單在執行時再擋一次。`assemble` 把腳本內容包成函式：用參數遮蔽 `agent`、`tryAgent`、`awfState` 等名字（`SHADOWED`），回傳的 `stage`、`recipe`、`trace` 由外層覆寫（靜態檢查只是提早發現，這層才是擋）。`awf done` 把 `custom_script`（來源與 sha1）放進結果，`save_run::policy_violations` 看到就拒絕政策核准。排序與閘門鏈照舊。
 - **非標準結果一律交人（0.5）**：覆寫檔或舊副本跑的段（`override_script`）、`done --output` 手動給的結果（`manual_output`）、自訂腳本（`custom_script`）都不能政策核准。標記記在 run.json 的 `awf.nonstandard[段]`，要等標準腳本的回傳從 workflow 紀錄取得才解除。`find_wf_meta` 不採用修改時間在未來的紀錄，同一支腳本在這次 next 之後有兩筆以上就不猜、交人。`stage_args` 對 `subtasks`、`sub_plans`、`branch` 以前段結果為準（`--set` 蓋不掉）。
@@ -237,6 +237,31 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **中斷回收**：`auto::recover_interrupted`（`cmd_next` 在 `decide` 之前呼叫）。只收 plan 段的調研，條件見函式說明；寫入走 `pack::record_reuse`，紀錄在 run.json 的 `awf.recovered`。
 - **多需求排程**：`awf program`（`crates/awf-core/src/program.rs`）。唯讀：`status`、`next`；`<runs_dir>/program.json` 的格式在 `schemas/program.schema.json`，語意規則 `program::semantic_errors`（`schema::check_doc` 也會呼叫；`run`、`change` 是字元白名單 `program::name_ok`）。`next` 的建議指令每個值加單引號、`--requirement` 是佔位符，title 只當資料列出。team agent 只能跑 `status`（`hooks/awf_cli.rs`），也寫不到 program.json。
 - 測試：`crates/awf/tests/auto_e2e.rs`（假的段結果從開工走到結案、全關與刪掉圖、中斷回收的該收與不該收）、`crates/awf/tests/hooks_auto.rs`（三個 hook 的該注入、不該注入、出錯不注入）、`awf program --selftest`、golden 的 `program*`、`methodology-knowledge-auto*`。說明在 `docs/知識圖.md`〈自動接點〉與 `docs/監控與整合.md`〈多需求排程〉。
+
+### 流程可設定：段、繼承、步驟引擎、派工單語言（1.2）
+
+- **段登記表**：`crates/awf-core/src/stages.rs`（`TABLE`、`Flag`）。段的名單、順序、哪些有閘門只有這一處；內建七段不變。profile 的 `flow` 加自訂段（`id`、`after`、`run: script|steps`、`gate: human|policy`、`approver`、`artifacts`、`labels`）：語意規則 `schema::flow_errors`；閘門鏈 `stages::flow_unapproved`、定義被改 `flow_tamper`。`gate: policy` 只限 `run: steps`。CI 的 merge gate 沒有 run.json，不檢查自訂段。測試在 `crates/awf/tests/flow_e2e.rs`。
+- **profile 繼承**：`crates/awf-core/src/profile.rs`。`extends` 只能是內建名或 `.claude/teams/` 底下的 `.json`；深度合併、陣列整個取代、`null` 拿掉鍵、最多 4 層。讀 profile 一律經過它。測試在 `profile_extends_e2e.rs`。
+- **步驟引擎**：片段 `snippets/steps.js`、範本 `flow-steps.js`（第 13 支）、工具端 `crates/awf-core/src/steps.rs`、存檔核對 `save_run/flowsteps.rs`。步驟種類 fanout、challenge、write、loop、check；check 的指令只來自 profile、不代入變數，`awf merge-gate` 不重跑。事件也可以用 `steps` 與 `extends`（`state/plugin.rs` 的 `fill_events`）。結果的 `flow_steps` 標記只由 `awf done` 寫。測試在 `steps_e2e.rs`。
+- **派工單語言**：`crates/awf-core/src/i18n.rs`（`KEYS`，46 個鍵）、`plugin/workflow-templates/i18n/zh-TW.json`、`en.json`、challenge 片段的 `awfText`。profile 的 `prompt_lang`、`prompt_overrides`；產生腳本時字串表放進保留鍵 `_prompt_strings`。`cargo xtask check-i18n` 核對三邊的鍵一致；check-all 另外用英文乾跑一次（`AWF_LANG_BASELINE`、情境的 `langSafe`）。換語言後〈限制對照〉的判定字與 intent 必要節標題仍然是中文（閘門依它核對，刻意不放寬）。12 支舊範本自己的派工單本文還沒進字串表。
+
+### 人的決定接上流程、本機合併、省 token（1.2）
+
+- **人答覆後往下走**：`save_run/human.rs`、`state/human.rs`。`awf approve --run <run> <段> --by <人> --answer "#N=<答覆>"`：每一題 blocking 問題都要答、不能 `--by policy`；記 `stages[段].decided`、進決策記憶、狀態改 done；結果檔不動。halted、blocked、缺件、blocker／important 發現、skeptic 推翻、test 條目沒過、反作弊有發現的段不適用。`decided` 的段之後不能政策核准。
+- **plan 修正輪**：`sdlc-plan.js` 的 `args.answers` 非空時只派 intent 作者與 skeptic（回傳 `round: 'revise'`、`not_redone_angles`）；由 `awf next --revise` 觸發（`state/human.rs` 的 `revise_setup`：plan 已存過、後面的段都還沒開始、有人的答覆 1～20 條；答覆取自 `stages.plan.decided.answers` 與決策記憶，記在 `awf.revise`）。`stage_args` 對 sdlc-plan 的 `answers` 以工具為準（`--set` 蓋不掉）；存檔後記 `stages.plan.revised`、核准照舊被清；閘門的 `highlights.revise_note` 提示沒重做的角度。
+- **非標準結果的標記**（`state/human.rs` 的 `MARK_KEYS`、`STICKY_MARKS`）：1.2 多 `edited_output`（`direct_save_marks`：直接存檔的內容和 workflow 紀錄不一致）、`edited_script`（`script_edited`：`awf next` 把腳本的 sha1 記在 `awf.pending.script_sha1`，`done` 後留在 `awf.last_script[段]`；腳本檔或 workflow 紀錄的 `script` 欄位和它不同、或沒有記下的雜湊，都標）。對跑基準把這兩個雜湊換成 `@SHA1@`。狀態機帶的 run 重存不會拿掉標記；`save_run::policy_violations` 看到任何一個都拒絕。
+- **略過子任務**：`awf next --retry --skip-subtask <id> --reason --by`（`skip_subtasks`）；記 `awf.skipped_subtasks`，build 之後不能政策核准、`awf publish` 要 `--confirm-skipped-subtasks`、`merge-gate --recipe` 一律 hold。
+- **halted 的 `retry` 是指令字串**（不是可以直接執行的物件）；`awf done --stage <段>` 沒有 pending 時的退路只在「那段停著、腳本還在、之後恰好一筆新紀錄」時採用。
+- **本機合併**：`conventions.merge.mode: pr|local`。local 時 merge 段回 `manual`；`awf next --confirm-merge --by <人>` 核對閘門鏈、未確認事項、凍結、主線 first-parent 上有合併 commit、剛好兩個 parent、第二 parent 等於審過的 commit（test 段驗證的 commit；沒有 test 段的 recipe 用 `awf done` 存 deliver 時記的 `reviewed_head`；快轉與 octopus 不算）、合併 commit 的 tree 等於 `git merge-tree --write-tree` 乾淨合併的結果（有衝突或夾帶改動交人）、diff 反查；寫 `merge-audit.jsonl` 的 `decision: local-merge`。和 `auto_merge` 同設時報錯。agent 的合併仍然只走 PR 與 merge-gate。
+- **照建議先做**（預設關）：`decisions.auto_accept: off|recommended`、`auto_accept_max`；信封 `open_questions[].risk`（沒標當 high）。排除 plan、自訂段、security／migration／public_api。記 `awf.unconfirmed`（`auto: true`），確認前政策核准、publish、合併都拒絕；`--confirm-unconfirmed`、`--reject-unconfirmed <段>`。**所有來源的 `awf.unconfirmed` 都擋 publish 與 merge。**
+- **輪數預算**：`hooks/read_budget.rs` 的 `count_turn`、`remind_json`，設定讀法 `config::turns`（profile 的 `limits.turns`；沒寫＝warn、門檻 50；和 `limits.mode` 各自獨立）。計數點在 `guard-shell`／`guard-paths`（沒有新的 hook 註冊）；只算有 `agent_id` 的模版角色。提醒用 PreToolUse 的 `additionalContext`；enforce 超過 1.5 倍後只放行 runs_dir 底下 `.md` 的 Read／Write／Edit（交件不經過這個 hook）。任何失敗都放行。讀取預算另把 shell 讀檔（`cat`、`head`、`tail`、`nl`、`sed -n` 行段等）計入同一個額度。
+- **1.2 審查補的**：只讀 `open(…)` 的遮罩不收解包參數（`*a`、`**k`）；`git merge-file` 不放行（`-p` 分不出真假）；同一題 blocking 問題出現多次取最嚴（`blocking_questions`）；`flow_steps`、`reviewed_head` 只由 `awf done` 寫，直接存檔時拿掉。
+- **Skill 工具**：只有 dev-design-reviewer 保留。`awf check-agents` 雙向檢查（有 Skill 要在內文說明；沒有 Skill 內文不能叫 agent 用）。新角色預設不給。
+- **小節資料包**：`pack/slices.rs`。`pack-args.json` 的 `test_packs`（`{分片: 路徑}`）、`review_pack`、`revise_pack`、`revise_packs`、`prev_subtasks`；檔名一律 `pack.md`；有大小上限、最後列沒附上的小節；任何錯誤退回沒有資料包；`--no-slices` 關閉。範本端 `sdlc-test.js` 的 `shardPack`、`sdlc-deliver.js` 的 `REVIEW_PACK`、`sdlc-design-revise.js` 的 `subPack` 只採用路徑合規的。閘門不讀資料包。
+- **design 修正輪只重做受影響的子計劃**：條件不成立或 `revise_all: true` 就全部重做；交件後的確定性核對只多不少（回傳 `revised_sub_plans`、`reused_sub_plans`）。
+- **拆工檢查**：`save_run/checks.rs` 的 `plan_check_issues_specs` 讀 `spec.md` 加全部 `sub/<id>/spec.md`。
+- **doctor**：`models` 是 inherit 時 warn；`kg-tmp`、`kg-unused`（訊號只看資料包有沒有 `kg`）。
+- 測試：`crates/awf/tests/human_paths_e2e.rs`、`awf state`／`save-run`／`publish`／`pack` 的 selftest、hook 案例的輪數與 shell 讀檔各組。
 
 ### 平行處理
 
@@ -340,7 +365,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改分支流程（scenarios）**：乾跑走不到的分支，在 `plugin/workflow-templates/scenarios/<workflow>.mjs` 補情境（`check_workflows.mjs` 自動載入，共用的 helper 在 `scenarios/_helpers.mjs`）。
 - **改 snippet**：改了 `plugin/workflow-templates/snippets/*.js`（workflow 共用片段）要重跑 `awf build`（`--check` 會抓漂移），不要手改內嵌進 workflow 的內容；並確認 `plugin/workflow-templates/scenarios/*.mjs` 用到的 agent label 沒變（情境靠 label 覆寫假回傳，label 一變情境就默默失效）。
 - **新增或修改 payload schema**：重跑 `awf build`；在 `golden-set/valid|invalid/` 補正例、反例，有語意規則的另補 `semantic` 反例；語意規則寫在 `crates/awf-core/src/schema.rs`。
-- **改狀態機（`crates/awf-core/src/state/`）**：`awf state --selftest`；動作的欄位名（`action`、`script`、`then`、`approve`、`retry`、`resume_from`、`need`、`highlights`）改了，`plugin/skills/tpm-team/SKILL.md` 的動作表要一起改；改了 `render` 要確認 `crates/awf/tests/smoke_init.rs` 的逐字相同檢查仍通過。
+- **改狀態機（`crates/awf-core/src/state/`）**：`awf state --selftest`；動作的欄位名（`action`、`script`、`then`、`approve`、`retry`、`resume_from`、`need`、`highlights`、`answer`、`blocking`、`merge`、`not_done`、`decided`、`skipped_subtasks`、`revise`）改了，`plugin/skills/tpm-team/SKILL.md` 的動作表要一起改；改了 `render` 要確認 `crates/awf/tests/smoke_init.rs` 的逐字相同檢查仍通過。
 - **改擴充 agent 機制**：四支 sdlc workflow 的 `EXT` 片段要一致；`plugin/workflow-templates/scenarios/sdlc-*.mjs` 的擴充情境、`crates/awf/tests/smoke_init.rs` 的 `extensions`、`tests/hooks/cases.jsonl` 的擴充 agent 案例要一起改。
 - **新增 hook 規則**：在 `tests/hooks/cases.jsonl` 補一個該擋、一個該放的測試，Bash 與 PowerShell 各一。
 - **改 profile 格式**：`methodology.schema.json`、兩份內建 profile、`docs/自訂與擴充.md` 的欄位表要一起改。
@@ -348,6 +373,8 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **改模型分級**：`recipe.rs`（`BUILTIN_TIER_MODELS`、`BUILTIN_MODEL_FLOORS`、`resolve_model`）與 `snippets/recipe.js` 一起改，在 `golden-set/recipes/` 補 `model_cases`，跑 `cargo xtask check-recipes`；floor 只能加、不能拿掉。
 - **改 pattern 庫或自訂腳本**：`cargo xtask check-patterns`（每個 pattern 的正常、達上限、缺件，以及組裝後實際執行）、`awf script --selftest`、`awf state --selftest` 的自訂腳本案例；`script::ROLES` 要等於 `awf check-agents` 的 `CORE` 扣掉 dev-merge-steward（selftest 會核對）；開放新的段之前先確認那一段的確定性核對不在 workflow 腳本裡；`docs/自訂與擴充.md`〈自訂腳本〉的規則表一起改。scaffold 底下的檔案（含片段與情境）不能出現雙大括號（init 會當佔位符）。
 - **改執行核心（kernel 片段）**：重跑 `awf build`；`plugin/workflow-templates/scenarios/sdlc-plan.mjs` 的 `V04` 情境（升級、上限、重用、角度數）要一起改；`awf save-run` 的 `retried_ok`、`model_errors` 依賴 trace 的 `model`、`tier`、`superseded`、`attempt` 欄位。
+- **改步驟引擎或字串表**：改 `snippets/steps.js` 要連動 `steps.rs`、`save_run/flowsteps.rs` 與 `steps_e2e.rs`；改 `awfText` 的鍵要連動 `i18n/zh-TW.json`、`en.json`、`i18n::KEYS`（`cargo xtask check-i18n`）。
+- **改輪數預算**：hook 案例的輪數各組（該提醒、不該提醒、enforce 擋與放、狀態檔壞掉放行）與計時案例（`count_turn`）；enforce 不能讓 agent 交不了件。
 - **改讀取預算**：`tests/hooks/cases.jsonl` 的 A2 一段補該擋與該放（Bash 與 PowerShell 各一），並確認效能檢查（計數路徑 50ms 內）仍通過；任何新的失敗路徑都要放行。
 - **改 awf pack／awf kb／awf locate**：各自的 `--selftest`；改了子任務資料包的路徑或 `pack-args.json` 的鍵，`sdlc-build.js` 的 `taskPack`／`REF_ERRS` 與 `plugin/workflow-templates/scenarios/sdlc-build.mjs` 的「子任務資料包」情境要一起改；改了 `awf locate` 的輸出格式，`sdlc-plan.js` 的 `toolLocated` 與 `plugin/workflow-templates/scenarios/sdlc-plan.mjs` 的「工具先定位」情境要一起改；`pack.md` 的內容不能有時間戳或絕對路徑以外會變動的東西（可重現是 `cargo xtask bench --selftest` 的檢查項）。
 - **改交付文件**：`awf deliverables --selftest`；改了型錄的欄位，`schemas/deliverables.schema.json`、`methodology.schema.json` 的 `deliverables`、`docs/交付文件.md` 一起改；改了 `pack_args` 的輸出鍵，`sdlc-design.js`／`sdlc-deliver.js` 與 `plugin/workflow-templates/scenarios/` 的「交付文件」情境一起改；隱私規則只能加不能拿掉（交付文件給外部的人看）。

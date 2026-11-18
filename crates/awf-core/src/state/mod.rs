@@ -22,15 +22,17 @@
 
 mod args;
 pub mod auto;
+mod human;
 mod machine;
 mod plugin;
 mod selftest;
 
 pub use crate::kb::PyErr;
 pub use args::{apply_sets, current_session, deliverables_sync, find_wf_meta, run_pack, stage_args, transcripts_root, unreadable_wf_meta};
-pub use machine::{carry, custom_action, decide, envelopes, gate_action, halted_action, handoff_text, highlights, provisional, text_of, try_policy, workflow_action};
+pub use machine::{carry, custom_action, decide, envelopes, flow_action, gate_action, halted_action, handoff_text, highlights, is_flow, provisional, text_of, try_policy, workflow_action};
 pub(crate) use plugin::{override_re, unregistered, version as plugin_version};
-pub use plugin::{custom_roles, find_plugin, find_template, plugin_candidates, read_config, render, render_custom, workflow_names, Candidate};
+pub use plugin::{custom_roles, find_plugin, find_template, plugin_candidates, read_config, render, render_custom, render_flow, workflow_names, Candidate};
+pub use human::direct_save_marks;
 pub use selftest::selftest;
 
 use crate::kb::pyish;
@@ -47,7 +49,7 @@ pub const EVENT_TYPES: [(&str, &[&str]); 5] =
 const FIXED_EVENTS: [(&str, &str, &str); 4] =
     [("brief", "event-brief", "brief"), ("pr-review", "event-pr-review", "pr-review"), ("post-merge", "event-post-merge", "post-merge"), ("merge", "sdlc-merge", "merge")];
 /// 每支 workflow 的必要參數（event.js 另外要該事件類型的參數）。
-pub const REQUIRED: [(&str, &[&str]); 12] = [
+pub const REQUIRED: [(&str, &[&str]); 13] = [
     ("sdlc-plan", &["repo", "epic", "requirement", "run_dir"]),
     ("sdlc-design", &["repo", "epic", "run_dir"]),
     ("sdlc-design-revise", &["repo", "epic", "run_dir", "decisions", "issues"]),
@@ -60,6 +62,8 @@ pub const REQUIRED: [(&str, &[&str]); 12] = [
     ("event-post-merge", &["repo", "run_dir"]),
     ("event-pr-review", &["target", "repo", "run_dir"]),
     ("event", &["event", "run_dir"]),
+    // 用步驟宣告的自訂段（profile 的 flow.stages[].run 是 steps）；不是事件，由狀態機在走到那一段時產生
+    ("flow-steps", &["stage", "run_dir"]),
 ];
 pub const HINTS: [(&str, &str); 15] = [
     ("repo", "目標 repo（我方的本機 clone）"),
@@ -88,9 +92,15 @@ pub const USAGE: &str = "狀態機：主 session 每一段只做兩件事——`
         [--requirement <需求原文或路徑>] [--base <base>] [--recipe <名>] [--modifiers a,b] [--size s] [--set k=v]… [--set-json k=<JSON>]…
     awf next --run <run_dir> [--set k=v]… [--set-json k=<JSON>]… [--stage <段>] [--workflow <名>] [--text]
     awf next --run <run_dir> --script <自己寫的腳本.js> [--stage <段> --retry]   # design、build、deliver 段改用自訂腳本（先檢查再接上執行核心）
+    awf next --run <run_dir> --revise            # plan 的修正輪：人答了 plan 的問題之後，只依答覆改 intent 再複查（不重做調研）；plan 要重新核准
     awf next --run <run_dir> --skip spec-apply   # merge 之後「把規格差異併回現行規格」這一步先不做，之後不再提
+    awf next --run <run_dir> --retry --skip-subtask <id>… --reason <理由> --by <誰>   # build 停下之後由人決定略過卡住的子任務（之後不能政策核准）
+    awf next --run <run_dir> --confirm-merge --by <誰> [--confirm-skipped-subtasks]   # 本機合併（conventions.merge.mode: local）：人合併之後由工具核對
     awf done --run <run_dir> [--output <workflow 回傳的 JSON 檔>] [--stage <段>]
     awf approve --run <run_dir> [<段>] --by <誰> [--note <備註>] [--answer \"<問題>=<答覆>\"]… [--accept-defaults]
+        停在 needs_decision 的段：每一題 blocking 的問題都用 --answer \"#N=<答覆>\" 答了就視為人工核准、往下走（不必重跑；之後不能政策核准）
+    awf approve --run <run_dir> [<段>] --by <誰> --confirm-unconfirmed          # 人確認了全部暫定做法（可以單獨跑，不核准任何一段）
+    awf approve --run <run_dir> --reject-unconfirmed <段> --by <誰>            # 推翻那一段照建議先做的答覆：回到 needs_decision
     awf handoff --run <run_dir> [--print]      # 寫 <run_dir>/接手摘要.md：換 session 或換人接手時看
     awf watch --run <run_dir> [--once [--json]] [--interval 5] [--stall-seconds 900]   # 進度事件寫到 <run_dir>/progress.jsonl
     awf statusline                             # 一行狀態，給 Claude Code 的 statusLine 用
@@ -105,7 +115,8 @@ next 回一個動作（JSON；--text 是給人看的摘要）：
     gate          這一段等人核准：把 highlights 列給使用者看，核准後跑 approve 的指令；退回就照使用者的意見處理。
     need_input    缺參數：照 need 的說明問使用者或自己判斷，用 next --set 補上。
     manual        要人當下同意、由主 session 自己做的步驟（例如推 fork、開 PR）。
-    halted        這一段停下了：reason 與 advice 是原因與建議；處理完用 retry 的動作重跑。
+    halted        這一段停下了：reason 與 advice 是原因與建議；處理完跑 retry 的指令（awf next --retry）重新備腳本再跑，不要直接重跑舊腳本。
+                  有 answer 時（只差 blocking 的問題沒答）：人答覆後跑 answer 的指令就能往下走，不必重跑。
     done          這個 run 沒有下一步了。
 
 workflow 腳本從哪來：plugin 的 workflow-templates/<名>.js（範本），加上專案的佔位符值（.claude/teams/workflow.config）
@@ -336,12 +347,14 @@ pub(crate) fn hint(k: &str) -> &'static str {
 }
 
 pub(crate) fn stage_workflow(stage: &str) -> String {
-    format!("sdlc-{stage}")
+    crate::stages::template_of(stage).map_or_else(|| format!("sdlc-{stage}"), str::to_string)
 }
 
 /// profile（methodology.json）的 events：使用者自訂的事件類型。讀不懂就當沒有。
 pub fn profile_events(env: &Env) -> py::R<Map<String, Value>> {
-    let m = load_json(env, &pyish::pjoin(&env.teams(), "methodology.json"))?;
+    let file = pyish::pjoin(&env.teams(), "methodology.json");
+    // 繼承（extends）解析失敗照「讀不懂」當沒有（產生腳本時 plugin::methodology 會報錯停下）
+    let m = load_json(env, &file)?.and_then(|v| crate::profile::resolve_str(&file, v).ok());
     let mut out = Map::new();
     if let Some(Value::Object(ev)) = m.as_ref().and_then(|m| m.as_object()).and_then(|m| m.get("events")) {
         for (k, v) in ev {
@@ -370,6 +383,12 @@ pub fn event_route(env: &Env, event: &str) -> py::R<Option<(String, String)>> {
 /// event.js 這個事件類型的必要參數：profile 有定義就照它的 args，否則用內建的。
 pub fn event_required(env: &Env, event: &str) -> py::R<Vec<String>> {
     if let Some(d) = profile_events(env)?.get(event) {
+        // extends：沒有自己寫 args 時用底（內建類型）的必要參數；有寫就整個取代（陣列不合併，和範本的合併規則一致）
+        if d.get("args").is_none() {
+            if let Some(base) = d.get("extends").and_then(Value::as_str).and_then(builtin_type) {
+                return Ok(base.iter().map(|x| x.to_string()).collect());
+            }
+        }
         let a = py::get(d, "args")?;
         return Ok(py::iter_or(a)?.iter().filter_map(|x| x.as_str().map(str::to_string)).collect());
     }
@@ -500,6 +519,19 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if !opt(argv, "--skip").is_empty() {
         auto::skip(env, &mut data, opt(argv, "--skip"))?;
     }
+    let mut skip_notes = if sr::opts(argv, "--skip-subtask").is_empty() { Vec::new() } else { human::skip_subtasks(env, run, &mut data, argv)? };
+    // plan 的修正輪：條件不符就拒絕、什麼都不改；接受時固定重跑 plan 段。沒帶 --revise 時清掉上一次留下的答覆（之後的 plan 是完整的一輪）
+    let revise_argv: Vec<String>;
+    let argv = if has(argv, "--revise") {
+        skip_notes.push(human::revise_setup(env, run, &mut data, argv)?);
+        revise_argv = argv.iter().filter(|a| *a != "--retry").cloned().chain(if has(argv, "--stage") { Vec::new() } else { vec!["--stage".to_string(), "plan".to_string()] }).chain(["--retry".to_string()]).collect();
+        revise_argv.as_slice()
+    } else {
+        if let Some(Value::Object(aw)) = data.get_mut("awf") {
+            aw.shift_remove("revise");
+        }
+        argv
+    };
     // 中斷回收（輔助）：上一次交出去的 plan 段沒有結果時，把已經做完的調研記進 reuse.json；任何失敗都當成沒有可回收的
     let recovered = auto::recover_interrupted(env, run, &mut data).unwrap_or_default();
     let act = if opt(argv, "--script").is_empty() { decide(env, run, run_arg, &mut data, plugin, argv)? } else { custom_action(env, run, run_arg, &mut data, argv)? };
@@ -507,6 +539,8 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if py::get(&act, "action")?.as_str() == Some("run_workflow") {
         let mut notes: Vec<Value> = pnotes.iter().map(|n| json!(n)).collect();
         notes.extend(py::iter(act.get("notes").unwrap_or(&json!([])))?);
+        // 靠答覆往下走的段、被略過的子任務（沒有就不加）
+        notes.extend(skip_notes.iter().chain(human::run_notes(&data).iter()).map(|n| json!(n)));
         if !recovered.is_empty() {
             notes.push(json!(format!("中斷回收：上次這一段沒跑完，已經做完而且來源沒變的調研會沿用（{}）", recovered.join("、"))));
             py::obj_mut(&mut act)?.insert("highlights".into(), json!({"recovered": recovered}));
@@ -518,12 +552,23 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
         }
         pending.insert("at".into(), json!(env.now_iso()));
         pending.insert("since".into(), json!(env.now_ts()));
+        // 產生的腳本的雜湊：awf done 用它確認跑的是這一支（手改過的腳本＝非標準結果）。讀不到就不記，done 會當成確認不了
+        if let Some(h) = act.get("script").and_then(Value::as_str).and_then(|sp| human::script_sha1(&if pyish::is_abs(sp) { sp.to_string() } else { pyish::pjoin(&env.project, sp) })) {
+            pending.insert("script_sha1".into(), json!(h));
+        }
         let mut mark = Map::new();
         for k in ["custom", "override"] {
             if let Some(v) = act.get(k).filter(|v| py::truthy(v)) {
                 pending.insert(k.to_string(), v.clone());
                 mark.insert(k.to_string(), v.clone());
             }
+        }
+        if let Some(n) = human::revise_answers(&data).filter(|_| has(argv, "--revise")).map(Vec::len) {
+            pending.insert("revise".into(), json!(n));
+        }
+        // 用步驟宣告的自訂段：段名與定義的指紋跟著 pending 走，awf done 從 workflow 紀錄取得結果時寫進結果（不算非標準）
+        if let Some(v) = act.get("steps").filter(|v| py::truthy(v)) {
+            pending.insert("steps".to_string(), v.clone());
         }
         let stage = py::s(py::idx(&act, "stage")?);
         // 中斷回收只認「交出去當時的 session」的 transcript，所以在會回收的那一種動作（SDLC 的 plan 段、標準腳本）記下來。
@@ -557,6 +602,8 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     let stage = py::s(&stage_v);
     let src = opt(argv, "--output");
     let mut meta: Option<(Value, String)> = None;
+    let mut fallback = false;
+    let mut edited: Option<Value> = None;
     let result: Value;
     if !src.is_empty() {
         match load_json(env, &py::pp(src))? {
@@ -582,19 +629,34 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
             Value::String(t) => t.clone(),
             other => return Err(Fail::Py(py::type_err(format!("expected str, bytes or os.PathLike object, not {}", py::tname(other))))),
         };
-        let want = if !script.is_empty() && !pyish::is_abs(&script) { pyish::pjoin(&env.project, &script) } else { script };
+        let mut want = if !script.is_empty() && !pyish::is_abs(&script) { pyish::pjoin(&env.project, &script) } else { script };
+        let mut since_at = py_float(py::get(&pend, "since")?)?;
+        // 沒有 pending（主 session 沒先跑 awf next --retry 就直接重跑了上一次的腳本）：只在能確定是哪一筆時才用 .wf/ 底下的標準腳本去對
+        let mut seen = String::new();
+        if want.is_empty() {
+            let wf_name = if s_or(py::get(&data, "event")?) == "sdlc" {
+                if is_flow(&data, &stage) { format!("flow-{stage}") } else { stage_workflow(&stage) }
+            } else {
+                event_route(env, &s_or(py::get(&data, "event")?))?.filter(|(_, st)| *st == stage).map(|(w, _)| w).unwrap_or_default()
+            };
+            if let Some((sc, at, id)) = human::done_fallback(run, &data, &stage, &wf_name) {
+                (want, since_at, seen) = (sc, at, id);
+                fallback = true;
+            }
+        }
         // 找到紀錄、但回傳讀不懂：和 --output 的檔讀不懂走同一條路（這一段不能留著舊的結果與舊核准）。找不到紀錄則什麼都不改
         let unreadable = |why: &str| -> A<i32> {
             let (mut o, mut e) = (String::new(), String::new());
             sr::stage_unreadable(&ctx, run, &stage, why, &mut o, &mut e)?;
             awf_err(format!("找到這一段的 workflow 紀錄，但{why}：{stage} 段已標成 invalid、舊核准失效；重跑這一段，或把正確的回傳存成 JSON 檔，用 --output <檔> 指定"))
         };
-        let since = py_float(py::get(&pend, "since")?)?;
-        let Some((m, mf)) = find_wf_meta(env, &want, since)? else {
+        let since = since_at;
+        let found = args::find_wf_meta_except(env, &want, since, &seen)?;
+        let Some((m, mf)) = found else {
             if unreadable_wf_meta(env, &want, since) {
                 return unreadable("紀錄檔不是讀得懂的 JSON");
             }
-            return awf_err("找不到這一段 workflow 的回傳（它還沒跑完，或這版 Claude Code 的存放位置變了）。把 Workflow 的回傳存成 JSON 檔，用 --output <檔> 指定");
+            return awf_err(args::wf_meta_missing(env, &want));
         };
         let mut r = py::get(&m, "result")?.clone();
         if let Value::String(t) = &r {
@@ -611,11 +673,16 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
             return awf_err(format!("workflow 沒有回傳物件（status={}）：{mf}。它可能還在跑，或中途失敗；失敗就重跑這一段", py::s(py::get(&m, "status")?)));
         }
         result = r;
+        // 跑的是不是 awf next 產生的那一支腳本：退路（沒有 pending）用上一次 done 留下的雜湊
+        let aw = or_obj(py::get(&data, "awf")?);
+        let expected = if fallback { py::get(&or_obj(py::get(&aw, "last_script")?), &stage)?.clone() } else { py::get(&pend, "script_sha1")?.clone() };
+        edited = human::script_edited(expected.as_str(), &want, &m);
         meta = Some((m, mf));
     }
     // 不是「標準腳本、而且回傳是 awf 自己從 transcript 找到的」，就在結果裡留標記；save_run 看到標記不給政策核准
     let sticky = or_obj(py::get(&or_obj(py::get(&or_obj(py::get(&data, "awf")?), "nonstandard")?), &stage)?);
-    let mine = if pyfmt_eq(py::get(&pend, "stage")?, &stage_v) { pend.clone() } else { json!({}) };
+    // 退路取得的結果：那支腳本是上一次 next 備的，上一次記下的非標準標記（覆寫檔）照樣算在這一次
+    let mine = if pyfmt_eq(py::get(&pend, "stage")?, &stage_v) { pend.clone() } else if fallback { sticky.clone() } else { json!({}) };
     let mut marks = Map::new();
     for (k, name) in [("custom", "custom_script"), ("override", "override_script")] {
         let own = py::get(&mine, k)?;
@@ -628,7 +695,38 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if meta.is_none() {
         marks.insert("manual_output".into(), json!(true));
     }
+    // 腳本被改過：這一次確認不了的，或上一次標過、這次又是手動給的結果（標記不會因為換成 --output 而掉）
+    match &edited {
+        Some(e) => {
+            marks.insert("edited_script".into(), e.clone());
+        }
+        None if meta.is_none() && py::truthy(py::get(&sticky, "edited")?) => {
+            marks.insert("edited_script".into(), py::idx(&sticky, "edited")?.clone());
+        }
+        None => {}
+    }
     let mut result = result;
+    // 用步驟宣告的自訂段的標記（flow_steps）只由這裡寫：workflow 自己回傳的同名欄位一律拿掉；
+    // 只有「標準腳本、回傳取自 workflow 紀錄」時才寫上 awf next 當時記下的段名與定義指紋
+    if let Value::Object(m) = &mut result {
+        m.shift_remove("flow_steps");
+        let own = py::get(&mine, "steps")?;
+        if marks.is_empty() && meta.is_some() && own.is_object() {
+            m.insert("flow_steps".into(), own.clone());
+        }
+    }
+    // 人決定略過的子任務記進 build 的結果（閘門與後面各段看得到；沒有略過時結果不變）
+    let skipped_ids = sr::human::skipped_subtasks(&data);
+    if stage == "deliver" {
+        if let (Some(h), Value::Object(m)) = (human::deliver_head(&env, &run, &data), &mut result) {
+            m.insert("reviewed_head".into(), json!(h));
+        }
+    }
+    if stage == "build" && !skipped_ids.is_empty() {
+        if let Value::Object(m) = &mut result {
+            m.insert("skipped_subtasks".into(), json!(skipped_ids));
+        }
+    }
     if !marks.is_empty() {
         let mut m = match &result {
             Value::Object(o) => o.clone(),
@@ -645,7 +743,12 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
         }
         result = Value::Object(m);
     }
-    if meta.is_some() && !py::truthy(py::get(&mine, "custom")?) && !py::truthy(py::get(&mine, "override")?) && py::truthy(&sticky) {
+    if let Some(e) = &edited {
+        // 記在 run.json：之後就算改用 --output 重存，這一段跑過被改過的腳本的事實也還在（標準腳本的回傳從紀錄取得才解除）
+        let ns = py::obj_mut(setdefault_obj(&mut data, "awf")?.entry("nonstandard".to_string()).or_insert_with(|| json!({})))?;
+        py::obj_mut(ns.entry(stage.clone()).or_insert_with(|| json!({})))?.insert("edited".into(), e.clone());
+        sr::dump(&ctx, run, &data)?;
+    } else if meta.is_some() && !py::truthy(py::get(&mine, "custom")?) && !py::truthy(py::get(&mine, "override")?) && py::truthy(&sticky) {
         // 這次是標準腳本、回傳取自 transcript：解除標記
         if let Some(aw) = data.get_mut("awf").filter(|a| py::truthy(a)) {
             match aw.get_mut("nonstandard") {
@@ -664,6 +767,29 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     let st_now = py::get(py::idx(&data, "stages")?, &stage)?.clone();
     out.push_str(rstrip(&merge_stage_output(&stage, &st_now, &o, &e)));
     out.push('\n');
+    if let Some(e) = &edited {
+        out.push_str(&format!("注意：{}\n", human::edited_note(&stage, e)));
+    }
+    // plan 的修正輪：存檔（上面的 save-run stage）已經清掉 plan 的核准與 decided（答覆已經寫進 intent，不再提示「產出文件還沒反映」）；
+    // 這裡留一筆「答覆已用於修正輪」的紀錄。不是修正輪的 plan 結果把舊的紀錄拿掉。用過的答覆（awf.revise）一律清掉
+    if stage == "plan" {
+        let own_pending = pyfmt_eq(py::get(&pend, "stage")?, &stage_v);
+        let n = py::get(&pend, "revise")?.as_u64().filter(|_| own_pending);
+        let is_revise = result.get("round").and_then(Value::as_str) == Some("revise");
+        if let Some(Value::Object(st)) = data.get_mut("stages").and_then(|s| s.get_mut("plan")) {
+            match n.filter(|_| is_revise) {
+                Some(n) => {
+                    st.insert("revised".into(), json!({"answers": n, "at": env.now_iso()}));
+                }
+                None => {
+                    st.shift_remove("revised");
+                }
+            }
+        }
+        if let Some(Value::Object(aw)) = data.get_mut("awf") {
+            aw.shift_remove("revise");
+        }
+    }
     if let Some(Value::Object(st)) = data.get_mut("stages").and_then(|s| s.get_mut(&stage)) {
         match &meta {
             Some((m, mf)) => {
@@ -679,6 +805,13 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     }
     match data.get_mut("awf") {
         Some(Value::Object(aw)) => {
+            // 這一段最後一次由 awf next 產生的腳本的雜湊留下來：沒有 pending 的退路（直接重跑上一次的腳本）靠它確認腳本沒被改過
+            let kept = aw.get("pending").filter(|p| p.get("stage").and_then(Value::as_str) == Some(stage.as_str())).and_then(|p| p.get("script_sha1")).cloned();
+            if let Some(h) = kept {
+                if let Value::Object(ls) = aw.entry("last_script".to_string()).or_insert_with(|| json!({})) {
+                    ls.insert(stage.clone(), h);
+                }
+            }
             aw.shift_remove("pending");
         }
         Some(other) if py::truthy(other) => return Err(Fail::Py(py::attr_err(other, "pop"))),
@@ -727,6 +860,15 @@ fn pyfmt_eq(a: &Value, b: &Value) -> bool {
 fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Value, out: &mut String, err: &mut String) -> A<i32> {
     let ctx = env.sr();
     let stages = py::idx(data, "stages")?;
+    // 推翻某一段照建議先做的答覆（不核准任何一段）
+    let reject = opt(argv, "--reject-unconfirmed");
+    if has(argv, "--reject-unconfirmed") {
+        let code = sr::human::reject_cmd(&ctx, run, reject, opt(argv, "--by"), &env.now_iso(), out, err)?;
+        if code == 0 {
+            out.push_str(&format!("下一步：awf next --run {run_arg}\n"));
+        }
+        return Ok(code);
+    }
     let mut skip: Vec<String> = ["--run", "--by", "--note", "--answer-scope", "--answer-expires", "--profile"].iter().map(|n| opt(argv, n).to_string()).collect();
     skip.extend(sr::opts(argv, "--answer"));
     let mut stage = String::new();
@@ -739,6 +881,16 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
     if stage.is_empty() {
         let snap = sr::status_snapshot(&ctx, run, data)?;
         stage = s_or(py::get(&snap, "waiting_gate")?);
+    }
+    if stage.is_empty() && !sr::opts(argv, "--answer").is_empty() {
+        // 沒有在等核准的段、但帶了答覆：下一段正停在 needs_decision 的話，就是要答它的 blocking 問題
+        if let Some(n) = sr::next_stage(data)?.filter(|n| py::get(py::get(stages, n).unwrap_or(&Value::Null), "status").is_ok_and(|s| s.as_str() == Some("needs_decision"))) {
+            stage = n;
+        }
+    }
+    if stage.is_empty() && has(argv, "--confirm-unconfirmed") {
+        // 只確認暫定做法、不核准任何一段
+        return Ok(sr::human::confirm_cmd(&ctx, run, opt(argv, "--by"), &env.now_iso(), out, err)?);
     }
     if stage.is_empty() {
         return awf_err("現在沒有在等核准的段；要指定就寫 awf approve --run <run_dir> <段> --by <誰>");
@@ -757,6 +909,9 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
         pass.push("--answer".into());
         pass.push(a);
     }
+    if has(argv, "--confirm-unconfirmed") {
+        pass.push("--confirm-unconfirmed".into());
+    }
     if has(argv, "--accept-defaults") {
         // 人確認了暫定的做法：沒有另外用 --answer 答的那幾題，照 agent 已套用的預設記進決策記憶
         let answered: Vec<String> = sr::opts(argv, "--answer").iter().map(|a| pyish::strip(a.split('=').next().unwrap_or_default()).to_string()).collect();
@@ -770,6 +925,10 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
     }
     let code = sr::approve(&ctx, &pass, out, err)?;
     if code == 0 {
+        if stage == "plan" && pass.iter().any(|a| a == "--answer") {
+            // 只是提示，不自動觸發：答覆記下來了，但 intent.md 還是答覆之前的內容
+            out.push_str(&format!("提示：答覆會改變 intent 內容的話，可以先跑 awf next --run {run_arg} --revise 讓 intent 反映答覆（只改 intent 再複查、不重做調研），再重新核准 plan\n"));
+        }
         out.push_str(&format!("下一步：awf next --run {run_arg}\n"));
     }
     Ok(code)

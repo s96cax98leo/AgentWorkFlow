@@ -24,7 +24,25 @@ function recipeBuiltinModifiers() {
     large: { description: '範圍大：允許拆子計劃、調研四個角度全開', research_angles: ['requirement', 'specs-adr', 'code-contracts', 'upstream'], split: true, model_floors: { 'dev-spec-author': 'strong' } },
   }
 }
-function recipeOrder(stages) { const s = new Set(stages || []); return recipeSdlc().filter((x) => s.has(x)) }
+// 全部的段：內建七段加上 profile 的 flow.stages 宣告的自訂段（每個自訂段接在它 after 的那一段後面，同一個 after 依宣告順序；
+// 讀不懂、撞內建段名、重複、接不到內建段或接在 merge 後面的不算）。順序要和 awf 的 stages::flow_order 一致。沒有 flow 時就是內建七段
+function recipeFlowOrder(profile) {
+  const sdlc = recipeSdlc()
+  const raw = ((profile || {}).flow || {}).stages
+  const list = []
+  for (const x of (Array.isArray(raw) ? raw.slice(0, 8) : [])) {
+    if (!x || typeof x !== 'object' || typeof x.id !== 'string' || typeof x.after !== 'string') continue
+    if (x.id.length > 32 || !'abcdefghijklmnopqrstuvwxyz'.includes(x.id[0]) || [...x.id].some((c) => !'abcdefghijklmnopqrstuvwxyz0123456789-'.includes(c))) continue
+    if (sdlc.includes(x.id) || list.some((y) => y.id === x.id)) continue
+    list.push({ id: x.id, after: x.after })
+  }
+  if (!list.length) return sdlc
+  const out = []
+  const put = (id) => { out.push(id); for (const c of list) if (c.after === id) put(c.id) }
+  for (const b of sdlc) { if (b === 'merge') out.push(b); else put(b) }
+  return out
+}
+function recipeOrder(stages, full) { const s = new Set(stages || []); return (full || recipeSdlc()).filter((x) => s.has(x)) }
 function recipeUnion(a, b) { const out = [...(a || [])]; for (const x of b || []) if (!out.includes(x)) out.push(x); return out }
 function recipeStricter(a, b) { return recipeLevel(a) >= recipeLevel(b) ? a : b }
 
@@ -53,7 +71,10 @@ function resolveRecipe(profile, name, modifiers, size) {
   if (r.followup === undefined) r.followup = false
   if (r.split === undefined) r.split = false
   if (!(r.stages || []).includes('plan')) errors.push(`recipe ${used} 沒有 plan 段（intent 不能省），改加上 plan`)
-  r.stages = recipeOrder(['plan', ...(r.stages || [])])
+  const full = recipeFlowOrder(profile)
+  const hasFlow = !!(profile && typeof profile === 'object' && profile.flow && typeof profile.flow === 'object' && !Array.isArray(profile.flow))
+  for (const x of r.stages || []) if (hasFlow && typeof x === 'string' && !full.includes(x)) errors.push(`recipe ${used} 的段 ${x} 不認得（不是內建的段，profile 的 flow 也沒有宣告）`)
+  r.stages = recipeOrder(['plan', ...(r.stages || [])], full)
   if (size === 'small' && base.small && typeof base.small === 'object') {
     if (base.small.research_angles) r.research_angles = [...base.small.research_angles]
     if (base.small.split !== undefined) r.split = !!base.small.split
@@ -64,7 +85,8 @@ function resolveRecipe(profile, name, modifiers, size) {
     const md = (own(modsDef, m) && modsDef[m]) || (!hasMods && own(builtin, m) ? builtin[m] : undefined)
     if (!md) { errors.push(`不認得的 modifier：${m}`); continue }
     applied.push(m)
-    r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages))
+    for (const x of md.add_stages || []) if (hasFlow && typeof x === 'string' && !full.includes(x)) errors.push(`modifier ${m} 的 add_stages 有不認得的段：${x}`)
+    r.stages = recipeOrder(recipeUnion(r.stages, md.add_stages), full)
     r.research_angles = recipeUnion(r.research_angles, md.research_angles)
     r.design_lenses = recipeUnion(r.design_lenses, md.design_lenses)
     r.deliver_axes = recipeUnion(r.deliver_axes, md.deliver_axes)

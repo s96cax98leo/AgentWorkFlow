@@ -1112,6 +1112,16 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
     let (meth_path, guard_path, record_path) = (teams.join("methodology.json"), teams.join("guard.config.json"), target.join(RECORD_FILE));
     let answers_path = target.join(interview::ANSWERS_FILE);
     let cur = load_object(&meth_path, "methodology.json")?;
+    // 繼承（extends）：比對用合併後的值（cur_eff），寫回的仍是檔案自己的內容（只改這次答案有變的葉子，extends 保留、不攤平）
+    let inherits = crate::profile::has_extends(&Value::Object(cur.clone()));
+    let effective = |raw: &Map<String, Value>| -> R<Map<String, Value>> {
+        match crate::profile::resolve_file(&meth_path, Value::Object(raw.clone())) {
+            Ok(Value::Object(o)) => Ok(o),
+            Ok(_) => die(format!("methodology.json（{}）合併後不是 JSON 物件", meth_path.display())),
+            Err(e) => die(format!("methodology.json（{}）的繼承（extends）讀不懂，沒有改任何設定：{e}", meth_path.display())),
+        }
+    };
+    let cur_eff = if inherits { effective(&cur)? } else { cur.clone() };
     let saved = match interview::load_answers(&answers_path)? {
         Some(s) => s,
         None => {
@@ -1200,6 +1210,9 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
     }
 
     let name_of = |ans: &Map<String, Value>| ans.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
+    if inherits && name_of(&saved) != name_of(&new_ans) {
+        return die(format!("methodology.json 有 extends（繼承）：不能用 --reconfigure 換開發規範 profile（{} → {}），沒有改任何設定。要換請直接改 methodology.json 的 extends", name_of(&saved), name_of(&new_ans)));
+    }
     let (mut vals_old, mut vals_new) = (vals.clone(), vals.clone());
     let p_old = profile::finish_methodology(site, &mut vals_old, &name_of(&saved), &saved)?;
     let p_new = profile::finish_methodology(site, &mut vals_new, &name_of(&new_ans), &new_ans)?;
@@ -1216,9 +1229,14 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
     let mut lines: Vec<String> = Vec::new();
     for c in &changes {
         let path = c.0.join(".");
-        let before = interview::get_path(&cur, &c.0).cloned();
+        let before = interview::get_path(&cur_eff, &c.0).cloned();
         if before.as_ref() == c.1.as_ref() {
             continue; // 已經是這個值
+        }
+        // 繼承來的鍵（檔案自己沒有）不能用「拿掉」改：要拿掉得在檔案裡寫 null，交人
+        if inherits && c.1.is_none() && interview::get_path(&cur, &c.0).is_none() {
+            lines.push(format!("  - methodology.json：{path} 沒有改（這個鍵是繼承來的；要拿掉請在 methodology.json 寫 null）"));
+            continue;
         }
         let expected = interview::get_path(&p_old, &c.0);
         let hand = before.as_ref() != expected;
@@ -1293,14 +1311,15 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
     }
     let meth_changed = next != cur;
     if meth_changed {
-        let errs = profile::check_methodology(site, &next)?;
+        let errs = profile::check_methodology(site, &if inherits { effective(&next)? } else { next.clone() })?;
         if !errs.is_empty() {
             return die(format!("照這些回答改完的 methodology.json 不符合 schema，沒有寫入：{}", errs.iter().take(5).map(String::as_str).collect::<Vec<_>>().join("；")));
         }
     }
     let hooks_new = interview::hooks_answer(&new_ans)?;
     let main_free = new_ans.get("main_session_push_merge").is_some_and(interview::yes);
-    for line in interview::table(&topics, &new_ans, &next, &g_new, main_free, hooks_new.as_deref().unwrap_or("plugin")) {
+    let next_eff = if inherits { effective(&next)? } else { next.clone() };
+    for line in interview::table(&topics, &new_ans, &next_eff, &g_new, main_free, hooks_new.as_deref().unwrap_or("plugin")) {
         con.say(&line);
     }
     if lines.is_empty() {

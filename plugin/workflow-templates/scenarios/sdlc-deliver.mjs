@@ -232,4 +232,32 @@ export default [
     args: { deliverables: { summary: '_tpm/runs/x/deliver/交付摘要.md', summary_sections: ['甲', '甲'], audience: 'x'.repeat(21) } },
     expect: (r) => { const p = r.prompts.deliverables || ''; return /交付文件是給客戶看的正式文件/.test(p) && /三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」/.test(p) ? [] : ['不合法的 summary_sections／audience 要退回內建'] },
   },
+  {
+    // 小節資料包（awf pack deliver）：各審查軸共用一份（路徑由 run_dir 組出來）；反駁與寫 PR 說明的派工單不帶
+    name: '小節資料包：有 → 每個審查軸的派工單指到同一份審查資料包',
+    args: { review_pack: '_runs/demo/deliver/review/pack.md' },
+    fakes: ONE_FINDING,
+    expect: (r) => {
+      const axes = Object.entries(r.prompts).filter(([k]) => k.startsWith('review:'))
+      return [
+        ...(axes.length >= 2 ? [] : [`審查軸沒有派出：${r.labels.join(',')}`]),
+        ...axes.filter(([, v]) => !/\n審查資料包（開工先讀這份，各審查軸共用[^\n]*不用整份讀）：\/tmp\/run\/deliver\/review\/pack\.md/.test(v)).map(([k]) => `${k} 的派工單要指到審查資料包`),
+        ...Object.entries(r.prompts).filter(([k, v]) => !k.startsWith('review:') && /審查資料包/.test(v)).map(([k]) => `${k} 不該引用審查資料包`),
+      ]
+    },
+  },
+  {
+    name: '小節資料包：沒有 → 派工單沒有這一句',
+    expect: (r) => Object.entries(r.prompts).filter(([, v]) => /審查資料包/.test(v)).map(([k]) => `${k} 不該出現資料包的句子`),
+  },
+  {
+    name: '小節資料包：路徑不合規則（含 ..）被丟掉',
+    args: { review_pack: '_runs/demo/deliver/../../secrets/deliver/review/pack.md' },
+    expect: (r) => Object.entries(r.prompts).filter(([, v]) => /審查資料包/.test(v)).map(([k]) => `${k} 不該引用路徑含 .. 的資料包`),
+  },
+  {
+    name: '小節資料包：別段的資料包路徑不採用',
+    args: { review_pack: '_runs/demo/build/t1/pack.md' },
+    expect: (r) => Object.entries(r.prompts).filter(([, v]) => /審查資料包/.test(v)).map(([k]) => `${k} 不該引用別段的資料包`),
+  },
 ]

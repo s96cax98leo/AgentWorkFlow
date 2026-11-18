@@ -2,87 +2,92 @@
  "workflows": {
   "event-brief.js": {
    "agents": 3,
-   "prompt_chars": 3360,
-   "shared_prefix_chars": 845
+   "prompt_chars": 3414,
+   "shared_prefix_chars": 863
   },
   "event-post-merge.js": {
    "agents": 3,
-   "prompt_chars": 4129,
-   "shared_prefix_chars": 945
+   "prompt_chars": 4183,
+   "shared_prefix_chars": 963
   },
   "event-pr-review.js": {
    "agents": 13,
-   "prompt_chars": 13764,
-   "shared_prefix_chars": 840
+   "prompt_chars": 13998,
+   "shared_prefix_chars": 858
   },
   "event.js": {
    "agents": 7,
-   "prompt_chars": 7649,
-   "shared_prefix_chars": 802
+   "prompt_chars": 7775,
+   "shared_prefix_chars": 820
   },
   "event.js#meeting": {
    "agents": 7,
-   "prompt_chars": 7649,
-   "shared_prefix_chars": 802
+   "prompt_chars": 7775,
+   "shared_prefix_chars": 820
   },
   "event.js#decision": {
    "agents": 6,
-   "prompt_chars": 7150,
-   "shared_prefix_chars": 809
+   "prompt_chars": 7258,
+   "shared_prefix_chars": 827
   },
   "event.js#demo-check": {
    "agents": 6,
-   "prompt_chars": 7896,
-   "shared_prefix_chars": 1042
+   "prompt_chars": 8004,
+   "shared_prefix_chars": 1060
   },
   "event.js#reqs-change": {
    "agents": 7,
-   "prompt_chars": 7937,
-   "shared_prefix_chars": 794
+   "prompt_chars": 8063,
+   "shared_prefix_chars": 812
   },
   "event.js#upstream": {
    "agents": 8,
-   "prompt_chars": 9928,
-   "shared_prefix_chars": 851
+   "prompt_chars": 10072,
+   "shared_prefix_chars": 869
+  },
+  "flow-steps.js": {
+   "agents": 0,
+   "prompt_chars": 0,
+   "shared_prefix_chars": 0
   },
   "sdlc-build.js": {
    "agents": 7,
-   "prompt_chars": 13435,
-   "shared_prefix_chars": 1286
+   "prompt_chars": 13561,
+   "shared_prefix_chars": 1304
   },
   "sdlc-deliver.js": {
    "agents": 9,
-   "prompt_chars": 13056,
-   "shared_prefix_chars": 1158
+   "prompt_chars": 13218,
+   "shared_prefix_chars": 1176
   },
   "sdlc-design-revise.js": {
    "agents": 4,
-   "prompt_chars": 8002,
-   "shared_prefix_chars": 1009
+   "prompt_chars": 8074,
+   "shared_prefix_chars": 1027
   },
   "sdlc-design.js": {
    "agents": 5,
-   "prompt_chars": 9873,
-   "shared_prefix_chars": 1013
+   "prompt_chars": 9963,
+   "shared_prefix_chars": 1031
   },
   "sdlc-merge.js": {
    "agents": 5,
-   "prompt_chars": 11025,
-   "shared_prefix_chars": 1464
+   "prompt_chars": 11115,
+   "shared_prefix_chars": 1482
   },
   "sdlc-plan.js": {
    "agents": 9,
-   "prompt_chars": 14743,
-   "shared_prefix_chars": 1078
+   "prompt_chars": 14905,
+   "shared_prefix_chars": 1096
   },
   "sdlc-sync.js": {
    "agents": 2,
-   "prompt_chars": 3468,
-   "shared_prefix_chars": 1065
+   "prompt_chars": 3504,
+   "shared_prefix_chars": 1083
   },
   "sdlc-test.js": {
    "agents": 1,
-   "prompt_chars": 1572,
+   "prompt_chars": 1590,
    "shared_prefix_chars": 0
   }
  },

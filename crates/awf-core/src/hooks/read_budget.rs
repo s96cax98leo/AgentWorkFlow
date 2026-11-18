@@ -175,11 +175,13 @@ struct State {
     used: i64,
     warned: bool,
     reads: i64,
+    /// 輪數預算：這個 agent 經過守門 hook 的工具呼叫次數（[`count_turn`]）。
+    turns: i64,
 }
 
 /// 回傳（狀態, 是不是新的）。內容壞掉就重置。
 fn load_state(p: &str) -> (State, bool) {
-    let fresh = || State { used: 0, warned: false, reads: 0 };
+    let fresh = || State { used: 0, warned: false, reads: 0, turns: 0 };
     let bytes = match std::fs::read(p) {
         Ok(b) => b,
         Err(e) => return (fresh(), e.kind() == std::io::ErrorKind::NotFound),
@@ -192,7 +194,8 @@ fn load_state(p: &str) -> (State, bool) {
     let warned = st.get("warned").and_then(Value::as_bool);
     let (Some(used), Some(warned)) = (used, warned) else { return (fresh(), false) };
     let reads = st.get("reads").and_then(Value::as_i64).unwrap_or(0);
-    (State { used, warned, reads }, false)
+    let turns = st.get("turns").and_then(Value::as_i64).filter(|t| *t >= 0).unwrap_or(0);
+    (State { used, warned, reads, turns }, false)
 }
 
 fn mkdir_private(dir: &str) -> std::io::Result<()> {
@@ -215,7 +218,7 @@ fn mkdir_private(dir: &str) -> std::io::Result<()> {
 fn save_state(p: &str, st: &State) -> std::io::Result<()> {
     mkdir_private(&path::parent(p))?;
     let tmp = format!("{}.{}.tmp", p, std::process::id());
-    std::fs::write(&tmp, py::json_dumps(&json!({"used": st.used, "warned": st.warned, "reads": st.reads}), true))?;
+    std::fs::write(&tmp, py::json_dumps(&json!({"used": st.used, "warned": st.warned, "reads": st.reads, "turns": st.turns}), true))?;
     std::fs::rename(&tmp, p)
 }
 
@@ -545,7 +548,445 @@ fn cat_targets(tool: &str, cmd: &str) -> Vec<String> {
     files
 }
 
-/// shell 的 cat 類整檔印出與 grep 類搜尋：回傳擋下的訊息；None＝放行。任何失敗都放行。
+/// shell 讀檔的提示：和 [`hint`] 同一個方向，多給 shell 的分段寫法。
+fn shell_hint(n: u64) -> String {
+    format!("先用 Grep 或 `awf kb query \"<問題>\"` 找到行段，再用 Read 帶 offset／limit，或 `sed -n '<起>,<訖>p' <檔>` 只印那一段，\
+一次最多 {n} 行（設定：.claude/teams/methodology.json 的 limits）")
+}
+
+/// shell 一次讀檔印出的範圍。
+#[derive(Debug, Clone, PartialEq)]
+enum Span {
+    /// 整檔（cat、nl、less、bat 不帶範圍、PowerShell 的 Get-Content）。
+    Whole,
+    /// 前 N 行（head）；負數＝除了最後 |N| 行以外全部（head -n -N）。
+    Head(i64),
+    /// 最後 N 行（tail）。
+    Tail(i64),
+    /// 從第 K 行到結尾（tail -n +K）。
+    From(i64),
+    /// 前 N 個位元組（head -c）。
+    Bytes(i64),
+    /// 行號範圍（sed -n 'a,bp'、bat -r a:b）：（起, 訖）；起是 -1＝最後一行，訖是 None＝到結尾。
+    Ranges(Vec<(i64, Option<i64>)>),
+}
+
+/// shell 指令裡一次讀檔：檔名（照寫的）、相對路徑的基準（前面 cd 過就是那個目錄）、範圍。
+#[derive(Debug, Clone, PartialEq)]
+struct ShellRead {
+    file: String,
+    base: Option<String>,
+    span: Span,
+}
+
+/// 一條指令最多算幾次讀檔（再多就只算前面這些）。
+const MAX_SHELL_READS: usize = 16;
+
+/// bash 指令依引號外的 `;`、`&&`、`||`、`&`、換行切成幾句；第二個值＝這一句在管線裡（`|`）。
+/// 有指令替換、process substitution、heredoc、引號沒關時回 None（看不懂，不算）。
+fn split_list(cmd: &str) -> Option<Vec<(String, bool)>> {
+    if cmd.contains('`') || cmd.contains("$(") || cmd.contains("<(") || cmd.contains(">(") || cmd.contains("<<") {
+        return None;
+    }
+    let ch: Vec<char> = cmd.chars().collect();
+    let mut out: Vec<(String, bool)> = Vec::new();
+    let mut cur = String::new();
+    let mut piped = false;
+    let mut q = '\0';
+    let mut i = 0;
+    let flush = |cur: &mut String, piped: &mut bool, next_piped: bool, out: &mut Vec<(String, bool)>| {
+        let t = py::strip(cur).to_string();
+        if !t.is_empty() {
+            out.push((t, *piped || next_piped));
+        }
+        cur.clear();
+        *piped = next_piped;
+    };
+    while i < ch.len() {
+        let c = ch[i];
+        if q != '\0' {
+            cur.push(c);
+            if c == '\\' && q == '"' && i + 1 < ch.len() {
+                cur.push(ch[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == q {
+                q = '\0';
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\\' => {
+                cur.push(c);
+                if let Some(x) = ch.get(i + 1) {
+                    cur.push(*x);
+                }
+                i += 2;
+                continue;
+            }
+            '\'' | '"' => {
+                q = c;
+                cur.push(c);
+            }
+            ';' | '\n' | '\r' => flush(&mut cur, &mut piped, false, &mut out),
+            '&' if ch.get(i + 1) == Some(&'&') => {
+                flush(&mut cur, &mut piped, false, &mut out);
+                i += 2;
+                continue;
+            }
+            '&' if i > 0 && ch[i - 1] == '>' || ch.get(i + 1) == Some(&'>') => cur.push(c), // 2>&1、&>
+            '&' => flush(&mut cur, &mut piped, false, &mut out),
+            '|' if ch.get(i + 1) == Some(&'|') => {
+                flush(&mut cur, &mut piped, false, &mut out);
+                i += 2;
+                continue;
+            }
+            '|' => {
+                // 管線：前一句與後一句都算在管線裡（輸出交給下一個指令，或讀的是上一個指令的輸出）
+                flush(&mut cur, &mut piped, true, &mut out);
+            }
+            _ => cur.push(c),
+        }
+        i += 1;
+    }
+    if q != '\0' {
+        return None;
+    }
+    let t = py::strip(&cur).to_string();
+    if !t.is_empty() {
+        out.push((t, piped));
+    }
+    Some(out)
+}
+
+/// 一句裡的 `2>&1`、`2>/dev/null` 拿掉；其餘重導向（輸出寫進檔或丟掉、從檔讀 stdin）回 None（不是印給 agent 看的讀取）。
+fn strip_stderr_redirects(s: &str) -> Option<String> {
+    let mut t = format!(" {s} ");
+    for pat in [" 2>&1 ", " 2>/dev/null ", " 2> /dev/null "] {
+        while let Some(i) = t.find(pat) {
+            t.replace_range(i..i + pat.len(), " ");
+        }
+    }
+    let mut q = '\0';
+    for c in t.chars() {
+        if q != '\0' {
+            if c == q {
+                q = '\0';
+            }
+        } else if c == '\'' || c == '"' {
+            q = c;
+        } else if c == '<' || c == '>' {
+            return None;
+        }
+    }
+    Some(py::strip(&t).to_string())
+}
+
+/// 不是一般檔名的參數（變數、萬用字元、家目錄）：這一句看不懂。
+fn odd_file(t: &str) -> bool {
+    t.is_empty() || t.starts_with('~') || t.chars().any(|c| matches!(c, '$' | '*' | '?' | '[' | ']' | '{' | '}' | '!' | '#'))
+}
+
+fn num(t: &str) -> Option<i64> {
+    if t.is_empty() || !t.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    t.parse::<i64>().ok()
+}
+
+/// sed 的腳本只有印行號範圍（`a,bp`、`ap`、`a,$p`、`$p`、`a,+np`，可以接 `;`、`aq`）時回範圍；其他寫法回 None。
+fn sed_ranges(script: &str) -> Option<Vec<(i64, Option<i64>)>> {
+    let mut out = Vec::new();
+    for part in script.split([';', '\n']) {
+        let p: String = part.chars().filter(|c| !c.is_whitespace()).collect();
+        if p.is_empty() {
+            continue;
+        }
+        if let Some(a) = p.strip_suffix('q') {
+            num(a)?;
+            continue;
+        }
+        let body = p.strip_suffix('p')?;
+        let (a, b) = match body.split_once(',') {
+            Some((a, b)) => (a, Some(b)),
+            None => (body, None),
+        };
+        let a = if a == "$" { -1 } else { num(a)?.max(1) };
+        let b = match b {
+            None => Some(if a == -1 { -1 } else { a }),
+            Some("$") => None,
+            Some(x) => match x.strip_prefix('+') {
+                Some(n) => Some(a.max(1).saturating_add(num(n)?)),
+                None => Some(num(x)?),
+            },
+        };
+        out.push((a, b));
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+/// bat 的 `-r`／`--line-range`：`a:b`、`a:`、`:b`、`a`。
+fn bat_range(v: &str) -> Option<(i64, Option<i64>)> {
+    match v.split_once(':') {
+        Some((a, b)) => {
+            let a = if a.is_empty() { 1 } else { num(a)?.max(1) };
+            let b = if b.is_empty() { None } else { Some(num(b)?) };
+            Some((a, b))
+        }
+        None => num(v).map(|a| (a.max(1), Some(a))),
+    }
+}
+
+/// 一句讀檔指令（第一個字是讀檔的程式）的檔與範圍；不是讀檔、看不懂回 None。
+fn reader_spans(toks: &[String]) -> Option<(Span, Vec<String>)> {
+    let name = rb_cmd_name(toks.first()?);
+    let args = &toks[1..];
+    let mut files: Vec<String> = Vec::new();
+    let mut opts = true;
+    let mut i = 0;
+    let next = |i: &mut usize| -> Option<String> {
+        *i += 1;
+        args.get(*i).cloned()
+    };
+    let span = match name.as_str() {
+        "cat" => {
+            for t in args {
+                if opts && t == "--" {
+                    opts = false;
+                } else if opts && t.starts_with('-') && t.len() > 1 {
+                    if !t[1..].bytes().all(|c| b"nbsAETvetu".contains(&c)) {
+                        return None;
+                    }
+                } else {
+                    files.push(t.clone());
+                }
+            }
+            Span::Whole
+        }
+        "nl" | "less" | "more" => {
+            const NL_VALUE: &[&str] = &["-b", "-d", "-f", "-h", "-i", "-l", "-n", "-s", "-v", "-w"];
+            while i < args.len() {
+                let t = &args[i];
+                if opts && t == "--" {
+                    opts = false;
+                } else if opts && name != "nl" && t.starts_with('+') {
+                    return None; // less +F、+/pattern：看不懂
+                } else if opts && t.starts_with('-') && t.len() > 1 {
+                    let takes = if name == "nl" { NL_VALUE.contains(&t.as_str()) || (t.starts_with("--") && !t.contains('=') && t != "--no-renumber") } else { false };
+                    if takes {
+                        next(&mut i)?;
+                    }
+                } else {
+                    files.push(t.clone());
+                }
+                i += 1;
+            }
+            Span::Whole
+        }
+        "bat" | "batcat" => {
+            const BAT_VALUE: &[&str] = &["-l", "--language", "-H", "--highlight-line", "--file-name", "--tabs", "--wrap", "--terminal-width", "--theme",
+                "--style", "-m", "--map-syntax", "--italic-text", "--decorations", "--color", "--paging", "--pager", "--diff-context", "--tabs"];
+            let mut ranges = Vec::new();
+            while i < args.len() {
+                let t = args[i].clone();
+                if opts && t == "--" {
+                    opts = false;
+                } else if opts && (t == "-r" || t == "--line-range") {
+                    ranges.push(bat_range(&next(&mut i)?)?);
+                } else if opts && t.starts_with("--line-range=") {
+                    ranges.push(bat_range(&t["--line-range=".len()..])?);
+                } else if opts && t.starts_with("-r") && t.len() > 2 && !t.starts_with("--") {
+                    ranges.push(bat_range(&t[2..])?);
+                } else if opts && t.starts_with('-') && t.len() > 1 {
+                    if BAT_VALUE.contains(&t.as_str()) {
+                        next(&mut i)?;
+                    }
+                } else {
+                    files.push(t);
+                }
+                i += 1;
+            }
+            if ranges.is_empty() { Span::Whole } else { Span::Ranges(ranges) }
+        }
+        "head" | "tail" => {
+            let head = name == "head";
+            let mut span = if head { Span::Head(10) } else { Span::Tail(10) };
+            let lines = |v: &str| -> Option<Span> {
+                if let Some(k) = v.strip_prefix('+') {
+                    return if head { None } else { Some(Span::From(num(k)?.max(1))) };
+                }
+                if let Some(k) = v.strip_prefix('-') {
+                    return if head { Some(Span::Head(-num(k)?)) } else { Some(Span::Tail(num(k)?)) };
+                }
+                let k = num(v)?;
+                Some(if head { Span::Head(k) } else { Span::Tail(k) })
+            };
+            let bytes = |v: &str| -> Option<Span> { if head { num(v).map(Span::Bytes) } else { None } };
+            while i < args.len() {
+                let t = args[i].clone();
+                if opts && t == "--" {
+                    opts = false;
+                } else if opts && (t == "-n" || t == "--lines") {
+                    span = lines(&next(&mut i)?)?;
+                } else if opts && (t == "-c" || t == "--bytes") {
+                    span = bytes(&next(&mut i)?)?;
+                } else if opts && t.starts_with("--lines=") {
+                    span = lines(&t["--lines=".len()..])?;
+                } else if opts && t.starts_with("--bytes=") {
+                    span = bytes(&t["--bytes=".len()..])?;
+                } else if opts && t.starts_with("-n") && t.len() > 2 {
+                    span = lines(&t[2..])?;
+                } else if opts && t.starts_with("-c") && t.len() > 2 {
+                    span = bytes(&t[2..])?;
+                } else if opts && t.len() > 1 && t.starts_with('-') && t[1..].bytes().all(|c| c.is_ascii_digit()) {
+                    span = lines(&t[1..])?;
+                } else if opts && !head && t.len() > 1 && t.starts_with('+') && t[1..].bytes().all(|c| c.is_ascii_digit()) {
+                    span = lines(&t)?;
+                } else if opts && matches!(t.as_str(), "-q" | "-v" | "-z" | "--quiet" | "--silent" | "--verbose" | "--zero-terminated") {
+                } else if opts && t.starts_with('-') && t.len() > 1 {
+                    return None; // -f（follow）、-s、--pid 與其他：看不懂
+                } else {
+                    files.push(t);
+                }
+                i += 1;
+            }
+            span
+        }
+        "sed" | "gsed" => {
+            let mut quiet = false;
+            let mut scripts: Vec<String> = Vec::new();
+            while i < args.len() {
+                let t = args[i].clone();
+                if opts && t == "--" {
+                    opts = false;
+                } else if opts && (t == "--quiet" || t == "--silent") {
+                    quiet = true;
+                } else if opts && (t == "-e" || t == "--expression") {
+                    scripts.push(next(&mut i)?);
+                } else if opts && t.starts_with("--expression=") {
+                    scripts.push(t["--expression=".len()..].to_string());
+                } else if opts && matches!(t.as_str(), "-E" | "-r" | "-s" | "-u" | "-z" | "--posix" | "--debug" | "--regexp-extended" | "--separate" | "--unbuffered") {
+                } else if opts && t.starts_with('-') && !t.starts_with("--") && t.len() > 1 {
+                    let flags = &t[1..];
+                    if flags.contains(['i', 'f']) || !flags.bytes().all(|c| b"nEersuz".contains(&c)) {
+                        return None; // -i（改檔）、-f（腳本檔）、其他：看不懂
+                    }
+                    quiet |= flags.contains('n');
+                    if flags.ends_with('e') {
+                        scripts.push(next(&mut i)?);
+                    }
+                } else if opts && t.starts_with("--") {
+                    return None;
+                } else if scripts.is_empty() {
+                    scripts.push(t);
+                } else {
+                    files.push(t);
+                }
+                i += 1;
+            }
+            if !quiet || scripts.is_empty() {
+                return None; // 不帶 -n 的 sed 會印整檔加上改動：腳本千變萬化，不算
+            }
+            let mut all = Vec::new();
+            for s in &scripts {
+                all.extend(sed_ranges(s)?);
+            }
+            Span::Ranges(all)
+        }
+        _ => return None,
+    };
+    if files.iter().any(|f| odd_file(f)) {
+        return None;
+    }
+    Some((span, files))
+}
+
+/// shell 指令裡讀檔印出的部分（cat、nl、less、more、bat、head、tail、sed -n 的行號範圍；PowerShell 的 Get-Content 整檔）。
+/// 依 `;`、`&&`、`||` 切句，前面的 `cd` 會改變相對路徑的基準；管線裡、輸出導向檔案的句子不算（印出來的不是檔案原文，或沒有印給 agent）。
+/// 看不懂的句子不算，任何一句看不懂基準（`cd $X`）就停在那裡。
+fn shell_reads(tool: &str, cmd: &str) -> Vec<ShellRead> {
+    if cmd.chars().count() > MAX_SHELL_LEN {
+        return Vec::new();
+    }
+    if tool == "PowerShell" {
+        return cat_targets(tool, cmd).into_iter().map(|file| ShellRead { file, base: None, span: Span::Whole }).collect();
+    }
+    let Some(list) = split_list(cmd) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut base: Option<String> = None;
+    for (text, piped) in list {
+        let Some(clean) = strip_stderr_redirects(&text) else { continue };
+        let Ok(mut toks) = py::shlex_split(&clean) else { continue };
+        while toks.first().is_some_and(|t| t.contains('=') && !t.starts_with('-') && !t.starts_with('=')) {
+            toks.remove(0); // LC_ALL=C cat …
+        }
+        let Some(first) = toks.first() else { continue };
+        if matches!(rb_cmd_name(first).as_str(), "cd" | "pushd") {
+            match toks.get(1) {
+                Some(d) if toks.len() == 2 && !odd_file(d) && !d.starts_with('-') => {
+                    let d = path::pp(d);
+                    base = Some(match &base {
+                        Some(b) if !path::is_abs(&d) => path::join(b, &d),
+                        _ => d,
+                    });
+                }
+                _ => break, // cd、cd -、cd $X：之後的相對路徑看不懂
+            }
+            continue;
+        }
+        if piped {
+            continue;
+        }
+        let Some((span, files)) = reader_spans(&toks) else { continue };
+        for file in files {
+            out.push(ShellRead { file, base: base.clone(), span: span.clone() });
+            if out.len() >= MAX_SHELL_READS {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+/// 這次讀取要印幾行、估計多少位元組。行數不知道（超過 5MB）時，整檔與「到結尾」的範圍回 None（一律算超過門檻）。
+fn span_size(span: &Span, info: &Info) -> (Option<i64>, i64) {
+    let size = info.size;
+    let est_lines = |want: i64| -> i64 { size.min((want.max(0) as f64 * info.avg) as i64 + 1) };
+    let Some(total) = info.lines else {
+        return match span {
+            Span::Head(k) if *k >= 0 => (Some(*k), est_lines(*k)),
+            Span::Tail(k) => (Some(*k), est_lines(*k)),
+            Span::Bytes(b) => (Some((*b as f64 / info.avg.max(1.0)).ceil() as i64), size.min(*b)),
+            Span::Ranges(r) if r.iter().all(|(a, b)| *a > 0 && b.is_some()) => {
+                let w = r.iter().map(|(a, b)| (b.unwrap_or(*a) - a + 1).max(0)).sum();
+                (Some(w), est_lines(w))
+            }
+            _ => (None, size.min(MAX_SINGLE_READ)),
+        };
+    };
+    let want = match span {
+        Span::Whole => total,
+        Span::Head(k) if *k < 0 => (total + k).max(0),
+        Span::Head(k) | Span::Tail(k) => (*k).min(total),
+        Span::From(k) => (total - k + 1).max(0),
+        Span::Bytes(b) => return (Some((((*b).min(size)) as f64 / info.avg.max(1.0)).ceil() as i64), size.min(*b)),
+        Span::Ranges(r) => r.iter().map(|(a, b)| {
+            if *a == -1 {
+                return i64::from(total > 0);
+            }
+            let end = b.map_or(total, |b| if b == -1 { total } else { b.min(total) });
+            (end - a + 1).max(0)
+        }).sum::<i64>().min(total),
+    };
+    (Some(want), if want >= total { size } else { est_lines(want) })
+}
+
+/// shell 的讀檔與 grep 類搜尋：回傳擋下的訊息；None＝放行。任何失敗都放行。
+///
+/// 讀檔（[`shell_reads`]）印出的估計位元組數和 Read 記在同一個額度；一次印的行數超過 `whole_file_lines` 時，
+/// enforce 擋下並提示改用 Read 帶 offset／limit 或 `sed -n 'a,bp'`，warn 只記進 warn.log。
 pub fn check_shell(data: &Value, cfg: &Config, ws: &str) -> Option<String> {
     let tool = data.get("tool_name").and_then(Value::as_str)?;
     let ti = ti_of(data)?;
@@ -558,8 +999,8 @@ pub fn check_shell(data: &Value, cfg: &Config, ws: &str) -> Option<String> {
     if role.is_empty() {
         return None;
     }
-    let files = cat_targets(tool, cmd);
-    if files.is_empty() {
+    let reads = shell_reads(tool, cmd);
+    if reads.is_empty() {
         if is_content_grep(tool, cmd) {
             let lim = config::limits(ws)?;
             return charge(data, &role, &lim, SHELL_GREP_BYTES, &format!("shell：{}", py::head(cmd, 60)));
@@ -568,26 +1009,123 @@ pub fn check_shell(data: &Value, cfg: &Config, ws: &str) -> Option<String> {
     }
     let lim = config::limits(ws)?;
     let n = lim.whole_file_lines;
-    if n == 0 {
-        return None;
-    }
-    for f in &files {
-        let Ok(info) = inspect(&resolve(f, data, ws)) else { continue };
-        let Some(info) = info else { continue };
-        if info.lines.is_some_and(|l| l <= n.min(i64::MAX as u64) as i64) {
+    let cap = n.min(i64::MAX as u64) as i64;
+    let mut est: i64 = 0;
+    for r in &reads {
+        let full = match &r.base {
+            Some(b) if !path::is_abs(&path::pp(&r.file)) => resolve(&path::join(b, &r.file), data, ws),
+            _ => resolve(&r.file, data, ws),
+        };
+        let Ok(Some(info)) = inspect(&full) else { continue };
+        let (want, bytes) = span_size(&r.span, &info);
+        est = est.saturating_add(bytes);
+        if n == 0 || want.is_some_and(|w| w <= cap) {
             continue;
         }
+        let f = &r.file;
         let total_txt = match info.lines {
             Some(l) => format!("共 {l} 行"),
             None => format!("超過 {}MB，行數未計", BIG_FILE_BYTES / (1024 * 1024)),
         };
+        let whole = r.span == Span::Whole;
         if !lim.enforce {
-            warn_log(data, &role, "shell_whole_file", vec![("file", json!(f)), ("total_lines", info.lines.map(|l| json!(l)).unwrap_or(Value::Null)), ("threshold", json!(n))]);
-            return None;
+            let rule = if whole { "shell_whole_file" } else { "shell_lines" };
+            warn_log(data, &role, rule, vec![("file", json!(f)), ("lines", want.map(|w| json!(w)).unwrap_or(Value::Null)),
+                ("total_lines", info.lines.map(|l| json!(l)).unwrap_or(Value::Null)), ("threshold", json!(n))]);
+            continue;
         }
-        return Some(format!("{role} 用 shell 整檔印出 {f}：檔案{total_txt}，超過一次讀取的門檻 {n} 行。{}", hint(n)));
+        return Some(if whole {
+            format!("{role} 用 shell 整檔印出 {f}：檔案{total_txt}，超過一次讀取的門檻 {n} 行。{}", shell_hint(n))
+        } else {
+            let w = want.map(|w| format!(" {w} 行")).unwrap_or_else(|| "到結尾".to_string());
+            format!("{role} 用 shell 印出 {f} 的{w}：超過一次讀取的門檻 {n} 行（檔案{total_txt}）。{}", shell_hint(n))
+        });
+    }
+    if est > 0 {
+        return charge(data, &role, &lim, est, &format!("shell：{}", py::head(cmd, 60)));
     }
     None
+}
+
+// ───────── 輪數預算（limits.turns） ─────────
+
+/// 輪數預算這次的結果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Turn {
+    /// 沒有話要說（不套用、還沒到門檻、不是提醒的那一次、任何失敗）。
+    Quiet,
+    /// 放行，並把這段文字送回給 agent（PreToolUse 的 `additionalContext`）。
+    Remind(String),
+    /// enforce 而且超過門檻的 1.5 倍：擋下這次呼叫（exit 2，訊息走 stderr）。
+    Block(String),
+}
+
+/// 到門檻之後每隔幾次再提醒一次。
+pub const TURN_REMIND_EVERY: i64 = 10;
+
+/// enforce 開始擋的次數：門檻的 1.5 倍（無條件進位）。
+pub fn turn_cap(threshold: u64) -> i64 {
+    let t = threshold.min(i64::MAX as u64 / 4) as i64;
+    (t * 3 + 1) / 2
+}
+
+fn turn_note(role: &str, n: i64, t: u64, enforce: bool) -> String {
+    let tail = if enforce {
+        format!("超過 {} 次後只放行讀寫執行紀錄檔與交件。", turn_cap(t))
+    } else {
+        String::new()
+    };
+    format!("agent-workflow 輪數提醒：{role} 已經 {n} 次工具呼叫（門檻 {t}）。把目前確認的發現寫進執行紀錄檔，然後交件；\
+還沒做完的列在信封的 open_questions／derived_work。{tail}（設定：.claude/teams/methodology.json 的 limits.turns）")
+}
+
+/// 數這個 agent 的工具呼叫次數（守門 hook 每次呼叫算一次），到門檻時提醒、enforce 超過 1.5 倍時擋。
+///
+/// 只套模版角色（主 session、使用者自己的 agent、擴充 agent 不算），沒有 agent_id 不算；和讀取預算共用每個 agent 的狀態檔。
+/// `delivering`：這次呼叫是讀寫執行紀錄檔（enforce 擋的時候放行它，否則 agent 交不了件）；只在要擋的時候才呼叫。
+/// 輔助功能：任何失敗（狀態檔讀寫失敗、設定讀不懂）都放行；設定讀不懂照預設（warn）只會提醒、不會擋。
+pub fn count_turn(data: &Value, cfg: &Config, ws: &str, delivering: &dyn Fn() -> bool) -> Turn {
+    let role = role(data, cfg);
+    if role.is_empty() {
+        return Turn::Quiet;
+    }
+    match data.get("agent_id") {
+        Some(Value::String(s)) if !s.is_empty() => {}
+        _ => return Turn::Quiet,
+    }
+    let tc = config::turns(ws);
+    if tc.mode == config::TurnMode::Off {
+        return Turn::Quiet;
+    }
+    let sp = state_path(data);
+    let (mut st, is_new) = load_state(&sp);
+    if is_new {
+        cleanup(&path::parent(&path::parent(&sp)));
+    }
+    st.turns = st.turns.saturating_add(1);
+    if save_state(&sp, &st).is_err() {
+        return Turn::Quiet; // 記不了帳就不提醒也不擋（每次都會是同一個數）
+    }
+    let n = st.turns;
+    let t = tc.threshold(&role);
+    let enforce = tc.mode == config::TurnMode::Enforce;
+    if enforce && n > turn_cap(t) && !delivering() {
+        let runs = if cfg.runs_dir.is_empty() { "_tpm/runs" } else { cfg.runs_dir.trim_end_matches('/') };
+        return Turn::Block(format!("{role} 已經 {n} 次工具呼叫，超過上限 {}（limits.turns 門檻 {t} 的 1.5 倍）：現在只放行讀寫執行紀錄檔\
+（{runs}/<run>/<段>/<label>.md）與交件。請把目前確認的發現寫進執行紀錄檔，然後交件；還沒做完的列在信封的 open_questions／derived_work。\
+（設定：.claude/teams/methodology.json 的 limits.turns）", turn_cap(t)));
+    }
+    let t_i = t.min(i64::MAX as u64) as i64;
+    if n >= t_i && (n - t_i) % TURN_REMIND_EVERY == 0 {
+        return Turn::Remind(turn_note(&role, n, t, enforce));
+    }
+    Turn::Quiet
+}
+
+/// PreToolUse 放行時把提醒送回給 agent 的 stdout：`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": …}}`。
+/// 不帶 `permissionDecision`（不改變權限流程，照常詢問或放行）。依據：<https://code.claude.com/docs/en/hooks>（PreToolUse 的 decision control）。
+pub fn remind_json(text: &str) -> String {
+    py::json_dumps(&json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}}), false)
 }
 
 #[cfg(test)]
@@ -617,5 +1155,49 @@ mod tests {
         assert!(!is_content_grep("Bash", "grep -c foo src"));
         assert!(!is_content_grep("Bash", "grep foo src | wc -l"));
         assert!(is_content_grep("PowerShell", "Select-String foo a.md"));
+    }
+
+    #[test]
+    fn shell_read_spans() {
+        let one = |c: &str| shell_reads("Bash", c).into_iter().map(|r| (r.file, r.base, r.span)).collect::<Vec<_>>();
+        let f = |s: &str| s.to_string();
+        assert_eq!(one("cat -n a.md b.md"), vec![(f("a.md"), None, Span::Whole), (f("b.md"), None, Span::Whole)]);
+        assert_eq!(one("cat a.md 2>&1"), vec![(f("a.md"), None, Span::Whole)]);
+        assert_eq!(one("head -n 30 a.md"), vec![(f("a.md"), None, Span::Head(30))]);
+        assert_eq!(one("head -300 a.md"), vec![(f("a.md"), None, Span::Head(300))]);
+        assert_eq!(one("head a.md"), vec![(f("a.md"), None, Span::Head(10))]);
+        assert_eq!(one("head -n -5 a.md"), vec![(f("a.md"), None, Span::Head(-5))]);
+        assert_eq!(one("tail -n +7 a.md"), vec![(f("a.md"), None, Span::From(7))]);
+        assert_eq!(one("tail -20 a.md"), vec![(f("a.md"), None, Span::Tail(20))]);
+        assert_eq!(one("sed -n '3,9p' a.md"), vec![(f("a.md"), None, Span::Ranges(vec![(3, Some(9))]))]);
+        assert_eq!(one("sed -n -e '3p' -e '10,$p' a.md"), vec![(f("a.md"), None, Span::Ranges(vec![(3, Some(3)), (10, None)]))]);
+        assert_eq!(one("sed -n '5,+3p;20q' a.md"), vec![(f("a.md"), None, Span::Ranges(vec![(5, Some(8))]))]);
+        assert_eq!(one("bat -r 2:40 a.md"), vec![(f("a.md"), None, Span::Ranges(vec![(2, Some(40))]))]);
+        assert_eq!(one("nl -ba a.md"), vec![(f("a.md"), None, Span::Whole)]);
+        assert_eq!(one("cd sub && cat a.md; cd .. && head b.md"),
+            vec![(f("a.md"), Some(f("sub")), Span::Whole), (f("b.md"), Some(f("sub/..")), Span::Head(10))]);
+        // 不算：管線、導向到檔、改檔、follow、看不懂的腳本、變數、指令替換、heredoc
+        for c in ["cat a.md | head", "grep x a.md | head -n 5", "cat a.md > b.md", "sed -i 's/a/b/' a.md", "sed 's/a/b/' a.md", "sed -n '/x/p' a.md",
+            "tail -f a.md", "head -n $N a.md", "cat $F", "cat $(ls)", "cat <<EOF\nx\nEOF", "less +F a.md", "cat 'a.md"] {
+            assert!(one(c).is_empty(), "{c}");
+        }
+        // cd 到看不懂的目錄：之後的都不算
+        assert!(one("cd $D && cat a.md").is_empty());
+    }
+
+    #[test]
+    fn span_sizes() {
+        let info = Info { size: 10_000, lines: Some(100), avg: 100.0 };
+        assert_eq!(span_size(&Span::Whole, &info), (Some(100), 10_000));
+        assert_eq!(span_size(&Span::Head(10), &info).0, Some(10));
+        assert_eq!(span_size(&Span::Head(-30), &info).0, Some(70));
+        assert_eq!(span_size(&Span::Tail(500), &info), (Some(100), 10_000));
+        assert_eq!(span_size(&Span::From(91), &info).0, Some(10));
+        assert_eq!(span_size(&Span::Ranges(vec![(1, Some(5)), (50, None)]), &info).0, Some(56));
+        assert_eq!(span_size(&Span::Ranges(vec![(-1, Some(-1))]), &info).0, Some(1));
+        let big = Info { size: 9_000_000, lines: None, avg: 80.0 };
+        assert_eq!(span_size(&Span::Whole, &big).0, None);
+        assert_eq!(span_size(&Span::Head(20), &big).0, Some(20));
+        assert_eq!(span_size(&Span::From(5), &big).0, None);
     }
 }

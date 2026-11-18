@@ -684,19 +684,27 @@ pub struct ProfileBits {
     pub event_stages: Vec<String>,
     /// `knowledge.repos[].path` 照寫的原文（還沒解析成絕對路徑；不是非空字串的項目不收）。
     pub knowledge_repos: Vec<String>,
+    /// `flow.stages[].id`：自訂段的段名（run 目錄的 `<段>.json` 是閘門資料）。只看形狀、不看其他規則是否合格（寧可多擋）。
+    pub flow_stages: Vec<String>,
 }
 
 /// 讀不到、格式不對一律當作沒有這些設定（回空的）。
 pub fn profile_bits(ws: &str) -> ProfileBits {
     let mut out = ProfileBits::default();
-    let Ok(text) = read_text(&methodology_path(ws)) else { return out };
-    let Ok(Value::Object(doc)) = serde_json::from_str::<Value>(&text) else { return out };
+    let path = methodology_path(ws);
+    let Ok(text) = read_text(&path) else { return out };
+    let Ok(doc) = serde_json::from_str::<Value>(&text) else { return out };
+    // 繼承（extends）：沒有時不碰檔案系統；解析失敗照「讀不懂當作沒設定」
+    let Ok(Value::Object(doc)) = crate::profile::resolve_str(&path, doc) else { return out };
     if let Some(Value::Object(ev)) = doc.get("events") {
         out.event_stages = ev.keys().filter(|k| {
             let b = k.as_bytes();
             !b.is_empty() && b.len() <= 40 && b[0].is_ascii_lowercase()
                 && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
         }).cloned().collect();
+    }
+    if let Some(Value::Array(list)) = doc.get("flow").and_then(|f| f.get("stages")) {
+        out.flow_stages = list.iter().take(MAX_FLOW_STAGES).filter_map(|x| x.get("id").and_then(Value::as_str)).filter(|id| crate::stages::flow_id_ok(id)).map(str::to_string).collect();
     }
     if let Some(Value::Array(repos)) = doc.get("knowledge").and_then(|k| k.get("repos")) {
         for r in repos.iter().take(MAX_KNOWLEDGE_REPOS) {
@@ -707,6 +715,9 @@ pub fn profile_bits(ws: &str) -> ProfileBits {
     }
     out
 }
+
+/// 守門只看 `flow.stages` 的前幾筆（規則上限是 8；多看一些是為了「宣告超過上限」時照樣擋，清單再長也不讓 hook 變慢）。
+pub const MAX_FLOW_STAGES: usize = 64;
 
 /// 守門只看 `knowledge.repos` 的前幾筆（每一筆都要解析路徑；清單再長也不讓 hook 變慢）。
 pub const MAX_KNOWLEDGE_REPOS: usize = 32;
@@ -734,9 +745,12 @@ fn limit_int(v: Option<&Value>) -> u64 {
 
 /// None＝整個功能關閉：沒有 methodology.json、讀不懂、沒有 limits 鍵、沒寫 mode、mode 是 off 或不認得的值。
 pub fn limits(ws: &str) -> Option<Limits> {
-    let text = read_text(&methodology_path(ws)).ok()?;
+    let path = methodology_path(ws);
+    let text = read_text(&path).ok()?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let data: Value = serde_json::from_str(text).ok()?;
+    // 繼承（extends）解析失敗＝讀不懂＝關閉（讀取預算的任何例外都放行，I9）
+    let data = crate::profile::resolve_str(&path, data).ok()?;
     let lim = data.as_object()?.get("limits")?.as_object()?;
     let mode = lim.get("mode")?.as_str()?;
     if mode != "enforce" && mode != "warn" {
@@ -763,6 +777,80 @@ pub fn limits(ws: &str) -> Option<Limits> {
         default_budget: limit_int(rb.get("default")),
         roles,
     })
+}
+
+/// 輪數預算的模式（methodology.json 的 `limits.turns.mode`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnMode {
+    Off,
+    Warn,
+    Enforce,
+}
+
+/// 輪數預算設定（methodology.json 的 `limits.turns`）。和讀取預算（[`limits`]）各自獨立：`limits.mode` 沒寫時這個照樣有效。
+#[derive(Debug, Clone)]
+pub struct Turns {
+    pub mode: TurnMode,
+    pub default: u64,
+    pub roles: Vec<(String, u64)>,
+}
+
+/// 沒寫 `limits.turns` 時的門檻（工具呼叫次數）。
+pub const TURNS_DEFAULT: u64 = 50;
+/// 門檻的上下限：超出範圍的值一律退回預設。
+pub const TURNS_MIN: u64 = 10;
+pub const TURNS_MAX: u64 = 500;
+
+impl Turns {
+    /// 預設：只提醒、門檻 [`TURNS_DEFAULT`]。
+    pub fn builtin() -> Turns {
+        Turns { mode: TurnMode::Warn, default: TURNS_DEFAULT, roles: Vec::new() }
+    }
+
+    /// 這個角色的門檻。
+    pub fn threshold(&self, role: &str) -> u64 {
+        self.roles.iter().find(|(r, _)| r == role).map(|(_, n)| *n).unwrap_or(self.default)
+    }
+}
+
+fn turn_int(v: Option<&Value>) -> Option<u64> {
+    match v {
+        Some(Value::Number(n)) => n.as_u64().filter(|n| (TURNS_MIN..=TURNS_MAX).contains(n)),
+        _ => None,
+    }
+}
+
+/// 讀 `limits.turns`。沒有 methodology.json、讀不懂、沒寫或寫錯：一律退回預設（warn、50）；個別欄位不合法只退回那一欄。
+pub fn turns(ws: &str) -> Turns {
+    let mut out = Turns::builtin();
+    let path = methodology_path(ws);
+    let Ok(text) = read_text(&path) else { return out };
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let Ok(data) = serde_json::from_str::<Value>(text) else { return out };
+    let Ok(data) = crate::profile::resolve_str(&path, data) else { return out };
+    let Some(t) = data.get("limits").and_then(|l| l.get("turns")).and_then(Value::as_object) else { return out };
+    out.mode = match t.get("mode").and_then(Value::as_str) {
+        Some("off") => TurnMode::Off,
+        Some("enforce") => TurnMode::Enforce,
+        _ => TurnMode::Warn,
+    };
+    if let Some(n) = turn_int(t.get("default")) {
+        out.default = n;
+    }
+    if let Some(Value::Object(roles)) = t.get("roles") {
+        for (k, v) in roles {
+            let Some(n) = turn_int(Some(v)) else { continue };
+            if k.is_empty() || k.starts_with('_') {
+                continue;
+            }
+            let name = alias(role_name(py::strip(k))).to_string();
+            match out.roles.iter_mut().find(|(r, _)| *r == name) {
+                Some(slot) => slot.1 = n,
+                None => out.roles.push((name, n)),
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

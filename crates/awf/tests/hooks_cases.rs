@@ -579,6 +579,10 @@ impl<'a> Runner<'a> {
             let msg = match s(&st["fn"]) {
                 "check_read" => awf_core::hooks::read_budget::check_read(&data, &cfg, &ws),
                 "check_shell" => awf_core::hooks::read_budget::check_shell(&data, &cfg, &ws),
+                "count_turn" => match awf_core::hooks::read_budget::count_turn(&data, &cfg, &ws, &|| false) {
+                    awf_core::hooks::read_budget::Turn::Block(m) => Some(m),
+                    _ => None,
+                },
                 other => return Err(format!("不認得的 fn：{other}")),
             };
             took.push(t0.elapsed().as_secs_f64() * 1000.0);

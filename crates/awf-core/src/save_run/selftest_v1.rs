@@ -406,6 +406,62 @@ pub fn run(ctx: &Ctx, out: &mut String) -> bool {
             && j["stages"].as_array().is_some_and(|a| a.iter().all(|s| s["skipped"].is_boolean() && s["spec_issues"] == 0 && s["link_gaps"] == 0)),
         snap + &format!("{errs:?}{skipped:?}{want:?}") + &o
     );
+    // ── 1.2 人答覆後往下走（needs_decision 的段）
+    t.n += 1;
+    let d = format!("{proj}/_runs/v{}", t.n);
+    t.call(&["init", &d, "--event", "sdlc", "--target", &format!("{proj}/repo"), "--requirement", "r"], None);
+    let q = |text: &str| json!({"question": text, "blocking": true, "why_blocking": "w", "options": [{"choice": "A", "cost": "x"}, {"choice": "B", "cost": "y"}], "recommendation": "A", "default_applied": "none"});
+    let plain_plan = json!({"stage": "plan", "epic_dir": t.epic_dir(), "intent": env(json!({"documents": [{"path": "specs/refund/intent.md", "kind": "intent", "audience": "owner"}]}))});
+    let mut asked = plain_plan.clone();
+    asked["intent"]["status"] = json!("needs_decision");
+    asked["intent"]["open_questions"] = json!([q("要不要含已刪除的訂單"), q("檔名格式")]);
+    let (_, o0) = t.call(&["stage", &d, "plan"], Some(&asked));
+    let st0 = t.st(&d, "plan")["status"].clone();
+    let (c1, o1) = t.call(&["approve", &d, "plan", "--by", "human", "--at", "t1"], None);
+    let (c2, o2) = t.call(&["approve", &d, "plan", "--by", "human", "--at", "t1", "--answer", "#1=不含"], None);
+    let (c3, o3) = t.call(&["approve", &d, "plan", "--by", "policy", "--at", "t1", "--note", "p", "--answer", "#1=不含", "--answer", "#2=日期"], None);
+    let (c4, o4) = t.call(&["approve", &d, "plan", "--by", "human", "--at", "t1", "--answer", "#1=不含", "--answer", "#2=日期", "--answer", "#9=多的"], None);
+    let untouched = t.st(&d, "plan").get("decided").is_none() && t.st(&d, "plan").get("approved").is_none() && t.st(&d, "plan")["status"] == "needs_decision";
+    check!(
+        "A1 人答覆：沒帶答覆、少答、政策核准、序號對不上 → 都拒絕，什麼都不記",
+        st0 == "needs_decision" && c1 != 0 && c2 != 0 && o2.contains("#2") && c3 != 0 && c4 != 0 && untouched,
+        o0 + &o1 + &o2 + &o3 + &o4
+    );
+    let before = slurp(&format!("{d}/plan.json"));
+    let (c5, o5) = t.call(&["approve", &d, "plan", "--by", "human", "--at", "t2", "--answer", "#1=不含", "--answer", "檔名格式=日期"], None);
+    let st = t.st(&d, "plan");
+    let (c6, o6) = t.call(&["approve", &d, "plan", "--by", "policy", "--at", "t3", "--note", "p"], None);
+    check!(
+        "A1 人答覆：每一題都答 → 視為人工核准；run.json 記人已決定（哪幾題、誰、時間），結果檔不改；之後不能政策核准",
+        c5 == 0 && st["status"] == "done" && st["approved"]["kind"] == "human" && st["decided"]["by"] == "human" && st["decided"]["at"] == "t2"
+            && st["decided"]["answers"].as_array().is_some_and(|a| a.len() == 2) && slurp(&format!("{d}/plan.json")) == before && c6 != 0,
+        o5 + &o6
+    );
+    // 不是只差問題沒答（halted）：這條路不適用
+    t.n += 1;
+    let d = format!("{proj}/_runs/v{}", t.n);
+    t.call(&["init", &d, "--event", "sdlc", "--target", &format!("{proj}/repo"), "--requirement", "r"], None);
+    let mut halted = asked.clone();
+    halted["halted"] = json!(true);
+    t.call(&["stage", &d, "plan"], Some(&halted));
+    let (c7, o7) = t.call(&["approve", &d, "plan", "--by", "human", "--at", "t1", "--answer", "#1=不含", "--answer", "#2=日期"], None);
+    check!("A1 人答覆：halted 的段不適用（照舊拒絕）", c7 != 0 && t.st(&d, "plan").get("decided").is_none(), o7);
+    // ── 1.2 沒人確認過的暫定做法、被略過的子任務：不能政策核准
+    t.n += 1;
+    let d = format!("{proj}/_runs/v{}", t.n);
+    t.call(&["init", &d, "--event", "sdlc", "--target", &format!("{proj}/repo"), "--requirement", "r"], None);
+    t.call(&["stage", &d, "plan"], Some(&plain_plan));
+    let (c8, o8) = t.call(&["approve", &d, "plan", "--by", "human", "--at", "t1"], None);
+    let mut data = load(&t.ctx, &d).unwrap_or(Value::Null);
+    let holds_none = human::run_holds(&data, false).is_empty();
+    data["awf"] = json!({"unconfirmed": [{"stage": "deliver", "question": "q", "applied": "A", "auto": true}], "skipped_subtasks": [{"id": "t2", "by": "human", "at": "t", "reason": "r"}]});
+    let holds = human::run_holds(&data, false);
+    let holds_ack = human::run_holds(&data, true);
+    check!(
+        "C／A4 待確認事項：沒有紀錄時不擋；有暫定做法一律擋，略過的子任務要人當下確認",
+        c8 == 0 && holds_none && holds.len() == 2 && holds_ack.len() == 1 && holds_ack[0].contains("暫定做法"),
+        o8 + &format!("{holds:?}{holds_ack:?}")
+    );
     let _ = std::fs::remove_dir_all(&tmp);
     ok_all
 }

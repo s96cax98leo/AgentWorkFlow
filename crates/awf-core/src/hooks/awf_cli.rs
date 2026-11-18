@@ -49,6 +49,10 @@ const GIT_INJECT: &[&str] = &["--output", "--upload-pack", "--receive-pack", "--
 const GIT_PASSING: &[&str] = &["recipe", "check-rules", "sync-branch", "locate", "cost", "deliverables", "kb"];
 const STATE_VERBS: &[&str] = &["start", "next", "done", "approve", "render", "handoff"];
 const HELP: &[&str] = &["-h", "--help"];
+/// `awf <子指令> --help`（唯一的參數）只印說明、不做別的事的子指令（逐一實跑對過）。不在清單裡的照原本的規則：
+/// start／next／done／approve／render／handoff 會把 --help 當成一般參數往下跑，build 會照樣重建，所以不放。
+const HELP_HONORED: &[&str] = &["save-run", "pack", "state", "publish", "init", "merge-gate", "sync-branch", "watch", "spec", "deliverables",
+    "kb", "kg", "program", "ci", "script", "locate", "recipe", "checklist", "run-brief", "golden", "tokens", "scrub", "cost"];
 
 const SHELL_NAMES: &[&str] = &["bash", "sh", "zsh", "dash", "ksh", "fish", "busybox"];
 const CMD_WRAPPERS: &[&str] = &["sudo", "command", "env", "nohup", "time", "nice", "timeout", "exec", "builtin", "stdbuf"];
@@ -993,7 +997,19 @@ impl Call {
             }
             return if self.forwarded { Some(Deny::Unknown(NOTE_FORWARD.to_string())) } else { None };
         }
+        if !self.forwarded && self.only_help() {
+            return None;
+        }
         self.sub_deny(steward).or_else(|| self.flag_deny())
+    }
+
+    /// 只印說明的呼叫：`awf help`（不認得的子指令，只印用法）、`awf <子指令> --help／-h`（只有這一個參數，
+    /// 而且那個子指令真的把它當說明，見 [`HELP_HONORED`]）。
+    fn only_help(&self) -> bool {
+        if self.sub == "help" {
+            return true;
+        }
+        self.args.len() == 1 && has(HELP, &self.args[0]) && has(HELP_HONORED, &self.sub)
     }
 
     fn sub_deny(&self, steward: bool) -> Option<Deny> {
@@ -1141,6 +1157,14 @@ mod tests {
         assert!(d("awf spec ids --root x --retire y").is_some());
         assert_eq!(d("awf spec ids --root x --json"), None);
         assert_eq!(d("awf watch"), Some(Deny::Watch));
+        // 只印說明的放；不認 --help 的子指令、多帶參數、轉呼叫照舊
+        for ok in ["awf help", "awf save-run --help", "awf pack -h", "awf init --help", "awf state --help", "awf publish --help"] {
+            assert_eq!(d(ok), None, "{ok}");
+        }
+        assert_eq!(d("awf next --help"), Some(Deny::State("next".into())));
+        assert_eq!(d("awf build --help"), Some(Deny::Build));
+        assert_eq!(d("awf save-run approve --help"), Some(Deny::SaveRun("approve".into())));
+        assert!(calls("xargs awf save-run --help")[0].team_deny(false).is_some());
         assert_eq!(d("awf bogus"), Some(Deny::Unknown("bogus".into())));
         assert_eq!(d("awf $X"), Some(Deny::Unknown("$X".into())));
     }

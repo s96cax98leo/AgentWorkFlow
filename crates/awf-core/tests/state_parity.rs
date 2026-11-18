@@ -104,7 +104,19 @@ impl Stage {
     }
 
     fn norm(&self, text: &str) -> String {
-        text.replace(&self.td, "@TMP@").replace(&self.src, "@SRC@")
+        let text = text.replace(&self.td, "@TMP@").replace(&self.src, "@SRC@");
+        // 產生的腳本的雜湊（run.json 的 awf.pending.script_sha1、awf.last_script）：腳本裡內嵌暫存目錄的絕對路徑，每次跑都不同，換成 @SHA1@ 再比
+        if !text.contains("script_sha1") && !text.contains("last_script") {
+            return text;
+        }
+        use std::sync::OnceLock;
+        static RE: OnceLock<(regex::Regex, regex::Regex, regex::Regex)> = OnceLock::new();
+        let (one, block, hex) = RE.get_or_init(|| {
+            let re = |p: &str| regex::Regex::new(p).expect("正規式");
+            (re(r#""script_sha1":\s*"[0-9a-f]{40}""#), re(r#""last_script":\s*\{[^{}]*\}"#), re(r#""[0-9a-f]{40}""#))
+        });
+        let text = one.replace_all(&text, "\"script_sha1\": \"@SHA1@\"");
+        block.replace_all(&text, |c: &regex::Captures| hex.replace_all(&c[0], "\"@SHA1@\"").into_owned()).into_owned()
     }
 
     fn norm_json(&self, v: &Value) -> Value {
@@ -428,7 +440,7 @@ fn run_steps(exp: &Value, st: &Stage) -> Tally {
     t
 }
 
-/// 產生的 12 支腳本用 node 乾跑（check_workflows.mjs 載入 plugin/workflow-templates/scenarios/ 的情境）。沒有 node 就略過。
+/// 產生的 13 支腳本用 node 乾跑（check_workflows.mjs 載入 plugin/workflow-templates/scenarios/ 的情境）。沒有 node 就略過。
 fn dry_run(st: &Stage) -> Option<String> {
     if std::process::Command::new("node").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
         return None;
@@ -488,5 +500,5 @@ fn state_matches_python() {
     assert!(t.runs >= 400, "指令步數不對：{}", t.runs);
     assert!(t.calls >= 70, "函式呼叫數不對：{}", t.calls);
     assert!(t.bad.is_empty(), "{} 步不同（共 {} 步）：\n{}", t.bad.len(), t.runs + t.calls, t.bad.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
-    assert_eq!(rendered, 12, "render --all 要產生 12 支腳本");
+    assert_eq!(rendered, 13, "render --all 要產生 13 支腳本");
 }
