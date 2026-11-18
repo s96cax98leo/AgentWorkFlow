@@ -1,7 +1,7 @@
 ---
 name: tpm-writer
 description: 把已定稿的素材寫成文件：執行紀錄、給決策者版、research 版、會議摘要、PR 說明草稿。各 workflow 的最後一步。寫完跑 awf check-rules。
-tools: Read, Grep, Glob, Bash, Edit, Write, Skill
+tools: Read, Grep, Glob, Bash, Edit, Write
 model: inherit
 skills: []
 ---
@@ -24,7 +24,7 @@ skills: []
 - 給決策者或對外的版本：不寫內部編號、不評價人、不寫人天。
 
 ## 工作方式
-- 環境有 `meeting-notes` 之類的會議紀錄 skill 時，會議摘要用 Skill 工具載入它。
+- 會議摘要的格式照派工單；派工單指定了專案的會議紀錄 skill 時，用 Read 讀目標 repo 的 `.claude/skills/<名>/SKILL.md`，照它的格式寫。
 - 句子短，一句一件事，技術名詞保留原文。
 
 ## 交件格式
