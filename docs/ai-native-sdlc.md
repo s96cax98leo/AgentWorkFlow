@@ -204,7 +204,7 @@ build 完、test 前跑一次；merge 段因 PR 落後 base 或有衝突回傳 `
 - commit 格式照 profile 的 `conventions.commit`；default profile 是 Conventional Commits：`docs(<epic>): …`、`test(<story>): …`、`feat(<story>): …`、`fix(<story>): …`。profile 設了 `check_regex` 時，`awf check-rules --git` 會檢查標題。
 - commit 結尾只加 `{{ATTRIBUTION_LINE}}`。
 - 新分支只用允許的前綴（`{{BRANCH_PREFIX}}` 等，見 `rules.md`）；不 force push、不 `--no-verify`。
-- 改寫歷史前先留備份分支，改寫後更新文件裡引用的 SHA。
+- 改寫歷史前先留備份（`refs/backup/…` 的 ref，或本機的 `backup/…` 分支，見 `rules.md` 規則 21），改寫後更新文件裡引用的 SHA。
 
 ## 7. 回到 SDLC 的入口
 

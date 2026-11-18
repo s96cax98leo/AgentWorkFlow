@@ -278,6 +278,124 @@ pub fn split_heredocs(text: &str) -> (String, Vec<String>) {
     (cmd.join("\n"), bodies)
 }
 
+/// 整條指令去掉「界線加了引號的 heredoc」的內文（`cat > a.md <<'EOF' … EOF`：shell 不會在內文裡做指令替換，
+/// 內文裡 markdown 的反引號不是指令）。沒有可去掉的回 None。
+///
+/// 比 [`split_heredocs`] 保守：`<<` 要在引號外、不在註解裡；找不到結尾界線的不去掉（整段照舊當指令）；
+/// 界線沒加引號的內文照舊留著（裡面的指令替換會執行）。
+pub fn strip_quoted_heredocs(text: &str) -> Option<String> {
+    if !text.contains("<<") {
+        return None;
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut keep: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut changed = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        keep.push(line);
+        i += 1;
+        let marks = heredoc_marks_unquoted(line);
+        if marks.is_empty() {
+            continue;
+        }
+        // 依序找每個 heredoc 的結尾界線；有一個找不到就整段不動
+        let mut j = i;
+        let mut bodies: Vec<(usize, usize, bool)> = Vec::new(); // （內文開頭, 結尾界線那一行, 加了引號）
+        let mut complete = true;
+        for (mark, quoted, dash) in &marks {
+            let start = j;
+            let end = (j..lines.len()).find(|k| {
+                let probe = if *dash { lines[*k].trim_start_matches('\t') } else { lines[*k] };
+                probe.trim_end_matches('\r') == mark
+            });
+            match end {
+                Some(e) => {
+                    bodies.push((start, e, *quoted));
+                    j = e + 1;
+                }
+                None => {
+                    complete = false;
+                    break;
+                }
+            }
+        }
+        if !complete {
+            continue;
+        }
+        for (start, end, quoted) in bodies {
+            if quoted {
+                changed |= end > start;
+            } else {
+                keep.extend_from_slice(&lines[start..end]);
+            }
+            keep.push(lines[end]);
+        }
+        i = j;
+    }
+    if changed { Some(keep.join("\n")) } else { None }
+}
+
+/// 一行裡在引號外、註解前的 heredoc 界線（同 [`heredoc_marks`] 的格式）。
+fn heredoc_marks_unquoted(line: &str) -> Vec<(String, bool, bool)> {
+    let ch: Vec<char> = line.chars().collect();
+    let mut q = '\0';
+    let mut cut = ch.len();
+    let mut starts: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < ch.len() {
+        let c = ch[i];
+        if q != '\0' {
+            if c == '\\' && q == '"' {
+                i += 2;
+                continue;
+            }
+            if c == q {
+                q = '\0';
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\\' => {
+                i += 2;
+                continue;
+            }
+            '\'' | '"' => q = c,
+            '#' if i == 0 || ch[i - 1].is_whitespace() || matches!(ch[i - 1], ';' | '&' | '|' | '(') => {
+                cut = i;
+                break;
+            }
+            '<' if ch.get(i + 1) == Some(&'<') => {
+                if ch.get(i + 2) != Some(&'<') && (i == 0 || ch[i - 1] != '<') {
+                    starts.push(i);
+                }
+                // 跳過整串 <（<<< 是 here-string）
+                while i < ch.len() && ch[i] == '<' {
+                    i += 1;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if q != '\0' || starts.is_empty() {
+        return Vec::new(); // 引號沒關：看不懂，不當成 heredoc
+    }
+    let mut out = Vec::new();
+    for s in starts {
+        if s >= cut {
+            break;
+        }
+        let rest: String = ch[s..cut].iter().collect();
+        if let Some(m) = heredoc_marks(&rest).into_iter().next() {
+            out.push(m);
+        }
+    }
+    out
+}
+
 fn collect(seg: &str, depth: usize, out: &mut Vec<String>, over: &mut bool) {
     if !has_subst(seg) {
         return;
@@ -376,5 +494,17 @@ mod tests {
         assert_eq!(cmd, "a <<-X\nc <<< d\ne");
         assert_eq!(bodies, vec!["\tb"]);
         assert_eq!(split_heredocs("a <<E\nb"), ("a <<E".to_string(), vec!["b".to_string()]));
+    }
+
+    #[test]
+    fn quoted_heredoc_bodies() {
+        assert_eq!(strip_quoted_heredocs("cat > a <<'EOF'\n`x` $(y)\nEOF\nls").as_deref(), Some("cat > a <<'EOF'\nEOF\nls"));
+        assert_eq!(strip_quoted_heredocs("cat <<\"E\" <<F\nq\nE\n$(u)\nF").as_deref(), Some("cat <<\"E\" <<F\nE\n$(u)\nF"));
+        assert_eq!(strip_quoted_heredocs("cat > a <<EOF\n`x`\nEOF"), None); // 沒加引號：內文會做指令替換
+        assert_eq!(strip_quoted_heredocs("cat > a <<'EOF'\n`x`"), None); // 沒有結尾界線
+        assert_eq!(strip_quoted_heredocs("echo \"<<'E'\"\n$(x)\nE"), None); // 引號裡的 <<
+        assert_eq!(strip_quoted_heredocs("# <<'E'\n$(x)\nE"), None); // 註解裡的 <<
+        assert_eq!(strip_quoted_heredocs("cat <<<'E'\n$(x)\nE"), None); // here-string
+        assert_eq!(strip_quoted_heredocs("\tcat <<-'E'\n\t`x`\n\tE").as_deref(), Some("\tcat <<-'E'\n\tE"));
     }
 }
