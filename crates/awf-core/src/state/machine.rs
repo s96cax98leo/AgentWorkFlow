@@ -122,9 +122,16 @@ pub fn highlights(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str
             h.insert("provisional".into(), Value::Array(prov));
         }
     }
-    for k in ["missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans", "custom_script", "override_script", "manual_output", "waves"] {
+    for k in ["missing", "refuted", "reused", "models", "gate", "halt_reason", "next", "located_by", "test_first", "sub_plans", "custom_script", "override_script", "manual_output", "edited_script", "waves"] {
         if let Some(v) = res.get(k).filter(|v| present(v)) {
             h.insert(k.to_string(), v.clone());
+        }
+    }
+    if stage == "plan" {
+        // 修正輪的結果：有角度沒有重做調研時多一行提醒（沒有時這個動作逐字不變）
+        if let Some(note) = human::revise_note(&res) {
+            h.insert("round".into(), json!("revise"));
+            h.insert("revise_note".into(), json!(note));
         }
     }
     if let Some(Value::Object(angles)) = res.get("angles") {
@@ -288,6 +295,11 @@ pub fn gate_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &st
         "approve": format!("{NEXT_CMD} approve --run {run_arg} {stage} --by <誰核准的> [--answer \"<問題>=<答覆>\"]… [--accept-defaults]"),
         "cost": format!("awf cost --project . --run-dir {run_arg}"),
     });
+    // 產生的腳本被改過（awf done 標的 edited_script）：說明放在最前面（沒有標記時這個動作逐字不變）
+    if let Some(e) = act.get("highlights").and_then(|h| h.get("edited_script")).cloned() {
+        let say = format!("{}。{}", human::edited_note(stage, &e), py::s(py::idx(&act, "say")?));
+        py::obj_mut(&mut act)?.insert("say".into(), json!(say));
+    }
     // 自訂段（profile 的 flow）與給人看的段名：有才加欄位（沒有 flow 的專案這個動作逐字不變）
     let flow = flow_of(env);
     let m = py::obj_mut(&mut act)?;
@@ -637,6 +649,12 @@ pub fn halted_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &
         act.insert("answer".into(), json!(format!("{NEXT_CMD} approve --run {run_arg} {stage} --by <誰答的> {}", blocking.iter().map(|b| format!("--answer \"{}=<答覆>\"", s_or(b.get("id").unwrap_or(&Value::Null)))).collect::<Vec<_>>().join(" "))));
         act.insert("blocking".into(), Value::Array(blocking));
     }
+    if stage == "plan" && res.get("round").and_then(Value::as_str) == Some("revise") {
+        // 停下的是修正輪：retry 會跑完整的 plan（含調研）；要再跑一次修正輪用 revise 的指令
+        act.insert("revise".into(), json!(format!("{NEXT_CMD} next --run {run_arg} --revise")));
+        let say = format!("{} 這一段停下的是 plan 的修正輪：要再跑一次修正輪用 revise 的指令；retry 的指令會跑完整的 plan（重做調研）。", s_or(act.get("say").unwrap_or(&Value::Null)));
+        act.insert("say".into(), json!(say));
+    }
     match workflow_action(env, run, run_arg, data, stage, workflow, plugin, false) {
         Ok(_) => {
             // 只給指令：腳本要由 awf next --retry 重新備（參數、資料包、pending 都在那時候更新），不能拿舊腳本直接跑
@@ -726,7 +744,9 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
     if !forced_wf.is_empty() && forced_wf != own && !crate::stages::alt_templates_of(stage).contains(&forced_wf) {
         return awf_err(format!("{stage} 段不能用 {forced_wf}"));
     }
-    if status == "done" && (custom || py::truthy(py::get(&st, "gate")?)) && !py::truthy(py::get(&st, "approved")?) && forced_wf.is_empty() {
+    // plan 的修正輪（--revise；條件由 cmd_next 的 human::revise_setup 先判過）：plan 已經有結果、在等核准時也要重跑，不停在閘門
+    let revise = stage == "plan" && has(argv, "--revise") && human::revise_answers(data).is_some();
+    if status == "done" && (custom || py::truthy(py::get(&st, "gate")?)) && !py::truthy(py::get(&st, "approved")?) && forced_wf.is_empty() && !revise {
         let Some(refused) = try_policy(env, run, data, stage)? else {
             let rest: Vec<String> = argv.iter().filter(|a| *a != "--retry").cloned().collect();
             return decide(env, run, run_arg, data, plugin, &rest);
@@ -1022,7 +1042,7 @@ pub fn handoff_text(env: &Env, run: &str, run_arg: &str, data: &Value) -> R<Stri
 pub fn text_of(act: &Value) -> R<String> {
     let stage = py::get(act, "stage")?;
     let mut lines = vec![format!("動作：{}{}", py::s(py::get(act, "action")?), if py::truthy(stage) { format!("（{} 段）", py::s(stage)) } else { String::new() })];
-    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("answer", "答覆"), ("retry", "重跑"), ("merge", "合併"), ("say", "說明"), ("approver", "核准者"), ("approve", "核准"), ("publish", "推送"), ("preview", "試跑"), ("apply", "執行"), ("skip", "略過")] {
+    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("answer", "答覆"), ("retry", "重跑"), ("revise", "修正輪"), ("merge", "合併"), ("say", "說明"), ("approver", "核准者"), ("approve", "核准"), ("publish", "推送"), ("preview", "試跑"), ("apply", "執行"), ("skip", "略過")] {
         let v = py::get(act, k)?;
         if py::truthy(v) {
             lines.push(format!("{label}：{}", py::s(v)));

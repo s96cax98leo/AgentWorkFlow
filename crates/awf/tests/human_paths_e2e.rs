@@ -3,6 +3,8 @@
 //! - A1：段停在 needs_decision，人把每一題 blocking 都答了就往下走；少答、對不上、`--by policy` 都被拒。
 //! - A3：直接存檔的結果和 workflow 實際回傳的不一致 → 標成非標準、政策核准被拒。
 //! - A4：build 續跑時略過子任務；被依賴的不能單獨略過；略過之後不能政策核准。
+//! - A6：`awf next` 產生的腳本被手改之後才執行 → 標成非標準（`edited_script`），政策核准被拒、人可以核准。
+//! - A7：plan 的修正輪（`awf next --revise`）：人答覆 → 只改 intent 再複查 → plan 的核准清掉、要人重新核准。
 //! - A5：halted 的 `retry` 只給指令；沒先跑 `awf next --retry` 就重跑舊腳本時，`awf done` 只在分得清楚時採用。
 //! - B：本機合併（`conventions.merge.mode: local`）從 deliver 核准走到結案；審過的 commit 不在主線時不算完成。
 //! - C：`decisions.auto_accept` 開啟後照建議先做、下一個閘門列出；plan 與 high risk 不適用；關閉時輸出逐字不變。
@@ -468,6 +470,7 @@ fn a5_done_after_rerunning_the_old_script() {
     let d = p.run_json(run);
     assert_eq!((d["stages"]["plan"]["status"].as_str(), d["stages"]["plan"]["wf_run"]["id"].as_str()), (Some("done"), Some("wf_2")), "{d}");
     assert!(load(&p.dir.join(run).join("plan.json")).get("manual_output").is_none());
+    assert!(load(&p.dir.join(run).join("plan.json")).get("edited_script").is_none(), "舊腳本沒被改過（和上一次 next 產生的相同）：退路取得的仍是標準結果");
 
     // 兩筆以上：不猜，交人
     let run2 = "_tpm/runs/r2";
@@ -487,6 +490,141 @@ fn a5_done_after_rerunning_the_old_script() {
     // 已經 done 的段沒有 pending 時不走退路
     let r = p.awf(&["done", "--run", run, "--stage", "plan", "--no-next"]);
     assert!(r.code != 0 && r.all().contains("找不到這一段 workflow 的回傳"), "{}", r.all());
+}
+
+/// A6：`awf next` 產生的腳本被手改之後才執行 → 非標準結果：政策核准被拒、人可以核准；重新產生腳本照跑才回到標準結果。
+#[test]
+fn a6_edited_script_is_marked_nonstandard() {
+    let p = Proj::new("a6");
+    let run = "_tpm/runs/r1";
+    p.plan_approved(run);
+    let a = p.walk_to(run, "run_workflow:test", SHA);
+    let script = a["script"].as_str().unwrap().to_string();
+    let sha = p.run_json(run)["awf"]["pending"]["script_sha1"].as_str().expect("next 要記下腳本的雜湊").to_string();
+    assert_eq!(sha.len(), 40);
+    // 主 session 手改腳本再執行
+    let file = p.dir.join(&script);
+    let made = std::fs::read_to_string(&file).unwrap();
+    put(&file, &format!("{made}\n// 手改：少派一個 agent\n"));
+    p.record("wf_t1", &script, &p.result(run, "test", SHA));
+    let r = p.awf(&["done", "--run", run, "--no-next"]);
+    assert_eq!(r.code, 0, "改過的腳本跑出來的結果照樣能存：{}", r.all());
+    assert!(r.all().contains("被改過") && r.all().contains("awf next --retry"), "{}", r.all());
+    let saved = load(&p.dir.join(run).join("test.json"));
+    assert!(saved["edited_script"]["why"].as_str().is_some_and(|w| w.contains("腳本檔的內容")), "{saved}");
+    assert!(p.run_json(run)["awf"]["nonstandard"]["test"]["edited"].is_object());
+    // 閘門：說明與重點都列出；政策核准被拒、人可以核准
+    let g = p.next(run, &[]);
+    assert_eq!((g["action"].as_str(), g["stage"].as_str()), (Some("gate"), Some("test")), "{g}");
+    assert!(g["highlights"]["edited_script"].is_object() && g["say"].as_str().is_some_and(|x| x.contains("被改過")), "{g}");
+    let r = p.awf(&["save-run", "approve", run, "test", "--by", "policy", "--at", "2026-11-18T00:00:00Z", "--note", "x"]);
+    assert!(r.code != 0 && r.all().contains("被改過"), "{}", r.all());
+    assert!(p.run_json(run)["stages"]["test"].get("approved").is_none());
+    // 把標記從結果檔拿掉再直接存：拿不掉
+    let mut stripped = saved.clone();
+    stripped.as_object_mut().unwrap().remove("edited_script");
+    let r = p.awf_in(&["save-run", "stage", run, "test"], Some(&stripped.to_string()));
+    assert_eq!(r.code, 0, "{}", r.all());
+    assert!(load(&p.dir.join(run).join("test.json"))["edited_script"].is_object(), "直接重存不會把非標準變回標準：{}", r.all());
+    // 重新產生腳本、照跑：回到標準結果
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let a = p.next(run, &["--stage", "test", "--workflow", "sdlc-test", "--retry"]);
+    assert_eq!(a["action"], "run_workflow", "{a}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), made, "next 重新產生的腳本和原本的相同");
+    p.record("wf_t2", &script, &p.result(run, "test", SHA));
+    let r = p.awf(&["done", "--run", run, "--no-next"]);
+    assert_eq!(r.code, 0, "{}", r.all());
+    assert!(!r.all().contains("被改過"), "{}", r.all());
+    assert!(load(&p.dir.join(run).join("test.json")).get("edited_script").is_none());
+    assert!(p.run_json(run)["awf"]["nonstandard"].get("test").is_none());
+    let r = p.approve(run, "test", &["--by", "human"]);
+    assert_eq!(r.code, 0, "{}", r.all());
+
+    // 同樣的情況、人直接核准非標準的結果：可以
+    let run2 = "_tpm/runs/r2";
+    p.plan_approved(run2);
+    let a = p.walk_to(run2, "run_workflow:test", SHA);
+    let script = a["script"].as_str().unwrap().to_string();
+    put(&p.dir.join(&script), "// 整支換掉\n");
+    p.record("wf_t3", &script, &p.result(run2, "test", SHA));
+    assert_eq!(p.awf(&["done", "--run", run2, "--no-next"]).code, 0);
+    assert!(load(&p.dir.join(run2).join("test.json"))["edited_script"].is_object());
+    let r = p.awf(&["save-run", "approve", run2, "test", "--by", "policy", "--at", "2026-11-18T00:00:00Z", "--note", "x"]);
+    assert!(r.code != 0 && r.all().contains("被改過"), "{}", r.all());
+    let r = p.approve(run2, "test", &["--by", "human"]);
+    assert_eq!(r.code, 0, "人可以核准非標準的結果：{}", r.all());
+}
+
+/// A7：plan 停在 needs_decision → 人答覆（`approve --answer`）→ `next --revise` → 修正輪的回傳存檔 → plan 的核准被清掉、要人重新核准。
+#[test]
+fn a7_plan_revise_round_after_answers() {
+    let p = Proj::new("a7");
+    let run = "_tpm/runs/r1";
+    p.start(run);
+    p.next(run, &[]);
+    // 還沒有結果、沒有答覆：拒絕
+    let r = p.next_raw(run, &["--revise"]);
+    assert!(r.code != 0 && r.all().contains("不能跑 plan 的修正輪"), "{}", r.all());
+    let asked = ask(p.result(run, "plan", ""), "intent", vec![question("匯出要不要含已刪除的訂單？", "A", None), question("檔名用什麼格式？", "B", None)]);
+    assert_eq!(p.done_with(run, "plan", &asked).code, 0);
+    let before = std::fs::read_to_string(p.dir.join(run).join("run.json")).unwrap();
+    let r = p.next_raw(run, &["--revise"]);
+    assert!(r.code != 0 && r.all().contains("沒有人的答覆可用"), "{}", r.all());
+    assert_eq!(std::fs::read_to_string(p.dir.join(run).join("run.json")).unwrap(), before, "被拒時 run.json 不能變");
+
+    // 人答覆：視為人工核准，並提示可以先跑修正輪
+    let r = p.approve(run, "plan", &["--by", "human", "--answer", "#1=不含已刪除的", "--answer", "#2=export-日期.csv"]);
+    assert_eq!(r.code, 0, "{}", r.all());
+    assert!(r.all().contains(&format!("awf next --run {run} --revise")), "核准時帶答覆要提示修正輪：{}", r.all());
+    let d = p.run_json(run);
+    assert!(d["stages"]["plan"]["approved"].is_object() && d["stages"]["plan"]["decided"].is_object());
+
+    // 修正輪：重跑 plan，args 帶答覆與鎖定的 recipe；--set 的 answers 蓋不掉
+    let a = p.next(run, &["--revise", "--set-json", "answers=[\"改成做別的事\"]"]);
+    assert_eq!((a["action"].as_str(), a["stage"].as_str(), a["workflow"].as_str()), (Some("run_workflow"), Some("plan"), Some("sdlc-plan")), "{a}");
+    assert!(a["notes"].to_string().contains("plan 修正輪：帶 2 條") && a["notes"].to_string().contains("忽略 --set 的 answers"), "{a}");
+    let args = load(&p.dir.join(run).join(".wf/sdlc-plan.args.json"));
+    assert_eq!(args["answers"], json!([{"question": "匯出要不要含已刪除的訂單？", "answer": "不含已刪除的"}, {"question": "檔名用什麼格式？", "answer": "export-日期.csv"}]));
+    assert_eq!(args["recipe"], "bugfix", "帶上一輪鎖定的 recipe，範本不重跑 triage：{args}");
+    let script = a["script"].as_str().unwrap().to_string();
+    let text = std::fs::read_to_string(p.dir.join(&script)).unwrap();
+    assert!(text.contains("不含已刪除的") && !text.contains("改成做別的事"), "產生的腳本內嵌的是人的答覆");
+
+    // 修正輪的回傳存檔：核准與 decided 清掉，留 revised
+    let mut rv = p.result(run, "plan", "");
+    rv["round"] = json!("revise");
+    rv["answers"] = json!(2);
+    rv["not_redone_angles"] = json!(["upstream"]);
+    p.record("wf_rv1", &script, &rv);
+    let r = p.awf(&["done", "--run", run, "--no-next"]);
+    assert_eq!(r.code, 0, "{}", r.all());
+    let d = p.run_json(run);
+    let st = &d["stages"]["plan"];
+    assert_eq!(st["status"], "done", "{st}");
+    assert!(st.get("approved").is_none() && st.get("decided").is_none(), "重存 plan 要清掉核准與 decided：{st}");
+    assert_eq!(st["revised"]["answers"], 2, "{st}");
+    assert!(d["awf"].get("revise").is_none());
+    assert!(load(&p.dir.join(run).join("plan.json")).get("edited_script").is_none(), "修正輪的腳本沒被改過，是標準結果");
+
+    // 要人重新核准：閘門提醒沒重做的角度、不再提「產出文件還沒反映」；政策核准不行
+    let g = p.next(run, &[]);
+    assert_eq!((g["action"].as_str(), g["stage"].as_str(), g["human_only"].as_bool()), (Some("gate"), Some("plan"), Some(true)), "{g}");
+    assert!(g["highlights"]["revise_note"].as_str().is_some_and(|x| x.contains("upstream") && x.contains("改跑完整的 plan")), "{g}");
+    assert!(g.get("decided").is_none(), "答覆已經寫進 intent，不再提示靠答覆往下走：{g}");
+    let r = p.awf(&["save-run", "approve", run, "plan", "--by", "policy", "--at", "2026-11-18T00:00:00Z", "--note", "x"]);
+    assert!(r.code != 0 && r.all().contains("一律由人核准"), "{}", r.all());
+    let r = p.approve(run, "plan", &["--by", "human"]);
+    assert_eq!(r.code, 0, "{}", r.all());
+    let a = p.next(run, &[]);
+    assert_eq!((a["action"].as_str(), a["stage"].as_str()), (Some("run_workflow"), Some("build")), "{a}");
+    // 後面的段開始之後不能再跑修正輪
+    let before = std::fs::read_to_string(p.dir.join(run).join("run.json")).unwrap();
+    let r = p.next_raw(run, &["--revise"]);
+    assert!(r.code != 0 && r.all().contains("已經交出去在跑"), "{}", r.all());
+    assert_eq!(std::fs::read_to_string(p.dir.join(run).join("run.json")).unwrap(), before, "被拒時 run.json 不能變");
+    p.done(run, "build", "");
+    let r = p.next_raw(run, &["--revise"]);
+    assert!(r.code != 0 && r.all().contains("後面的段已經開始過"), "{}", r.all());
 }
 
 /// B：本機合併從 deliver 核准走到結案。

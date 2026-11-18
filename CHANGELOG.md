@@ -4,6 +4,76 @@
 
 ## [Unreleased]
 
+## [1.2.0]
+
+這一版有兩部分。第一部分把「段的名單與順序、事件流程的形狀、派工單的語言」開放給使用者設定。第二部分依一個實際專案升級 1.0 之後的使用紀錄做修正（10 個 run、577 個 subagent、結案 0 個）：run 常卡在「需要人決定」之後走不下去，主 session 改用手動給結果繞過狀態機；守門誤擋唯讀指令；subagent 的輸入有七成是累積的工具結果被每一輪重讀。
+
+### 行為改變（沒改設定也會看到）
+
+- **每張派工單的共同前綴改了字**（每張約多 18 字）：加上「讀檔帶 offset／limit 或用 `sed -n 'a,bp'`，不用 cat／head／tail 印整檔」；知識庫與知識圖的指示縮短，改成「資料包列的行段就是範圍，不夠再查」。
+- **7 個角色不再有 Skill 工具**：dev-acceptance-tester、dev-implementer、dev-integrator、dev-spec-author、tpm-planner、tpm-reviewer、tpm-writer。原本寫「可以用某個 skill」的地方改成直接讀那個 skill 的檔；互動式的 skill（grill、to-issues）本來就不能在 subagent 裡用。dev-design-reviewer 保留。帶 Skill 工具的 agent 每一輪都會被注入使用者裝的全部 skill 清單。
+- **輪數提醒預設開啟**：模版角色的工具呼叫到 50 次時，hook 提醒它把發現寫進執行紀錄、交件，之後每 10 次再提醒。只提醒、不擋；`limits.turns.mode: off` 可以關。
+- **守門放行這些原本誤擋的唯讀寫法**（team agent）：`git merge-base`、`merge-tree`、`merge-file -p`、`rebase --show-current-patch`；只讀的 `open(…)` 讀狀態檔；`awf run-brief` 的路徑用同一條指令裡賦值一次的變數；加引號的 heredoc 內文不計入指令長度上限；`awf help`、`awf --help` 與認得 `--help` 的子指令（例如 `awf save-run --help`）；`git branch backup/<名>`（不帶選項）。
+- **守門變嚴**：`git -C <目錄> merge`、`git -c k=v merge` 原本漏掉，現在會擋；`awf run-brief --log` 指到 runs 目錄底下帶未賦值變數的路徑會擋。
+- **停下時的 `retry` 改成一句指令**（`awf next --run <run> --retry`），不再是帶 `script`、`then` 的物件。原本主 session 會照那個物件直接重跑舊腳本，之後 `awf done` 找不到回傳。自己寫工具讀這個欄位的要改。
+- **有「未確認的暫定做法」時不能推送與合併**：政策核准的段留下的暫定做法（`awf.unconfirmed`），原本只在下一個閘門列出來；現在 `awf publish`、`awf merge-gate --recipe`、本機合併確認都會拒絕，要先由人確認（`awf approve --run <run> --by <人> --confirm-unconfirmed`）。
+- **產生後被改過的腳本**：`awf next` 記下腳本的雜湊，`awf done` 核對腳本檔與 workflow 紀錄裡實際執行的內容；不一致就標成 `edited_script`，不能政策核准。升級當下已經排出去、還沒 `done` 的那一段沒有雜湊，會被標；`awf next --retry` 重排即可。
+- **`--set answers=` 對 `sdlc-plan` 不再有效**（修正輪的答覆只取自人的核准紀錄）。
+- **直接存檔的結果會和 workflow 實際的回傳比對**：狀態機帶的 run，用 `awf save-run stage` 存的內容和 workflow 紀錄不一致時照樣存，但標成 `edited_output`，不能政策核准。非標準結果的標記不會因為重存而消失。
+- **`awf doctor`**：`models.mode` 是 inherit 從提示升為警告（全部角色都用主對話的模型，成本最高）；新增 `kg-tmp`（建圖中斷留下的暫存檔）與 `kg-unused`（有圖但最近的資料包沒帶到）。`awf kg build` 開始前會清掉程序已經結束的暫存檔。
+- **讀取上限有開（`limits.mode`）的專案**：用 shell 讀檔（`cat`、`head`、`tail`、`nl`、`sed -n` 的行段等）現在也計入同一個額度，一次印超過門檻行數時 enforce 會擋。預設仍然不啟用。
+- **拆工檢查**涵蓋全部子計劃的 `spec.md`（原本只讀一份，有子計劃時會誤報「spec 沒有的驗收條件」，也漏掉沒人對應的條件）。
+- **`rules.md`（新 init 的專案）**：規則 21 的備份改成先用 `refs/backup/…`；規則 23 多一句問題的 `risk` 標法。
+- test、deliver、design 修正輪的派工單在有小節資料包時，結尾多一句指到資料包的路徑。
+
+### 新增：人的決定接得上流程
+
+- **人答覆後往下走**：段停在 `needs_decision` 時，`awf approve --run <run> <段> --by <人> --answer "#1=<答覆>"`（每一題都要答）。答覆進決策記憶，這一段記人工核准；之後的派工單與資料包會列出「靠答覆往下走、產出文件還沒反映」的項目。這樣走過的段不能政策核准。
+- **plan 修正輪**：答覆會改變 intent 內容時，`awf next --run <run> --revise` 只派 intent 作者與反駁，不重跑調研；存檔後 plan 照樣要人重新核准。只在後面的段都還沒開始時可用；答覆 1～20 條。沒重做調研的角度會在閘門列出來。
+- **略過卡住的子任務**：`awf next --run <run> --retry --skip-subtask <id> --reason <理由> --by <人>`。還要做的子任務依賴它時拒絕。之後 build 不能政策核准，`awf publish` 要帶 `--confirm-skipped-subtasks`，`awf merge-gate --recipe` 一律 hold。
+- **本機合併的專案可以結案**：`conventions.merge.mode: local`（預設 `pr`）。merge 段改成請人合併，再用 `awf next --run <run> --confirm-merge --by <人>` 確認：主線的 first-parent 鏈上要有合併 commit，而且合進來的正好是 test 段驗證的那個 commit（快轉合併不算）；閘門鏈、凍結、diff 反查照舊。紀錄寫進 `merge-audit.jsonl`（`decision: local-merge`）。和 `auto_merge` 不能同時開。它沒有伺服器端的信任邊界，保證範圍寫在 `docs/自動合併信任模型.md`。
+- **低風險的問題先照建議做**（預設關）：`decisions.auto_accept: recommended`。信封的 `open_questions[].risk` 標 `low`、有建議項、不在 plan 段、沒有 security／migration／public_api，一段最多 `auto_accept_max` 題（預設 5）。照建議的記成未確認，要在下一個人工閘門確認或推翻（`--reject-unconfirmed <段>`），確認前不能推送。
+- **`awf done` 的退路**：沒有等待中的紀錄、那一段停在 blocked／needs_decision／invalid、上次的腳本還在、之後恰好一筆新紀錄時採用；兩筆以上不猜。找不到時的訊息會列出找的位置與比對的腳本。
+
+### 新增：省 token
+
+- **輪數預算**：`limits.turns`（`mode: warn|enforce|off`、`default`、`roles`；10～500）。enforce 在超過門檻 1.5 倍後只放行讀寫執行紀錄檔與交件。和讀取上限各自獨立。
+- **小節資料包**：`awf pack` 在 test（每個驗證分片一份：驗收條件小節的內文、這一片的子任務、上一輪沒過的條目）、deliver（各審查軸共用：diff 清單、改到的檔對應的 spec 小節、限制文件）、design 修正輪（總覽加每個子計劃一份）多寫 `pack.md`。每份有大小上限，最後列出沒附上的小節與原檔行號；`--no-slices` 關閉。
+- **design 修正輪只重做受影響的子計劃**：每一條決定與發現都指得到子計劃時才這樣做，否則全部重做；`revise_all: true` 強制全部。交件後多五項核對（範圍外的子任務被改、子任務少了沒說明等），不過就停下。
+
+### 新增：流程可以自己定
+
+- **profile 繼承**：`extends`（內建 profile 名，或 `.claude/teams/` 底下的 `.json`）。深度合併、陣列整個取代、`null` 拿掉鍵，最多 4 層。
+- **自訂段**：`flow`（`id`、`after`、`run: script|steps`、`gate: human|policy`、`approver`、`artifacts`、`labels`）。`gate: policy` 只限用步驟宣告的段。CI 的 merge gate 不檢查自訂段（沒有 run.json）。
+- **步驟引擎**：用資料宣告一段流程（fanout、challenge、write、loop、check），不用寫腳本；事件也可以用 `steps` 與 `extends`。check 的指令只來自 profile、不代入變數。workflow 範本多一支 `flow-steps.js`（共 13 支）。
+- **派工單的語言**：`prompt_lang`（內建 zh-TW、en）與 `prompt_overrides`（逐句改寫共同前綴的 46 個鍵）。換語言後〈限制對照〉的判定字與 intent 必要節的標題仍然要中文（閘門依它核對）。
+- 段的名單收在一張登記表（`stages.rs`），內建七段的順序與閘門不變。
+
+### 內部
+
+- `cargo xtask check-i18n`（字串表三邊一致）、英文乾跑。
+- `awf check-agents` 多一條：`tools` 沒有 Skill 時，內文不能叫 agent 用 Skill 工具。
+- `awf save-run status --json` 的參數順序不再影響輸出。
+
+### 已知限制
+
+- `--by` 是自己填的字串：主 session 可以自己執行 `--answer`、`--skip-subtask`、`--confirm-merge`、`--confirm-unconfirmed` 並填人名，工具分不出來（hook 只擋 team agent）。這些指令的輸出都會留在 run.json 與決策紀錄裡供事後查。
+- `risk: low` 是 agent 自己標的；開啟 `decisions.auto_accept` 等於信任它的分級。
+- 本機合併解衝突時夾帶的改動，工具只看得到 diff 的形狀。
+- 腳本雜湊、workflow 紀錄、run.json 都在主 session 寫得到的位置；整筆偽造分不出來。這些核對擋的是「順手改一下」，不是蓄意繞過。
+- 從頭到尾不經 `awf next`、直接用 `awf save-run stage` 存的 run（文件裡的手動執行）沒有「非標準結果」的標記可言；這條路本來就不比對 workflow 紀錄。
+- 輪數不計 Glob、WebFetch、WebSearch；官方 agent 設定的 `maxTurns` 對 Workflow 派出的 agent 是否有效還沒確認，這一版沒用。
+- `en.json` 是機器翻譯，還沒有人審過。
+- test 段耗時（實測平均 91 分鐘）這一版沒處理。
+
+### 升級步驟
+
+1. 更新 plugin：`claude plugin marketplace update agentworkflow`、`claude plugin update agent-workflow@agentworkflow`，再 `/reload-plugins`。
+2. 在專案根目錄跑 `awf init --target . --upgrade`。
+3. 跑 `awf doctor`：`models.mode` 是 inherit 的話，照它給的修法改成 auto（輕、中等級的角色改用較便宜的模型）。
+4. 專案是本機合併、不開 PR 的：在 `methodology.json` 設 `conventions.merge.mode: "local"`。
+5. 自己寫的工具有讀 halted 動作的 `retry` 欄位的，改成把它當指令字串。
+
 ## [1.1.0]
 
 這一版把 12 支 workflow 範本與共用片段裡還寫死的值改成可設定，並修掉盤點時發現的問題。沒有新流程；沒設定新欄位時，除了下面〈行為改變〉列的幾項，流程和 1.0 相同。
