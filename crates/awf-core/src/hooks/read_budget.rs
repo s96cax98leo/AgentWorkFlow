@@ -175,11 +175,13 @@ struct State {
     used: i64,
     warned: bool,
     reads: i64,
+    /// 輪數預算：這個 agent 經過守門 hook 的工具呼叫次數（[`count_turn`]）。
+    turns: i64,
 }
 
 /// 回傳（狀態, 是不是新的）。內容壞掉就重置。
 fn load_state(p: &str) -> (State, bool) {
-    let fresh = || State { used: 0, warned: false, reads: 0 };
+    let fresh = || State { used: 0, warned: false, reads: 0, turns: 0 };
     let bytes = match std::fs::read(p) {
         Ok(b) => b,
         Err(e) => return (fresh(), e.kind() == std::io::ErrorKind::NotFound),
@@ -192,7 +194,8 @@ fn load_state(p: &str) -> (State, bool) {
     let warned = st.get("warned").and_then(Value::as_bool);
     let (Some(used), Some(warned)) = (used, warned) else { return (fresh(), false) };
     let reads = st.get("reads").and_then(Value::as_i64).unwrap_or(0);
-    (State { used, warned, reads }, false)
+    let turns = st.get("turns").and_then(Value::as_i64).filter(|t| *t >= 0).unwrap_or(0);
+    (State { used, warned, reads, turns }, false)
 }
 
 fn mkdir_private(dir: &str) -> std::io::Result<()> {
@@ -215,7 +218,7 @@ fn mkdir_private(dir: &str) -> std::io::Result<()> {
 fn save_state(p: &str, st: &State) -> std::io::Result<()> {
     mkdir_private(&path::parent(p))?;
     let tmp = format!("{}.{}.tmp", p, std::process::id());
-    std::fs::write(&tmp, py::json_dumps(&json!({"used": st.used, "warned": st.warned, "reads": st.reads}), true))?;
+    std::fs::write(&tmp, py::json_dumps(&json!({"used": st.used, "warned": st.warned, "reads": st.reads, "turns": st.turns}), true))?;
     std::fs::rename(&tmp, p)
 }
 
@@ -1042,6 +1045,87 @@ pub fn check_shell(data: &Value, cfg: &Config, ws: &str) -> Option<String> {
         return charge(data, &role, &lim, est, &format!("shell：{}", py::head(cmd, 60)));
     }
     None
+}
+
+// ───────── 輪數預算（limits.turns） ─────────
+
+/// 輪數預算這次的結果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Turn {
+    /// 沒有話要說（不套用、還沒到門檻、不是提醒的那一次、任何失敗）。
+    Quiet,
+    /// 放行，並把這段文字送回給 agent（PreToolUse 的 `additionalContext`）。
+    Remind(String),
+    /// enforce 而且超過門檻的 1.5 倍：擋下這次呼叫（exit 2，訊息走 stderr）。
+    Block(String),
+}
+
+/// 到門檻之後每隔幾次再提醒一次。
+pub const TURN_REMIND_EVERY: i64 = 10;
+
+/// enforce 開始擋的次數：門檻的 1.5 倍（無條件進位）。
+pub fn turn_cap(threshold: u64) -> i64 {
+    let t = threshold.min(i64::MAX as u64 / 4) as i64;
+    (t * 3 + 1) / 2
+}
+
+fn turn_note(role: &str, n: i64, t: u64, enforce: bool) -> String {
+    let tail = if enforce {
+        format!("超過 {} 次後只放行讀寫執行紀錄檔與交件。", turn_cap(t))
+    } else {
+        String::new()
+    };
+    format!("agent-workflow 輪數提醒：{role} 已經 {n} 次工具呼叫（門檻 {t}）。把目前確認的發現寫進執行紀錄檔，然後交件；\
+還沒做完的列在信封的 open_questions／derived_work。{tail}（設定：.claude/teams/methodology.json 的 limits.turns）")
+}
+
+/// 數這個 agent 的工具呼叫次數（守門 hook 每次呼叫算一次），到門檻時提醒、enforce 超過 1.5 倍時擋。
+///
+/// 只套模版角色（主 session、使用者自己的 agent、擴充 agent 不算），沒有 agent_id 不算；和讀取預算共用每個 agent 的狀態檔。
+/// `delivering`：這次呼叫是讀寫執行紀錄檔（enforce 擋的時候放行它，否則 agent 交不了件）；只在要擋的時候才呼叫。
+/// 輔助功能：任何失敗（狀態檔讀寫失敗、設定讀不懂）都放行；設定讀不懂照預設（warn）只會提醒、不會擋。
+pub fn count_turn(data: &Value, cfg: &Config, ws: &str, delivering: &dyn Fn() -> bool) -> Turn {
+    let role = role(data, cfg);
+    if role.is_empty() {
+        return Turn::Quiet;
+    }
+    match data.get("agent_id") {
+        Some(Value::String(s)) if !s.is_empty() => {}
+        _ => return Turn::Quiet,
+    }
+    let tc = config::turns(ws);
+    if tc.mode == config::TurnMode::Off {
+        return Turn::Quiet;
+    }
+    let sp = state_path(data);
+    let (mut st, is_new) = load_state(&sp);
+    if is_new {
+        cleanup(&path::parent(&path::parent(&sp)));
+    }
+    st.turns = st.turns.saturating_add(1);
+    if save_state(&sp, &st).is_err() {
+        return Turn::Quiet; // 記不了帳就不提醒也不擋（每次都會是同一個數）
+    }
+    let n = st.turns;
+    let t = tc.threshold(&role);
+    let enforce = tc.mode == config::TurnMode::Enforce;
+    if enforce && n > turn_cap(t) && !delivering() {
+        let runs = if cfg.runs_dir.is_empty() { "_tpm/runs" } else { cfg.runs_dir.trim_end_matches('/') };
+        return Turn::Block(format!("{role} 已經 {n} 次工具呼叫，超過上限 {}（limits.turns 門檻 {t} 的 1.5 倍）：現在只放行讀寫執行紀錄檔\
+（{runs}/<run>/<段>/<label>.md）與交件。請把目前確認的發現寫進執行紀錄檔，然後交件；還沒做完的列在信封的 open_questions／derived_work。\
+（設定：.claude/teams/methodology.json 的 limits.turns）", turn_cap(t)));
+    }
+    let t_i = t.min(i64::MAX as u64) as i64;
+    if n >= t_i && (n - t_i) % TURN_REMIND_EVERY == 0 {
+        return Turn::Remind(turn_note(&role, n, t, enforce));
+    }
+    Turn::Quiet
+}
+
+/// PreToolUse 放行時把提醒送回給 agent 的 stdout：`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": …}}`。
+/// 不帶 `permissionDecision`（不改變權限流程，照常詢問或放行）。依據：<https://code.claude.com/docs/en/hooks>（PreToolUse 的 decision control）。
+pub fn remind_json(text: &str) -> String {
+    py::json_dumps(&json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}}), false)
 }
 
 #[cfg(test)]

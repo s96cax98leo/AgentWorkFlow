@@ -143,6 +143,16 @@
             "roles": {"type": "object", "description": "各角色的額度（鍵是不帶命名空間的角色名）；0＝該角色不限", "additionalProperties": {"type": "integer", "minimum": 0}}
           }
         },
+        "turns": {
+          "type": "object",
+          "description": "選填：輪數預算（每個模版角色的 agent 經過守門 hook 的工具呼叫次數）。和上面的讀取上限各自獨立：沒寫這一段＝warn、門檻 50。到門檻時提醒 agent 寫執行紀錄並交件，之後每 10 次再提醒；enforce 超過門檻的 1.5 倍後只放行讀寫執行紀錄檔與交件。輔助功能，任何失敗都放行、閘門不看",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"type": "string", "enum": ["warn", "enforce", "off"], "description": "warn＝只提醒（預設）；enforce＝超過門檻的 1.5 倍後擋；off＝不數"},
+            "default": {"type": "integer", "minimum": 10, "maximum": 500, "description": "沒有另外設定的角色的門檻（10–500；沒寫或不在範圍內用 50）"},
+            "roles": {"type": "object", "description": "各角色的門檻（鍵是不帶命名空間的角色名；10–500，不在範圍內的那一項用 default）", "additionalProperties": {"type": "integer", "minimum": 10, "maximum": 500}}
+          }
+        },
         "max_agents": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "一支 workflow 一次執行最多派幾個 agent（1–1000；沒寫或不在範圍內用 40）；design、build、test 會依子計劃數與子任務數另加額度。到上限就停下交人，不靜默截斷"},
         "run_brief": {
           "type": "object",

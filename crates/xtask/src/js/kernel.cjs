@@ -102,9 +102,9 @@ const need = (c, m) => { if (!c) errs.push(m) }
   const flags = (p) => { const t = k.awfTune(p); return `${t.read_hook},${t.kb}` }
   need(flags({ limits: { mode: 'enforce' }, knowledge: { sources: ['docs/**/*.md'] } }) === 'true,true' && flags({ limits: { mode: 'warn' } }) === 'true,false' && flags({ limits: { mode: 'off' }, knowledge: { sources: [] } }) === 'false,false' && flags({ limits: { mode: 'x' }, knowledge: { sources: 'docs' } }) === 'false,false' && flags({ knowledge: { sources: [' ', 7] } }) === 'false,false', 'awfTune 的 read_hook／kb 判斷不對')
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW' })
-  need(/- 省 context：大檔帶 offset／limit 分段讀。/.test(k.awfPrefix()) && /，再用 Grep 找行段，只讀那幾行/.test(k.awfPrefix()) && !/超量讀取|awf kb query/.test(k.awfPrefix()), '沒啟用讀取預算、沒設知識層時前綴不該提 hook 與 awf kb query')
+  need(/- 省 context：先看 _runs\/r1\/plan\/pack\.md（有才讀/.test(k.awfPrefix()) && /列的行段就是範圍，不夠再 Grep[；。]/.test(k.awfPrefix()) && /讀檔帶 offset／limit 或用 sed -n 'a,bp'，不用 cat／head／tail 印整檔。/.test(k.awfPrefix()) && !/超量讀取|awf kb query/.test(k.awfPrefix()), '沒啟用讀取預算、沒設知識層時前綴不該提 hook 與 awf kb query')
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', tune: k.awfTune({ limits: { mode: 'warn' }, knowledge: { sources: ['docs/**/*.md'] } }) })
-  need(/- 省 context（hook 會擋超量讀取）：大檔帶/.test(k.awfPrefix()) && /，再用 awf kb query "<問題>" 或 Grep 找行段，只讀那幾行/.test(k.awfPrefix()), '啟用讀取預算、有知識層來源時前綴要照寫')
+  need(/- 省 context（hook 會擋超量讀取）：先看/.test(k.awfPrefix()) && /不夠再 Grep 或 awf kb query[；。]/.test(k.awfPrefix()), '啟用讀取預算、有知識層來源時前綴要照寫')
   const TL11 = [{ id: 'c1', file: 'docs/a.md', note: '', paths: [], table: false }]
   need(/先用 awf kb query 或 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11)) && /先用 awf kb query 或 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11, null, true)) && /；先用 Grep 找相關行段再讀/.test(k.awfConstraintRule(TL11, null, false)), 'awfConstraintRule 的 kb 參數不對')
   const SIX = '產出、驗證'
@@ -117,7 +117,7 @@ const need = (c, m) => { if (!c) errs.push(m) }
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', kg: 'true' })
   need(k.awfPrefix() === plain, 'kg 不是布林 true 時前綴不該變')
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', kg: true })
-  need(k.awfPrefix().startsWith(plain) && /awf kg locate "<文字>"/.test(k.awfPrefix().slice(plain.length)) && /awf kg impact <檔>/.test(k.awfPrefix()) && /_runs\/r1\/plan\/pack\.md 列了行段/.test(k.awfPrefix()), 'kg=true 時前綴要在最後多一行查圖的指示')
+  need(k.awfPrefix().startsWith(plain) && /awf kg locate "<文字>"/.test(k.awfPrefix().slice(plain.length)) && /awf kg impact <檔>/.test(k.awfPrefix()) && /\n- 有知識圖：行段不夠時用 awf kg locate/.test(k.awfPrefix()), 'kg=true 時前綴要在最後多一行查圖的指示')
   k.awfInit({ run_dir: '_runs/r1', stage: 'plan', lang: 'zh-TW', tune: k.awfTune({ knowledge: { code_tools: ['ast-grep'] }, limits: { envelope: { summary_chars: 200, evidence_items: 6 } } }) })
   need(/程式碼有 ast-grep 就先用。/.test(k.awfPrefix()) && /summary 不超過 200 字、evidence 最多 6 則/.test(k.awfPrefix()) && !/graft/.test(k.awfPrefix()), 'tune 的值沒有寫進前綴')
   // 限制對照的用語（constraints_format）、合併方式、提問選項數：沒寫或不合法一律是內建的字（規則要和工具端的 constraint_format_errors 一致）

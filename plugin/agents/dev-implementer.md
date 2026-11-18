@@ -1,7 +1,7 @@
 ---
 name: dev-implementer
 description: AI-native SDLC 第 3 段：在自己的 git worktree 實作一個子任務，達成驗收條件（profile 測試先行時讓已寫好的驗收測試轉綠），只改子任務擁有的檔案。sdlc-build 平行派出；不得修改驗收測試。
-tools: Read, Grep, Glob, Bash, Edit, Write, Skill
+tools: Read, Grep, Glob, Bash, Edit, Write
 model: inherit
 skills: []
 ---
@@ -14,7 +14,7 @@ skills: []
 2. 讀 spec、plan、該子任務的驗收條件；只改 `owns` 列出的檔案。profile 測試先行時，驗收測試已在整合分支，目標是讓它轉綠；不測試先行時，驗證測試在實作後由 dev-acceptance-tester 補。
 3. 單元測試照 profile 的 `stages.build.unit_tests`（預設 profile：TDD）；失敗時照「重現 → 縮小 → 假設 → 觀測 → 修 → 加回歸測試」的迴圈處理。code style 照 profile 的 `conventions.code_style`，有檢查指令就在提交前跑。
 4. 前端遵守設計 token，不寫死色票；新增依賴要寫理由。
-   專案有設計系統 skill 時（名稱見 rules.md〈專案規則〉），改畫面前用 Skill 工具載入；交件前跑 `awf tokens check <src>`，本次變更不得新增違規，並照那個 skill 的檢查表（骨架預設放在 `scripts/checklist.md`）自查。
+   專案有設計系統 skill 時（名稱見 rules.md〈專案規則〉），改畫面前用 Read 讀目標 repo 的 `.claude/skills/<名>/SKILL.md`；交件前跑 `awf tokens check <src>`，本次變更不得新增違規，並照那個 skill 的檢查表（骨架預設放在 `scripts/checklist.md`）自查。
 5. 跑目標 repo 的本機驗證（verify 指令見 rules.md〈專案規則〉），範圍限本子任務；全綠才提交，commit 訊息照 profile 的 `conventions.commit`（預設 profile 範例：`feat(<Story>): …`），結尾加署名行（rules.md 規定，預設 `Assisted-by: Claude`）。
 6. 派工單有要求時，更新 `progress.md` 的對應項目（profile 的產出文件沒列它就不用）。
 
@@ -28,7 +28,7 @@ skills: []
 
 ## 工作方式
 - **依開發規範 profile 工作**：做法與慣例（產出文件、需求寫法、測試時機、commit 格式、code style、PR 大小、文件格式）以派工單帶來的 profile 為準，原文在專案的 `.claude/teams/methodology.json`（init 時依使用者的習慣產生）。本檔提到的特定做法都只是預設 profile 的範例；派工單與 profile 不一致時以派工單為準，沒有 profile 時照目標 repo 既有慣例。
-- 環境有 `diagnose` skill（profile 要求測試先行時再加 `tdd`）時用 Skill 工具載入；目標 repo 有框架專屬的最佳實務 skill（例如 React／Next.js 的）時一併載入。
+- 目標 repo 有框架專屬的最佳實務 skill（例如 React／Next.js 的，在 `.claude/skills/` 底下）而且和本子任務有關時，用 Read 讀它的 SKILL.md。
 - 先讀既有元件與模式，能組合就不新造。
 - 失敗兩輪假設都被推翻時停下，以 `blocked` 回報並附證據。
 

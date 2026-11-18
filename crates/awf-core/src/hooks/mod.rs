@@ -25,7 +25,8 @@
 //!        規則跑到一半就壞了，等於沒檢查過；team agent 的寫入範圍、awf 子指令這些限制最小規則都不管，放行就是繞過。
 //!        主 session 不受影響，所以使用者不會被鎖死。
 //!   4. 守門規則執行中出現意外錯誤（對應 Python 的例外）：守門類擋（exit 2），交件類放行（exit 0）。
-//!   5. 讀取預算是輔助功能：任何失敗都放行，不影響前面幾條既有檢查的結果。
+//!   5. 讀取預算與輪數預算（`limits.turns`，guard-shell／guard-paths 每次呼叫算一次）是輔助功能：任何失敗都放行，
+//!      不影響前面幾條既有檢查的結果。輪數到門檻時 exit 0 並在 stdout 印 PreToolUse 的 `additionalContext`（提醒 agent 交件）。
 //!
 //! release 是 `panic = "abort"`，所以不靠 `catch_unwind`：panic hook 裡直接套第 3 條並結束行程。
 
@@ -219,6 +220,8 @@ fn run_guard(mode: &str, g: &Guard, data: &Value) -> guard::R<()> {
         return guard::err("TypeError", t);
     }
     let is_read = matches!(data.get("tool_name").and_then(Value::as_str), Some("Read") | Some("Grep"));
+    // 輪數預算先記帳（被下面的規則擋下的呼叫也算一次）；判定留到既有檢查都過了才套
+    let turn = read_budget::count_turn(data, &g.cfg, &g.ws, &|| delivering(g, data));
     let budget_msg = if mode == "guard-shell" {
         g.check_shell_rules(data)?;
         read_budget::check_shell(data, &g.cfg, &g.ws)
@@ -233,7 +236,41 @@ fn run_guard(mode: &str, g: &Guard, data: &Value) -> guard::R<()> {
         say(&format!("已被 agent-workflow hook 擋下：{msg}"));
         return Err(Stop::Exit(2));
     }
+    match turn {
+        read_budget::Turn::Block(msg) => {
+            say(&format!("已被 agent-workflow hook 擋下：{msg}"));
+            return Err(Stop::Exit(2));
+        }
+        read_budget::Turn::Remind(text) => {
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(format!("{}\n", read_budget::remind_json(&text)).as_bytes());
+        }
+        read_budget::Turn::Quiet => {}
+    }
     Ok(())
+}
+
+/// 輪數預算 enforce 時仍放行的呼叫：Read／Write／Edit 工作區 `<runs_dir>/` 底下的 `.md`（執行紀錄檔）。
+/// 交件（StructuredOutput、SubagentHandback）不經過守門 hook，本來就不會被擋。出錯一律當作不是（只會更嚴，但交件不受影響）。
+fn delivering(g: &Guard, data: &Value) -> bool {
+    let tool = data.get("tool_name").and_then(Value::as_str).unwrap_or_default();
+    if !matches!(tool, "Read" | "Write" | "Edit") {
+        return false;
+    }
+    let Some(fp) = data.get("tool_input").and_then(|t| t.get("file_path")).and_then(Value::as_str).filter(|s| !s.is_empty()) else { return false };
+    let runs = format!("{}/", g.cfg.runs_dir.trim_matches('/'));
+    if runs == "/" {
+        return false;
+    }
+    let fp = if path::is_abs(&path::pp(fp)) {
+        fp.to_string()
+    } else {
+        match data.get("cwd").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+            Some(c) => path::join(c, fp),
+            None => path::join(&g.ws, fp),
+        }
+    };
+    matches!(g.rel_to_workspace(&fp), Ok(Some(rel)) if rel.starts_with(&runs) && rel.to_ascii_lowercase().ends_with(".md") && !rel.contains("/../"))
 }
 
 fn dispatch(mode: &str) -> i32 {

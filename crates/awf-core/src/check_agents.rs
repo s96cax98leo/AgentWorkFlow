@@ -275,6 +275,10 @@ fn check(argv: &[String], claude: &str, env_plugin: Option<&str>, home: &str) ->
         if has_skill_word(tools_text) && !body.contains("Skill 工具") {
             errs.push(format!("{name}: tools 有 Skill，內文卻沒寫用 Skill 工具載入什麼；用不到就拿掉（省每個 agent 約 12k 的開工 context）"));
         }
+        // 反方向：沒有 Skill 工具的角色，內文不能叫它用 Skill 工具（照做只會失敗；專案的 skill 檔改用 Read 讀）
+        if !has_skill_word(tools_text) && body.contains("Skill 工具") {
+            errs.push(format!("{name}: tools 沒有 Skill，內文卻叫它用 Skill 工具；改成用 Read 讀 .claude/skills/<名>/SKILL.md，或把那一行拿掉"));
+        }
         if let Some((_, merged)) = ALIASES.iter().find(|(old, _)| *old == role) {
             // 舊名薄殼：只檢查薄殼格式
             let len = body.chars().count();

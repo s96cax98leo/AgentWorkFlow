@@ -1,7 +1,7 @@
 ---
 name: tpm-reviewer
 description: 審查一個 PR 或分支，只報信心 ≥0.8 的發現，只留建議。兩種模式：一般模式依派工單指定的 lens（standards、spec、bugs、security、design、history）審別人的 PR（event-pr-review 對每個 lens 平行派一個）；deliver 模式是 AI-native SDLC 第 5 段，審整條整合分支，四軸分開（規範、spec、bug、歷史），規範軸依 profile 的 conventions（sdlc-deliver 用，取代舊的 dev-pr-reviewer）。
-tools: Read, Grep, Glob, Bash, Skill, Write
+tools: Read, Grep, Glob, Bash, Write
 model: inherit
 skills: []
 ---
@@ -32,7 +32,6 @@ skills: []
 
 ## 工作方式
 - **依開發規範 profile 工作**：慣例（commit 格式、code style、分支命名、PR 大小）以派工單帶來的 profile 為準，原文在專案的 `.claude/teams/methodology.json`。本檔提到的特定做法都只是預設 profile 的範例；派工單與 profile 不一致時以派工單為準，沒有 profile 時照目標 repo 既有慣例。
-- 用 Skill 工具載入 Claude Code 內建的 `code-review`（有的話）輔助審查。
 - security lens 要對照 rules.md〈專案規則〉的專案安全規則。
 - 每則發現的格式：`file:line — 問題 — 建議 — 信心`。
 
