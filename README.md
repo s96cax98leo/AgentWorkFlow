@@ -274,6 +274,8 @@ target/release/awf init --target ~/work/my-project
 
 **加入自己的 agent**：在 Claude Code 裡跑 `/agent-workflow:add-agent`，它會問要加在哪一段、套用哪個模版角色的守門規則、派工內容是什麼，需要的話幫你建立 agent 定義檔。設定寫在 `methodology.json` 的 `extensions` 與 `guard.config.json` 的 `extension_agents`。擴充 agent 和該段的內建 agent 平行執行，它的 blocker／important 發現會擋住政策核准。只能套用唯讀類角色；build 段和 merge 段不開放擴充。
 
+**加入自己的段**：在 profile 的 `flow` 宣告自訂段（例如 test 之後的客戶驗收），recipe 點名了才會跑，並進整條閘門鏈。內容可以是自己寫的腳本（`run: "script"`），或用資料宣告一串步驟（`run: "steps"`：fanout、challenge、write、loop、check，由 plugin 的 `flow-steps` 範本執行；`check` 與 loop 的結束指令由 `awf` 在存檔時自己執行）。用步驟宣告的段可以設成政策核准，其餘一律等人核准。事件類型也能用同一套步驟，或用 `extends` 只改內建類型的一部分。見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈自訂段〉與 [`docs/事件處理.md`](docs/事件處理.md)。
+
 **守門 hooks**：入口只有一個，`awf hook`。
 - `guard-shell` 同時涵蓋 Bash 與 PowerShell 工具，擋推送、寫上游、推受保護分支，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - `guard-paths` 擋越權寫入，以及用 Read、Grep 讀機敏檔（`.env`、金鑰、憑證）。只能寫紀錄的角色只准寫 runs_dir 裡的 `.md`；所有模版 agent 都不能改 `.claude/teams/`、run.json 與執行紀錄索引。
@@ -460,7 +462,7 @@ AgentWorkFlow/
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
 │   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
-│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
+│   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge，加上自訂段用步驟宣告時跑的 flow-steps）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
 │   │   ├── snippets/                 # 多支 workflow 共用的片段（awf build 內嵌進範本）
 │   │   ├── scenarios/                # 乾跑的情境檔（每支 workflow 一檔）
 │   │   └── check_workflows.mjs       # 乾跑所有 workflow 的 Node 腳本

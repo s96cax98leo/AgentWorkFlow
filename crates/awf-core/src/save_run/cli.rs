@@ -6,7 +6,7 @@ use super::checks::{constraint_issues, intent_errors, plan_check_for_with};
 use super::decisions::{decision_errors, record_decisions, split_answer};
 use super::links::{decision_links, id_pattern, link_gaps_with, links_setting, stage_links_with, write_links, LEDGER};
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
-use super::policy::{abandoned_error, chain_errors, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations, profile_missing, recipe_mismatch, recipe_tamper_errors};
+use super::policy::{abandoned_error, chain_errors_with, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations_with, profile_missing, recipe_mismatch, recipe_tamper_errors};
 use super::py::{self, get, get_opt, idx, iter_or, pj, pname, s, s_or, truthy, R, NULL};
 use super::trace::{envelopes, model_errors_with, process_trace};
 use super::{dump, load, opt, opts, Ctx, GATED, HUMAN_ONLY, INDEX_NAME, NO_ENVELOPE, SDLC};
@@ -60,6 +60,18 @@ fn pending(stage: &str, extra: &[&str]) -> Value {
     json!({"status": "pending", "gate": GATED.contains(&stage) || extra.contains(&stage)})
 }
 
+/// 新的自訂段（profile 的 `flow`）：一律有閘門、一律由人核准；`flow` 標記讓不讀 profile 的地方也認得它。
+fn pending_flow() -> Value {
+    json!({"status": "pending", "gate": true, "flow": true})
+}
+
+/// run.json 的這一段是不是自訂段（存檔時標了 `flow`，或鎖定的 recipe 點名了它）。只在 SDLC 的 run 裡有意義。
+fn is_flow_stage(data: &Value, stage: &str) -> bool {
+    !SDLC.contains(&stage)
+        && (crate::stages::run_customs(data).iter().any(|c| c == stage)
+            || data.get("stages").and_then(|s| s.get(stage)).and_then(|s| s.get("flow")) == Some(&Value::Bool(true)))
+}
+
 /// 這次用的 profile 另外加了閘門的段（讀不到、不合規則的 profile 當成沒有加；那種 profile 在別處已經報錯）。
 fn gates_of(ctx: &Ctx, profile_arg: &str) -> Vec<&'static str> {
     extra_gates(&load_profile(ctx, profile_arg).0)
@@ -88,11 +100,15 @@ fn rebuild_stages(data: &mut Value, resolved: &Value, extra: &[&str]) -> R<()> {
     let want = get(resolved, "stages")?.clone();
     let d = py::obj_mut(data)?;
     let stages = d.entry("stages").or_insert_with(|| json!({}));
-    for st_name in SDLC {
+    // 內建段照 SDLC 順序；recipe 點名的自訂段排在它該在的位置（沒有自訂段時 order 就是 SDLC，結果和原本逐字相同）
+    let order = crate::stages::run_order(&want);
+    for st_name in &order {
+        let st_name = st_name.as_str();
+        let custom = !SDLC.contains(&st_name);
         let st = get(stages, st_name)?;
         let wanted = truthy(&want) && py::contains(&want, st_name)?;
         let new = if wanted {
-            if !st.is_object() || get(st, "status")?.as_str() == Some("skipped") { Some(pending(st_name, extra)) } else { None }
+            if !st.is_object() || get(st, "status")?.as_str() == Some("skipped") { Some(if custom { pending_flow() } else { pending(st_name, extra) }) } else { None }
         } else {
             Some(json!({"status": "skipped", "gate": false}))
         };
@@ -102,12 +118,22 @@ fn rebuild_stages(data: &mut Value, resolved: &Value, extra: &[&str]) -> R<()> {
     }
     let old = py::obj_mut(stages)?;
     let mut ordered = Map::new();
-    for st_name in SDLC {
-        ordered.insert(st_name.to_string(), old.get(st_name).cloned().unwrap_or(Value::Null));
+    for st_name in &order {
+        let mut v = old.get(st_name.as_str()).cloned().unwrap_or(Value::Null);
+        if !SDLC.contains(&st_name.as_str()) {
+            // 自訂段：閘門拿不掉（run.json 被手改成 gate=false 也會補回來）
+            if let Some(o) = v.as_object_mut() {
+                o.insert("gate".into(), json!(true));
+                o.insert("flow".into(), json!(true));
+            }
+        }
+        ordered.insert(st_name.clone(), v);
     }
     for (k, v) in old.iter() {
-        if !SDLC.contains(&k.as_str()) {
-            ordered.insert(k.clone(), v.clone());
+        if !order.iter().any(|o| o == k) {
+            // 之前點名過、現在的 recipe 沒有的自訂段（plan 鎖定前換了 recipe）：標 skipped，不留成還要跑的段
+            let gone = v.get("flow") == Some(&Value::Bool(true));
+            ordered.insert(k.clone(), if gone { json!({"status": "skipped", "gate": false, "flow": true}) } else { v.clone() });
         }
     }
     *stages = Value::Object(ordered);
@@ -126,9 +152,9 @@ fn is_os(e: &PyErr) -> bool {
     )
 }
 
-/// `SDLC.index(x)`
-fn sdlc_index(v: &Value) -> R<usize> {
-    SDLC.iter().position(|x| v.as_str() == Some(*x)).ok_or_else(|| PyErr::other("ValueError", format!("{} is not in list", pyfmt::repr(v))))
+/// `order.index(x)`（`order` 是這個 run 的完整順序：SDLC 加上 recipe 點名的自訂段）
+fn order_index(order: &[String], v: &Value) -> R<usize> {
+    order.iter().position(|x| v.as_str() == Some(x.as_str())).ok_or_else(|| PyErr::other("ValueError", format!("{} is not in list", pyfmt::repr(v))))
 }
 
 /// CLI 的本體：stdout 的文字寫進 `out`、stderr 的寫進 `err`，回傳 exit code。`stdin` 只有 `stage` 會讀。
@@ -288,7 +314,19 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         Some(stages) => py::contains(stages, "plan")?,
         None => false,
     };
-    let in_sdlc = SDLC.contains(&stage);
+    // 自訂段（profile 的 flow）：recipe 點名了、或 profile 宣告了的段，照 SDLC 的段處理（recipe、trace、模型下限都查），而且一定有閘門
+    let flow_def = if sdlc_run && !SDLC.contains(&stage) { crate::stages::Resolved::of(&load_profile(ctx, profile_arg).0).custom(stage).cloned() } else { None };
+    let flow_stage = sdlc_run && (flow_def.is_some() || is_flow_stage(&data, stage));
+    if flow_stage && !has_recipe(&data)? {
+        line(err, format!("不能記錄：{stage} 是自訂段，run.json 卻沒有 recipe（自訂段要由 recipe 點名、plan 核准後才會跑）；回傳只存成 {stage}.json"));
+        return Ok(1);
+    }
+    let in_sdlc = SDLC.contains(&stage) || flow_stage;
+    if in_sdlc && sdlc_run && stage != "plan" && !crate::stages::run_customs(&data).is_empty() {
+        // 鎖定的 recipe 點名了自訂段：要和現在的 profile 對得上（自訂段被拿掉、順序被改）；對不上，這個 run 之後存的每一段都是 invalid
+        let (fprof, _) = load_profile(ctx, profile_arg);
+        errs.extend(crate::stages::flow_tamper(&fprof, get(idx(idx(&data, "recipe")?, "resolved")?, "stages")?).into_iter().map(|e| format!("自訂段：{e}")));
+    }
     // run.json 已有 recipe 的非 plan 段：專案的 profile 找不到或不能用，當下就拒絕。
     // recipe 是用那份 profile 解析的；沒有它，這一段的規格檢查、連結檢查、限制文件都做不了，不能等到核准才發現
     if in_sdlc && sdlc_run && stage != "plan" && has_recipe(&data)? {
@@ -367,7 +405,7 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
                 if let Some(first) = lost.first() {
                     errs.push(format!("這個舊 run 已經當成 feature 往下跑：{first}"));
                 } else {
-                    let merged = recipe::merge_stricter(&r, &feat).map_err(py::from_recipe)?;
+                    let merged = recipe::merge_stricter_in(&profile, &r, &feat).map_err(py::from_recipe)?;
                     let rec = entry(merged)?;
                     py::obj_mut(&mut data)?.insert("recipe".into(), rec);
                 }
@@ -438,6 +476,22 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
     // 就算這個 run 是在加這項設定之前建立的。拿掉設定不會把已經標上的閘門拿掉。
     if in_sdlc && sdlc_run && gates_of(ctx, profile_arg).contains(&stage) {
         st_mut(&mut data, stage)?.insert("gate".into(), json!(true));
+    }
+    if flow_stage {
+        // 自訂段一律有閘門；核准者與產出清單記下來只供顯示（不做身分驗證）
+        let st = st_mut(&mut data, stage)?;
+        st.insert("gate".into(), json!(true));
+        st.insert("flow".into(), json!(true));
+        st.shift_remove("approver");
+        st.shift_remove("artifacts");
+        if let Some(def) = &flow_def {
+            if !def.approver.is_empty() {
+                st.insert("approver".into(), json!(def.approver));
+            }
+            if !def.artifacts.is_empty() {
+                st.insert("artifacts".into(), json!(def.artifacts));
+            }
+        }
     }
     let halted = if result.is_object() { get(result, "halted")?.clone() } else { Value::Null };
     let status = if !errs.is_empty() {
@@ -550,6 +604,48 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
             }
         }
     }
+    // 用步驟宣告的段（自訂段的 run: steps，或事件定義的 steps）：check 與 loop until 的指令由工具執行（指令只取自 profile），
+    // 結果記進 run.json。只在這一段會是 done 時跑；指令沒過不是存檔失敗，是不能政策核准（事件沒有閘門，只提醒）
+    {
+        let (sprof2, sperr) = load_profile(ctx, profile_arg);
+        let ev_steps = if !in_sdlc && sperr.is_empty() { sprof2.get("events").and_then(|e| e.get(stage)).and_then(|e| e.get("steps")).filter(|v| !v.is_null()).cloned() } else { None };
+        let fl = flow_def.as_ref().filter(|d| d.by_steps());
+        let def_steps = fl.map(|d| d.steps.clone()).or(ev_steps);
+        let st_has = |k: &str| data.get("stages").and_then(|x| x.get(stage)).and_then(|x| x.get(k)).is_some();
+        if def_steps.is_some() || st_has("step_checks") || st_has("step_issues") {
+            let (mut issues, mut records) = (Vec::new(), Vec::new());
+            if let (Some(ds), "done") = (&def_steps, status) {
+                issues = match fl {
+                    Some(d) => super::flowsteps::static_issues(stage, d, &sprof2, result),
+                    None => crate::steps::errors(ds, &format!("events[{stage}].steps"), crate::steps::max_agents(&sprof2)).into_iter().chain(crate::steps::trace_issues(ds, result)).collect(),
+                };
+                if crate::steps::errors(ds, "steps", crate::steps::max_agents(&sprof2)).is_empty() {
+                    let (ci, cr) = super::flowsteps::step_checks(ctx, ds, target.as_deref());
+                    issues.extend(ci);
+                    records = cr;
+                }
+            }
+            for m in &issues {
+                line(err, format!("步驟：{m}（{}）", if fl.is_some_and(|d| d.policy) { "不能政策核准，交人核准" } else if fl.is_some() { "人工核准前請先確認" } else { "請確認" }));
+            }
+            let st = st_mut(&mut data, stage)?;
+            if issues.is_empty() { st.shift_remove("step_issues"); } else { st.insert("step_issues".into(), json!(issues)); }
+            if records.is_empty() { st.shift_remove("step_checks"); } else { st.insert("step_checks".into(), Value::Array(records)); }
+        }
+    }
+    if let Some(def) = &flow_def {
+        // 自訂段宣告的產出：缺檔列成缺件（和執行紀錄缺件一樣：不能政策核准，人工核准前會提醒）
+        let lost: Vec<String> = def.artifacts.iter().filter(|a| !ctx.is_file(&pj(&pj(run, stage), a))).map(|a| format!("自訂段的產出缺檔：{stage}/{a}")).collect();
+        if !lost.is_empty() {
+            for m in &lost {
+                line(err, format!("執行紀錄缺件：{m}（人工核准前請先確認）"));
+            }
+            let st = st_mut(&mut data, stage)?;
+            let mut all: Vec<Value> = st.get("missing_records").and_then(Value::as_array).cloned().unwrap_or_default();
+            all.extend(lost.into_iter().map(Value::String));
+            st.insert("missing_records".into(), Value::Array(all));
+        }
+    }
     dump(ctx, run, &data)?;
     if links_on.is_some() && in_sdlc {
         // 連結帳本是輔助：寫不了只警告（閘門的連結檢查自己從各段結果重算，不讀帳本）
@@ -654,6 +750,25 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     }
     if stage != "plan" {
         errs.extend(recipe_tamper_errors(ctx, &data, profile_arg)?);
+    } else if !crate::stages::run_customs(&data).is_empty() {
+        // plan 核准會鎖定 recipe：點名的自訂段要在現在的 profile 裡、順序要對（沒有自訂段時不做這一步）
+        let (fprof, fperr) = load_profile(ctx, profile_arg);
+        if !fperr.is_empty() {
+            errs.push(fperr);
+        }
+        errs.extend(crate::stages::flow_tamper(&fprof, get(idx(idx(&data, "recipe")?, "resolved")?, "stages")?));
+    }
+    // 排在這一段前面的自訂段：recipe 點名的每一個都要做完、由人核准（只看 recipe 與核准紀錄，不靠 run.json 的標記；沒有自訂段時是空的）
+    // 政策核准的紀錄只有在現在的 profile 把那一段宣告成 run: steps＋gate: policy 時才算數（profile 讀不到、讀不懂就都不算）
+    let flow_prof = {
+        let (p, perr) = load_profile(ctx, profile_arg);
+        if perr.is_empty() { p } else { Value::Null }
+    };
+    errs.extend(crate::stages::flow_unapproved_with(&data, Some(stage), &flow_prof).into_iter().map(|e| format!("前面的段還沒過：{e}")));
+    let flow_stage = is_flow_stage(&data, stage);
+    let flow_policy = flow_stage && crate::stages::Resolved::of(&flow_prof).custom(stage).is_some_and(|d| d.policy);
+    if flow_stage && by == "policy" && !flow_policy {
+        errs.push(format!("{stage} 是自訂段，一律由人核准，不能政策核准"));
     }
     if by == "policy" && note.is_empty() {
         errs.push("--by policy 時 --note 要寫依據的政策名稱".to_string());
@@ -669,7 +784,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             errs.push(format!("找不到 {}，政策核准要讀該段的實際結果", pname(&f)));
         } else {
             let result = ctx.load_json(&f)?;
-            errs.extend(policy_violations(ctx, stage, &result, Some(run))?.into_iter().map(|e| format!("政策判定：{e}")));
+            errs.extend(policy_violations_with(ctx, stage, &result, Some(run), profile_arg)?.into_iter().map(|e| format!("政策判定：{e}")));
             let (cprof, cperr) = load_profile(ctx, profile_arg);
             if !cperr.is_empty() {
                 errs.push(cperr);
@@ -694,7 +809,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             errs.push(format!("{stage} 段一律由人核准，不能政策核准"));
         }
     }
-    errs.extend(chain_errors(&data, stage)?);
+    errs.extend(chain_errors_with(&data, stage, &flow_prof)?);
     if !errs.is_empty() {
         for e in errs {
             line(err, format!("不能核准：{e}"));
@@ -712,7 +827,7 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     if SDLC.contains(&stage) {
         let (bprof, _) = load_profile(ctx, profile_arg);
         let bsc = if bprof.is_object() { open_spec(ctx, run, &data, &bprof) } else { None };
-        if matches!(stage, "plan" | "design") {
+        if crate::stages::has(stage, crate::stages::Flag::SpecBaseline) {
             match spec_baseline(bsc.as_ref()) {
                 Some(Ok(b)) => {
                     approved.insert(BASELINE_KEY.into(), b);
@@ -816,24 +931,35 @@ fn escalate_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mu
         }
         return Ok(1);
     }
-    let merged = recipe::merge_stricter(&new, &old).map_err(py::from_recipe)?;
+    // 原本鎖定的 recipe 點名的自訂段要還在 profile 裡（被拿掉的不能靠升級默默略過）
+    let gone = crate::stages::flow_tamper(&profile, get(&old, "stages")?);
+    if !gone.is_empty() {
+        for e in gone {
+            line(err, format!("不能升級：{e}"));
+        }
+        return Ok(1);
+    }
+    let merged = recipe::merge_stricter_in(&profile, &new, &old).map_err(py::from_recipe)?;
     let (added, changed) = escalate_affected(&merged, &old, &profile)?;
-    let mut first = SDLC.len();
+    // 這個 run 升級後的完整順序（沒有自訂段時就是 SDLC）
+    let order = crate::stages::run_order(get(&merged, "stages")?);
+    let mut first = order.len();
     let mut added_idx: Vec<usize> = Vec::new();
     for a in &added {
-        added_idx.push(sdlc_index(a)?);
+        added_idx.push(order_index(&order, a)?);
     }
     for c in &changed {
-        first = first.min(sdlc_index(&json!(c))?);
+        first = first.min(order_index(&order, &json!(c))?);
     }
     first = added_idx.iter().copied().fold(first, usize::min);
     let mut stale: Vec<&str> = Vec::new();
     let extra_g = extra_gates(&profile);
-    for (i, st_name) in SDLC.iter().enumerate() {
+    for (i, st_name) in order.iter().enumerate() {
+        let st_name = st_name.as_str();
         let stages = stages_mut(&mut data)?;
         let st = get(stages, st_name)?;
-        if added.iter().any(|a| a.as_str() == Some(*st_name)) {
-            py::obj_mut(stages)?.insert(st_name.to_string(), pending(st_name, &extra_g));
+        if added.iter().any(|a| a.as_str() == Some(st_name)) {
+            py::obj_mut(stages)?.insert(st_name.to_string(), if SDLC.contains(&st_name) { pending(st_name, &extra_g) } else { pending_flow() });
         } else if st.is_object() && get(st, "status")?.as_str() == Some("done") && (added_idx.iter().any(|a| i > *a) || changed.iter().any(|c| c == st_name) || i > first) {
             let st = st_mut(&mut data, st_name)?;
             st.insert("status".into(), json!("stale"));
@@ -929,7 +1055,11 @@ fn close_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mut S
     if truthy(get(&data, "abandoned")?) {
         errs.push(abandoned_error(&data)?);
     }
-    errs.extend(chain_errors(&data, "merge")?.into_iter().map(|e| format!("流程還沒走完：{e}")));
+    let close_prof = {
+        let (p, perr) = load_profile(ctx, "");
+        if perr.is_empty() { p } else { Value::Null }
+    };
+    errs.extend(chain_errors_with(&data, "merge", &close_prof)?.into_iter().map(|e| format!("流程還沒走完：{e}")));
     let want = get(&r, "stages")?;
     if truthy(want) && py::contains(want, "merge")? {
         let empty = json!({});
@@ -1009,10 +1139,25 @@ fn status_cmd(ctx: &Ctx, run: &str, argv: &[String], data: &Value, out: &mut Str
         Value::Object(o) => o,
         other => return Err(py::attr_err(other, "items")),
     };
+    // 給人看的段名與自訂段的說明（profile 的 flow）：有才多印一行；沒有 flow 的專案輸出不變
+    let flow = crate::stages::Resolved::of(&ctx.load_json(&ctx.profile).unwrap_or(Value::Null));
     for (name, st) in stages {
         let gate = if truthy(get(st, "gate")?) { "閘門" } else { "" };
         let ok = if truthy(get(st, "approved")?) { format!("核准 {}", s(idx(idx(st, "approved")?, "by")?)) } else { String::new() };
         line(out, format!("{name:<8} {} {gate} {ok}", pad15(idx(st, "status")?)?));
+        let mut tags: Vec<String> = Vec::new();
+        if let Some(l) = flow.own_label(name) {
+            tags.push(format!("顯示名稱：{l}"));
+        }
+        if st.get("flow") == Some(&Value::Bool(true)) {
+            tags.push("自訂段（一律由人核准）".to_string());
+            if let Some(a) = st.get("approver").and_then(Value::as_str).filter(|a| !a.is_empty()) {
+                tags.push(format!("核准者：{}", crate::hooks::safe::text(a, 60)));
+            }
+        }
+        if !tags.is_empty() {
+            line(out, format!("         {}", tags.join("；")));
+        }
         for (key, text) in [("missing_records", "執行紀錄缺件 {n} 個"), ("constraint_issues", "限制文件 {n} 項")] {
             let v = get(st, key)?;
             if truthy(v) {

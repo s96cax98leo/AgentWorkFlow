@@ -367,6 +367,7 @@ pub fn load_config(profile_path: &Path) -> Result<Option<Config>, String> {
     let Some(text) = read_opt(profile_path).map_err(|e| format!("讀不了 {}：{e}", profile_path.display()))? else { return Ok(None) };
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let doc = pyjson::loads(text).map_err(|e| format!("{} 不是合法 JSON：{e}", profile_path.display()))?;
+    let doc = crate::profile::resolve_file(profile_path, doc)?;
     parse_config(&doc)
 }
 

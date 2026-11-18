@@ -355,7 +355,7 @@ pub fn plan_check_for(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &
 
 /// 同 [`plan_check_for`]；`profile` 有 `stages.design.criteria_id_pattern` 時用它認驗收條件編號（寫壞了列成問題）。
 pub fn plan_check_for_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, data: &Value, profile: &Value) -> R<Vec<String>> {
-    if !matches!(stage, "plan" | "design") {
+    if !crate::stages::has(stage, crate::stages::Flag::PlanCheck) {
         return Ok(Vec::new());
     }
     let (pat, pat_err) = match criteria_pattern(profile) {
@@ -383,7 +383,7 @@ pub fn plan_check_for_with(ctx: &Ctx, run: &str, stage: &str, result: &Value, da
 }
 
 /// `sh -c <cmd>`（Python 的 `subprocess.run(cmd, shell=True)`）。
-fn shell(cmd: &str) -> std::process::Command {
+pub(super) fn shell(cmd: &str) -> std::process::Command {
     #[cfg(windows)]
     {
         let mut c = std::process::Command::new(std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()));

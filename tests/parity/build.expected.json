@@ -1880,7 +1880,7 @@
     "--check"
    ],
    "rc": 0,
-   "out": "檢查：12 支 workflow（沒有 methodology.json，workflow 用中性指引），全部一致\n",
+   "out": "檢查：13 支 workflow（沒有 methodology.json，workflow 用中性指引），全部一致\n",
    "err": ""
   }
  ],
@@ -3651,7 +3651,7 @@
   {
    "op": "docs_real",
    "rc": 0,
-   "out": "文件一致性檢查通過：agent 22 個（核心 14、舊名 2、網站分析 6），command 4 支，workflow 12 支\n",
+   "out": "文件一致性檢查通過：agent 22 個（核心 14、舊名 2、網站分析 6），command 4 支，workflow 13 支\n",
    "err": ""
   }
  ]

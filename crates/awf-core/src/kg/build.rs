@@ -108,6 +108,7 @@ fn knowledge_of(root: &str, profile: Option<&str>) -> serde_json::Map<String, se
     std::fs::read_to_string(&p)
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| crate::profile::resolve_str(&p, v).ok())
         .and_then(|v| v.get("knowledge").and_then(|k| k.as_object()).cloned())
         .unwrap_or_default()
 }

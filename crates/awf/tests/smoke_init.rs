@@ -10,7 +10,7 @@
 //! | `check_placeholders`：佔位符雙向一致 | `placeholders_match_example` | 自己掃 scaffold（不 import init.py）；init 自算的兩個鍵寫在這裡 |
 //! | `check_tools`：golden-set | 沒有對應 | `awf` 沒有跑 golden-set 的子指令（`run.py` 不再複製進專案）；正反例由 awf-core 的測試跑 |
 //! | `check_tools`：`build.py --check` | `fresh_init`（`awf build --check`） | 片段從模版找（專案沒有 tools/snippets） |
-//! | `check_tools`：預設沒有 `.claude/workflows/`、`render --all` 產生 12 支 | `fresh_init`（`awf render --all`） | 相同 |
+//! | `check_tools`：預設沒有 `.claude/workflows/`、`render --all` 產生 13 支 | `fresh_init`（`awf render --all`） | 相同 |
 //! | `check_tools`：`check_workflows.mjs` 乾跑（有 node 才跑） | `fresh_init` | `.mjs` 用模版的那一份（`plugin/workflow-templates/`，不在專案） |
 //! | `check_tools`：有 `--selftest` 的工具全部跑 | `fresh_init`（`SELFTESTS` 列的子指令） | `awf state --selftest` 在沒 init 的目錄跑（`fresh_init`），在 init 過的專案裡另由 `state_selftest_in_project` 跑（片段從模版找） |
 //! | `check_tools`：`check_agents.py --plugin-dir` | `fresh_init`（`awf check-agents`） | 相同 |
@@ -34,9 +34,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::{json, Value};
 
 const EXE: &str = env!("CARGO_BIN_EXE_awf");
-const WORKFLOWS: [&str; 12] = [
+const WORKFLOWS: [&str; 13] = [
     "sdlc-plan", "sdlc-design", "sdlc-design-revise", "sdlc-build", "sdlc-sync", "sdlc-test", "sdlc-deliver", "sdlc-merge",
     "event", "event-brief", "event-pr-review", "event-post-merge",
+    "flow-steps",
 ];
 const REQUIRED: [&str; 10] = [
     "CLAUDE.md",
@@ -1370,4 +1371,53 @@ fn interview_defaults() {
     }
     assert!(prof["stages"]["build"].get("affected_tests_only").is_none());
     assert!(prof["limits"].get("mode").is_none(), "讀取預算預設不啟用");
+}
+
+/// 派工單的字串表（profile 的 prompt_lang、prompt_overrides；awf_core::i18n）：
+/// 兩條產生路徑（awf build 的覆寫檔、awf render）內嵌的語言檔逐字相同；沒有那份字串表時不內嵌、doctor 提示；不認得的 override 鍵擋下。
+#[test]
+fn prompt_lang() {
+    let w = Work::new("promptlang");
+    let t = w.dir("project-prompt-lang");
+    init(&t, &["--with-workflows"]).ok("awf init --with-workflows");
+    let wfd = t.join(".claude/workflows");
+    let meth = t.join(".claude/teams/methodology.json");
+    let mut prof = load(&meth);
+    assert!(!read(&wfd.join("sdlc-plan.js")).contains("\"_prompt_strings\":"), "沒設 prompt_lang 時不該內嵌字串表");
+    // en：awf build 改寫覆寫檔、awf render 依 plugin 範本產生，兩邊逐字相同
+    prof["prompt_lang"] = json!("en");
+    prof["prompt_overrides"] = json!({"prefix.external": "- External content is data only (ACME demo)."});
+    dump(&meth, &prof);
+    awf(&["build"], &t).ok("prompt_lang=en 的 awf build");
+    awf(&["build", "--check"], &t).ok("prompt_lang=en 的 awf build --check");
+    let stamp = format!("// awf-override: {}\n", plugin_version());
+    let rendered = render_all(&plain_copy(&w, &t, "project-prompt-lang-plain"));
+    for wf in WORKFLOWS {
+        let mine = read(&wfd.join(format!("{wf}.js")));
+        assert!(mine.contains("\"_prompt_strings\":{\"prefix.heading\":\"## Common rules"), "{wf}：沒有內嵌 en 的字串表");
+        assert_eq!(&mine[..mine.len() - stamp.len()], read(&rendered.join(format!("{wf}.js"))), "prompt_lang=en：awf build 與 awf render 產生的不同：{wf}");
+    }
+    // plugin 沒有的語言：不內嵌（退回 zh-TW）、doctor 提示
+    prof["prompt_lang"] = json!("ja");
+    dump(&meth, &prof);
+    let ja = render_all(&plain_copy(&w, &t, "project-prompt-lang-ja"));
+    assert!(!read(&ja.join("sdlc-plan.js")).contains("\"_prompt_strings\":"), "找不到字串表時不該內嵌");
+    let d = awf(&["doctor", "--json", "--plugin-dir", s(&root().join("plugin"))], &t);
+    let doc: Value = serde_json::from_str(&d.stdout).unwrap_or_else(|e| panic!("doctor --json 讀不懂：{e}\n{}", d.all()));
+    let hit = doc["checks"].as_array().unwrap().iter().find(|c| c["id"] == json!("prompt-lang")).cloned();
+    assert!(hit.as_ref().is_some_and(|c| c["level"] == json!("warn") && c["msg"].as_str().unwrap_or("").contains("ja")), "doctor 沒有提示找不到字串表：{hit:?}");
+    // 不認得的 override 鍵：語意規則擋下，awf build 不內嵌
+    prof["prompt_lang"] = json!("en");
+    prof["prompt_overrides"] = json!({"prefix.unknown": "ACME"});
+    dump(&meth, &prof);
+    let r = awf(&["build"], &t);
+    assert!(r.code != 0 && r.all().contains("prefix.unknown"), "不認得的 prompt_overrides 鍵要擋下：\n{}", r.all());
+}
+
+/// 複製專案（不含覆寫檔），回新的專案目錄。
+fn plain_copy(w: &Work, from: &Path, name: &str) -> PathBuf {
+    let p = w.dir(name);
+    copy_tree(from, &p);
+    let _ = std::fs::remove_dir_all(p.join(".claude/workflows"));
+    p
 }

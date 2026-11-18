@@ -288,7 +288,9 @@ pub fn load_config(profile_path: &Path) -> Result<Option<Config>, String> {
     let text = String::from_utf8_lossy(&raw);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     match serde_json::from_str::<Value>(text) {
-        Ok(v) => parse_config(&v),
+        // 繼承（extends）解析失敗：看不出有沒有啟用掃描，一律當失敗（不能默默不掃）
+        Ok(v) => parse_config(&crate::profile::resolve_file(profile_path, v)
+            .map_err(|e| format!("profile {} 的繼承（extends）讀不懂（{e}），看不出去客戶化掃描有沒有啟用", profile_path.display()))?),
         // 整份讀不懂：看不出有沒有啟用。提到 scrub 就當失敗（不能默默不掃），沒提到就和沒有這個功能時一樣
         Err(e) if text.contains("\"scrub\"") => Err(format!("profile {} 不是合法 JSON（{e}），看不出去客戶化掃描有沒有啟用", profile_path.display())),
         Err(_) => Ok(None),

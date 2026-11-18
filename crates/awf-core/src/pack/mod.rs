@@ -42,7 +42,7 @@ use std::sync::LazyLock;
 
 pub type PyResult<T> = Result<T, PyErr>;
 
-pub const SDLC: [&str; 7] = ["plan", "design", "build", "sync", "test", "deliver", "merge"];
+pub use crate::stages::IDS as SDLC;
 pub const STORE: &str = "reuse.json";
 pub const ARGS: &str = "pack-args.json";
 pub const KB_TOP: i64 = 12;
@@ -1363,7 +1363,8 @@ pub fn write_task_packs_with(run: &str, root: &str, repo: Option<&str>, argv: &[
     let epic = if opt(argv, "--epic").is_empty() { epic } else { opt(argv, "--epic").to_string() };
     let spec = spec_dir(repo, &epic, opt(argv, "--spec"), root);
     let label = if opt(argv, "--spec").is_empty() { spec.as_deref().map(posix).unwrap_or_default() } else { posix(opt(argv, "--spec")) };
-    let profile = load_json(&join(root, ".claude/teams/methodology.json"));
+    let pf = join(root, ".claude/teams/methodology.json");
+    let profile = load_json(&pf).and_then(|v| crate::profile::resolve_str(&pf, v).ok());
     let bases: Vec<String> = std::iter::once(root.to_string()).chain(repo.map(str::to_string)).collect();
     // 需求來源是 openspec 時，spec_refs 可以是規格層的穩定 id；不是 openspec（或規格讀不到）時是 None，行為照舊
     let run_data = load_json(&join(run, "run.json")).filter(Value::is_object).unwrap_or_else(|| json!({}));

@@ -191,6 +191,8 @@ re!(TEAM_CONFIG_MKDIR, r"(?:^|[\s;&|(`])(?:mkdir|md|rmdir)(?:\.exe)?(?=\s|$)", "
 re!(MULTI_SLASH, r"(?<![:/])[/\\\\]{2,}");
 re!(TEAMS_REL, r#"(?:^|[\s"'=])\.?[/\\\\]?(?:teams|workflows)(?:[/\\\\]|\s|$)"#);
 re!(CI_TARGET, r#"(?:^|[/\\\s"'=])\.github[/\\]workflows(?:[/\\"']|\s|$)"#, "i");
+re!(FLOW_TARGET, r#"(?:^|[/\\\s"'=])\.claude[/\\]flows(?:[/\\"']|\s|$)"#, "i");
+re!(FLOW_REL, r#"(?:^|[\s"'=])\.?[/\\]?flows(?:[/\\"']|\s|$)"#, "i");
 re!(CI_REL, r#"(?:^|[\s"'=])\.?[/\\]?workflows(?:[/\\"']|\s|$)"#, "i");
 re!(CLAUDE_PROJECTS_TARGET, r#"(?:^|[/\\\s"'=(:])\.claude[/\\]projects(?:[/\\"')]|\s|$)"#, "i");
 re!(PROJECT_ENV_SET, concat!(
@@ -215,7 +217,7 @@ pub fn all_patterns() -> Vec<&'static Re> {
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
-         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &GRAPH_DB, &SQLITE_CLI, &CLAUDE_PROJECTS_TARGET, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
+         &FREEZE_TRUE, &FREEZE_FALSE, &TEAM_CONFIG_TARGET, &TEAM_TOOL_CALL, &TEAM_CONFIG_MKDIR, &MULTI_SLASH, &TEAMS_REL, &CI_TARGET, &CI_REL, &FLOW_TARGET, &FLOW_REL, &GRAPH_DB, &SQLITE_CLI, &CLAUDE_PROJECTS_TARGET, &PROJECT_ENV_SET, &PUSH_RE, &GIT_WORD,
          &NO_VERIFY, &MERGE_GATE_PY, &PUBLISH_PY, &CHECK_WORD, &HEREDOC, &SAVE_RUN_LAUNCHERS, &REPO_FLAG_ANY, &REFS_HEADS, &GIT_GLOBAL_OPTS, &SLUG]
 }
 
@@ -1176,6 +1178,22 @@ impl Guard {
         Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
     }
 
+    /// shell 寫入某個專案的 `.claude/flows/`（自訂段的腳本；盡力而為，判法比照 [`Self::shell_writes_ci`]）。
+    fn shell_writes_flow(&self, seg: &str, cwd: &str) -> R<bool> {
+        let here = self.folded_here(cwd)?;
+        let inside_dir = here.contains("/.claude/flows/");
+        if !inside_dir && !seg.to_ascii_lowercase().contains("flows") {
+            return Ok(false);
+        }
+        let probe = MULTI_SLASH.replace_all(&norm(seg), "/");
+        let inside = inside_dir || (here.ends_with("/.claude/") && FLOW_REL.is_match(&probe));
+        if !inside && !FLOW_TARGET.is_match(&probe) {
+            return Ok(false);
+        }
+        let probe = NULL_REDIR.replace_all(&probe, " ");
+        Ok(SHELL_WRITE.is_match(&probe) || TEAM_CONFIG_MKDIR.is_match(&probe) || (INTERP.is_match(&probe) && INTERP_WRITE.is_match(&probe)))
+    }
+
     /// shell 寫入 `~/.claude/projects/` 底下（Claude Code 的記憶與對話紀錄；下一個 session 會自動載入記憶，等於跨 session 的指示）。
     /// 讀不擋；判法比照 [`Self::shell_writes_ci`]（盡力而為）。
     fn shell_writes_claude_projects(&self, seg: &str, cwd: &str) -> R<bool> {
@@ -1584,6 +1602,10 @@ log 請放 {runs_label}<run>/<段>/logs/<label>.log")));
             if team && self.shell_writes_ci(seg, d)? {
                 return Err(self.block(&format!("{agent} 不能寫 .github/workflows/ 底下的檔（CI 檔決定哪些檢查會跑，只由人或主 session 改，\
 例如 awf ci render --write；需要改 CI 就寫進交件的 open_questions）")));
+            }
+            if team && self.shell_writes_flow(seg, d)? {
+                return Err(self.block(&format!("{agent} 不能寫 .claude/flows/ 底下的檔（自訂段的腳本決定那一段怎麼跑，只由人或主 session 改；可以讀。\
+需要改就寫進交件的 open_questions；讀它的指令不要和寫入寫在同一段）")));
             }
             if team {
                 if let Some(name) = self.shell_moves_tree(seg, d)? {

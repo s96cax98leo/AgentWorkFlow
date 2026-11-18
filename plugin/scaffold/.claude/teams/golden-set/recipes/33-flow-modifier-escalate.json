@@ -1,0 +1,182 @@
+{
+ "_說明": "自訂段由 modifier 的 add_stages 加進來；escalate 合併後自訂段還在、順序照 flow",
+ "profile": {
+  "recipes": {
+   "feature": {
+    "description": "示範",
+    "stages": [
+     "plan",
+     "design",
+     "build",
+     "sync",
+     "test",
+     "signoff",
+     "uat",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "feature",
+    "research_angles": [
+     "requirement"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan"
+    ],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify"
+     ]
+    },
+    "deliver_axes": [
+     "spec",
+     "bugs"
+    ]
+   },
+   "bugfix": {
+    "description": "示範",
+    "stages": [
+     "plan",
+     "build",
+     "test",
+     "deliver",
+     "merge"
+    ],
+    "plan_mode": "diagnose",
+    "research_angles": [
+     "requirement"
+    ],
+    "design_lenses": [
+     "coverage",
+     "plan"
+    ],
+    "test": {
+     "design_review": "auto",
+     "security_review": "auto",
+     "modes": [
+      "verify"
+     ]
+    },
+    "deliver_axes": [
+     "spec",
+     "bugs"
+    ]
+   }
+  },
+  "modifiers": {
+   "client": {
+    "description": "客戶要驗收",
+    "add_stages": [
+     "uat"
+    ]
+   },
+   "perf": {
+    "description": "量效能",
+    "add_stages": [
+     "perf-check"
+    ]
+   }
+  },
+  "flow": {
+   "stages": [
+    {
+     "id": "uat",
+     "after": "test",
+     "run": "script",
+     "script": ".claude/flows/uat.js",
+     "gate": "human",
+     "approver": "示範客戶 ACME 的 PM",
+     "artifacts": [
+      "驗收報告.md"
+     ]
+    },
+    {
+     "id": "perf-check",
+     "after": "test",
+     "run": "script",
+     "script": ".claude/flows/perf.js",
+     "gate": "human"
+    },
+    {
+     "id": "signoff",
+     "after": "uat",
+     "run": "script",
+     "script": ".claude/flows/signoff.js",
+     "gate": "human"
+    }
+   ],
+   "labels": {
+    "design": "系統設計",
+    "uat": "客戶驗收"
+   }
+  }
+ },
+ "recipe": "bugfix",
+ "modifiers": [
+  "client",
+  "perf"
+ ],
+ "old": {
+  "recipe": "bugfix",
+  "modifiers": [
+   "client"
+  ]
+ },
+ "expect": {
+  "name": "bugfix",
+  "stages": [
+   "plan",
+   "build",
+   "test",
+   "uat",
+   "perf-check",
+   "deliver",
+   "merge"
+  ],
+  "plan_mode": "diagnose",
+  "research_angles": [
+   "requirement"
+  ],
+  "design_lenses": [
+   "coverage",
+   "plan"
+  ],
+  "test": {
+   "design_review": "auto",
+   "security_review": "auto",
+   "modes": [
+    "verify"
+   ]
+  },
+  "deliver_axes": [
+   "spec",
+   "bugs"
+  ],
+  "build_kinds": [
+   "code",
+   "test",
+   "doc"
+  ],
+  "publishable": true,
+  "followup": false,
+  "split": false,
+  "modifiers": [
+   "client",
+   "perf"
+  ],
+  "errors": [],
+  "escalate_errors": [],
+  "merged_stages": [
+   "plan",
+   "build",
+   "test",
+   "uat",
+   "perf-check",
+   "deliver",
+   "merge"
+  ],
+  "merged_ok": true
+ }
+}

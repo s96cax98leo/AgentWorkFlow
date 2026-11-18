@@ -27,7 +27,7 @@ pub const LINK_SCHEMA_VERSION: u64 = 1;
 /// 連結種類（計畫 D1 的表）。
 pub const LINK_KINDS: [&str; 7] = ["req_run", "ac_spec", "ac_file", "ac_test", "ac_commit", "decision_req", "change_deliverable"];
 /// 連結檢查在哪些段算。
-pub const GAP_STAGES: [&str; 3] = ["design", "test", "deliver"];
+pub use crate::stages::LINK_GAPS as GAP_STAGES;
 
 /// profile 的 `links`：沒有這個物件回 None（帳本與檢查都不啟用）；有就回 `enforce`（預設 false）。
 pub fn links_setting(profile: &Value) -> Option<bool> {

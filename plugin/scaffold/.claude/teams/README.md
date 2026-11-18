@@ -13,6 +13,7 @@
 | plugin 的 `workflow-templates/sdlc-*.js`（8 支） | AI-native SDLC：plan、design、design-revise、build、sync、test、deliver、merge。不複製進專案：`awf next` 每段用範本加本專案的設定產生 `<run_dir>/.wf/<名>.js` |
 | plugin 的 `workflow-templates/event.js` | 形狀相同的事件共用一支：會議、決策落地、Demo 前檢查、需求變動、上游變動，以及 `methodology.json` 的 `events` 自訂的類型 |
 | plugin 的 `workflow-templates/event-*.js`（3 支） | 簡報、PR 審查、合併後監看 |
+| plugin 的 `workflow-templates/flow-steps.js` | `methodology.json` 的 `flow` 用步驟宣告（`run: "steps"`）的自訂段共用這一支 |
 | `.claude/teams/rules.md` | 硬規則：通用規則＋專案規則 |
 | `.claude/teams/VERSION`、`.claude/teams/workflow.config` | init 寫下的模版版本與佔位符值；`awf init --upgrade` 讀它們，不要手改 |
 | `.claude/teams/guard.config.json` | 守門設定，包括：<br>・目錄：run、repo<br>・repo：上游、fork、禁止路徑<br>・規範：允許的分支前綴、受保護分支、任務編號前綴、署名行<br>・開關：主 session 開關、`auto_merge` |
@@ -156,7 +157,7 @@ hooks 有兩種安裝方式，**只能選一種**，不然同一個事件會檢�
 | `awf doctor` | 檢查安裝：`awf doctor` 逐項檢查環境、plugin 與專案版本、安裝來源衝突、hook、設定，每項附修法；只讀 |
 
 ```bash
-awf render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 12 支腳本
+awf render --all --out _tpm/wf-check   # 用 plugin 的範本＋專案設定產生 13 支腳本
 node <plugin>/workflow-templates/check_workflows.mjs --project . --wf-dir _tpm/wf-check
 awf check-agents --plugin-dir <plugin>
 awf merge-gate --selftest

@@ -183,7 +183,9 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
     }
     // recipe 專屬的主線（profile 的 conventions.branch.bases）：這個 run 的 recipe 有列、而且沒有用 --base／--set base= 指定時，
     // 這一段的 base 用它（範本的 A.base 沒給時是守門設定的主線）。沒設定時整段不做，args 和以前逐字相同
-    if workflow.starts_with("sdlc-") && s_or(py::get(data, "event")?) == "sdlc" && !a.get("base").is_some_and(|b| !blank(b)) {
+    // 自訂段（profile 的 flow；workflow 名是 flow-<段>）和 sdlc 各段一樣帶 recipe 的主線與中轉分支
+    let flow_wf = workflow.starts_with("flow-");
+    if (workflow.starts_with("sdlc-") || flow_wf) && s_or(py::get(data, "event")?) == "sdlc" && !a.get("base").is_some_and(|b| !blank(b)) {
         let name = a.get("recipe").and_then(Value::as_str).filter(|n| !n.is_empty()).unwrap_or("feature").to_string();
         let profile = crate::layout::read_profile(&pj(&env.teams(), "methodology.json"));
         if let Some(b) = crate::layout::recipe_base(&profile, &name) {
@@ -192,11 +194,11 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
             a.insert("base".into(), json!(want));
         }
     }
-    if workflow.starts_with("sdlc-") && workflow != "sdlc-merge" {
+    if (workflow.starts_with("sdlc-") && workflow != "sdlc-merge") || flow_wf {
         let sync = stage_result(env, run, "sync")?;
         let default = format!("{}{}", read_config(env)?.get("BRANCH_PREFIX").and_then(Value::as_str).unwrap_or_default(), a.get("epic").map(s_or).unwrap_or_default());
         if let Some(head) = sync.get("head_branch").and_then(Value::as_str).filter(|h| !h.is_empty() && *h != default) {
-            if ["build", "test", "deliver", "sync"].contains(&stage) {
+            if crate::stages::has(stage, crate::stages::Flag::TransitBranch) || flow_wf {
                 if let Some(b) = a.get("branch").filter(|b| !blank(b) && b.as_str() != Some(head)) {
                     notes.push(format!("忽略 --set 的 branch={}：sync 走過中轉分支，以它回報的 {head} 為準", py::s(b)));
                 }

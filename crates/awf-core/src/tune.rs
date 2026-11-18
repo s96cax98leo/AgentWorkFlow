@@ -5,10 +5,10 @@
 
 use serde_json::Value;
 
-/// 專案的 profile（`<root>/.claude/teams/methodology.json`）。沒有、讀不到、不是 JSON 物件都回 `Null`。
+/// 專案的 profile（`<root>/.claude/teams/methodology.json`，照 `extends` 合併）。沒有、讀不到、不是 JSON 物件、繼承解析失敗都回 `Null`。
 pub fn profile(root: &str) -> Value {
     let p = std::path::Path::new(root).join(".claude/teams/methodology.json");
-    match std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+    match std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| crate::profile::resolve_file(&p, v).ok()) {
         Some(v) if v.is_object() => v,
         _ => Value::Null,
     }
