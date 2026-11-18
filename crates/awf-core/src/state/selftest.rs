@@ -937,6 +937,18 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
     w.call(&["next", "--run", d3]);
     let (c, out, _) = w.call(&["done", "--run", d3]);
     t.check("done：找不到回傳時明說，並提示用 --output", c != 0 && out.contains("--output"), out.clone());
+    t.check("done：找不到回傳時列出找的位置與比對的腳本（1.2）", out.contains("找的位置") && out.contains("workflows/wf_*.json") && out.contains("比對的腳本"), out.clone());
+    {
+        // pending 沒有腳本路徑（不是 next 排的，或直接用了 retry 物件）：找法不變（一筆都不採用），說明要先 next --retry
+        let rj = std::path::Path::new(&w.run(d3)).join("run.json");
+        let mut v: Value = std::fs::read_to_string(&rj).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+        if let Some(p) = v.pointer_mut("/awf/pending").and_then(Value::as_object_mut) {
+            p.remove("script");
+        }
+        let _ = std::fs::write(&rj, serde_json::to_string(&v).unwrap_or_default());
+        let (c, out, _) = w.call(&["done", "--run", d3]);
+        t.check("done：pending 沒有腳本路徑時說明要先 awf next --retry（1.2）", c != 0 && out.contains("awf next --retry") && out.contains("retry 物件"), out);
+    }
     t.check("done：沒跑過 next 又沒指定段時拒絕", w.call(&["done", "--run", d2]).0 != 0, String::new());
 
     // ── 事件與結束狀態
