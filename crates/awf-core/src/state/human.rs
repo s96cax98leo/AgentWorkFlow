@@ -181,6 +181,126 @@ pub fn direct_save_marks(ctx: &sr::Ctx, run: &str, stage: &str, data: &Value, re
     notes
 }
 
+// ------------------------------------------------------------------ plan 修正輪（awf next --revise）
+/// 修正輪一次最多帶幾條答覆（和 sdlc-plan 範本的上限一致；超過就拒絕，不默默截掉）。
+pub const MAX_REVISE_ANSWERS: usize = 20;
+
+/// 這個 run 的 plan 段可以用的「人的答覆」（`[{question, answer}]`；同一題後面的取代前面的）：
+/// - run.json 的 `stages.plan.decided.answers`（`awf approve --answer "#N=…"` 記的；`auto: true`＝照建議先做的不算）。
+/// - 決策記憶（`<runs_dir>/decisions.jsonl`）裡 `run` 是這個 run、`stage` 是 plan（核准時帶的 `--answer`）或沒有記段
+///   （`awf save-run decide`；修正輪只在後面的段都還沒開始時能跑，所以這個 run 沒記段的決定都是 plan 期間做的）的紀錄；
+///   `by` 是 policy 或照建議先做的不算。重存 plan 會清掉 `decided`，所以再跑一次修正輪時靠的是這一份。
+///
+/// 讀不到、讀不懂的紀錄略過（寧可少，不採信看不懂的）。
+fn plan_answers(run: &str, data: &Value) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut put = |q: &str, a: &str| {
+        let (q, a) = (py::squash(q), py::squash(a));
+        if a.is_empty() {
+            return;
+        }
+        match out.iter_mut().find(|x| !q.is_empty() && x.0 == q) {
+            Some(slot) => slot.1 = a,
+            None => out.push((q, a)),
+        }
+    };
+    let human = |by: Option<&Value>| by.and_then(Value::as_str).is_some_and(|b| !b.trim().is_empty() && b != "policy" && b != hm::AUTO_BY);
+    let resolved = pyish::resolve(run).unwrap_or_else(|_| run.to_string());
+    let name = py::pname(&resolved);
+    if let Ok(text) = std::fs::read_to_string(pj(&py::pparent(&resolved), crate::pack::DECISIONS)) {
+        for rec in text.lines().filter_map(|l| py::loads(l).ok()).filter(Value::is_object) {
+            let stage = rec.get("stage").and_then(Value::as_str).unwrap_or_default();
+            if rec.get("run").and_then(Value::as_str) == Some(name.as_str()) && (stage.is_empty() || stage == "plan") && human(rec.get("by")) {
+                put(rec.get("question").and_then(Value::as_str).unwrap_or_default(), rec.get("answer").and_then(Value::as_str).unwrap_or_default());
+            }
+        }
+    }
+    if let Some(d) = data.get("stages").and_then(|s| s.get("plan")).and_then(|s| s.get(hm::DECIDED)).filter(|d| d.is_object()) {
+        if d.get("auto") != Some(&Value::Bool(true)) && human(d.get("by")) {
+            for a in d.get("answers").and_then(Value::as_array).into_iter().flatten() {
+                put(a.get("question").and_then(Value::as_str).unwrap_or_default(), a.get("answer").and_then(Value::as_str).unwrap_or_default());
+            }
+        }
+    }
+    out
+}
+
+/// `awf next --run <run> --revise`：plan 的修正輪（人答了待釐清的問題，只改 intent 再複查、不重做調研）。
+/// 全部成立才接受，否則拒絕並說明、什麼都不改：
+/// 1. 進行中的 SDLC run；沒有同時帶 `--script`、`--workflow`、`--skip-subtask`、`--confirm-merge`，`--stage` 有給只能是 plan。
+/// 2. plan 已經存過結果、狀態是 done 或 needs_decision，而且結果不是 halted、有 intent 的信封（沒有 intent 可以改就整段重跑）。
+///    例外：上一輪就是修正輪（結果的 `round` 是 revise）而且停在 blocked／invalid 時，可以再跑一次修正輪。
+/// 3. plan 後面沒有任何一段開始過：其他每一段的狀態都還是 pending 或 skipped，等待中的段（`awf.pending`）不是別的段。
+///    plan 核准過沒關係（`approve --answer` 之後本來就是核准的）：修正輪的結果存檔時核准會被清掉，要人重新核准。
+/// 4. 有人的答覆可用（[`plan_answers`]），而且不超過 [`MAX_REVISE_ANSWERS`] 條。
+/// 5. 知道上一輪的 recipe（run.json 鎖定的，或上一輪 plan.json 回傳的）：修正輪不重跑 triage。
+///
+/// 接受時把答覆記在 run.json 的 `awf.revise`（[`stage_args`] 從這裡帶進 args，`--set answers=` 蓋不掉），回傳要給主 session 看的說明。
+pub fn revise_setup(env: &Env, run: &str, data: &mut Value, argv: &[String]) -> A<String> {
+    const HEAD: &str = "不能跑 plan 的修正輪（--revise）";
+    if s_or(py::get(data, "event")?) != "sdlc" || py::truthy(py::get(data, "abandoned")?) || py::truthy(py::get(data, "closed")?) {
+        return awf_err(format!("{HEAD}：只用在進行中的 SDLC run"));
+    }
+    for flag in ["--script", "--workflow", "--skip-subtask", "--confirm-merge", "--skip"] {
+        if has(argv, flag) {
+            return awf_err(format!("{HEAD}：不能和 {flag} 一起用"));
+        }
+    }
+    if has(argv, "--stage") && opt(argv, "--stage") != "plan" {
+        return awf_err(format!("{HEAD}：修正輪只有 plan 段有（design 退回用 --stage design --workflow sdlc-design-revise）"));
+    }
+    let stages = data.get("stages").and_then(Value::as_object).cloned().unwrap_or_default();
+    let status = stages.get("plan").and_then(|s| s.get("status")).and_then(Value::as_str).unwrap_or_default().to_string();
+    // 上一輪就是修正輪、而且停下了（缺件、halted）：intent 還在，可以再跑一次修正輪
+    let prev = stage_result(env, run, "plan")?;
+    let again = ["blocked", "invalid"].contains(&status.as_str()) && prev.get("round").and_then(Value::as_str) == Some("revise");
+    if !["done", "needs_decision"].contains(&status.as_str()) && !again {
+        return awf_err(format!("{HEAD}：plan 的狀態是 {}，要先有一份存好的 plan 結果（done 或 needs_decision）；還沒跑過或停在別的狀態就用 awf next（或 --retry）跑完整的 plan", if status.is_empty() { "（沒有）" } else { &status }));
+    }
+    let started: Vec<String> = stages.iter().filter(|(k, v)| k.as_str() != "plan" && !matches!(v.get("status").and_then(Value::as_str), None | Some("pending" | "skipped"))).map(|(k, _)| crate::hooks::safe::text(k, 40)).collect();
+    if !started.is_empty() {
+        return awf_err(format!("{HEAD}：plan 後面的段已經開始過（{}）。這時候改 intent 會讓後面的產出對不上：要改需求就重跑 plan（awf next --stage plan --workflow sdlc-plan --retry，後面的段要重做），或另開一個 run", started.join("、")));
+    }
+    if let Some(p) = data.get("awf").and_then(|a| a.get("pending")).and_then(|p| p.get("stage")).and_then(Value::as_str).filter(|s| *s != "plan") {
+        return awf_err(format!("{HEAD}：{} 段已經交出去在跑（awf.pending）；plan 後面的段開始之後不能再跑修正輪", crate::hooks::safe::text(p, 40)));
+    }
+    if !again && (prev.get("halted").is_some_and(py::truthy) || !prev.get("intent").is_some_and(Value::is_object)) {
+        return awf_err(format!("{HEAD}：上一輪 plan 的結果是 halted 或沒有 intent 的信封，沒有可以修改的 intent；用 awf next --retry 跑完整的 plan"));
+    }
+    let known = sr::has_recipe(data)? || prev.get("recipe").and_then(|r| r.get("name")).and_then(Value::as_str).is_some_and(|n| !n.is_empty());
+    if !known {
+        return awf_err(format!("{HEAD}：run.json 與上一輪 plan 的結果都沒有 recipe（修正輪不重跑 triage）；用 awf next --retry 跑完整的 plan"));
+    }
+    let answers = plan_answers(run, data);
+    if answers.is_empty() {
+        return awf_err(format!(
+            "{HEAD}：這個 run 的 plan 段沒有人的答覆可用（照建議先做的不算）。先由人答覆：停在 needs_decision 用 awf approve --run <run_dir> plan --by <誰> --answer \"#N=<答覆>\"，其餘用 awf save-run decide <run_dir> --question … --answer … --by … --at …"
+        ));
+    }
+    if answers.len() > MAX_REVISE_ANSWERS {
+        return awf_err(format!("{HEAD}：這個 run 的 plan 段有 {} 條答覆，修正輪一次最多帶 {MAX_REVISE_ANSWERS} 條（不會默默截掉）。請人把答覆精簡、合併後重新記，或跑完整的 plan（awf next --stage plan --workflow sdlc-plan --retry）", answers.len()));
+    }
+    let n = answers.len();
+    let list: Vec<Value> = answers.into_iter().map(|(q, a)| json!({"question": q, "answer": a})).collect();
+    setdefault_obj(data, "awf")?.insert("revise".into(), json!({"stage": "plan", "answers": list, "at": env.now_iso()}));
+    Ok(format!("plan 修正輪：帶 {n} 條人的答覆，只派 intent 作者依答覆修改 intent、再由 skeptic 複查，不重做 triage 與調研。存檔（awf done）之後 plan 的核准會清掉，要由人重新核准"))
+}
+
+/// 修正輪要帶的答覆（`awf.revise`，只認 plan）；沒有回 None。
+pub fn revise_answers(data: &Value) -> Option<&Vec<Value>> {
+    let r = data.get("awf")?.get("revise")?;
+    (r.get("stage").and_then(Value::as_str) == Some("plan")).then(|| r.get("answers").and_then(Value::as_array)).flatten().filter(|l| !l.is_empty())
+}
+
+/// 閘門重點的一行：plan 的結果是修正輪、而且有角度沒有重做調研時才有（會進對話：每個名字都先過 [`crate::hooks::safe::text`]）。
+pub fn revise_note(result: &Value) -> Option<String> {
+    if result.get("round").and_then(Value::as_str) != Some("revise") {
+        return None;
+    }
+    let names: Vec<String> = result.get("not_redone_angles").and_then(Value::as_array)?.iter().filter_map(Value::as_str).map(|x| crate::hooks::safe::text(x, 40)).filter(|x| !x.is_empty()).take(12).collect();
+    (!names.is_empty()).then(|| crate::hooks::safe::text(&format!("修正輪沒有重做這些角度的調研：{}；答覆若改變了它們的前提，請改跑完整的 plan", names.join("、")), 600))
+}
+
 // ------------------------------------------------------------------ build 續跑時略過子任務
 fn task_id(t: &Value) -> Option<&str> {
     match t {

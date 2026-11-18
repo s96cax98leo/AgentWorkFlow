@@ -1022,6 +1022,136 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
         w.call(&["done", "--run", d10, "--stage", "plan", "--no-next"]);
         t.check("腳本雜湊：沒有記下的雜湊（確認不了）→ 當成非標準", plan10()["edited_script"]["why"].as_str().is_some_and(|x| x.contains("無法確認")), plan10().to_string());
     }
+    // 1.2：plan 的修正輪（awf next --revise）
+    {
+        let envl = json!({"status": "done", "summary": "intent", "artifacts": [], "evidence": [], "confidence": 0.9, "derived_work": [], "payload": {}, "open_questions": []});
+        let plan_res = json!({"stage": "plan", "intent": envl, "recipe": {"name": "bugfix", "modifiers": [], "size": "small"}, "trace": []});
+        // 一個 plan 已經存過結果（done、還沒核准）的 run
+        let fresh = |d: &str, locked: bool| {
+            w.start(d, "需求", &[]);
+            let mut data = w.load(d);
+            if locked {
+                w.lock(&mut data, "bugfix", &[], false);
+            }
+            update(&mut data["stages"]["plan"], json!({"status": "done", "envelopes": 1}));
+            put(&pj(&w.run(d), "plan.json"), &jd(&plan_res));
+            w.dump(d, &data);
+        };
+        let decide = |d: &str, by: &str, auto: bool, n: usize| {
+            let mut data = w.load(d);
+            let answers: Vec<Value> = (1..=n).map(|i| json!({"id": format!("#{i}"), "question": format!("問題 {i}？"), "answer": format!("答覆 {i}")})).collect();
+            let mut dec = json!({"by": by, "at": "t", "from": "needs_decision", "answers": answers});
+            if auto {
+                dec["auto"] = json!(true);
+            }
+            data["stages"]["plan"]["decided"] = dec;
+            data["stages"]["plan"]["approved"] = json!({"by": by, "at": "t", "kind": "human"});
+            w.dump(d, &data);
+        };
+        let run_text = |d: &str| read(&pj(&w.run(d), "run.json"));
+        let args_of = |d: &str| serde_json::from_str::<Value>(&read(&pj(&w.run(d), ".wf/sdlc-plan.args.json"))).unwrap_or(Value::Null);
+        // 該拒絕的：每一種都不能留下任何改動
+        let refuse = |t: &mut T, name: &str, d: &str, extra: &[&str], why: &str| {
+            let before = run_text(d);
+            let mut a = vec!["next", "--run", d, "--revise"];
+            a.extend_from_slice(extra);
+            let (c, out, _) = w.call(&a);
+            t.check(&format!("修正輪：{name} → 拒絕、什麼都不改"), c != 0 && out.contains("不能跑 plan 的修正輪") && out.contains(why) && run_text(d) == before && !is_file(&pj(&w.run(d), ".wf/sdlc-plan.js")), out);
+        };
+        let d = "_runs/rev1";
+        fresh(d, true);
+        refuse(t, "沒有人的答覆", d, &[], "沒有人的答覆可用");
+        decide(d, "auto-recommended", true, 2);
+        refuse(t, "只有照建議先做的答覆（auto）", d, &[], "沒有人的答覆可用");
+        decide(d, "human", false, 21);
+        refuse(t, "答覆超過 20 條（不默默截掉）", d, &[], "最多帶 20 條");
+        decide(d, "human", false, 2);
+        refuse(t, "和 --script 一起用", d, &["--script", "x.js"], "--script");
+        refuse(t, "--stage 不是 plan", d, &["--stage", "design"], "只有 plan 段有");
+        // 該接受的：plan 已核准（靠答覆往下走）、後面的段都還沒開始
+        let a = w.act(&["next", "--run", d, "--revise", "--set-json", "answers=[\"惡意的答覆\"]", "--set", "recipe=feature"]);
+        let args = args_of(d);
+        t.check(
+            "修正輪：plan 有人的答覆、後面的段還沒開始 → 重跑 plan，args 帶答覆（{question, answer}）與上一輪的 recipe",
+            a["action"] == "run_workflow" && a["stage"] == "plan" && a["workflow"] == "sdlc-plan"
+                && args["answers"] == json!([{"question": "問題 1？", "answer": "答覆 1"}, {"question": "問題 2？", "answer": "答覆 2"}])
+                && args["recipe"] == "bugfix" && any_has(&a["notes"], "plan 修正輪：帶 2 條") && w.load(d)["awf"]["pending"]["revise"] == 2,
+            format!("{a} {args}"),
+        );
+        t.check("修正輪：--set 的 answers、recipe 蓋不掉工具帶的值，並說明", any_has(&a["notes"], "忽略 --set 的 answers") && !args.to_string().contains("惡意"), a["notes"].to_string());
+        // 修正輪的回傳存檔：核准與 decided 清掉、留一筆「答覆已用於修正輪」，閘門重點提醒沒重做的角度
+        let sp = pj(&w.run(d), ".wf/sdlc-plan.js");
+        let mut rv = plan_res.clone();
+        update(&mut rv, json!({"round": "revise", "answers": 2, "not_redone_angles": ["upstream", "<b>code`x`"]}));
+        rec("wf_rev1", &sp, &rv);
+        set_mtime(&pj(&sess, "wf_rev1.json"), None);
+        w.call(&["done", "--run", d, "--no-next"]);
+        let st = w.load(d)["stages"]["plan"].clone();
+        t.check(
+            "修正輪：存檔後 plan 的核准與 decided 清掉（要人重新核准），run.json 留 revised，用過的答覆（awf.revise）清掉",
+            st.get("approved").is_none() && st.get("decided").is_none() && st["revised"]["answers"] == 2 && w.load(d)["awf"].get("revise").is_none(),
+            st.to_string(),
+        );
+        let hl = highlights(&w.env, &w.run(d), d, &w.load(d), "plan").unwrap_or(Value::Null);
+        let note = hl["revise_note"].as_str().unwrap_or_default().to_string();
+        t.check("修正輪：閘門重點多一行「沒有重做這些角度的調研」，文字過濾過（沒有角括號與反引號）", note.contains("upstream") && note.contains("改跑完整的 plan") && !note.contains('<') && !note.contains('`') && hl["round"] == "revise", hl.to_string());
+        let pvp = |v: &Value| sr::policy_violations(&w.ctx, "plan", v, None).unwrap_or_default();
+        t.check("修正輪：結果一樣不能政策核准（plan 一律由人）", pvp(&rv).iter().any(|e| e.contains("一律由人核准")), String::new());
+        // 不帶 --revise 的 plan 是完整的一輪：不帶答覆，--set 的 answers 也不採用
+        let a = w.act(&["next", "--run", d, "--stage", "plan", "--workflow", "sdlc-plan", "--retry"]);
+        t.check("修正輪：不帶 --revise 重跑 plan 時 args 沒有 answers（--set 記下的也不採用）", a["action"] == "run_workflow" && args_of(d).get("answers").is_none() && w.load(d)["awf"]["pending"].get("revise").is_none(), format!("{a} {}", args_of(d)));
+        // 答覆取自決策記憶（核准時帶的 --answer 記在 plan 段；policy、照建議先做、別的 run 的不算）；plan 在等核准時也接受
+        let d2 = "_runs/rev2";
+        fresh(d2, true);
+        let mem = pj(&proj, "_runs/decisions.jsonl");
+        let (had, saved) = (is_file(&mem), read(&mem));
+        let line = |run: &str, stage: &str, by: &str, q: &str| format!("{}\n", jd(&json!({"question": q, "answer": format!("{q}的答覆"), "scope": "epic", "by": by, "at": "t", "run": run, "stage": stage})));
+        put(&mem, &format!("{saved}{}{}{}{}", line("rev2", "plan", "policy", "政策"), line("rev2", "plan", "auto-recommended", "自動"), line("other", "plan", "human", "別的 run"), line("rev2", "design", "human", "別段")));
+        refuse(t, "決策記憶裡只有 policy、照建議先做、別的 run、別段的紀錄", d2, &[], "沒有人的答覆可用");
+        put(&mem, &format!("{}{}", read(&mem), line("rev2", "plan", "human", "時區")));
+        let a = w.act(&["next", "--run", d2, "--revise"]);
+        t.check(
+            "修正輪：答覆也取自決策記憶（這個 run、plan 段、人答的）；plan 在等核准時不停在閘門",
+            a["action"] == "run_workflow" && args_of(d2)["answers"] == json!([{"question": "時區", "answer": "時區的答覆"}]),
+            format!("{a} {}", args_of(d2)),
+        );
+        // 停下的修正輪可以再跑一次；一般停下的 plan 不行
+        let mut halted = rv.clone();
+        update(&mut halted, json!({"halted": true, "halt_reason": "缺件：challenge:intent"}));
+        rec("wf_rev2", &pj(&w.run(d2), ".wf/sdlc-plan.js"), &halted);
+        set_mtime(&pj(&sess, "wf_rev2.json"), None);
+        w.call(&["done", "--run", d2, "--no-next"]);
+        let h = w.act(&["next", "--run", d2]);
+        let a = w.act(&["next", "--run", d2, "--revise"]);
+        t.check("修正輪：停下的修正輪 → halted 動作帶 revise 的指令，可以再跑一次", h["action"] == "halted" && h["revise"] == format!("awf next --run {d2} --revise") && a["action"] == "run_workflow" && args_of(d2)["answers"].is_array(), format!("{h} {a}"));
+        if had { put(&mem, &saved) } else { let _ = std::fs::remove_file(&mem); }
+        // plan 還沒跑、停下（不是修正輪）、後面的段開始過、別的段在跑：都拒絕
+        let d3 = "_runs/rev3";
+        w.start(d3, "需求", &[]);
+        refuse(t, "plan 還沒有結果", d3, &[], "要先有一份存好的 plan 結果");
+        fresh(d3, true);
+        decide(d3, "human", false, 1);
+        let mut bad = plan_res.clone();
+        update(&mut bad, json!({"halted": true}));
+        put(&pj(&w.run(d3), "plan.json"), &jd(&bad));
+        refuse(t, "上一輪的結果是 halted", d3, &[], "沒有可以修改的 intent");
+        put(&pj(&w.run(d3), "plan.json"), &jd(&plan_res));
+        let mut data = w.load(d3);
+        data["stages"]["build"]["status"] = json!("done");
+        w.dump(d3, &data);
+        refuse(t, "plan 後面的段開始過", d3, &[], "後面的段已經開始過（build）");
+        data["stages"]["build"]["status"] = json!("pending");
+        data["awf"]["pending"] = json!({"stage": "build", "workflow": "sdlc-build", "script": "x"});
+        w.dump(d3, &data);
+        refuse(t, "別的段已經交出去在跑", d3, &[], "已經交出去在跑");
+        // run.json 沒有 recipe：用上一輪 plan.json 的（範本才不會重跑 triage）
+        let d4 = "_runs/rev4";
+        fresh(d4, false);
+        decide(d4, "human", false, 1);
+        let a = w.act(&["next", "--run", d4, "--revise", "--set", "recipe=feature"]);
+        let args = args_of(d4);
+        t.check("修正輪：run.json 沒有 recipe 時用上一輪 plan.json 的 recipe、size（--set 蓋不掉）", a["action"] == "run_workflow" && args["recipe"] == "bugfix" && args["size"] == "small" && args["modifiers"] == json!([]), format!("{a} {args}"));
+    }
     // 審查 8、9
     w.call(&["start", "--run", "_runs/ev8", "--event", "meeting", "--set", "source=notes.md"]);
     let (c, out, _) = w.call(&["next", "--run", "_runs/ev8", "--workflow", "sdlc-merge"]);

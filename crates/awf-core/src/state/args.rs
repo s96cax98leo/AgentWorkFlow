@@ -181,6 +181,28 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
         let list: Vec<Value> = m.split(',').filter(|x| !x.is_empty()).map(|x| json!(x)).collect();
         a.insert("modifiers".into(), Value::Array(list));
     }
+    if workflow == "sdlc-plan" {
+        // 修正輪的答覆只由 awf next --revise 帶（取自 run.json 與決策記憶）：--set 給的 answers 不採用
+        if a.shift_remove("answers").is_some() {
+            notes.push("忽略 --set 的 answers：plan 修正輪的答覆由 awf next --revise 從 run.json 與決策記憶帶入".to_string());
+        }
+        if let Some(list) = super::human::revise_answers(data) {
+            a.insert("answers".into(), Value::Array(list.clone()));
+            if !sr::has_recipe(data)? {
+                // run.json 沒有 recipe（沒有 recipes 的舊 profile）：用上一輪 plan.json 回傳的，範本才不會重跑 triage；--set 給的不採用
+                let prev = stage_result(env, run, "plan")?;
+                let rec = prev.get("recipe").cloned().unwrap_or(Value::Null);
+                if let Some(name) = rec.get("name").filter(|n| n.as_str().is_some_and(|x| !x.is_empty())) {
+                    a.insert("recipe".into(), name.clone());
+                    a.insert("modifiers".into(), Value::Array(py::iter_or(py::get(&rec, "modifiers")?)?));
+                    match rec.get("size").filter(|x| py::truthy(x)) {
+                        Some(sz) => a.insert("size".into(), sz.clone()),
+                        None => a.shift_remove("size"),
+                    };
+                }
+            }
+        }
+    }
     // recipe 專屬的主線（profile 的 conventions.branch.bases）：這個 run 的 recipe 有列、而且沒有用 --base／--set base= 指定時，
     // 這一段的 base 用它（範本的 A.base 沒給時是守門設定的主線）。沒設定時整段不做，args 和以前逐字相同
     // 自訂段（profile 的 flow；workflow 名是 flow-<段>）和 sdlc 各段一樣帶 recipe 的主線與中轉分支

@@ -92,6 +92,7 @@ pub const USAGE: &str = "狀態機：主 session 每一段只做兩件事——`
         [--requirement <需求原文或路徑>] [--base <base>] [--recipe <名>] [--modifiers a,b] [--size s] [--set k=v]… [--set-json k=<JSON>]…
     awf next --run <run_dir> [--set k=v]… [--set-json k=<JSON>]… [--stage <段>] [--workflow <名>] [--text]
     awf next --run <run_dir> --script <自己寫的腳本.js> [--stage <段> --retry]   # design、build、deliver 段改用自訂腳本（先檢查再接上執行核心）
+    awf next --run <run_dir> --revise            # plan 的修正輪：人答了 plan 的問題之後，只依答覆改 intent 再複查（不重做調研）；plan 要重新核准
     awf next --run <run_dir> --skip spec-apply   # merge 之後「把規格差異併回現行規格」這一步先不做，之後不再提
     awf next --run <run_dir> --retry --skip-subtask <id>… --reason <理由> --by <誰>   # build 停下之後由人決定略過卡住的子任務（之後不能政策核准）
     awf next --run <run_dir> --confirm-merge --by <誰> [--confirm-skipped-subtasks]   # 本機合併（conventions.merge.mode: local）：人合併之後由工具核對
@@ -518,7 +519,19 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if !opt(argv, "--skip").is_empty() {
         auto::skip(env, &mut data, opt(argv, "--skip"))?;
     }
-    let skip_notes = if sr::opts(argv, "--skip-subtask").is_empty() { Vec::new() } else { human::skip_subtasks(env, run, &mut data, argv)? };
+    let mut skip_notes = if sr::opts(argv, "--skip-subtask").is_empty() { Vec::new() } else { human::skip_subtasks(env, run, &mut data, argv)? };
+    // plan 的修正輪：條件不符就拒絕、什麼都不改；接受時固定重跑 plan 段。沒帶 --revise 時清掉上一次留下的答覆（之後的 plan 是完整的一輪）
+    let revise_argv: Vec<String>;
+    let argv = if has(argv, "--revise") {
+        skip_notes.push(human::revise_setup(env, run, &mut data, argv)?);
+        revise_argv = argv.iter().filter(|a| *a != "--retry").cloned().chain(if has(argv, "--stage") { Vec::new() } else { vec!["--stage".to_string(), "plan".to_string()] }).chain(["--retry".to_string()]).collect();
+        revise_argv.as_slice()
+    } else {
+        if let Some(Value::Object(aw)) = data.get_mut("awf") {
+            aw.shift_remove("revise");
+        }
+        argv
+    };
     // 中斷回收（輔助）：上一次交出去的 plan 段沒有結果時，把已經做完的調研記進 reuse.json；任何失敗都當成沒有可回收的
     let recovered = auto::recover_interrupted(env, run, &mut data).unwrap_or_default();
     let act = if opt(argv, "--script").is_empty() { decide(env, run, run_arg, &mut data, plugin, argv)? } else { custom_action(env, run, run_arg, &mut data, argv)? };
@@ -549,6 +562,9 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
                 pending.insert(k.to_string(), v.clone());
                 mark.insert(k.to_string(), v.clone());
             }
+        }
+        if let Some(n) = human::revise_answers(&data).filter(|_| has(argv, "--revise")).map(Vec::len) {
+            pending.insert("revise".into(), json!(n));
         }
         // 用步驟宣告的自訂段：段名與定義的指紋跟著 pending 走，awf done 從 workflow 紀錄取得結果時寫進結果（不算非標準）
         if let Some(v) = act.get("steps").filter(|v| py::truthy(v)) {
@@ -749,6 +765,26 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if let Some(e) = &edited {
         out.push_str(&format!("注意：{}\n", human::edited_note(&stage, e)));
     }
+    // plan 的修正輪：存檔（上面的 save-run stage）已經清掉 plan 的核准與 decided（答覆已經寫進 intent，不再提示「產出文件還沒反映」）；
+    // 這裡留一筆「答覆已用於修正輪」的紀錄。不是修正輪的 plan 結果把舊的紀錄拿掉。用過的答覆（awf.revise）一律清掉
+    if stage == "plan" {
+        let own_pending = pyfmt_eq(py::get(&pend, "stage")?, &stage_v);
+        let n = py::get(&pend, "revise")?.as_u64().filter(|_| own_pending);
+        let is_revise = result.get("round").and_then(Value::as_str) == Some("revise");
+        if let Some(Value::Object(st)) = data.get_mut("stages").and_then(|s| s.get_mut("plan")) {
+            match n.filter(|_| is_revise) {
+                Some(n) => {
+                    st.insert("revised".into(), json!({"answers": n, "at": env.now_iso()}));
+                }
+                None => {
+                    st.shift_remove("revised");
+                }
+            }
+        }
+        if let Some(Value::Object(aw)) = data.get_mut("awf") {
+            aw.shift_remove("revise");
+        }
+    }
     if let Some(Value::Object(st)) = data.get_mut("stages").and_then(|s| s.get_mut(&stage)) {
         match &meta {
             Some((m, mf)) => {
@@ -884,6 +920,10 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
     }
     let code = sr::approve(&ctx, &pass, out, err)?;
     if code == 0 {
+        if stage == "plan" && pass.iter().any(|a| a == "--answer") {
+            // 只是提示，不自動觸發：答覆記下來了，但 intent.md 還是答覆之前的內容
+            out.push_str(&format!("提示：答覆會改變 intent 內容的話，可以先跑 awf next --run {run_arg} --revise 讓 intent 反映答覆（只改 intent 再複查、不重做調研），再重新核准 plan\n"));
+        }
         out.push_str(&format!("下一步：awf next --run {run_arg}\n"));
     }
     Ok(code)
