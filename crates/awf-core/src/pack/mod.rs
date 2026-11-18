@@ -1597,9 +1597,11 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
             Err(e) => notes.push(format!("子任務資料包產生失敗，照舊用派工單（{}：{}）", e.class, e.msg)),
         }
     }
+    // 小節資料包的說明只印在輸出，不寫進 pack.md（那一份的內容和沒有小節資料包時相同）
+    let mut slice_notes: Vec<String> = Vec::new();
     if !has(argv, "--no-slices") && matches!(stage, "test" | "deliver" | "design") {
         // 小節層級的資料包（輔助：沒有對應資料就沒有新的鍵，出錯只記一行說明）
-        notes.extend(slice_packs(stage, &run, root, repo, &data, opt(argv, "--epic"), kx.as_ref(), &mut out_args));
+        slice_notes = slice_packs(stage, &run, root, repo, &data, opt(argv, "--epic"), kx.as_ref(), &mut out_args);
     }
     if stage == "design" || stage == "deliver" {
         // 交付文件：design 段要留哪些小節、deliver 段要更新哪些文件的哪些小節。沒有交付設定時什麼都不帶
@@ -1656,6 +1658,7 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
         return unwritable(out, &PyErr::os(&e, &pack_md).msg);
     }
     out_args.insert("pack".into(), json!(posix(&pack_md)));
+    notes.extend(slice_notes);
     let args_val = Value::Object(out_args);
     if let Err(e) = write_lf(&args_file, &format!("{}\n", dumps_sorted(&args_val))) {
         return unwritable(out, &PyErr::os(&e, &args_file).msg);

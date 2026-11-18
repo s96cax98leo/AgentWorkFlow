@@ -1436,13 +1436,13 @@
       "proj/.claude/workflows/event.js": "-:3e0109d9d93dc840",
       "proj/.claude/workflows/flow-steps.js": "-:bb946bf1009a881a",
       "proj/.claude/workflows/sdlc-build.js": "-:c44eb2309cc78365",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:a14abc719b623d87",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:6f1f230739a335d3",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:c794d485b71fe394",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:c0e2ccb61601af0a",
       "proj/.claude/workflows/sdlc-design.js": "-:85fbe685b3168c07",
       "proj/.claude/workflows/sdlc-merge.js": "-:f33f64cbbdb1a729",
-      "proj/.claude/workflows/sdlc-plan.js": "-:cce0a0aedbca0939",
+      "proj/.claude/workflows/sdlc-plan.js": "-:e83414866002a303",
       "proj/.claude/workflows/sdlc-sync.js": "-:5a16a48f7f1f4a51",
-      "proj/.claude/workflows/sdlc-test.js": "-:b56052177c9d3ee9"
+      "proj/.claude/workflows/sdlc-test.js": "-:0ed539c9d83225fb"
      },
      "as_base": [
       422,
@@ -1468,7 +1468,7 @@
      "stdout": "== 升級 agent-workflow：9.9.9 → 9.9.9 ==\n佔位符的值：@TMP@/proj/.claude/teams/workflow.config\n開發規範 profile：保留 methodology.json，和內建 default 比對沒有缺少的欄位\n更新 400 個模版檔到 @TMP@/proj\n保留使用者設定（模版部分更新）3 個：\n  - .claude/teams/guard.config.json：你的值全部保留；沒有新欄位\n  - .claude/teams/rules.md：「專案規則」段之後保留，前面更新成新版\n  - CLAUDE.md：「專案特定」段之後保留，前面更新成新版\n保留 15 個使用者的檔案，沒有改動（--force／--upgrade 也不覆蓋；要整份換成模版版本加 --overwrite-user-files）：\n  - .claude/settings.json\n  - .claude/workflows/event-brief.js\n  - .claude/workflows/event-post-merge.js\n  - .claude/workflows/event-pr-review.js\n  - .claude/workflows/event.js\n  - .claude/workflows/flow-steps.js\n  - .claude/workflows/sdlc-build.js\n  - .claude/workflows/sdlc-deliver.js\n  - .claude/workflows/sdlc-design-revise.js\n  - .claude/workflows/sdlc-design.js\n  - .claude/workflows/sdlc-merge.js\n  - .claude/workflows/sdlc-plan.js\n  - .claude/workflows/sdlc-sync.js\n  - .claude/workflows/sdlc-test.js\n  - .claude/teams/methodology.json\n已更新：13 支 workflow（開發規範 profile：default），改了 0 支\n\n升級完成：9.9.9 → 9.9.9。用 git diff 檢查變更；驗證指令見下面第 5 步。\n記得也更新 plugin（agents、skills、hooks、awf 執行檔）：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins。\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/workflows/sdlc-plan.js": "-:0ee8737ae65dd7aa"
+      "proj/.claude/workflows/sdlc-plan.js": "-:5e9ccee0e5d94292"
      },
      "as_base": [
       0,
@@ -1524,7 +1524,7 @@
      "stdout": "== 設定對照表（設定｜偵測到｜你的回答｜會寫成） ==\n  開發規範 profile｜—｜（沒回答，用預設）｜methodology.json：name = default\n  測試先行｜—｜（沒回答，用預設）｜methodology.json：stages.build.test_first = true\n  commit 格式｜—｜（沒回答，用預設）｜methodology.json：conventions.commit.format = \"Conventional Commits：<type>(<scope>): <摘要>，sco…\n  分支前綴｜—｜（沒回答，用預設）｜methodology.json：conventions.branch.prefix = feature/\n  跟上主線的策略｜—｜（沒回答，用預設）｜methodology.json：conventions.sync.strategy = auto\n  PR 大小上限｜—｜（沒回答，用預設）｜methodology.json：conventions.pr_size = {\"max_lines\": 300, \"max_files\": 15, \"scope\": \"只…\n  文件格式｜—｜（沒回答，用預設）｜methodology.json：conventions.doc_format.format = Markdown\n  需求來源｜—｜（沒回答，用預設）｜methodology.json：requirements.source = json\n  模型分級｜—｜（沒回答，用預設）｜methodology.json：models.mode = auto\n  平行與拆分｜—｜（沒回答，用預設）｜methodology.json：parallelism = {\"split_threshold\": 8, \"max_sub_plans\": 4, \"sha…\n  知識庫與知識圖｜—｜（沒回答，用預設）｜methodology.json：knowledge = {\"sources\": [\"README.md\", \"CLAUDE.md\", \"docs/**…\n  交付文件｜—｜（沒回答，用預設）｜methodology.json：deliverables.enabled = false\n  自動合併｜—｜（沒回答，用預設）｜guard.config.json：auto_merge.enabled = false\n  主 session 的 git／GitHub 限制｜—｜（沒回答，用預設）｜guard.config.json：main_session_git_rules、main_session_github_rules = true\n  hook 註冊方式｜—｜（沒回答，用預設）｜hooks 由 plugin 註冊\n開發規範 profile：default（.claude/teams/methodology.json）\n這次的答案存在 .claude/teams/init-answers.json；之後要改設定：awf init --target <專案> --reconfigure（只改有變的設定）。\n寫入 418 個模版檔到 @TMP@/proj\n已更新：13 支 workflow（開發規範 profile：default），改了 13 支\nworkflow 覆寫檔 13 支放在 .claude/workflows/（結尾有 awf-override 標記；awf 會用它們取代 plugin 的範本，plugin 更新後要自己對照更新。不需要改 workflow 的話可以整個刪掉）。\n\n下一步：\n  1. 在 Claude Code 安裝 plugin（hooks、agents、skills、commands、awf 執行檔都由 plugin 提供）：\n       /plugin marketplace add @SRC@\n       /plugin install agent-workflow@agentworkflow\n  2. 確認 hooks 只註冊一次：@TMP@/proj/.claude/settings.json 不應有 \"hooks\"；在 Claude Code 跑 /hooks，awf hook guard-shell 只出現一次（來源是 plugin）。\n  3. 填寫 @TMP@/proj/.claude/teams/rules.md 的「## 專案規則」段與 CLAUDE.md 的「專案特定」段。\n  4. 檢查 @TMP@/proj/.claude/teams/guard.config.json（上游、fork、禁止路徑、分支前綴）與\n     @TMP@/proj/.claude/teams/methodology.json（開發規範與慣例；改了下一段 workflow 就生效，不用重新 init）。\n  5. 驗證（在 @TMP@/proj 執行；awf 由 plugin 的 bin/ 提供，裝好 plugin 後在 Claude Code 裡就能直接叫）：\n       awf doctor\n       awf render --all --out _tpm/wf-check --plugin-dir @SRC@/plugin\n       awf check-agents --plugin-dir @SRC@/plugin\n  6. merge gate CI（auto_merge 用）預設沒有放。要啟用自動合併時，先完成 @SRC@/docs/自動合併信任模型.md\n     的啟用前檢查清單，再加 --with-merge-gate 重跑 init。\n  套用到既有專案時保留了什麼、怎麼移除模版：見 @SRC@/docs/自訂與擴充.md〈套用到既有專案〉。\n",
      "stderr": "",
      "files": {
-      "proj/.claude/workflows/sdlc-plan.js": "-:cce0a0aedbca0939"
+      "proj/.claude/workflows/sdlc-plan.js": "-:e83414866002a303"
      },
      "as_base": [
       0,
@@ -1578,13 +1578,13 @@
       "proj/.claude/workflows/event.js": "-:3e0109d9d93dc840",
       "proj/.claude/workflows/flow-steps.js": "-:bb946bf1009a881a",
       "proj/.claude/workflows/sdlc-build.js": "-:c44eb2309cc78365",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:a14abc719b623d87",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:6f1f230739a335d3",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:c794d485b71fe394",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:c0e2ccb61601af0a",
       "proj/.claude/workflows/sdlc-design.js": "-:85fbe685b3168c07",
       "proj/.claude/workflows/sdlc-merge.js": "-:f33f64cbbdb1a729",
-      "proj/.claude/workflows/sdlc-plan.js": "-:cce0a0aedbca0939",
+      "proj/.claude/workflows/sdlc-plan.js": "-:e83414866002a303",
       "proj/.claude/workflows/sdlc-sync.js": "-:5a16a48f7f1f4a51",
-      "proj/.claude/workflows/sdlc-test.js": "-:b56052177c9d3ee9",
+      "proj/.claude/workflows/sdlc-test.js": "-:0ed539c9d83225fb",
       "proj/.github/": "d",
       "proj/.github/workflows/": "d",
       "proj/.github/workflows/agent-merge-gate.yml": "-:ce771a68a4fdcf86",
@@ -3722,8 +3722,8 @@
       "proj/.claude/workflows/event.js": "-:3e0109d9d93dc840",
       "proj/.claude/workflows/flow-steps.js": "-:bb946bf1009a881a",
       "proj/.claude/workflows/sdlc-build.js": "-:c44eb2309cc78365",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:a14abc719b623d87",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:6f1f230739a335d3",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:c794d485b71fe394",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:c0e2ccb61601af0a",
       "proj/.claude/workflows/sdlc-design.js": "-:85fbe685b3168c07",
       "proj/.claude/workflows/sdlc-merge.js": "-:f33f64cbbdb1a729",
       "proj/.claude/workflows/sdlc-plan.js": [
@@ -3731,7 +3731,7 @@
        "// 使用者自己的同名 workflow\nexport const meta = { name: 'sdlc-plan' }\n"
       ],
       "proj/.claude/workflows/sdlc-sync.js": "-:5a16a48f7f1f4a51",
-      "proj/.claude/workflows/sdlc-test.js": "-:b56052177c9d3ee9",
+      "proj/.claude/workflows/sdlc-test.js": "-:0ed539c9d83225fb",
       "proj/.github/": "d",
       "proj/.github/workflows/": "d",
       "proj/.github/workflows/agent-merge-gate.yml": [
@@ -3899,8 +3899,8 @@
       "proj/.claude/workflows/event.js": "-:3e0109d9d93dc840",
       "proj/.claude/workflows/flow-steps.js": "-:bb946bf1009a881a",
       "proj/.claude/workflows/sdlc-build.js": "-:c44eb2309cc78365",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:a14abc719b623d87",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:6f1f230739a335d3",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:c794d485b71fe394",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:c0e2ccb61601af0a",
       "proj/.claude/workflows/sdlc-design.js": "-:85fbe685b3168c07",
       "proj/.claude/workflows/sdlc-merge.js": "-:f33f64cbbdb1a729",
       "proj/.claude/workflows/sdlc-plan.js": [
@@ -3908,7 +3908,7 @@
        "// 使用者自己的同名 workflow\nexport const meta = { name: 'sdlc-plan' }\n"
       ],
       "proj/.claude/workflows/sdlc-sync.js": "-:5a16a48f7f1f4a51",
-      "proj/.claude/workflows/sdlc-test.js": "-:b56052177c9d3ee9",
+      "proj/.claude/workflows/sdlc-test.js": "-:0ed539c9d83225fb",
       "proj/.github/": "d",
       "proj/.github/workflows/": "d",
       "proj/.github/workflows/agent-merge-gate.yml": "-:ce771a68a4fdcf86",
@@ -3978,13 +3978,13 @@
       "proj/.claude/workflows/event.js": "-:8494aa2b2c931324",
       "proj/.claude/workflows/flow-steps.js": "-:9b8f511f1cbf461e",
       "proj/.claude/workflows/sdlc-build.js": "-:2ae74c19ee54dc73",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:cc07b76ff866ca6f",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:f16e6e2b2cfbe861",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:2d922c00ca724d59",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:e4aebcea8cc1d053",
       "proj/.claude/workflows/sdlc-design.js": "-:bb89ccc727d03974",
       "proj/.claude/workflows/sdlc-merge.js": "-:703e84e832bd71ea",
-      "proj/.claude/workflows/sdlc-plan.js": "-:f75c354571a6de10",
+      "proj/.claude/workflows/sdlc-plan.js": "-:9d4d04f82c9af618",
       "proj/.claude/workflows/sdlc-sync.js": "-:b1a06dcfd3b33bca",
-      "proj/.claude/workflows/sdlc-test.js": "-:658cbe00249540c8",
+      "proj/.claude/workflows/sdlc-test.js": "-:30790c7c6477244f",
       "proj/.mcp.json": [
        "-:e39dd737aa95231d",
        "{\n  \"mcpServers\": {\n    \"code-graph\": {\n      \"command\": \"<程式碼圖譜 MCP 的啟動指令，例如 npx>\",\n      \"args\": [\"-y\", \"<程式碼圖譜 MCP 套件名>\", \"--repo\", \"repos\"],\n      \"env\": {}\n    },\n    \"browser\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@playwright/mcp@latest\"],\n      \"env\": {}\n    }\n  }\n}\n"
@@ -6834,13 +6834,13 @@
       "proj/.claude/workflows/event.js": "-:3e0109d9d93dc840",
       "proj/.claude/workflows/flow-steps.js": "-:bb946bf1009a881a",
       "proj/.claude/workflows/sdlc-build.js": "-:c44eb2309cc78365",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:a14abc719b623d87",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:6f1f230739a335d3",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:c794d485b71fe394",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:c0e2ccb61601af0a",
       "proj/.claude/workflows/sdlc-design.js": "-:85fbe685b3168c07",
       "proj/.claude/workflows/sdlc-merge.js": "-:f33f64cbbdb1a729",
-      "proj/.claude/workflows/sdlc-plan.js": "-:cce0a0aedbca0939",
+      "proj/.claude/workflows/sdlc-plan.js": "-:e83414866002a303",
       "proj/.claude/workflows/sdlc-sync.js": "-:5a16a48f7f1f4a51",
-      "proj/.claude/workflows/sdlc-test.js": "-:b56052177c9d3ee9"
+      "proj/.claude/workflows/sdlc-test.js": "-:0ed539c9d83225fb"
      },
      "as_base": [
       422,
@@ -6931,13 +6931,13 @@
       "proj/.claude/workflows/event.js": "-:0f5dc064002410d3",
       "proj/.claude/workflows/flow-steps.js": "-:6e9b2be5a9e724a6",
       "proj/.claude/workflows/sdlc-build.js": "-:97a70a54ac1fa218",
-      "proj/.claude/workflows/sdlc-deliver.js": "-:c3bb6ffc4a3a7dfd",
-      "proj/.claude/workflows/sdlc-design-revise.js": "-:113291f882a66c29",
+      "proj/.claude/workflows/sdlc-deliver.js": "-:647ffc9db5ca23f7",
+      "proj/.claude/workflows/sdlc-design-revise.js": "-:ed1b4318eae0aa32",
       "proj/.claude/workflows/sdlc-design.js": "-:3ad5ff3531c5cb70",
       "proj/.claude/workflows/sdlc-merge.js": "-:680df3c71586d73c",
-      "proj/.claude/workflows/sdlc-plan.js": "-:115136bb6647c12f",
+      "proj/.claude/workflows/sdlc-plan.js": "-:edb4ad5c7f4c2bf4",
       "proj/.claude/workflows/sdlc-sync.js": "-:47e942ac7e7a2983",
-      "proj/.claude/workflows/sdlc-test.js": "-:4514faf1341e4bb7"
+      "proj/.claude/workflows/sdlc-test.js": "-:fbfcbd27dc515923"
      },
      "as_base": [
       0,
