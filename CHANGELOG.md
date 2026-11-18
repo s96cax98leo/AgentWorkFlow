@@ -13,8 +13,8 @@
 - **每張派工單的共同前綴改了字**（每張約多 18 字）：加上「讀檔帶 offset／limit 或用 `sed -n 'a,bp'`，不用 cat／head／tail 印整檔」；知識庫與知識圖的指示縮短，改成「資料包列的行段就是範圍，不夠再查」。
 - **7 個角色不再有 Skill 工具**：dev-acceptance-tester、dev-implementer、dev-integrator、dev-spec-author、tpm-planner、tpm-reviewer、tpm-writer。原本寫「可以用某個 skill」的地方改成直接讀那個 skill 的檔；互動式的 skill（grill、to-issues）本來就不能在 subagent 裡用。dev-design-reviewer 保留。帶 Skill 工具的 agent 每一輪都會被注入使用者裝的全部 skill 清單。
 - **輪數提醒預設開啟**：模版角色的工具呼叫到 50 次時，hook 提醒它把發現寫進執行紀錄、交件，之後每 10 次再提醒。只提醒、不擋；`limits.turns.mode: off` 可以關。
-- **守門放行這些原本誤擋的唯讀寫法**（team agent）：`git merge-base`、`merge-tree`、`merge-file -p`、`rebase --show-current-patch`；只讀的 `open(…)` 讀狀態檔；`awf run-brief` 的路徑用同一條指令裡賦值一次的變數；加引號的 heredoc 內文不計入指令長度上限；`awf help`、`awf --help` 與認得 `--help` 的子指令（例如 `awf save-run --help`）；`git branch backup/<名>`（不帶選項）。
-- **守門變嚴**：`git -C <目錄> merge`、`git -c k=v merge` 原本漏掉，現在會擋；`awf run-brief --log` 指到 runs 目錄底下帶未賦值變數的路徑會擋。
+- **守門放行這些原本誤擋的唯讀寫法**（team agent）：`git merge-base`、`merge-tree`、`rebase --show-current-patch`；只讀的 `open(…)` 讀狀態檔；`awf run-brief` 的路徑用同一條指令裡賦值一次的變數；加引號的 heredoc 內文不計入指令長度上限；`awf help`、`awf --help` 與認得 `--help` 的子指令（例如 `awf save-run --help`）；`git branch backup/<名>`（不帶選項）。
+- **守門變嚴**：`git merge-file` 對唯讀角色一律擋（含 `-p`），寫狀態檔的判斷也認得它；`git -C <目錄> merge`、`git -c k=v merge` 原本漏掉，現在會擋；`awf run-brief --log` 指到 runs 目錄底下帶未賦值變數的路徑會擋。
 - **停下時的 `retry` 改成一句指令**（`awf next --run <run> --retry`），不再是帶 `script`、`then` 的物件。原本主 session 會照那個物件直接重跑舊腳本，之後 `awf done` 找不到回傳。自己寫工具讀這個欄位的要改。
 - **有「未確認的暫定做法」時不能推送與合併**：政策核准的段留下的暫定做法（`awf.unconfirmed`），原本只在下一個閘門列出來；現在 `awf publish`、`awf merge-gate --recipe`、本機合併確認都會拒絕，要先由人確認（`awf approve --run <run> --by <人> --confirm-unconfirmed`）。
 - **產生後被改過的腳本**：`awf next` 記下腳本的雜湊，`awf done` 核對腳本檔與 workflow 紀錄裡實際執行的內容；不一致就標成 `edited_script`，不能政策核准。升級當下已經排出去、還沒 `done` 的那一段沒有雜湊，會被標；`awf next --retry` 重排即可。
@@ -31,7 +31,7 @@
 - **人答覆後往下走**：段停在 `needs_decision` 時，`awf approve --run <run> <段> --by <人> --answer "#1=<答覆>"`（每一題都要答）。答覆進決策記憶，這一段記人工核准；之後的派工單與資料包會列出「靠答覆往下走、產出文件還沒反映」的項目。這樣走過的段不能政策核准。
 - **plan 修正輪**：答覆會改變 intent 內容時，`awf next --run <run> --revise` 只派 intent 作者與反駁，不重跑調研；存檔後 plan 照樣要人重新核准。只在後面的段都還沒開始時可用；答覆 1～20 條。沒重做調研的角度會在閘門列出來。
 - **略過卡住的子任務**：`awf next --run <run> --retry --skip-subtask <id> --reason <理由> --by <人>`。還要做的子任務依賴它時拒絕。之後 build 不能政策核准，`awf publish` 要帶 `--confirm-skipped-subtasks`，`awf merge-gate --recipe` 一律 hold。
-- **本機合併的專案可以結案**：`conventions.merge.mode: local`（預設 `pr`）。merge 段改成請人合併，再用 `awf next --run <run> --confirm-merge --by <人>` 確認：主線的 first-parent 鏈上要有合併 commit，而且合進來的正好是 test 段驗證的那個 commit（快轉合併不算）；閘門鏈、凍結、diff 反查照舊。紀錄寫進 `merge-audit.jsonl`（`decision: local-merge`）。和 `auto_merge` 不能同時開。它沒有伺服器端的信任邊界，保證範圍寫在 `docs/自動合併信任模型.md`。
+- **本機合併的專案可以結案**：`conventions.merge.mode: local`（預設 `pr`）。merge 段改成請人合併，再用 `awf next --run <run> --confirm-merge --by <人>` 確認：主線的 first-parent 鏈上要有合併 commit，而且剛好兩個 parent、合進來的正好是 test 段驗證的那個 commit（快轉合併、一次合多條分支不算；recipe 沒有 test 段時對 deliver 存檔當時記下的分支 head）；合併 commit 的內容要等於乾淨合併的結果（有衝突或合併時夾帶改動都不算，先跑 sync 再驗證）；閘門鏈、凍結、diff 反查照舊。紀錄寫進 `merge-audit.jsonl`（`decision: local-merge`）。和 `auto_merge` 不能同時開。它沒有伺服器端的信任邊界，保證範圍寫在 `docs/自動合併信任模型.md`。
 - **低風險的問題先照建議做**（預設關）：`decisions.auto_accept: recommended`。信封的 `open_questions[].risk` 標 `low`、有建議項、不在 plan 段、沒有 security／migration／public_api，一段最多 `auto_accept_max` 題（預設 5）。照建議的記成未確認，要在下一個人工閘門確認或推翻（`--reject-unconfirmed <段>`），確認前不能推送。
 - **`awf done` 的退路**：沒有等待中的紀錄、那一段停在 blocked／needs_decision／invalid、上次的腳本還在、之後恰好一筆新紀錄時採用；兩筆以上不猜。找不到時的訊息會列出找的位置與比對的腳本。
 
@@ -59,7 +59,7 @@
 
 - `--by` 是自己填的字串：主 session 可以自己執行 `--answer`、`--skip-subtask`、`--confirm-merge`、`--confirm-unconfirmed` 並填人名，工具分不出來（hook 只擋 team agent）。這些指令的輸出都會留在 run.json 與決策紀錄裡供事後查。
 - `risk: low` 是 agent 自己標的；開啟 `decisions.auto_accept` 等於信任它的分級。
-- 本機合併解衝突時夾帶的改動，工具只看得到 diff 的形狀。
+- 本機合併模式下，hook 沒有另外擋 team agent 在本機主線上 `git merge`（這條規則 1.2 沒動）；「agent 不代為合併」靠 rules 與合併確認的核對。確認指令 team agent 跑不了。
 - 腳本雜湊、workflow 紀錄、run.json 都在主 session 寫得到的位置；整筆偽造分不出來。這些核對擋的是「順手改一下」，不是蓄意繞過。
 - 從頭到尾不經 `awf next`、直接用 `awf save-run stage` 存的 run（文件裡的手動執行）沒有「非標準結果」的標記可言；這條路本來就不比對 workflow 紀錄。
 - 輪數不計 Glob、WebFetch、WebSearch；官方 agent 設定的 `maxTurns` 對 Workflow 派出的 agent 是否有效還沒確認，這一版沒用。

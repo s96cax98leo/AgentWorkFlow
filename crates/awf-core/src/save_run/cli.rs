@@ -224,6 +224,11 @@ fn dispatch(ctx: &Ctx, argv: &[String], stdin: &mut dyn FnMut() -> R<String>, ou
             };
             match py::loads(&stdin()?) {
                 Ok(mut result) => {
+                    // 這兩個欄位只由 awf done 寫（步驟段的標記、本機合併要對的分支 head）：直接存檔時自帶的一律拿掉
+                    if let Some(m) = result.as_object_mut() {
+                        m.shift_remove("flow_steps");
+                        m.shift_remove("reviewed_head");
+                    }
                     // 直接存檔（不是 awf done 取回來的）：和 workflow 實際回傳的不一致、或上一份結果標過非標準，就標成非標準結果（只標記，照樣存）
                     for n in crate::state::direct_save_marks(ctx, run, stage, &data, &mut result) {
                         line(err, n);

@@ -463,6 +463,18 @@ pub fn try_auto_accept(env: &Env, run: &str, data: &mut Value, stage: &str) -> A
 
 // ------------------------------------------------------------------ 本機合併（conventions.merge.mode: local）
 /// profile 的 `conventions.merge.mode` 是不是 `local`（讀不到、沒寫、別的值都不是：走原本開 PR 的路）。
+/// 本機合併模式：`awf done` 存 deliver 時記下分支當時的 head（沒有 test 段的 recipe 用它當「審過的 commit」）。取不到就不記（確認時會交人）。
+pub fn deliver_head(env: &Env, run: &str, data: &Value) -> Option<String> {
+    if !merge_local(env) {
+        return None;
+    }
+    let t = local_target(env, run, data).ok()?;
+    if t.repo.is_empty() || !ref_ok(&t.branch) {
+        return None;
+    }
+    git(&t.repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}^{{commit}}", t.branch)]).filter(|s| hexish(s))
+}
+
 pub fn merge_local(env: &Env) -> bool {
     let p = crate::layout::read_profile(&pj(&env.teams(), "methodology.json"));
     p.get("conventions").and_then(|c| c.get("merge")).and_then(|m| m.get("mode")).and_then(Value::as_str) == Some("local")
@@ -550,8 +562,13 @@ fn local_checks(env: &Env, run: &str, data: &Value, t: &Local, ack_skipped: bool
             }
             (c, "test 段驗證的 commit")
         } else {
-            let c = git(&t.repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}^{{commit}}", t.branch)]).ok_or_else(|| format!("這個 recipe 沒有 test 段，要拿分支 {} 的 head 來對，但分支不在了", t.branch))?;
-            (c, "分支的 head（這個 recipe 沒有 test 段）")
+            // 沒有 test 段：對 deliver 存檔當時記下的分支 head（awf done 記的 reviewed_head），不拿確認當下的 head（審查之後加的 commit 不算審過）
+            let deliver = stage_result(env, run, "deliver").map_err(|e| e.msg)?;
+            let c = deliver.get("reviewed_head").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+            if !hexish(&c) {
+                return Err("這個 recipe 沒有 test 段，而 deliver 的結果沒有記下審查當時的分支 head（reviewed_head）：用 awf next 重跑 deliver 再 awf done".to_string());
+            }
+            (c, "deliver 審查當時的分支 head（這個 recipe 沒有 test 段）")
         };
         let sha = git(&t.repo, &["rev-parse", "--verify", "--quiet", &format!("{reviewed}^{{commit}}")]).filter(|s| hexish(s)).ok_or_else(|| format!("審過的 commit {reviewed} 不在目標 repo 裡"))?;
         let head = git(&t.repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}^{{commit}}", t.base)]).filter(|s| hexish(s)).ok_or_else(|| format!("目標 repo 沒有本機分支 {}", t.base))?;
@@ -570,8 +587,19 @@ fn local_checks(env: &Env, run: &str, data: &Value, t: &Local, ack_skipped: bool
         let merge = lo.checked_sub(1).and_then(|i| chain.get(i)).map(|c| c.to_string()).ok_or_else(|| format!("主線 {} 上找不到把審過的 commit 合進來的合併 commit（快轉合併沒有合併 commit：請用 git merge --no-ff）", t.base))?;
         let parents = git(&t.repo, &["rev-list", "--parents", "-n", "1", &merge]).unwrap_or_default();
         let parents: Vec<&str> = parents.split_whitespace().skip(1).collect();
-        if parents.len() < 2 || !parents.iter().skip(1).any(|p| *p == sha) {
+        if parents.len() > 2 {
+            return Err(format!("合併 commit {} 一次合進不只一條分支（{} 個 parent）：只有審過的那一條可以合，請分開合併", pyish::take(&merge, 12), parents.len()));
+        }
+        if parents.len() != 2 || parents.get(1).copied() != Some(sha.as_str()) {
             return Err(format!("合併 commit {} 合進來的不是審過的那個 commit（{}）：分支在審查之後又有改動，要重跑 sync 與 test", pyish::take(&merge, 12), pyish::take(&sha, 12)));
+        }
+        // 合併 commit 的內容要等於「主線當時的 commit 和審過的 commit 乾淨合併」的結果：有衝突、或合併時夾帶改動都不算（交人）
+        let clean = git(&t.repo, &["merge-tree", "--write-tree", &format!("{merge}^1"), &sha]).and_then(|o| o.lines().next().map(str::to_string)).filter(|l| hexish(l));
+        let actual = git(&t.repo, &["rev-parse", "--verify", "--quiet", &format!("{merge}^{{tree}}")]).filter(|l| hexish(l));
+        match (clean, actual) {
+            (Some(c), Some(a)) if c == a => {}
+            (None, _) | (_, None) => return Err(format!("合併 commit {} 的內容核對不了（合併有衝突，或這版 git 沒有 merge-tree --write-tree）：先跑 sync 讓分支跟上主線、重跑 test，再合併", pyish::take(&merge, 12))),
+            _ => return Err(format!("合併 commit {} 的內容和「主線加上審過的 commit」乾淨合併的結果不同：合併時有夾帶或手動改動，這些改動沒有審過", pyish::take(&merge, 12))),
         }
         found = (merge.clone(), sha.clone());
         Ok(format!("{} 把 {}（{from}）合進 {}", pyish::take(&merge, 12), pyish::take(&sha, 12), t.base))

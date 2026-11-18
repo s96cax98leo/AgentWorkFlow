@@ -30,11 +30,18 @@ pub fn blocking_questions(result: &Value) -> R<Vec<Value>> {
                 continue;
             }
             let text = py::squash(&s_or(get(&q, "question")?, ""));
-            if out.iter().any(|x| x.get("question").and_then(Value::as_str) == Some(text.as_str())) {
-                continue;
-            }
             let rec = py::squash(&s_or(get(&q, "recommendation")?, ""));
             let risk = if get(&q, "risk")?.as_str() == Some("low") { "low" } else { "high" };
+            // 同一題出現不只一次：取最嚴的。任何一筆不是 low、或建議不一樣，就當 high（不會被自動照建議）
+            if let Some(prev) = out.iter_mut().find(|x| x.get("question").and_then(Value::as_str) == Some(text.as_str())) {
+                let same_rec = prev.get("recommendation").and_then(Value::as_str).unwrap_or_default() == if blank_text(&rec) { "" } else { rec.as_str() };
+                if risk != "low" || !same_rec {
+                    if let Some(m) = prev.as_object_mut() {
+                        m.insert("risk".into(), json!("high"));
+                    }
+                }
+                continue;
+            }
             out.push(json!({"id": format!("#{}", out.len() + 1), "question": text, "recommendation": if blank_text(&rec) { String::new() } else { rec }, "risk": risk}));
         }
     }
@@ -392,4 +399,27 @@ pub fn mark_decided(data: &mut Value, stage: &str, by: &str, at: &str, answers: 
     st.insert(DECIDED.into(), Value::Object(d));
     st.insert("status".into(), json!("done"));
     Ok(())
+}
+
+#[cfg(test)]
+mod dup_question_tests {
+    use super::*;
+
+    fn res(qs: Vec<Value>) -> Value {
+        let envs: Vec<Value> = qs.into_iter().map(|q| json!({"status": "needs_decision", "payload": {}, "open_questions": [q]})).collect();
+        json!({"stage": "build", "a": envs[0], "b": envs.get(1).cloned().unwrap_or(Value::Null)})
+    }
+
+    /// 審查 M3：同一題出現兩次、risk 或建議不同，取最嚴（當 high），不會被自動照建議。
+    #[test]
+    fn same_question_takes_the_strictest() {
+        let q = |risk: &str, rec: &str| json!({"question": "要不要刪掉舊資料表？", "blocking": true, "risk": risk, "recommendation": rec});
+        let one = |v: Value| blocking_questions(&v).unwrap();
+        let b = one(res(vec![q("low", "刪"), q("high", "不要刪，先備份")]));
+        assert_eq!((b.len(), b[0]["risk"].as_str()), (1, Some("high")), "{b:?}");
+        let b = one(res(vec![q("low", "刪"), q("low", "不要刪")]));
+        assert_eq!(b[0]["risk"].as_str(), Some("high"), "建議不一樣也當 high：{b:?}");
+        let b = one(res(vec![q("low", "刪"), q("low", "刪")]));
+        assert_eq!((b.len(), b[0]["risk"].as_str()), (1, Some("low")), "{b:?}");
+    }
 }

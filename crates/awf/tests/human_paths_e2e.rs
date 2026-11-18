@@ -666,6 +666,27 @@ fn b_local_merge_to_close() {
     let m = p.next(run, &["--confirm-merge", "--by", "human"]);
     assert!(m["not_done"].to_string().contains("找不到") && m["not_done"].to_string().contains("--no-ff"), "{m}");
     p.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    // 合併時夾帶改動（審過的檔被改、多一個檔）：內容和乾淨合併的結果不同，不算
+    p.git(&["merge", "-q", "--no-ff", "--no-commit", "feature/export"]);
+    p.put("src/export.py", "def export():\n    return [1, 99]\n");
+    p.put("src/extra.py", "X = 1\n");
+    p.git(&["add", "-A"]);
+    p.git(&["commit", "-q", "-m", "merge export（夾帶）"]);
+    let m = p.next(run, &["--confirm-merge", "--by", "human"]);
+    assert!(m["not_done"].to_string().contains("夾帶"), "{m}");
+    assert_eq!(p.run_json(run)["stages"]["merge"]["status"], "pending");
+    p.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    // 一次合進兩條分支（另一條沒審過）：不算
+    p.git(&["switch", "-q", "-c", "feature/other"]);
+    p.put("src/other.py", "Y = 1\n");
+    p.git(&["add", "-A"]);
+    p.git(&["commit", "-q", "-m", "沒審過的"]);
+    p.git(&["switch", "-q", "main"]);
+    p.git(&["merge", "-q", "--no-ff", "-m", "merge 兩條", "feature/export", "feature/other"]);
+    let m = p.next(run, &["--confirm-merge", "--by", "human"]);
+    assert!(m["not_done"].to_string().contains("不只一條分支"), "{m}");
+    assert!(!p.dir.join("_tpm/runs/merge-audit.jsonl").exists(), "沒過的確認不寫稽核");
+    p.git(&["reset", "-q", "--hard", "HEAD~1"]);
     // 凍結旗標有設：不算
     p.git(&["merge", "-q", "--no-ff", "-m", "merge export", "feature/export"]);
     p.put("_tpm/runs/auto-merge.freeze.json", "{\"frozen\": true, \"reason\": \"main 紅了\"}");

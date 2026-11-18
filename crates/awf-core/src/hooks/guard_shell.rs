@@ -57,7 +57,7 @@ re!(PR_URL, r"^https?://[^/]+/([\w.-]+/[\w.-]+)/pull/(\d+)(?:[/?#].*)?$");
 re!(SUBST, r"\$\(|`|<\(|\$\{");
 re!(SHELL_WRITE, concat!(
     r"(?<![&<>=-])>(?!&)|\b(?:rm|mv|cp|tee|truncate|dd|install|ln|touch|chmod|sed\s+-i|perl\s+-p?i)\b",
-    r#"|\bgit\s+(?:checkout|restore|rm|mv|stash|reset)\b|open\([^)]*["'][wax+]|write_text|write_bytes|writelines|\.write\(|unlink|os\.remove|shutil\."#,
+    r#"|\bgit\s+(?:checkout|restore|rm|mv|stash|reset|merge-file)\b|open\([^)]*["'][wax+]|write_text|write_bytes|writelines|\.write\(|unlink|os\.remove|shutil\."#,
     r"|set-content|add-content|out-file|new-item|remove-item|clear-content|copy-item|move-item|rename-item"), "i");
 re!(STATE_FRAGMENT, r"audit|freeze|\brun\W{0,16}\.json\b|guard\W{0,16}\.?config|methodology\W{0,16}\.json", "i");
 re!(WRITE_API, r"\bopen\s*\(|appendFile|writeFile|createWriteStream|\.write\b|write_text|write_bytes|>>?|\bFile\.(?:write|open)|out-file|set-content|add-content", "i");
@@ -260,8 +260,8 @@ re!(RECORD_WRITE_CMD, concat!(
     r"|\bfind\b.*\s-(?:delete|fprint\w*|fls)(?=\s|$)",
     r"|(?:^|\s)-outfile(?=[\s:]|$)|\[(?:system\.)?io\.file\]::",
     // 唯讀的 git 子指令不算：merge-base、merge-tree（字首剛好是 merge；merge-tree --write-tree 只寫物件庫，不動工作區與分支）、
-    // merge-file 帶 -p／--stdout（結果印到 stdout，不改檔）、rebase --show-current-patch（只印）
-    r"|\bgit\s+(?:checkout|switch|restore|reset|stash|clean|rm|mv|commit|merge(?!-(?:base|tree)\b|-file\b.*\s(?:-p|--stdout)(?=\s|$))|pull|",
+    // rebase --show-current-patch（只印）。merge-file 不放行：-p 可以是 -L 的值、也可以躲在註解裡，分不出來
+    r"|\bgit\s+(?:checkout|switch|restore|reset|stash|clean|rm|mv|commit|merge(?!-(?:base|tree)\b)|pull|",
     r"rebase(?!\s+--show-current-patch(?=\s|$))|cherry-pick|revert|am|clone|init|",
     r"checkout-index|read-tree|update-index|worktree\s+(?:add|remove|move)|apply(?!.*\s--(?:check|stat|numstat|summary)\b))\b"), "i");
 re!(INTERP_WRITE, concat!(
@@ -828,6 +828,10 @@ fn read_mode_literal(a: &str) -> bool {
 fn read_only_open(args: &[String], method: bool) -> bool {
     let mut pos = 0usize;
     for a in args {
+        // 解包的參數（*a、**k）看不出模式是什麼：不算只讀
+        if a.trim_start().starts_with('*') {
+            return false;
+        }
         let kw = a.split_once('=').filter(|(k, _)| {
             let k = k.trim();
             !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !a.contains("==")

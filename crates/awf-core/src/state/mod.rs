@@ -717,6 +717,11 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     }
     // 人決定略過的子任務記進 build 的結果（閘門與後面各段看得到；沒有略過時結果不變）
     let skipped_ids = sr::human::skipped_subtasks(&data);
+    if stage == "deliver" {
+        if let (Some(h), Value::Object(m)) = (human::deliver_head(&env, &run, &data), &mut result) {
+            m.insert("reviewed_head".into(), json!(h));
+        }
+    }
     if stage == "build" && !skipped_ids.is_empty() {
         if let Value::Object(m) = &mut result {
             m.insert("skipped_subtasks".into(), json!(skipped_ids));
