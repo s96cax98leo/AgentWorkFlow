@@ -775,6 +775,52 @@ fn check_kg_tmp(env: &Env) -> Part {
     )])
 }
 
+/// 7. 有知識圖（`<knowledge.dir>/graph.db`），但最近幾個 run 的資料包都沒有帶知識圖（`pack-args.json` 沒有 `kg: true`）。
+/// 訊號只用工具寫的檔：`awf pack` 在圖開得起來時才寫 `kg: true`（執行紀錄是 agent 寫的自由文字，不拿來判斷）。
+/// 只看 plan、design 的 pack-args.json；最新的那一份比圖舊（圖是之後才建或更新的）時看不出來，不列。只讀。
+fn check_kg_unused(env: &Env) -> Part {
+    const RECENT: usize = 3;
+    let Ok(lay) = crate::kg::layout(Some(&env.project), None, None, None) else { return Ok(Vec::new()) };
+    let Ok(graph_at) = std::fs::metadata(&lay.db).and_then(|m| m.modified()) else { return Ok(Vec::new()) };
+    let guard = guard_of(env);
+    let runs = text_at(guard.as_ref(), &["runs_dir"]);
+    let runs = if runs.is_empty() { "_tpm/runs" } else { runs };
+    let dir = if pyish::is_abs(runs) { runs.to_string() } else { pyish::pjoin(&env.project, runs) };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(Vec::new()) };
+    let packs = |run: &Path| -> Vec<std::path::PathBuf> {
+        ["plan", "design"].iter().map(|s| run.join(s).join("pack-args.json")).filter(|p| p.is_file()).collect()
+    };
+    let mut names: Vec<String> = rd.flatten().filter(|e| !packs(&e.path()).is_empty()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    // run 目錄以日期開頭：依名稱倒排就是由新到舊（和「最近的 run」那一項同一個排法）
+    names.sort();
+    names.reverse();
+    names.truncate(RECENT);
+    let mut newest: Option<std::time::SystemTime> = None;
+    for n in &names {
+        for p in packs(&Path::new(&dir).join(n)) {
+            match load_json(&p.to_string_lossy()) {
+                Some(v) if v.get("kg") == Some(&Value::Bool(true)) => return Ok(Vec::new()),
+                Some(_) => {}
+                None => continue, // 讀不懂的不算
+            }
+            if let Ok(t) = std::fs::metadata(&p).and_then(|m| m.modified()) {
+                newest = Some(newest.map_or(t, |x| x.max(t)));
+            }
+        }
+    }
+    let Some(newest) = newest else { return Ok(Vec::new()) };
+    if newest < graph_at {
+        return Ok(Vec::new());
+    }
+    let gdir = if pyish::is_under(&lay.dir, &env.project) { pyish::relpath(&lay.dir, &env.project) } else { lay.dir.clone() };
+    Ok(vec![item(
+        "kg-unused",
+        INFO,
+        format!("有知識圖（{gdir}/graph.db），但最近 {} 個 run 的資料包都沒有帶知識圖（pack-args.json 沒有 kg）：{}。圖可能開不起來或格式過期，資料包少了查好的行段，派工單也不會有查圖的指示", names.len(), names.join("、")),
+        "跑 awf kg build 重建（建不起來時它會說原因）；之後的 awf next 會自動把查好的行段帶進資料包，agent 不一定要自己查圖",
+    )])
+}
+
 // ------------------------------------------------------------------ 主流程
 pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> Vec<Item> {
     let mut out = check_env(which);
@@ -802,10 +848,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 15] = [
+    let parts: [&dyn Fn() -> Part; 16] = [
         &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
         &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
-        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env), &|| check_prompt_lang(env, plugin), &|| check_kg_tmp(env),
+        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env), &|| check_prompt_lang(env, plugin), &|| check_kg_tmp(env), &|| check_kg_unused(env),
     ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查
@@ -1175,6 +1221,29 @@ fn selftest_in(root: &Path) -> i32 {
         format!("{r:?}"),
     );
     check("體檢：五項都不會是問題，exit code 不受影響", !r.iter().any(|i| i.level == ERR), format!("{r:?}"));
+    // 有圖但資料包沒帶知識圖（1.2）：訊號是工具寫的 pack-args.json 的 kg，不看 agent 寫的紀錄
+    {
+        let has = |r: &[Item]| ids(r, None).contains(&"kg-unused".to_string());
+        w("proj/_tpm/runs/2026-01-06-acme-f/plan/pack-args.json", &json!({"located": {}}).to_string());
+        check("知識圖沒用上：沒有圖 → 不列", !has(&doctor()), String::new());
+        w("proj/_tpm/kb/graph.db", "x");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        w("proj/_tpm/runs/2026-01-06-acme-f/plan/pack-args.json", &json!({"located": {}}).to_string());
+        w("proj/_tpm/runs/2026-01-05-acme-e/design/pack-args.json", "{壞掉");
+        let r = doctor();
+        let k = find(&r, "kg-unused");
+        check("知識圖沒用上：有圖、最近的資料包都沒有 kg → 說明，列出 run、修法提到 awf kg build；讀不懂的 pack-args 不算",
+            k.level == INFO && k.msg.contains("2026-01-06-acme-f") && k.fix.contains("awf kg build"), format!("{r:?}"));
+        w("proj/_tpm/runs/2026-01-05-acme-e/design/pack-args.json", &json!({"kg": true}).to_string());
+        check("知識圖沒用上：最近有一份資料包帶了 kg → 不列", !has(&doctor()), String::new());
+        let _ = std::fs::remove_file(root.join("proj/_tpm/runs/2026-01-05-acme-e/design/pack-args.json"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        w("proj/_tpm/kb/graph.db", "y");
+        check("知識圖沒用上：圖比最新的資料包新（之後才建）→ 看不出來，不列", !has(&doctor()), String::new());
+        let _ = std::fs::remove_file(root.join("proj/_tpm/kb/graph.db"));
+        let _ = std::fs::remove_dir_all(root.join("proj/_tpm/runs/2026-01-06-acme-f/plan"));
+        let _ = std::fs::remove_dir_all(root.join("proj/_tpm/runs/2026-01-05-acme-e/design"));
+    }
     check("主線分支：沒設定（main）而且受保護 → 不列", !ids(&r, None).iter().any(|i| i == "base-branch" || i == "layout"), format!("{r:?}"));
     w("proj/.claude/teams/guard.config.json", &json!({"runs_dir": "_tpm/runs", "base_branch": "develop", "protected_branches": "main,master"}).to_string());
     let r = doctor();
