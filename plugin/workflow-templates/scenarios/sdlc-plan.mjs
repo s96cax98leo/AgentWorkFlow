@@ -10,6 +10,10 @@ const SD_PROFILE = { stages: { design: { system_design: { source: 'System Design
 const DEF = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'scaffold', '.claude', 'teams', 'methodologies', 'default.json'), 'utf8'))
 const RP = { recipes: DEF.recipes, modifiers: DEF.modifiers }
 
+// 修正輪：bugfix 的每個調研角度都有來源沒變的結論可以沿用（plan_mode=diagnose）
+const RV_ENV = (k) => ({ plan_mode: 'diagnose', envelope: { status: 'done', summary: '上次的結論', artifacts: [`/tmp/run/plan/research-${k}.md`], evidence: [], confidence: 0.9, open_questions: [], derived_work: [], payload: { lens: k, findings: [] } } })
+const RV_REUSE = Object.fromEntries((DEF.recipes.bugfix.research_angles || []).map((k) => [k, RV_ENV(k)]))
+
 const TRIAGE = (kind, confidence) => (base) => ({ ...base, status: 'done', open_questions: [],
   payload: { ...base.payload, kind, confidence, size: 'medium', modifiers: [], alternatives: [] } })
 const sub = (kind) => ({ id: 't1', title: 'x', kind, owns: ['x'], depends_on: [], acceptance: ['x'] })
@@ -661,5 +665,53 @@ export default [
     name: '前綴：limits.mode=warn、沒有 knowledge.sources → 寫「hook 會擋超量讀取」，不提 awf kb query',
     profile: (p) => ({ ...p, limits: { ...(p.limits || {}), mode: 'warn' }, knowledge: { dir: '_tpm/kb' } }),
     expect: (r) => { const p = r.prompts.triage || ''; return /- 省 context（hook 會擋超量讀取）：大檔帶/.test(p) && /，再用 Grep 找行段，只讀那幾行/.test(p) && !/awf kb query "<問題>"/.test(p) ? [] : ['limits.mode=warn、沒有知識層來源時的前綴不對'] },
+  },
+  {
+    // 修正輪（args.answers）：不重做調研，只派 intent 作者依答覆改 intent、skeptic 複查
+    name: '修正輪：answers ＋ 來源沒變的 reuse → 不派 triage、定位、調研；intent 是修正輪的派工單，skeptic 多查答覆有沒有落實',
+    args: { recipe: 'bugfix', answers: ['匯出檔一律 UTF-8、不加 BOM', { question: '日期篩選用哪個時區？', answer: '一律 UTC' }, '   ', { question: '沒有答案的不算' }], reuse: RV_REUSE },
+    expect: (r) => {
+      const o = r.out || {}
+      const p = r.prompts.intent || ''
+      const c = r.prompts['challenge:intent'] || ''
+      return [
+        ...(o.halted ? [`不該中斷：${o.halt_reason}`] : []),
+        ...(r.labels.some((l) => /^(triage|locate:|research:)/.test(l)) ? [`修正輪不該派 triage、定位、調研：${r.labels.join(',')}`] : []),
+        ...(/## 派工單（SDLC 第 1 段 Plan 的修正輪，plan_mode=diagnose）/.test(p) && /intent\.md 已經起草過，人在閘門上答了下面 2 條。這一輪只依答覆修改 intent：不重寫整份、不重做調研。/.test(p) ? [] : ['intent 要是修正輪的派工單（空白與沒有答案的不算一條）']),
+        ...(/## 人的答覆\n1\. 匯出檔一律 UTF-8、不加 BOM\n2\. 問：日期篩選用哪個時區？ ｜答：一律 UTC\n/.test(p) && /必要節照舊[^\n]*：/.test(p) && /上次的結論/.test(p) ? [] : ['修正輪的派工單要列出答覆、必要節與沿用的調研結論']),
+        ...(/worktree add/.test(p) ? ['修正輪不該再叫 agent 開 worktree'] : []),
+        ...(/這是修正輪：intent 剛依下面的答覆改過。另外逐條確認每一條答覆有沒有落實到 intent（target_id 用「答覆 <編號>」/.test(c) && /人的答覆：\n1\. 匯出檔一律 UTF-8/.test(c) && /必要節（/.test(c) ? [] : ['skeptic 要照原本的規則再加查答覆有沒有落實']),
+        ...(o.round === 'revise' && o.answers === 2 && JSON.stringify(o.not_redone_angles) === '[]' && (o.reused || []).length === (o.angles.chosen || []).length && o.reused.length > 0 ? [] : [`回傳要標 round=revise、沿用全部角度：${JSON.stringify([o.round, o.answers, o.not_redone_angles, o.reused])}`]),
+        ...(Array.isArray(o.subtasks) && r.labels.includes('tasks') ? [] : ['沒有 design 段的 recipe 在修正輪一樣要重拆子任務']),
+      ]
+    },
+  },
+  {
+    name: '修正輪：有角度沒有可以沿用的結論 → 不派工，列在 not_redone_angles，派工單與 skeptic 都寫明',
+    args: { recipe: 'bugfix', answers: ['匯出檔一律 UTF-8'], reuse: { 'code-contracts': { plan_mode: 'feature', envelope: { status: 'done', summary: 'x', payload: { lens: 'code-contracts', findings: [] } } } } },
+    expect: (r) => {
+      const o = r.out || {}
+      const nr = o.not_redone_angles || []
+      return [
+        ...(r.labels.some((l) => /^(locate:|research:)/.test(l)) ? [`修正輪不重做調研：${r.labels.join(',')}`] : []),
+        ...(nr.includes('code-contracts') && !(o.reused || []).length ? [] : [`plan_mode 不同的不能沿用，要列在 not_redone_angles：${JSON.stringify(nr)}`]),
+        ...(/這一輪不重做調研；沒有可以沿用的結論的角度（來源變了，或上一輪沒做）：[^\n]*code-contracts/.test(r.prompts.intent || '') ? [] : ['intent 的派工單要寫明哪些角度沒有結論']),
+        ...(/沒有可以沿用的結論：intent 若把這些角度的事實當成已確認，判 refuted。/.test(r.prompts['challenge:intent'] || '') ? [] : ['skeptic 要知道哪些角度沒有結論']),
+      ]
+    },
+  },
+  {
+    name: '修正輪：answers 是空的、不是陣列、全是空白 → 照一般的 plan（派工單沒有修正輪的字）',
+    args: { recipe: 'bugfix', answers: ['  ', { question: 'x' }] },
+    expect: (r) => [
+      ...(Object.entries(r.prompts).filter(([, v]) => /修正輪|人的答覆/.test(v)).map(([k]) => `${k} 不該出現修正輪的字`)),
+      ...(r.labels.some((l) => l.startsWith('research:')) && !('round' in (r.out || {})) ? [] : ['沒有答覆時要照一般的 plan 跑調研，回傳沒有 round']),
+    ],
+  },
+  {
+    name: '修正輪：intent 缺件、skeptic 缺件一樣停下交人',
+    args: { recipe: 'bugfix', answers: ['匯出檔一律 UTF-8'], reuse: RV_REUSE },
+    fakes: { 'challenge:intent': () => null },
+    expect: (r) => (r.out && r.out.halted && /challenge:intent/.test(r.out.halt_reason || '') && r.out.round === 'revise' ? [] : ['修正輪的 skeptic 缺件要 halted']),
   },
 ]
