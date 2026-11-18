@@ -57,7 +57,7 @@
 | `artifacts` | 產出或改動的檔案路徑 |
 | `evidence[]` | `claim`（要佐證的說法）、`source`（`路徑:行號` 或可重跑的指令）、`result`（看到的結果） |
 | `confidence` | 0–1 |
-| `open_questions[]` | `question`、`blocking`、`options[{choice, cost}]`、`recommendation`、`default_applied`（沒有就寫 `none`） |
+| `open_questions[]` | `question`、`blocking`、`options[{choice, cost}]`、`recommendation`、`default_applied`（沒有就寫 `none`）；選填 `risk`（`low`／`high`，blocking 的問題用；沒標當 high，見 `docs/自訂與擴充.md`〈照建議先做〉） |
 | `derived_work[]` | 衍生工作，只列不編號 |
 | `payload` | 依角色：`subtasks`、`findings`、`verdicts`、`criteria`、`build-result`、`items`、`docs` |
 

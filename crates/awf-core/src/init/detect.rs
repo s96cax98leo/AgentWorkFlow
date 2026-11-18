@@ -62,7 +62,7 @@ pub const TOPICS: &[(&str, &str, &str, &[&str])] = &[
     ("deliverables", "交付文件", "要不要產交付文件（預設不啟用）；細項用 /agent-workflow:deliverables 設定", &["deliverables"]),
     ("ci", "專案的測試／lint CI", "要不要由 awf ci render 產生 CI 檔（預設不啟用）；跑哪些指令、哪些必過", &["ci"]),
     ("build_loop", "build 修正迴圈", "修正迴圈要不要只跑受影響的測試（預設關；test 段的閘門照舊全跑）", &["affected_tests_only"]),
-    ("auto_merge", "自動合併", "要不要啟用（預設關；啟用前要完成信任模型的檢查清單）", &["auto_merge"]),
+    ("auto_merge", "合併與自動合併", "合併方式（pr 或本機合併 local，預設 pr）；blocking 的問題要不要照建議先做（預設 off）；要不要啟用自動合併（預設關；啟用前要完成信任模型的檢查清單）", &["merge_mode", "auto_accept", "auto_merge"]),
     ("main_session", "主 session 的習慣", "會不會在主 session 直接 push 主線、合併 PR（會＝放寬主 session 的 git／GitHub 限制）", &["main_session_push_merge"]),
     ("hooks", "hook 註冊方式", "plugin（由 plugin 註冊）或 project（註冊在專案的 settings.json；Windows 建議）", &["hooks"]),
     ("guard", "守門設定", "受保護分支、驗收測試目錄、文件目錄等 guard.config.json 的值（沒回答就用範本的預設）", &["guard"]),

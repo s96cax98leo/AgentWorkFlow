@@ -99,7 +99,9 @@ pub fn direct_save_marks(ctx: &sr::Ctx, run: &str, stage: &str, data: &Value, re
     if !result.is_object() || !simple_name(stage) {
         return notes;
     }
-    if let Ok(Value::Object(old)) = ctx.load_json(&pj(run, &format!("{stage}.json"))) {
+    // 只管狀態機帶的 run（run.json 有 awf）：不經狀態機、直接用 awf save-run 存的 run 照舊
+    let managed = data.get("awf").is_some_and(Value::is_object);
+    if let Some(Value::Object(old)) = managed.then(|| ctx.load_json(&pj(run, &format!("{stage}.json"))).ok()).flatten() {
         for k in STICKY_MARKS {
             let Some(v) = old.get(k).filter(|v| py::truthy(v)) else { continue };
             if !result.get(k).is_some_and(py::truthy) {

@@ -86,6 +86,22 @@ pub fn apply_topic_answers(prof: &mut Map<String, Value>, ans: &Map<String, Valu
         };
         prof.insert((*key).to_string(), Value::Object(deep_merge(&base, &extra)));
     }
+    // 1.2：合併方式（conventions.merge.mode）與「照建議先做」（decisions.auto_accept）。沒答＝不動 profile
+    if let Some(v) = ans.get("merge_mode").filter(|v| !v.is_null()) {
+        let Some(m) = v.as_str().filter(|m| ["pr", "local"].contains(m)) else { return die(format!("merge_mode 要是 pr 或 local（收到 {}）", pyfmt::repr(v))) };
+        if m == "local" && ans.get("auto_merge") == Some(&Value::Bool(true)) {
+            return die("merge_mode: local（本機合併）不能和 auto_merge: true 同時設：兩個只能選一個");
+        }
+        let conv = prof.entry("conventions").or_insert_with(|| json!({}));
+        let Some(conv) = conv.as_object_mut() else { return die("profile 的 conventions 要是物件") };
+        conv.insert("merge".to_string(), json!({"mode": m}));
+    }
+    if let Some(v) = ans.get("auto_accept").filter(|v| !v.is_null()) {
+        let Some(m) = v.as_str().filter(|m| ["off", "recommended"].contains(m)) else { return die(format!("auto_accept 要是 off 或 recommended（收到 {}）", pyfmt::repr(v))) };
+        let dec = prof.entry("decisions").or_insert_with(|| json!({}));
+        let Some(dec) = dec.as_object_mut() else { return die("profile 的 decisions 要是物件") };
+        dec.insert("auto_accept".to_string(), json!(m));
+    }
     if let Some(v) = ans.get("affected_tests_only").filter(|v| !v.is_null()) {
         let Some(b) = v.as_bool() else { return die(format!("affected_tests_only 要是 true 或 false（收到 {}）", pyfmt::repr(v))) };
         let stages = prof.entry("stages").or_insert_with(|| json!({}));
@@ -348,10 +364,31 @@ pub fn ask_more(con: &mut Console, ans: &mut Map<String, Value>, prof: &Map<Stri
 
     // 自動合併
     if want("auto_merge") {
+    // 合併方式：只有已經有答案、或使用者改掉預設時才記（預設 pr＝開 PR，照舊）
+    let mm_prof = at(at(prof.get("conventions"), "merge").as_ref(), "mode").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "pr".to_string());
+    let mm_now = ans.get("merge_mode").and_then(Value::as_str).map(str::to_string).unwrap_or(mm_prof.clone());
+    let mm = con.ask("合併方式（pr＝開 PR，由合併 agent 或人在平台上合併；local＝不開 PR，由人自己在本機合併、工具只核對，不能和自動合併同時用）", &mm_now);
+    if mm != "pr" && mm != "local" {
+        return die(format!("合併方式只能是 pr 或 local（收到 {}）", pyfmt::repr_str(&mm)));
+    }
+    if mm != mm_prof || ans.contains_key("merge_mode") {
+        ans.insert("merge_mode".to_string(), json!(mm));
+    }
+    let aa_prof = at(prof.get("decisions"), "auto_accept").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "off".to_string());
+    let aa_now = ans.get("auto_accept").and_then(Value::as_str).map(str::to_string).unwrap_or(aa_prof.clone());
+    let aa = con.ask("blocking 的問題要不要照建議先做（off＝每一題都等人答；recommended＝有建議、標成低風險的先照建議做，下一個閘門一次列出給人確認或推翻；plan 段與高風險一律等人）", &aa_now);
+    if aa != "off" && aa != "recommended" {
+        return die(format!("照建議先做只能是 off 或 recommended（收到 {}）", pyfmt::repr_str(&aa)));
+    }
+    if aa != aa_prof || ans.contains_key("auto_accept") {
+        ans.insert("auto_accept".to_string(), json!(aa));
+    }
+    if mm != "local" {
     let am_now = ans.get("auto_merge").and_then(Value::as_bool).unwrap_or(false);
     let a = con.ask("要不要啟用自動合併（y／n；啟用前要先完成 docs/自動合併信任模型.md 的檢查清單，白名單沒填之前不會合併任何 repo）", yn(am_now));
     if starts_y(&a) || ans.contains_key("auto_merge") {
         ans.insert("auto_merge".to_string(), json!(starts_y(&a)));
+    }
     }
     }
 
@@ -618,6 +655,8 @@ const ROWS: &[(&str, &str, &str, &str)] = &[
     ("交付文件", "deliverables", "methodology.json", "deliverables.enabled"),
     ("專案的 CI", "ci", "methodology.json", "ci"),
     ("修正迴圈只跑受影響的測試", "affected_tests_only", "methodology.json", "stages.build.affected_tests_only"),
+    ("合併方式", "merge_mode", "methodology.json", "conventions.merge.mode"),
+    ("照建議先做", "auto_accept", "methodology.json", "decisions.auto_accept"),
     ("自動合併", "auto_merge", "guard.config.json", "auto_merge.enabled"),
     ("主 session 的 git／GitHub 限制", "main_session_push_merge", "guard.config.json", "main_session_git_rules"),
     ("hook 註冊方式", "hooks", "settings", ""),

@@ -1249,6 +1249,17 @@ fn selftest_body(env: &Env, fake_git: &[String], fake_gh: &[String], root: &str,
     let (ghlog, sent) = (slurp(&gh_log), slurp(&gh_body));
     let good = sent.contains("取代 #12") && sent.starts_with("示範 PR 說明") && !ghlog.contains("pr close") && !ghlog.contains(&body) && rec["supersedes"] == 12 && !slurp(&body).contains("取代");
     t.expect("PR 說明含「取代 #12」、原說明檔不動、沒有執行 gh pr close", good);
+    // 1.2：還沒有人確認的暫定做法一律拒絕；有子任務被略過要人當下確認
+    let held = t.make_run("r-unconfirmed", human())?;
+    let hj = format!("{held}/run.json");
+    let mut hd = py::loads(&slurp(&hj)).unwrap_or(Value::Null);
+    hd["awf"] = json!({"unconfirmed": [{"stage": "deliver", "question": "q", "applied": "A", "auto": true}]});
+    put(&hj, recipe::dumps(&hd, None).as_bytes())?;
+    t.case("還有沒人確認過的暫定做法 → 拒絕", "refused", Some("暫定做法"), with_run(&held));
+    hd["awf"] = json!({"skipped_subtasks": [{"id": "t2", "by": "human", "at": "t", "reason": "r"}]});
+    put(&hj, recipe::dumps(&hd, None).as_bytes())?;
+    t.case("有子任務被略過、沒有當下確認 → 拒絕", "refused", Some("子任務被略過"), with_run(&held));
+    t.case("有子任務被略過、帶 --confirm-skipped-subtasks → 照常（dry-run）", "dry-run", None, Args { dry_run: true, confirm_skipped: true, ..with_run(&held) });
     t.case("推到受保護分支 main → 拒絕", "refused", None, on("main"));
     t.case("分支前綴不合規（wip/）→ 拒絕", "refused", None, on("wip/x"));
     t.case("remote 指向上游 → 拒絕", "refused", None, Args { remote: "upstream".into(), ..base.clone() });
