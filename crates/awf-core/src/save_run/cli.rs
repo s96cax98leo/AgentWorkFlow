@@ -4,6 +4,7 @@
 use super::archive::{next_stage, recipe_summary, status_snapshot, write_archive, write_context, ARCHIVE_DIR, ARCHIVE_NAME};
 use super::checks::{constraint_issues, intent_errors, plan_check_for_with};
 use super::decisions::{decision_errors, record_decisions, split_answer};
+use super::human;
 use super::links::{decision_links, id_pattern, link_gaps_with, links_setting, stage_links_with, write_links, LEDGER};
 use super::speccheck::{baseline_drift, intent_errors_spec, open_spec, spec_baseline, spec_issues, BASELINE_KEY};
 use super::policy::{abandoned_error, chain_errors_with, escalate_affected, extra_gates, followup_run_errors, has_recipe, load_profile, mods, policy_violations_with, profile_missing, recipe_mismatch, recipe_tamper_errors};
@@ -35,6 +36,11 @@ run 目錄：<runs_dir>/<YYYYMMDD>-<事件>-<短名>/
         [--answer \"<問題>=<答覆>\"]… [--answer-scope epic|project] [--answer-expires <YYYY-MM-DD>]
         只有狀態 done 的段能核准；recipe 裡前面的每一段都要 done，有閘門的都要已核准。已取消的 run 不能核准。
         --by policy 表示依專案政策自動核准，--note 必須寫政策名稱；plan 段一律由人核准。
+        狀態是 needs_decision（只差 blocking 的問題沒答）的段：人用 --answer 把每一題都答了（鍵用序號 \"#N=<答覆>\" 或問題原文）就視為人工核准、往下走；
+        少答、對不上都拒絕。原始信封不改，答覆記在 run.json 那一段的 decided；這種段不能政策核准。
+        [--confirm-unconfirmed]：人確認了全部暫定做法（awf.unconfirmed）；有「照建議先做」還沒確認的項目時，人工核准要帶它。
+    awf save-run confirm-unconfirmed <run_dir> --by <誰> --at <ISO 時間>      # 只確認暫定做法，不核准任何一段
+    awf save-run reject-unconfirmed <run_dir> <stage> --by <誰> --at <ISO 時間>   # 推翻那一段照建議先做的答覆：回到 needs_decision，之後已 done 的段改成 stale
     awf save-run decide <run_dir> --question <問題> --answer <答覆> --by <誰> --at <ISO 時間> [--scope epic|project] [--expires <YYYY-MM-DD>]
     awf save-run escalate <run_dir> --recipe <名> [--modifiers a,b] [--size s] --by <誰> --at <ISO 時間> --reason <理由> [--profile <檔>]
         升級 recipe（只能加嚴）；之後已 done 的段改成 stale 並清掉核准。
@@ -215,7 +221,13 @@ fn dispatch(ctx: &Ctx, argv: &[String], stdin: &mut dyn FnMut() -> R<String>, ou
                 return Ok(2);
             };
             match py::loads(&stdin()?) {
-                Ok(result) => stage_cmd(ctx, run, stage, &result, opt(argv, "--profile", ""), data, out, err),
+                Ok(mut result) => {
+                    // 直接存檔（不是 awf done 取回來的）：和 workflow 實際回傳的不一致、或上一份結果標過非標準，就標成非標準結果（只標記，照樣存）
+                    for n in crate::state::direct_save_marks(ctx, run, stage, &data, &mut result) {
+                        line(err, n);
+                    }
+                    stage_cmd(ctx, run, stage, &result, opt(argv, "--profile", ""), data, out, err)
+                }
                 // 回傳讀不懂：不能當成「這次沒存」而留下舊的結果與舊核准（1.0 審查 M3）
                 Err(e) => unreadable_cmd(ctx, run, stage, &format!("{}：{}", e.class, e.msg), data, out, err),
             }
@@ -227,6 +239,14 @@ fn dispatch(ctx: &Ctx, argv: &[String], stdin: &mut dyn FnMut() -> R<String>, ou
                 return Ok(2);
             };
             approve_cmd(ctx, run, stage, argv, data, out, err)
+        }
+        "confirm-unconfirmed" => human::confirm_cmd(ctx, run, opt(argv, "--by", ""), opt(argv, "--at", ""), out, err),
+        "reject-unconfirmed" => {
+            let Some(stage) = argv.get(2) else {
+                line(out, USAGE);
+                return Ok(2);
+            };
+            human::reject_cmd(ctx, run, stage, opt(argv, "--by", ""), opt(argv, "--at", ""), out, err)
         }
         "escalate" => escalate_cmd(ctx, run, argv, data, out, err),
         "followup" => followup_cmd(ctx, run, argv, data, out, err),
@@ -284,6 +304,7 @@ fn unreadable_cmd(ctx: &Ctx, run: &str, stage: &str, why: &str, mut data: Value,
         st.insert("envelopes".into(), json!(0));
         st.insert("unreadable".into(), json!(note));
         st.shift_remove("halted");
+        st.shift_remove(human::DECIDED);
         st.shift_remove("approved").unwrap_or(Value::Null)
     };
     dump(ctx, run, &data)?;
@@ -508,6 +529,9 @@ fn stage_cmd(ctx: &Ctx, run: &str, stage: &str, result: &Value, profile_arg: &st
         st.insert("status".into(), json!(status));
         st.insert("envelopes".into(), json!(envs.len()));
         st.shift_remove("unreadable");
+        // 重存＝新的結果：上一份結果的人工答覆（或照建議先做、被人推翻）的紀錄不再算數
+        st.shift_remove(human::DECIDED);
+        st.shift_remove("auto_rejected");
         let old = st.shift_remove("approved");
         if truthy(&halted) {
             let reason = get(result, "halt_reason")?;
@@ -738,8 +762,31 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     if truthy(get(&data, "abandoned")?) {
         errs.push(abandoned_error(&data)?);
     }
+    let mut answers: Vec<(String, String)> = opts(argv, "--answer").iter().map(|a| split_answer(a)).collect();
+    // 人答完 blocking 的問題後往下走：狀態是 needs_decision、帶了 --answer、不是政策核准時才走這條路（其餘照舊拒絕）
+    let mut decided: Option<Vec<Value>> = None;
     if st.is_null() {
         errs.push(format!("沒有 {stage} 這一段"));
+    } else if idx(&st, "status")?.as_str() == Some("needs_decision") && !answers.is_empty() && by != "policy" && by != human::AUTO_BY {
+        let f = pj(run, &format!("{stage}.json"));
+        match ctx.load_json(&f) {
+            Err(e) if py::os_or_value(&e) => errs.push(format!("找不到或讀不懂 {}，無法核對答覆對到哪幾題", pname(&f))),
+            Err(e) => return Err(e),
+            Ok(result) => {
+                let why = human::not_answerable(stage, &result)?;
+                if !why.is_empty() {
+                    errs.push(format!("{stage} 停在 needs_decision，但不是只差問題沒答（{}）：答覆不能讓它往下走，處理後重跑這一段", why.iter().take(5).cloned().collect::<Vec<_>>().join("；")));
+                } else {
+                    let (items, list, aerrs) = human::match_answers(&result, &answers)?;
+                    errs.extend(aerrs);
+                    answers = items;
+                    decided = Some(list);
+                }
+            }
+        }
+        if !truthy(get(&st, "envelopes")?) {
+            errs.push(format!("{stage} {NO_ENVELOPE}"));
+        }
     } else if idx(&st, "status")?.as_str() != Some("done") {
         errs.push(format!("{stage} 狀態是 {}，只有 done 的段能核准", s(idx(&st, "status")?)));
     } else if !truthy(get(&st, "envelopes")?) {
@@ -773,8 +820,19 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     if by == "policy" && note.is_empty() {
         errs.push("--by policy 時 --note 要寫依據的政策名稱".to_string());
     }
-    let answers: Vec<(String, String)> = opts(argv, "--answer").iter().map(|a| split_answer(a)).collect();
     let (a_scope, a_exp) = (opt(argv, "--answer-scope", "epic"), opt(argv, "--answer-expires", ""));
+    // 照建議先做（decisions.auto_accept）還沒有人確認的項目：人工核准要明確帶 --confirm-unconfirmed（或先推翻），不默默帶過
+    let confirm = argv.iter().any(|a| a == "--confirm-unconfirmed");
+    let auto_un = human::auto_unconfirmed(&data);
+    if by == "policy" && (confirm || !auto_un.is_empty()) {
+        errs.push("還有照建議先做、沒有人確認過的項目：只能由人確認，不能政策核准".to_string());
+    } else if !auto_un.is_empty() && !confirm {
+        errs.push(format!(
+            "還有 {} 題是照建議先做、沒有人確認過的（{}）：都同意就在核准時加 --confirm-unconfirmed；不同意先用 reject-unconfirmed <段> 推翻",
+            auto_un.len(),
+            human::unconfirmed_of(&data).iter().take(3).cloned().collect::<Vec<_>>().join("；")
+        ));
+    }
     if !answers.is_empty() {
         errs.extend(decision_errors(&answers, by, a_scope, a_exp));
     }
@@ -846,6 +904,13 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
             }
         }
     }
+    if let Some(list) = decided.take() {
+        // 原始信封不改寫：答了哪幾題、誰、什麼時候另外記在這一段；狀態改成 done、視為人工核准
+        let n = list.len();
+        human::mark_decided(&mut data, stage, by, at, list, false)?;
+        line(out, format!("{stage}：{n} 題 blocking 的問題由 {by} 答覆，這一段視為人工核准（原結果不改；之後不能政策核准）"));
+    }
+    let confirmed = if confirm { human::confirm_all(&mut data, by, at)? } else { Vec::new() };
     st_mut(&mut data, stage)?.insert("approved".into(), Value::Object(approved));
     let lock = stage == "plan" && has_recipe(&data)?;
     if lock {
@@ -857,6 +922,11 @@ fn approve_cmd(ctx: &Ctx, run: &str, stage: &str, argv: &[String], mut data: Val
     line(out, format!("{stage} 已記錄核准：{by} @ {at}"));
     for w in &spec_warns {
         line(err, format!("警告：{w}"));
+    }
+    if confirm {
+        line(out, format!("已確認 {} 項暫定做法：{by} @ {at}", confirmed.len()));
+        let fresh: Vec<(String, String)> = confirmed.into_iter().filter(|c| !answers.iter().any(|a| a.0 == c.0)).collect();
+        human::record(ctx, run, &fresh, by, at, stage, out, err);
     }
     if !answers.is_empty() {
         // 決策記憶是輔助：寫不出來不影響核准
@@ -964,6 +1034,7 @@ fn escalate_cmd(ctx: &Ctx, run: &str, argv: &[String], mut data: Value, out: &mu
             let st = st_mut(&mut data, st_name)?;
             st.insert("status".into(), json!("stale"));
             st.shift_remove("approved");
+            st.shift_remove(human::DECIDED);
             stale.push(st_name);
         }
     }

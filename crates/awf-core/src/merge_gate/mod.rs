@@ -1706,6 +1706,11 @@ fn gather(ctx: &Ctx, a: &Parsed, cfg: &Value, proj: &str) -> Result<(Inp, Vec<St
         };
         let flow_pending = crate::stages::flow_unapproved_with(&data, None, &flow_prof);
         if !flow_pending.is_empty() { return Err(Fail::Input(format!("--recipe {p} 的自訂段還沒過：{}", first(&flow_pending, 5).join("；")))); }
+        // 還沒有人確認的暫定做法、被略過的子任務：都不是 agent 能自己合併的情況，交人（沒有這些紀錄時不多做事）
+        let unconfirmed = crate::save_run::human::unconfirmed_of(&data);
+        if !unconfirmed.is_empty() { return Err(Fail::Input(format!("--recipe {p} 還有 {} 項暫定做法沒有人確認過：{}", unconfirmed.len(), first(&unconfirmed, 3).join("；")))); }
+        let skipped = crate::save_run::human::skipped_subtasks(&data);
+        if !skipped.is_empty() { return Err(Fail::Input(format!("--recipe {p} 有子任務被略過（{}）：要不要合併由人決定，agent 不合併", skipped.join("、")))); }
         inp.recipe = Some(r.clone());
         if inp.requirements_source.starts_with("openspec:") {
             let (rc, _) = requirements_config(cfg, proj)?;

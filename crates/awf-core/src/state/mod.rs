@@ -22,6 +22,7 @@
 
 mod args;
 pub mod auto;
+mod human;
 mod machine;
 mod plugin;
 mod selftest;
@@ -31,6 +32,7 @@ pub use args::{apply_sets, current_session, deliverables_sync, find_wf_meta, run
 pub use machine::{carry, custom_action, decide, envelopes, flow_action, gate_action, halted_action, handoff_text, highlights, is_flow, provisional, text_of, try_policy, workflow_action};
 pub(crate) use plugin::{override_re, unregistered, version as plugin_version};
 pub use plugin::{custom_roles, find_plugin, find_template, plugin_candidates, read_config, render, render_custom, render_flow, workflow_names, Candidate};
+pub use human::direct_save_marks;
 pub use selftest::selftest;
 
 use crate::kb::pyish;
@@ -91,8 +93,13 @@ pub const USAGE: &str = "狀態機：主 session 每一段只做兩件事——`
     awf next --run <run_dir> [--set k=v]… [--set-json k=<JSON>]… [--stage <段>] [--workflow <名>] [--text]
     awf next --run <run_dir> --script <自己寫的腳本.js> [--stage <段> --retry]   # design、build、deliver 段改用自訂腳本（先檢查再接上執行核心）
     awf next --run <run_dir> --skip spec-apply   # merge 之後「把規格差異併回現行規格」這一步先不做，之後不再提
+    awf next --run <run_dir> --retry --skip-subtask <id>… --reason <理由> --by <誰>   # build 停下之後由人決定略過卡住的子任務（之後不能政策核准）
+    awf next --run <run_dir> --confirm-merge --by <誰> [--confirm-skipped-subtasks]   # 本機合併（conventions.merge.mode: local）：人合併之後由工具核對
     awf done --run <run_dir> [--output <workflow 回傳的 JSON 檔>] [--stage <段>]
     awf approve --run <run_dir> [<段>] --by <誰> [--note <備註>] [--answer \"<問題>=<答覆>\"]… [--accept-defaults]
+        停在 needs_decision 的段：每一題 blocking 的問題都用 --answer \"#N=<答覆>\" 答了就視為人工核准、往下走（不必重跑；之後不能政策核准）
+    awf approve --run <run_dir> [<段>] --by <誰> --confirm-unconfirmed          # 人確認了全部暫定做法（可以單獨跑，不核准任何一段）
+    awf approve --run <run_dir> --reject-unconfirmed <段> --by <誰>            # 推翻那一段照建議先做的答覆：回到 needs_decision
     awf handoff --run <run_dir> [--print]      # 寫 <run_dir>/接手摘要.md：換 session 或換人接手時看
     awf watch --run <run_dir> [--once [--json]] [--interval 5] [--stall-seconds 900]   # 進度事件寫到 <run_dir>/progress.jsonl
     awf statusline                             # 一行狀態，給 Claude Code 的 statusLine 用
@@ -107,7 +114,8 @@ next 回一個動作（JSON；--text 是給人看的摘要）：
     gate          這一段等人核准：把 highlights 列給使用者看，核准後跑 approve 的指令；退回就照使用者的意見處理。
     need_input    缺參數：照 need 的說明問使用者或自己判斷，用 next --set 補上。
     manual        要人當下同意、由主 session 自己做的步驟（例如推 fork、開 PR）。
-    halted        這一段停下了：reason 與 advice 是原因與建議；處理完用 retry 的動作重跑。
+    halted        這一段停下了：reason 與 advice 是原因與建議；處理完跑 retry 的指令（awf next --retry）重新備腳本再跑，不要直接重跑舊腳本。
+                  有 answer 時（只差 blocking 的問題沒答）：人答覆後跑 answer 的指令就能往下走，不必重跑。
     done          這個 run 沒有下一步了。
 
 workflow 腳本從哪來：plugin 的 workflow-templates/<名>.js（範本），加上專案的佔位符值（.claude/teams/workflow.config）
@@ -510,6 +518,7 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if !opt(argv, "--skip").is_empty() {
         auto::skip(env, &mut data, opt(argv, "--skip"))?;
     }
+    let skip_notes = if sr::opts(argv, "--skip-subtask").is_empty() { Vec::new() } else { human::skip_subtasks(env, run, &mut data, argv)? };
     // 中斷回收（輔助）：上一次交出去的 plan 段沒有結果時，把已經做完的調研記進 reuse.json；任何失敗都當成沒有可回收的
     let recovered = auto::recover_interrupted(env, run, &mut data).unwrap_or_default();
     let act = if opt(argv, "--script").is_empty() { decide(env, run, run_arg, &mut data, plugin, argv)? } else { custom_action(env, run, run_arg, &mut data, argv)? };
@@ -517,6 +526,8 @@ fn cmd_next(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     if py::get(&act, "action")?.as_str() == Some("run_workflow") {
         let mut notes: Vec<Value> = pnotes.iter().map(|n| json!(n)).collect();
         notes.extend(py::iter(act.get("notes").unwrap_or(&json!([])))?);
+        // 靠答覆往下走的段、被略過的子任務（沒有就不加）
+        notes.extend(skip_notes.iter().chain(human::run_notes(&data).iter()).map(|n| json!(n)));
         if !recovered.is_empty() {
             notes.push(json!(format!("中斷回收：上次這一段沒跑完，已經做完而且來源沒變的調研會沿用（{}）", recovered.join("、"))));
             py::obj_mut(&mut act)?.insert("highlights".into(), json!({"recovered": recovered}));
@@ -571,6 +582,7 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     let stage = py::s(&stage_v);
     let src = opt(argv, "--output");
     let mut meta: Option<(Value, String)> = None;
+    let mut fallback = false;
     let result: Value;
     if !src.is_empty() {
         match load_json(env, &py::pp(src))? {
@@ -596,15 +608,30 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
             Value::String(t) => t.clone(),
             other => return Err(Fail::Py(py::type_err(format!("expected str, bytes or os.PathLike object, not {}", py::tname(other))))),
         };
-        let want = if !script.is_empty() && !pyish::is_abs(&script) { pyish::pjoin(&env.project, &script) } else { script };
+        let mut want = if !script.is_empty() && !pyish::is_abs(&script) { pyish::pjoin(&env.project, &script) } else { script };
+        let mut since_at = py_float(py::get(&pend, "since")?)?;
+        // 沒有 pending（主 session 沒先跑 awf next --retry 就直接重跑了上一次的腳本）：只在能確定是哪一筆時才用 .wf/ 底下的標準腳本去對
+        let mut seen = String::new();
+        if want.is_empty() {
+            let wf_name = if s_or(py::get(&data, "event")?) == "sdlc" {
+                if is_flow(&data, &stage) { format!("flow-{stage}") } else { stage_workflow(&stage) }
+            } else {
+                event_route(env, &s_or(py::get(&data, "event")?))?.filter(|(_, st)| *st == stage).map(|(w, _)| w).unwrap_or_default()
+            };
+            if let Some((sc, at, id)) = human::done_fallback(run, &data, &stage, &wf_name) {
+                (want, since_at, seen) = (sc, at, id);
+                fallback = true;
+            }
+        }
         // 找到紀錄、但回傳讀不懂：和 --output 的檔讀不懂走同一條路（這一段不能留著舊的結果與舊核准）。找不到紀錄則什麼都不改
         let unreadable = |why: &str| -> A<i32> {
             let (mut o, mut e) = (String::new(), String::new());
             sr::stage_unreadable(&ctx, run, &stage, why, &mut o, &mut e)?;
             awf_err(format!("找到這一段的 workflow 紀錄，但{why}：{stage} 段已標成 invalid、舊核准失效；重跑這一段，或把正確的回傳存成 JSON 檔，用 --output <檔> 指定"))
         };
-        let since = py_float(py::get(&pend, "since")?)?;
-        let Some((m, mf)) = find_wf_meta(env, &want, since)? else {
+        let since = since_at;
+        let found = args::find_wf_meta_except(env, &want, since, &seen)?;
+        let Some((m, mf)) = found else {
             if unreadable_wf_meta(env, &want, since) {
                 return unreadable("紀錄檔不是讀得懂的 JSON");
             }
@@ -629,7 +656,8 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
     }
     // 不是「標準腳本、而且回傳是 awf 自己從 transcript 找到的」，就在結果裡留標記；save_run 看到標記不給政策核准
     let sticky = or_obj(py::get(&or_obj(py::get(&or_obj(py::get(&data, "awf")?), "nonstandard")?), &stage)?);
-    let mine = if pyfmt_eq(py::get(&pend, "stage")?, &stage_v) { pend.clone() } else { json!({}) };
+    // 退路取得的結果：那支腳本是上一次 next 備的，上一次記下的非標準標記（覆寫檔）照樣算在這一次
+    let mine = if pyfmt_eq(py::get(&pend, "stage")?, &stage_v) { pend.clone() } else if fallback { sticky.clone() } else { json!({}) };
     let mut marks = Map::new();
     for (k, name) in [("custom", "custom_script"), ("override", "override_script")] {
         let own = py::get(&mine, k)?;
@@ -650,6 +678,13 @@ fn cmd_done(env: &Env, argv: &[String], run: &str, run_arg: &str, mut data: Valu
         let own = py::get(&mine, "steps")?;
         if marks.is_empty() && meta.is_some() && own.is_object() {
             m.insert("flow_steps".into(), own.clone());
+        }
+    }
+    // 人決定略過的子任務記進 build 的結果（閘門與後面各段看得到；沒有略過時結果不變）
+    let skipped_ids = sr::human::skipped_subtasks(&data);
+    if stage == "build" && !skipped_ids.is_empty() {
+        if let Value::Object(m) = &mut result {
+            m.insert("skipped_subtasks".into(), json!(skipped_ids));
         }
     }
     if !marks.is_empty() {
@@ -750,6 +785,15 @@ fn pyfmt_eq(a: &Value, b: &Value) -> bool {
 fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Value, out: &mut String, err: &mut String) -> A<i32> {
     let ctx = env.sr();
     let stages = py::idx(data, "stages")?;
+    // 推翻某一段照建議先做的答覆（不核准任何一段）
+    let reject = opt(argv, "--reject-unconfirmed");
+    if has(argv, "--reject-unconfirmed") {
+        let code = sr::human::reject_cmd(&ctx, run, reject, opt(argv, "--by"), &env.now_iso(), out, err)?;
+        if code == 0 {
+            out.push_str(&format!("下一步：awf next --run {run_arg}\n"));
+        }
+        return Ok(code);
+    }
     let mut skip: Vec<String> = ["--run", "--by", "--note", "--answer-scope", "--answer-expires", "--profile"].iter().map(|n| opt(argv, n).to_string()).collect();
     skip.extend(sr::opts(argv, "--answer"));
     let mut stage = String::new();
@@ -762,6 +806,16 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
     if stage.is_empty() {
         let snap = sr::status_snapshot(&ctx, run, data)?;
         stage = s_or(py::get(&snap, "waiting_gate")?);
+    }
+    if stage.is_empty() && !sr::opts(argv, "--answer").is_empty() {
+        // 沒有在等核准的段、但帶了答覆：下一段正停在 needs_decision 的話，就是要答它的 blocking 問題
+        if let Some(n) = sr::next_stage(data)?.filter(|n| py::get(py::get(stages, n).unwrap_or(&Value::Null), "status").is_ok_and(|s| s.as_str() == Some("needs_decision"))) {
+            stage = n;
+        }
+    }
+    if stage.is_empty() && has(argv, "--confirm-unconfirmed") {
+        // 只確認暫定做法、不核准任何一段
+        return Ok(sr::human::confirm_cmd(&ctx, run, opt(argv, "--by"), &env.now_iso(), out, err)?);
     }
     if stage.is_empty() {
         return awf_err("現在沒有在等核准的段；要指定就寫 awf approve --run <run_dir> <段> --by <誰>");
@@ -779,6 +833,9 @@ fn cmd_approve(env: &Env, argv: &[String], run: &str, run_arg: &str, data: &Valu
     for a in sr::opts(argv, "--answer") {
         pass.push("--answer".into());
         pass.push(a);
+    }
+    if has(argv, "--confirm-unconfirmed") {
+        pass.push("--confirm-unconfirmed".into());
     }
     if has(argv, "--accept-defaults") {
         // 人確認了暫定的做法：沒有另外用 --answer 答的那幾題，照 agent 已套用的預設記進決策記憶

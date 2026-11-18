@@ -378,6 +378,15 @@
         }
       }
     },
+    "decisions": {
+      "type": "object",
+      "description": "選填：blocking 的問題怎麼處理。沒寫＝每一題都等人答",
+      "additionalProperties": false,
+      "properties": {
+        "auto_accept": {"enum": ["off", "recommended"], "description": "off＝預設。recommended＝一段停在 needs_decision、而且每一題 blocking 的問題都有建議、risk 都標成 low 時，awf next 先照建議記答覆並往下走，這些題目在下一個要人出面的動作一次列出、可以逐段推翻；人確認之前不能政策核准、不能推送與合併。plan 段、自訂段、帶 security／migration／public_api 的 recipe、沒標 risk 或標成 high 的問題一律照舊交人"},
+        "auto_accept_max": {"type": "integer", "minimum": 1, "maximum": 20, "description": "同一段最多照建議先答幾題（預設 5）；超過就整段交人"}
+      }
+    },
     "gates": {
       "type": "object",
       "description": "選填：另外加的核准閘門。plan、design、test、deliver 本來就有、拿不掉；這裡只能再加",
@@ -836,6 +845,14 @@
             "strategy": {"enum": ["auto", "rebase", "merge", "transit"], "description": "auto＝已跟上不動；未推送且無衝突 rebase；已推送且無衝突把 base merge 進來；有衝突走中轉分支。固定值遇到做不到的情況一律停下交人"},
             "transit_naming": {"type": "string", "minLength": 1, "description": "中轉分支命名，可用 <短名>、<base>、<YYYYMMDD>；前綴要在 guard.config 的 allowed_branch_prefixes 裡"},
             "backup_ref": {"type": "string", "pattern": "^refs/backup/", "maxLength": 200, "description": "選填：rebase 前備份 ref 的樣式（沒寫用 refs/backup/<branch>-<date>）。一定要在 refs/backup/ 底下，<branch>（分支名，/ 換成 -）與 <date>（YYYYMMDD）各出現一次；其餘只能是英數與 . _ - /。不合規則時工具用內建的樣式"}
+          },
+          "additionalProperties": false
+        },
+        "merge": {
+          "type": "object",
+          "description": "選填：merge 段怎麼合併。沒寫＝pr（開 PR，由合併 agent 對 PR 做 awf merge-gate 後合併，或由人在平台上合併）",
+          "properties": {
+            "mode": {"enum": ["pr", "local"], "description": "pr＝預設。local＝本機合併、不開 PR：merge 段不派合併 agent，由人自己在本機把分支合進主線（要留合併 commit），再由 awf next --confirm-merge 核對閘門鏈、審過的 commit、diff 形狀與凍結旗標；agent 與主 session 都不合併。不能和 guard.config.json 的 auto_merge.enabled 同時用。保證什麼、不保證什麼見 docs/自動合併信任模型.md〈本機合併〉"}
           },
           "additionalProperties": false
         }

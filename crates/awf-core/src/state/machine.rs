@@ -2,7 +2,7 @@
 
 use super::args::stage_result;
 use super::{
-    auto, awf_err, current_session, event_route, find_template, has, hint, is_file, load_json_or, opt, or_obj, read_config, render, render_custom, render_flow, run_pack, s_or, setdefault_obj, stage_args,
+    auto, awf_err, human, current_session, event_route, find_template, has, hint, is_file, load_json_or, opt, or_obj, read_config, render, render_custom, render_flow, run_pack, s_or, setdefault_obj, stage_args,
     stage_workflow, write, Env, Fail, A,
 };
 use crate::kb::pyish;
@@ -252,11 +252,28 @@ pub fn carry(mut act: Value, data: &Value) -> R<Value> {
         let unconfirmed = py::get(&aw, "unconfirmed")?;
         if py::truthy(unconfirmed) {
             let say = format!(
-                "{} unconfirmed 是政策核准的段裡 agent 先照建議做的暫定，還沒有人看過：一併列給使用者確認，確認後用 awf save-run decide 記下來（不同意就回對應的段修正）。",
+                "{} unconfirmed 是還沒有人看過的暫定做法（政策核准的段裡 agent 先照建議做的；標 auto 的是 decisions.auto_accept 照建議先答的 blocking 問題）：一併列給使用者確認。\
+                 都同意就在 approve 加 --confirm-unconfirmed（或單獨跑 awf approve --run <run_dir> --confirm-unconfirmed --by <誰>），確認之前不能推送、合併；\
+                 不同意：標 auto 的用 awf approve --run <run_dir> --reject-unconfirmed <段> --by <誰> 推翻（那一段回到 needs_decision），其餘回對應的段修正。",
                 s_or(py::get(&act, "say")?)
             );
             let m = py::obj_mut(&mut act)?;
             m.insert("unconfirmed".into(), unconfirmed.clone());
+            m.insert("say".into(), json!(pyish::strip(&say)));
+        }
+        // 靠答覆往下走的段、被略過的子任務：每一個要人出面的動作都列出（沒有就不加欄位）
+        let decided = human::decided_list(data);
+        if !decided.is_empty() {
+            let say = format!("{} decided 是停在 needs_decision 之後靠答覆往下走的題目：那一段的產出文件還沒反映這些答覆，請使用者留意後面的段有沒有照做。", s_or(py::get(&act, "say")?));
+            let m = py::obj_mut(&mut act)?;
+            m.insert("decided".into(), Value::Array(decided));
+            m.insert("say".into(), json!(pyish::strip(&say)));
+        }
+        let skipped = py::get(&aw, "skipped_subtasks")?;
+        if py::truthy(skipped) {
+            let say = format!("{} skipped_subtasks 是人決定略過的子任務：對應的驗收條件沒有達成，這個 run 之後每個閘門都由人核准，推送與合併前要使用者再確認一次。", s_or(py::get(&act, "say")?));
+            let m = py::obj_mut(&mut act)?;
+            m.insert("skipped_subtasks".into(), skipped.clone());
             m.insert("say".into(), json!(pyish::strip(&say)));
         }
     }
@@ -584,6 +601,10 @@ pub fn workflow_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage:
     Ok(Value::Object(ordered))
 }
 
+fn status_is(act: &Map<String, Value>, want: &str) -> bool {
+    act.get("status").and_then(Value::as_str) == Some(want)
+}
+
 pub fn halted_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &str, workflow: &str, plugin: Option<&str>) -> A<Value> {
     let res = stage_result(env, run, stage)?;
     let st = stage_entry(data, stage)?;
@@ -607,11 +628,19 @@ pub fn halted_action(env: &Env, run: &str, run_arg: &str, data: &Value, stage: &
     act.insert("reason".into(), reason);
     act.insert("advice".into(), res.get("next").filter(|n| py::truthy(n)).cloned().unwrap_or_else(|| json!("")));
     act.insert("highlights".into(), highlights(env, run, run_arg, data, stage)?);
-    act.insert("say".into(), json!("把原因與 open_questions 列給使用者；人答覆的決定用 awf save-run decide 記下來。處理完用 retry 的方式重跑這一段。"));
+    // 只差 blocking 的問題沒答：人答覆之後不必重跑，用 answer 的指令記下來就能往下走
+    let blocking = if status_is(&act, "needs_decision") && sr::human::not_answerable(stage, &res)?.is_empty() { sr::human::blocking_questions(&res)? } else { Vec::new() };
+    if blocking.is_empty() {
+        act.insert("say".into(), json!("把原因與 open_questions 列給使用者；人答覆的決定用 awf save-run decide 記下來。處理完跑 retry 的指令重新備腳本再重跑這一段（不要直接重跑舊腳本）。"));
+    } else {
+        act.insert("say".into(), json!("這一段只差 blocking 的問題沒答：把 blocking 逐題列給使用者（合成一次、用選項問）。每一題都有答覆後跑 answer 的指令（每題一個 --answer \"#N=<答覆>\"），這一段就視為人工核准、往下走，不必重跑；不要改結果檔。使用者要整段重做才跑 retry 的指令。"));
+        act.insert("answer".into(), json!(format!("{NEXT_CMD} approve --run {run_arg} {stage} --by <誰答的> {}", blocking.iter().map(|b| format!("--answer \"{}=<答覆>\"", s_or(b.get("id").unwrap_or(&Value::Null)))).collect::<Vec<_>>().join(" "))));
+        act.insert("blocking".into(), Value::Array(blocking));
+    }
     match workflow_action(env, run, run_arg, data, stage, workflow, plugin, false) {
-        Ok(mut retry) => {
-            py::obj_mut(&mut retry)?.insert("how_to_prepare".into(), json!(format!("{NEXT_CMD} next --run {run_arg} --retry")));
-            act.insert("retry".into(), retry);
+        Ok(_) => {
+            // 只給指令：腳本要由 awf next --retry 重新備（參數、資料包、pending 都在那時候更新），不能拿舊腳本直接跑
+            act.insert("retry".into(), json!(format!("{NEXT_CMD} next --run {run_arg} --retry")));
         }
         Err(Fail::Awf(m)) => {
             act.insert("retry_error".into(), json!(m));
@@ -724,8 +753,22 @@ pub fn decide(env: &Env, run: &str, run_arg: &str, data: &mut Value, plugin: Opt
     if !chain.is_empty() {
         return Ok(json!({"action": "halted", "stage": stage, "status": "chain", "reason": format!("前面的段還沒過：{}", chain.join("；")), "advice": "先完成並核准前面的段"}));
     }
+    if status == "needs_decision" && !retry && forced_wf.is_empty() && !custom && human::try_auto_accept(env, run, data, stage)? {
+        // 照建議先做（decisions.auto_accept）：這一段改成 done，接著照一般的路走（有閘門就停在閘門，由人確認）
+        return decide(env, run, run_arg, data, plugin, argv);
+    }
     if ["blocked", "invalid", "needs_decision"].contains(&status.as_str()) && !retry && forced_wf.is_empty() {
         return halted_action(env, run, run_arg, data, stage, &workflow, plugin);
+    }
+    if stage == "merge" && human::merge_local(env) {
+        // 本機合併、不開 PR：不派合併 agent，請人自己合併；--confirm-merge 時由工具核對
+        return match human::local_merge(env, run, run_arg, data, argv)? {
+            Some(act) => Ok(act),
+            None => {
+                let rest: Vec<String> = argv.iter().filter(|a| *a != "--confirm-merge" && *a != "--retry").cloned().collect();
+                decide(env, run, run_arg, data, plugin, &rest)
+            }
+        };
     }
     if stage == "merge" && !py::truthy(py::get(&or_obj(py::get(data, "args")?), "pr")?) {
         let g = load_json_or(env, &pj(&env.teams(), "guard.config.json"))?;
@@ -979,7 +1022,7 @@ pub fn handoff_text(env: &Env, run: &str, run_arg: &str, data: &Value) -> R<Stri
 pub fn text_of(act: &Value) -> R<String> {
     let stage = py::get(act, "stage")?;
     let mut lines = vec![format!("動作：{}{}", py::s(py::get(act, "action")?), if py::truthy(stage) { format!("（{} 段）", py::s(stage)) } else { String::new() })];
-    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("say", "說明"), ("approver", "核准者"), ("approve", "核准"), ("publish", "推送"), ("preview", "試跑"), ("apply", "執行"), ("skip", "略過")] {
+    for (k, label) in [("workflow", "workflow"), ("script", "腳本"), ("how", "做法"), ("resume_from", "續跑"), ("then", "完成後"), ("reason", "原因"), ("advice", "建議"), ("answer", "答覆"), ("retry", "重跑"), ("merge", "合併"), ("say", "說明"), ("approver", "核准者"), ("approve", "核准"), ("publish", "推送"), ("preview", "試跑"), ("apply", "執行"), ("skip", "略過")] {
         let v = py::get(act, k)?;
         if py::truthy(v) {
             lines.push(format!("{label}：{}", py::s(v)));
