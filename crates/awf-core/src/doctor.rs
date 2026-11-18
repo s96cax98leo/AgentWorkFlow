@@ -489,6 +489,22 @@ fn check_models(env: &Env) -> Part {
     )])
 }
 
+/// 派工單的語言（profile 的 `prompt_lang`）：寫了 zh-TW 以外的語言，plugin 卻沒有那份字串表（或讀不懂）時提示；
+/// 這時派工單退回內建的 zh-TW。沒寫、是 zh-TW、找得到時不列。
+fn check_prompt_lang(env: &Env, plugin: Option<&str>) -> Part {
+    let Some(prof) = profile_of(env) else { return Ok(Vec::new()) };
+    let dirs: Vec<std::path::PathBuf> = plugin.into_iter().chain(env.template.as_deref()).map(|p| crate::template::i18n(std::path::Path::new(p))).collect();
+    Ok(match crate::i18n::lang_problem(&prof, &dirs) {
+        None => Vec::new(),
+        Some(why) => vec![item(
+            "prompt-lang",
+            WARN,
+            format!("{why}：派工單的固定文字退回內建的 zh-TW"),
+            "把 prompt_lang 改成 plugin 的 workflow-templates/i18n/ 有的語言（內建 zh-TW、en），或拿掉這個鍵；個別的字可以用 prompt_overrides 蓋",
+        )],
+    })
+}
+
 /// 主線分支（guard.config.json 的 `base_branch`、`base_remote`）：寫了但不合規則，或主線分支不在受保護分支裡。
 /// 兩者是兩件事（設了主線分支不會讓它受保護），所以只提示、不當成問題。
 fn check_base_branch(env: &Env) -> Part {
@@ -752,10 +768,10 @@ pub fn run_checks(env: &Env, plugin_dir: &str, which: &dyn Fn(&str) -> bool) -> 
     let plugin = plugin.as_deref();
     let inst = check_installs(env);
     let has_install = inst.iter().any(|i| i.id != "install" || i.level == OK);
-    let parts: [&dyn Fn() -> Part; 13] = [
+    let parts: [&dyn Fn() -> Part; 14] = [
         &|| check_plugin(env, plugin, &notes), &|| Ok(inst.clone()), &|| check_hooks(env, plugin, has_install), &|| check_config(env), &|| check_overrides(env, plugin),
         &|| check_models(env), &|| check_kb(env), &|| check_openspec(env), &|| check_requirements_outside(env), &|| check_recent_runs(env),
-        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env),
+        &|| check_ci(env), &|| check_base_branch(env), &|| check_flow(env), &|| check_prompt_lang(env, plugin),
     ];
     for part in parts {
         // 單一檢查出錯不影響其他檢查

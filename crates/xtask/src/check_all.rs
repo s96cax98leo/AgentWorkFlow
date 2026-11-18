@@ -13,8 +13,10 @@
 //!   5. 各子指令的 selftest：`awf <子指令> --selftest`（在 `plugin/scaffold/` 下跑），清單見 [`SELFTESTS`]。
 //!   6. bench --selftest：基準實跑不花 token 的部分。
 //!   7. workflow 乾跑：暫存專案 init、產生 13 支腳本，`node check_workflows.mjs` 把每支與全部情境走一遍。
+//!   8. workflow 乾跑（prompt_lang: en）：同上再跑一次預設語言（存情境報告），profile 設 `prompt_lang: "en"` 再產生、乾跑，
+//!      逐情境核對派出的 label、phase、模型、halted、回傳和預設語言相同（`AWF_LANG_BASELINE`，見 check_workflows.mjs 的第 6 項）。
 //!
-//! 沒有 node 時：需要 node 的步驟（check-recipes、check-kernel、check-patterns、check-budget、workflow 乾跑）印「略過」、
+//! 沒有 node 時：需要 node 的步驟（check-recipes、check-kernel、check-i18n、check-patterns、check-budget、兩個 workflow 乾跑）印「略過」、
 //! 不執行，總結列出；略過不算通過，所以整體 exit 1。確定要在沒有 node 的機器上只看其餘步驟時加 `--allow-skip`
 //! （略過照樣列出，只是不影響 exit code）。單獨跑那幾支檢查時行為不變：沒有 node 判失敗。
 //!
@@ -23,7 +25,7 @@
 //!   --only <片段>  只跑名稱含這段文字的步驟（除錯用；總結會註明不是全部）
 
 use crate::util::{self, Captured};
-use crate::{awfbin, bench, check_budget, check_docs, check_kernel, check_patterns, check_recipes, check_supply, gen_legacy, golden, launchers, scrub, tempproj};
+use crate::{awfbin, bench, check_budget, check_docs, check_i18n, check_kernel, check_patterns, check_recipes, check_supply, gen_legacy, golden, launchers, scrub, tempproj};
 use awf_core::merge_gate::pyutil;
 use std::path::Path;
 use std::time::Instant;
@@ -90,6 +92,30 @@ fn dry_run(root: &Path) -> Outcome {
     }
 }
 
+/// 換了派工單語言的乾跑：先跑預設語言存情境報告，再用 `prompt_lang: en` 的腳本乾跑並逐情境核對。
+fn dry_run_lang(root: &Path) -> Outcome {
+    let base = match tempproj::rendered(root, "awf-dryrun-zh.") {
+        Ok(r) => r,
+        Err(e) => return Outcome::Fail(format!("{e}\n")),
+    };
+    let rep = base.tmp.path().join("report.json");
+    match util::run(tempproj::check_workflows(root, &base.proj, &base.wf_dir).env("AWF_SCENARIO_REPORT", &rep), None) {
+        Ok(p) if p.code == 0 && rep.is_file() => {}
+        Ok(p) => return Outcome::Fail(format!("預設語言的乾跑沒過：{}\n", pyutil::tail(&format!("{}{}", p.stdout, p.stderr), 1500))),
+        Err(e) => return Outcome::Fail(format!("{e}\n")),
+    }
+    let en = match tempproj::rendered_with(root, "awf-dryrun-en.", Some(&serde_json::json!({"prompt_lang": "en"}))) {
+        Ok(r) => r,
+        Err(e) => return Outcome::Fail(format!("{e}\n")),
+    };
+    let mut cmd = tempproj::check_workflows(root, &en.proj, &en.wf_dir);
+    cmd.env("AWF_LANG_BASELINE", &rep);
+    match util::run(&mut cmd, None) {
+        Ok(p) => from_captured((p.code, p.stdout, p.stderr)),
+        Err(e) => Outcome::Fail(format!("{e}\n")),
+    }
+}
+
 struct Step<'a> {
     name: String,
     needs_node: bool,
@@ -107,6 +133,7 @@ fn steps<'a>(root: &'a Path) -> Vec<Step<'a>> {
     add(&mut v, "check-docs", false, Box::new(move || from_captured(check_docs::run_captured(root))));
     add(&mut v, "check-recipes", true, Box::new(move || from_captured(check_recipes::run_captured(root))));
     add(&mut v, "check-kernel", true, Box::new(move || from_captured(check_kernel::run_captured(root))));
+    add(&mut v, "check-i18n", true, Box::new(move || from_captured(check_i18n::run_captured(root))));
     add(&mut v, "check-patterns", true, Box::new(move || from_captured(check_patterns::run_captured(root))));
     add(&mut v, "check-budget", true, Box::new(move || from_captured(check_budget::run_captured(root, &[]))));
     add(&mut v, "check-supply", false, Box::new(move || from_captured(check_supply::run_captured(root))));
@@ -122,6 +149,7 @@ fn steps<'a>(root: &'a Path) -> Vec<Step<'a>> {
     }
     add(&mut v, "bench --selftest", false, Box::new(move || from_captured(bench::run_captured(root, &["--selftest".to_string()]))));
     add(&mut v, "workflow 乾跑（check_workflows.mjs）", true, Box::new(move || dry_run(root)));
+    add(&mut v, "workflow 乾跑（prompt_lang: en，和預設語言逐情境核對）", true, Box::new(move || dry_run_lang(root)));
     v
 }
 

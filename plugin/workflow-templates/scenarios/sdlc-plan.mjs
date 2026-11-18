@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extScenario, ENV, kgScenarios, tuneScenarios, roleScenarios } from './_helpers.mjs'
+import { extScenario, ENV, kgScenarios, tuneScenarios, roleScenarios, i18nScenarios } from './_helpers.mjs'
 
 const SD_PROFILE = { stages: { design: { system_design: { source: 'System Design Primer', steps: ['1 用例、限制與假設'], feature_scope: 'x', system_scope: 'x' } } } }
 
@@ -606,6 +606,7 @@ export default [
   ...roleScenarios('plan.challenge', 'tpm-skeptic', /^challenge:intent$/, { profile: RP, args: { recipe: 'feature' } }),
   ...tuneScenarios({ fakes: FEATURE_TRIAGE }),
   ...kgScenarios({ fakes: FEATURE_TRIAGE }),
+  ...i18nScenarios('plan'),
   {
     // 主線分支（W14）：沒帶 base 不再拒絕執行，用專案的設定（守門設定的 base_remote／base_branch；預設 origin/main），和其他各段一致
     name: '主線分支：沒帶 base → 每張派工單用專案設定的 <remote>/<分支>',

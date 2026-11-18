@@ -6,6 +6,7 @@ pub mod bench_fixture;
 pub mod check_all;
 pub mod check_budget;
 pub mod check_docs;
+pub mod check_i18n;
 pub mod check_kernel;
 pub mod check_patterns;
 pub mod check_recipes;

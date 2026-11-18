@@ -880,6 +880,8 @@
         "runs_on": {"description": "runner 標籤（字串，或自架 runner 用的字串陣列）；預設 ubuntu-latest"}
       },
       "additionalProperties": false
-    }
+    },
+    "prompt_lang": {"type": "string", "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8}){0,2}$", "description": "選填：派工單固定文字（共同前綴、限制文件那幾行、執行紀錄檔那一行等，由片段產生的部分）的語言；值是 plugin 的 workflow-templates/i18n/<值>.json（內建 zh-TW、en）。沒寫或 zh-TW＝內建的字（派工單逐字不變）；找不到那份字串表時退回 zh-TW，awf doctor 提示。只換派工單的字：閘門比對的字（〈限制對照〉的節名與判定詞）用 constraints_format 改；agent 的輸出語言仍是 OUTPUT_LANGUAGE"},
+    "prompt_overrides": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 2000}, "description": "選填：蓋掉字串表裡的某幾個字（鍵 → 字串，1–2000 字），疊在 prompt_lang 選的語言之上。只能蓋字串表（i18n/zh-TW.json）裡已有的鍵，不認得的鍵由語意規則報錯；字串裡的 {名稱} 是代入的變數，拿掉就不會出現"}
   }
 }

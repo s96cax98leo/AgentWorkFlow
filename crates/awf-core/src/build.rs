@@ -393,6 +393,9 @@ pub fn run_captured(args: &[String], paths: &Paths) -> (i32, String, String) {
         ));
         return (1, out, String::new());
     }
+    // 派工單的字串表（prompt_lang 不是 zh-TW 時內嵌語言檔；crate::i18n）：語言檔在片段目錄旁邊的 i18n/，和 awf next 產生腳本時同一份
+    let i18n_dirs: Vec<PathBuf> = paths.snippet_dirs().into_iter().filter_map(crate::i18n::beside_snippets).collect();
+    let embedded = crate::i18n::augment(methodology.as_ref(), &i18n_dirs);
     let mut cache = SnippetCache::new();
     let mut stale: Vec<&str> = Vec::new();
     for (name, path) in &files {
@@ -400,7 +403,7 @@ pub fn run_captured(args: &[String], paths: &Paths) -> (i32, String, String) {
             Ok(t) => t,
             Err(msg) => return fail(out, msg),
         };
-        let new = match render_from(&old, methodology.as_ref(), &paths.teams_dir, &paths.snippet_dirs(), &mut cache) {
+        let new = match render_from(&old, embedded.as_ref(), &paths.teams_dir, &paths.snippet_dirs(), &mut cache) {
             Ok(t) => t,
             Err(BuildError::Snippet(e)) => {
                 out.push_str(&format!("{name}：{e}\n"));
