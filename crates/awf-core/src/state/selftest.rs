@@ -832,6 +832,17 @@ fn main_part(env: &Env, src: &str, in_template: bool, root: &str, t: &mut T) {
         out.clone(),
     );
     t.check("done：印出下一步（這一段 halted → 原因與建議）", out.contains("下一步：") && out.contains("\"action\": \"halted\"") && out.contains("缺件：intent"), out.clone());
+    // 1.2：halted 的 retry 只是一行指令（不是帶 script／then、看起來可以直接執行的動作）；不是只差問題沒答時不給 answer
+    let h = w.act(&["next", "--run", d]);
+    t.check(
+        "halted：retry 是 awf next --retry 的指令字串，動作裡沒有腳本路徑；缺件的段不給答覆的指令",
+        h["action"] == "halted" && h["retry"] == format!("awf next --run {d} --retry") && !h.to_string().contains(".wf/") && h.get("answer").is_none() && h.get("blocking").is_none(),
+        h.to_string(),
+    );
+    let (c, out, err) = w.call(&["next", "--run", d, "--retry", "--skip-subtask", "t1", "--reason", "卡住", "--by", "human"]);
+    t.check("略過子任務：只在 build 段停下之後能用（plan 段拒絕、不留紀錄）", c != 0 && w.load(d)["awf"].get("skipped_subtasks").is_none(), out + &err);
+    let (c, out, err) = w.call(&["next", "--run", d, "--confirm-merge", "--by", "human"]);
+    t.check("本機合併：profile 沒設 conventions.merge.mode: local 時 --confirm-merge 不產生任何合併結果", !std::path::Path::new(&pj(&run, "merge.json")).exists() && w.load(d)["stages"]["merge"]["status"] == "pending", format!("{c}{out}{err}"));
     let a = w.act(&["next", "--run", d, "--retry"]);
     t.check(
         "續跑：同一個 session 裡 halted 後重跑，帶 resume_from（＝resumeFromRunId）",

@@ -85,7 +85,7 @@ fn nonempty_list(v: &Value) -> bool {
 }
 
 /// 已存檔的拆工：design 的 payload.subtasks，否則 plan 的 subtasks。
-fn subtasks(env: &Env, run: &str) -> R<Value> {
+pub(crate) fn subtasks(env: &Env, run: &str) -> R<Value> {
     let d = stage_result(env, run, "design")?;
     if let Some(Value::Object(design)) = d.get("design") {
         if let Some(Value::Object(p)) = design.get("payload") {
@@ -240,6 +240,11 @@ pub fn stage_args(env: &Env, run: &str, data: &Value, stage: &str, workflow: &st
                     a.insert("subtasks".into(), derived);
                 }
             }
+        }
+        // 人決定略過的子任務（awf next --retry --skip-subtask）：不管是續跑還是整份重做都拿掉；沒有略過時不做事
+        let gone = super::human::drop_skipped(data, &mut a);
+        if !gone.is_empty() {
+            notes.push(format!("略過子任務（人決定的，記在 run.json）：{}", gone.join("、")));
         }
         if !a.get("subtasks").is_some_and(py::truthy) {
             a.shift_remove("subtasks");
@@ -404,6 +409,11 @@ fn names_in(dir: &str) -> Vec<String> {
 /// 最近一次用這支腳本跑的 workflow 紀錄（`<session>/workflows/wf_<id>.json`；格式沒承諾穩定）：（內容, 檔案路徑）。
 /// 只採用可信的：修改時間不在未來；這次 next 之後用同一支腳本跑的只有一筆。有兩筆以上時分不出哪一筆是真的，回 `Fail::Awf` 交人。
 pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, String)>> {
+    find_wf_meta_except(env, script, since, "")
+}
+
+/// 同 [`find_wf_meta`]；`seen` 不是空的時，run id 是它的那一筆不算（已經存過的結果，不會被當成這一次的）。
+pub(crate) fn find_wf_meta_except(env: &Env, script: &str, since: f64, seen: &str) -> A<Option<(Value, String)>> {
     let want = if script.is_empty() { None } else { Some(pyish::resolve(&env.abs(script))?) };
     let root = transcripts_root(env)?;
     let now = env.now_ts();
@@ -424,7 +434,8 @@ pub fn find_wf_meta(env: &Env, script: &str, since: f64) -> A<Option<(Value, Str
                 let Some(meta) = load_json(env, &f)? else { continue };
                 let (Some(sp), Some(want)) = (meta.as_object().and_then(|m| m.get("scriptPath")).and_then(Value::as_str), want.as_ref()) else { continue };
                 let same = pyish::resolve(&pyish::pjoin(&env.project, sp)).is_ok_and(|p| &p == want);
-                if same {
+                let old = !seen.is_empty() && meta.get("runId").and_then(Value::as_str).filter(|r| !r.is_empty()).unwrap_or_else(|| name.strip_suffix(".json").unwrap_or(&name)) == seen;
+                if same && !old {
                     hits.push((mt, meta, f));
                 }
             }

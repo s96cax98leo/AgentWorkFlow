@@ -149,6 +149,8 @@ pub struct Args {
     pub supersedes: Option<i64>,
     pub project_dir: Option<String>,
     pub timestamp: Option<String>,
+    /// 人當下確認過「這個 run 有子任務被略過」（`--confirm-skipped-subtasks`）；沒有略過時用不到。
+    pub confirm_skipped: bool,
 }
 
 /// 真值判斷後的字串（`if a.x:`）：沒給或空字串都是 None。
@@ -685,6 +687,17 @@ fn steps(env: &Env, a: &Args, cfg: &Config, repo: &str, run_dir: Option<&str>, r
     }
     let policy = check_policy(ctx, run_dir, &a.stage)?;
     reason(rec, policy);
+    // 還沒有人確認的暫定做法一律擋；有子任務被略過時要人當下確認（--confirm-skipped-subtasks）。沒有這些紀錄時不多做事
+    if let Some(Ok(data)) = run_dir.map(|r| load_json(ctx, &pyish::pjoin(r, "run.json"))).transpose()? {
+        let holds = save_run::human::run_holds(&data, a.confirm_skipped);
+        if !holds.is_empty() {
+            return refused(holds.join("；"));
+        }
+        let skipped = save_run::human::skipped_subtasks(&data);
+        if !skipped.is_empty() {
+            reason(rec, format!("有子任務被略過（{}），推送前已由人確認", skipped.join("、")));
+        }
+    }
     let mut shape_paths: Vec<String> = parse_diff(&d.stdout).map_err(Stop::Crash)?.paths().into_iter().map(str::to_string).chain(names.iter().cloned()).collect();
     shape_paths.sort();
     shape_paths.dedup();
@@ -802,6 +815,7 @@ const OPTS: &[Opt] = &[
     o("--supersedes", Kind::Str),
     o("--project-dir", Kind::Str),
     o("--timestamp", Kind::Str),
+    o("--confirm-skipped-subtasks", Kind::Flag),
 ];
 
 /// 照 argparse 解析 `push` 的參數。Err(None) 是 `-h`；Err(Some(訊息)) 是參數錯誤（exit 2）。
@@ -837,6 +851,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, Option<String>> {
         supersedes,
         project_dir: text("--project-dir"),
         timestamp: text("--timestamp"),
+        confirm_skipped: p.flag("--confirm-skipped-subtasks"),
     })
 }
 
@@ -1234,6 +1249,17 @@ fn selftest_body(env: &Env, fake_git: &[String], fake_gh: &[String], root: &str,
     let (ghlog, sent) = (slurp(&gh_log), slurp(&gh_body));
     let good = sent.contains("取代 #12") && sent.starts_with("示範 PR 說明") && !ghlog.contains("pr close") && !ghlog.contains(&body) && rec["supersedes"] == 12 && !slurp(&body).contains("取代");
     t.expect("PR 說明含「取代 #12」、原說明檔不動、沒有執行 gh pr close", good);
+    // 1.2：還沒有人確認的暫定做法一律拒絕；有子任務被略過要人當下確認
+    let held = t.make_run("r-unconfirmed", human())?;
+    let hj = format!("{held}/run.json");
+    let mut hd = py::loads(&slurp(&hj)).unwrap_or(Value::Null);
+    hd["awf"] = json!({"unconfirmed": [{"stage": "deliver", "question": "q", "applied": "A", "auto": true}]});
+    put(&hj, recipe::dumps(&hd, None).as_bytes())?;
+    t.case("還有沒人確認過的暫定做法 → 拒絕", "refused", Some("暫定做法"), with_run(&held));
+    hd["awf"] = json!({"skipped_subtasks": [{"id": "t2", "by": "human", "at": "t", "reason": "r"}]});
+    put(&hj, recipe::dumps(&hd, None).as_bytes())?;
+    t.case("有子任務被略過、沒有當下確認 → 拒絕", "refused", Some("子任務被略過"), with_run(&held));
+    t.case("有子任務被略過、帶 --confirm-skipped-subtasks → 照常（dry-run）", "dry-run", None, Args { dry_run: true, confirm_skipped: true, ..with_run(&held) });
     t.case("推到受保護分支 main → 拒絕", "refused", None, on("main"));
     t.case("分支前綴不合規（wip/）→ 拒絕", "refused", None, on("wip/x"));
     t.case("remote 指向上游 → 拒絕", "refused", None, Args { remote: "upstream".into(), ..base.clone() });

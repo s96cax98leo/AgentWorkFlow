@@ -63,7 +63,7 @@ argument-hint: <目標專案路徑（可省略＝目前目錄）>
 | `deliverables` | 要不要產交付文件（細項之後用 `/agent-workflow:deliverables`） | 不啟用 | `deliverables` |
 | `ci` | 要不要由 `awf ci render` 產生專案的測試／lint CI、跑哪些指令、哪些必過 | 不啟用 | `ci` |
 | `build_loop` | build 的修正迴圈要不要只跑受影響的測試（test 段閘門照舊全跑） | 關 | `affected_tests_only` |
-| `auto_merge` | 要不要啟用自動合併（啟用前要完成信任模型的檢查清單） | 關 | `auto_merge` |
+| `auto_merge` | 合併方式（`pr`＝開 PR；`local`＝不開 PR、由人在本機合併，不能和自動合併同時用）；blocking 的問題要不要照建議先做（`off`／`recommended`）；要不要啟用自動合併（啟用前要完成信任模型的檢查清單） | pr、off、關 | `merge_mode`、`auto_accept`、`auto_merge` |
 | `main_session` | 會不會在主 session 直接 push 主線、合併 PR（會＝放寬主 session 的 git／GitHub 限制；auto_merge 啟用後主 session 仍不能合併） | 不會 | `main_session_push_merge` |
 | `hooks` | hook 由 plugin 註冊，或註冊在專案的 settings.json（Windows 建議 `project`） | `plugin` | `hooks` |
 | `guard` | 受保護分支、驗收測試目錄、文件目錄等 `guard.config.json` 的值 | 範本預設 | `guard` |

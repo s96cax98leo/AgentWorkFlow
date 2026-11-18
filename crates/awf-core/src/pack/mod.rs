@@ -1607,6 +1607,8 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
         return unwritable(out, &e.msg);
     }
     let text = graph::append(&build_pack(stage, &run, root, &requirement, &recipe_line_of(&data)?, &hits, &kb_note, &notes, &decs), &graph_lines);
+    // 這個 run 裡人答過的題、照建議先做的題、被略過的子任務（沒有這些紀錄時逐字不變）
+    let text = graph::append(&text, &crate::save_run::human::pack_lines(&data));
     if let Err(e) = write_lf(&pack_md, &text) {
         return unwritable(out, &PyErr::os(&e, &pack_md).msg);
     }

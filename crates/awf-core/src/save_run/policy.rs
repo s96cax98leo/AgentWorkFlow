@@ -180,6 +180,9 @@ pub fn policy_violations_with(ctx: &Ctx, stage: &str, result: &Value, run: Optio
         if truthy(field("manual_output")) {
             errs.push("這一段的結果是用 awf done --output 手動給的（不是 awf 從 workflow 紀錄取得的）：要由人核准".to_string());
         }
+        if truthy(field("edited_output")) {
+            errs.push(format!("這一段存下來的結果和 workflow 實際回傳的不一致（{}）：要由人核准", py::take(&s(field("edited_output")), 160)));
+        }
     }
     let envs = envelopes(result);
     if envs.is_empty() {
@@ -258,6 +261,18 @@ pub fn policy_violations_with(ctx: &Ctx, stage: &str, result: &Value, run: Optio
             Err(e) => return Err(e),
         };
         if let Some(data) = data {
+            // 人答覆（或照建議先做）blocking 問題後往下走的段、有子任務被略過的 run：一律由人核准（沒有這些紀錄時不多做事）
+            if data.get("stages").and_then(|x| x.get(stage)).and_then(|x| x.get(super::human::DECIDED)).is_some_and(truthy) {
+                errs.push("這一段停在 needs_decision 之後是靠答覆往下走的（run.json 的 decided）：要由人核准".to_string());
+            }
+            // 子任務是在 build 段略過的：build 與它之後的段都不能政策核准（之前已經核准的 plan、design 不受影響）
+            let skipped = if ["plan", "design"].contains(&stage) { Vec::new() } else { super::human::skipped_subtasks(&data) };
+            if !skipped.is_empty() {
+                errs.push(format!("這個 run 有子任務被略過（{}）：要由人核准", skipped.join("、")));
+            }
+            if !super::human::auto_unconfirmed(&data).is_empty() {
+                errs.push("還有照建議先做、沒有人確認過的項目：要由人核准".to_string());
+            }
             // 自訂段（profile 的 flow）：一律由人核准；recipe、trace 的核對和內建段一樣
             let flow_stage = !SDLC.contains(&stage)
                 && data.get("stages").is_some_and(|s| s.get("plan").is_some())

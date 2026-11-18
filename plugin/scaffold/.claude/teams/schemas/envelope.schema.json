@@ -34,6 +34,7 @@
           "why_blocking": {"type": "string"},
           "options": {"type": "array", "items": {"type": "object", "required": ["choice", "cost"], "properties": {"choice": {"type": "string"}, "cost": {"type": "string"}}}},
           "recommendation": {"type": "string"},
+          "risk": {"type": "string", "enum": ["low", "high"], "description": "選填，blocking 的問題才需要：low＝可逆、影響小，照建議做錯了容易改回來；high＝不可逆，或涉及刪除資料、對外介面、權限、金流。沒標當 high"},
           "default_applied": {"type": "string", "description": "已先套用的預設；沒有寫 none"}
         }
       }
