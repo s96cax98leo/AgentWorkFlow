@@ -761,6 +761,12 @@ const SHARDS = SUBS.length >= 2 && PAR.shard_verification !== false
     ]
   : null
 
+// 驗證資料包（awf pack test 產生，主 session 把 pack-args.json 的 test_packs 併進 args）：每個分片一份（沒有分片時是 all），驗收條件的小節已經附上內文。
+// 只採用「自己那一片、在這個 run 的 test 目錄底下」的那一份（路徑一律由 run_dir 組出來，不用 args 給的字串）；沒有就照舊，派工單逐字不變
+const TEST_PACKS = (A.test_packs && typeof A.test_packs === 'object' && !Array.isArray(A.test_packs)) ? A.test_packs : {}
+const shardPack = (id) => { const p = TEST_PACKS[id]; return (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && typeof p === 'string' && p.replace(/\\/g, '/').endsWith(`/test/${id}/pack.md`) && !p.split(/[\\/]/).includes('..')) ? `${A.run_dir}/test/${id}/pack.md` : '' }
+const packNote = (id) => (shardPack(id) ? `\n驗證資料包（開工先讀這份：驗收條件的小節已經附上內文，另有這一片的子任務與擁有的檔、上一輪沒通過的條目；spec 的其他小節要看時照它最後列的行號範圍讀，不用整份讀）：${shardPack(id)}` : '')
+
 // 驗收條件來源：recipe 沒有 design 段（bugfix、hotfix…）時沒有 spec，對照 intent.md 的驗收條件
 const CRIT_SRC = HAS_DESIGN ? `${SPEC}/spec.md 的驗收條件` : `${SPEC}/intent.md 的驗收條件（這個 recipe 沒有 design 段）`
 // recipe.test.modes：verify 之外加跑的驗證
@@ -780,7 +786,7 @@ const MODES_TEXT = MODES ? `\nrecipe ${R.name} 要加的驗證：\n${MODES}` : '
 const SRC_DOC = (t) => (HAS_DESIGN ? t : String(t).replace(/spec\.md/g, 'intent.md'))
 const HOW = SRC_DOC(`驗證方式照 profile：${STAGE.verification || '逐條驗證驗收條件（pass／fail／not_verifiable）'}${STAGE.guidance ? `\nprofile 的 test 指引：${STAGE.guidance}` : ''}`)
 const verifyAll = (round) => awfAgent(
-  `${CTX}\n\n## 派工單（驗證，第 ${round} 輪）\n在 ${EPIC_DIR} 的目前 HEAD 驗證 ${CRIT_SRC}。${HOW}${MODES_TEXT}\n${RUN_BRIEF}\n不論 profile 怎麼寫，都要對 diff 做反作弊檢查，照範本寫 ${SPEC}/verifier.md（repo 有 verifier 檢查腳本就跑）。payload 用 criteria。`,
+  `${CTX}\n\n## 派工單（驗證，第 ${round} 輪）\n在 ${EPIC_DIR} 的目前 HEAD 驗證 ${CRIT_SRC}。${HOW}${MODES_TEXT}\n${RUN_BRIEF}\n不論 profile 怎麼寫，都要對 diff 做反作弊檢查，照範本寫 ${SPEC}/verifier.md（repo 有 verifier 檢查腳本就跑）。payload 用 criteria。` + packNote('all'),
   { label: `verify#${round}`, phase: 'Verify', agentType: NS + 'dev-verifier', schema: CRITERIA },
 )
 const verifyShard = (sh, round, again) => awfAgent(
@@ -790,7 +796,7 @@ const verifyShard = (sh, round, again) => awfAgent(
   (sh.owns
     ? `反作弊檢查只看這個子計劃範圍內的 diff（git diff ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}...HEAD -- ${sh.owns.join(' ')}）。\n`
     : `這是整合分片：驗證跨子計劃的整合驗收條件，反作弊檢查看整條 diff（git diff ${A.base || '{{BASE_REMOTE}}/{{BASE_BRANCH}}'}...HEAD）。\n`) +
-  `報告寫到 ${sh.report}（只寫這個檔）。payload 用 criteria，commit 填驗證當下的 HEAD。`,
+  `報告寫到 ${sh.report}（只寫這個檔）。payload 用 criteria，commit 填驗證當下的 HEAD。` + packNote(sh.id),
   { label: `verify:${sh.id}#${round}${again ? 'r' : ''}`, phase: 'Verify', agentType: NS + 'dev-verifier', schema: CRITERIA },
 )
 

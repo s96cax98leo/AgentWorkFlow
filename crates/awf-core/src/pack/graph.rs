@@ -161,6 +161,15 @@ pub fn task(kx: &KgCtx, owns: &[String]) -> Vec<String> {
     flow::section("這些檔的呼叫者與相依（知識圖；只讀這些行段，要再找用 `awf kg impact <檔>`）", &[("呼叫者（改介面會影響它們）", &callers), ("會受影響的測試", &tests), ("相依（它用到的）", &deps)])
 }
 
+/// deliver 的審查資料包：改動的檔（repo 相對路徑；圖裡有的）現在連著的需求、情境與測試。回傳要放進資料包的那一節。
+pub fn review(kx: &KgCtx, changed: &[String]) -> Vec<String> {
+    let paths: Vec<String> = changed.iter().filter_map(|p| kx.to_graph(p)).collect();
+    let mut files: Vec<String> = flow::known_files(&kx.g, &paths).into_iter().filter(|f| !kx.g.is_test(f)).collect();
+    files.truncate(flow::MAX_LINKS);
+    let (reqs, tests) = flow::file_links(&kx.g, &files);
+    flow::section("知識圖：改動的檔連著的需求與測試（只讀這些行段）", &[("需求與情境", &reqs), ("測試", &tests)])
+}
+
 /// 把一節接在資料包後面。
 pub fn append(text: &str, lines: &[String]) -> String {
     if lines.is_empty() {
