@@ -831,11 +831,15 @@ function dedupeFindings(groups, field) {
 }
 /*@end*/
 
+// 審查資料包（awf pack deliver 產生，pack-args.json 的 review_pack）：改動的檔與統計、對應的 spec 小節（內文已附上）、限制文件，各審查軸共用一份。
+// 只採用這個 run 的 deliver 目錄底下的那一份（路徑由 run_dir 組出來）；沒有就照舊，派工單逐字不變
+const REVIEW_PACK = (typeof A.review_pack === 'string' && A.review_pack.replace(/\\/g, '/').endsWith('/deliver/review/pack.md') && !A.review_pack.split(/[\\/]/).includes('..')) ? `${A.run_dir}/deliver/review/pack.md` : ''
+const REVIEW_PACK_NOTE = REVIEW_PACK ? `\n審查資料包（開工先讀這份，各審查軸共用：改動的檔與統計、對應的 spec 小節已經附上內文、要對照的限制文件；spec 的其他小節要看時照它最後列的行號範圍讀，不用整份讀）：${REVIEW_PACK}` : ''
 // 擴充 agent 和四軸一起審，發現一樣經 skeptic 反駁
 if (R.errors.length || unknownAxes.length || !AXES.length) return { stage: 'deliver', halted: true, halt_reason: `recipe 解析有錯：${[...R.errors, ...unknownAxes.map((k) => `不認得的審查軸：${k}`), ...(AXES.length ? [] : ['沒有任何審查軸'])].join('；')}`, missing: [], gate: null, findings: [], dropped: 0, docs: null, recipe: RECIPE, next: '修正 args.recipe／modifiers 後重跑 sdlc-deliver', trace: awfTrace() }
 const reviewed = await pipeline(
   [...AXES, ...EXT.map((e) => ({ key: e.name, ext: e }))],
-  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥${MIN_CONF} 的。`, 'Review')() : awfAgent(`${CTX}\n\n## 派工單（deliver 模式，審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥${MIN_CONF} 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。`,
+  (a) => a.ext ? extJob(a.ext, `${CTX}\n審查對象：${EPIC_DIR}（git diff ${BASE}...HEAD）。每則附 0–1 信心，只列 ≥${MIN_CONF} 的。`, 'Review')() : awfAgent(`${CTX}\n\n## 派工單（deliver 模式，審查軸：${a.key}）\n${a.ask}\n每則附 0–1 信心，只列 ≥${MIN_CONF} 的；先回頭讀實際行為再確認。payload 用 findings（lens=${a.key}）。` + REVIEW_PACK_NOTE,
     { label: `review:${a.key}`, phase: 'Review', ...awfStep(MP, 'deliver.review', NS), schema: FINDINGS }),
   (r, a) => {
     // 缺件不是「沒有發現」（rules.md 規則 26）：審查軸缺件記下 label，不能當成空清單

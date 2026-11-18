@@ -23,6 +23,7 @@
 //! - reuse.json 的原文有落單的代理字元跳脫時整份當成讀不懂；信封裡大到超出 64 位元整數範圍的數字一律當成不相等。
 
 pub mod graph;
+pub mod slices;
 mod selftest;
 mod selftest_v1;
 
@@ -1446,6 +1447,46 @@ fn today_local() -> String {
     }
 }
 
+/// test、deliver、design 修正輪的小節資料包（[`slices`]）：把產生的路徑放進 `out_args`，回傳說明。任何錯誤都只少這份資料包。
+fn slice_packs(stage: &str, run: &str, root: &str, repo: Option<&str>, data: &Value, epic_opt: &str, kx: Option<&graph::KgCtx>, out_args: &mut Map<String, Value>) -> Vec<String> {
+    let pf = join(root, ".claude/teams/methodology.json");
+    let profile = load_json(&pf).and_then(|v| crate::profile::resolve_str(&pf, v).ok());
+    let mut epic = if epic_opt.is_empty() { run_epic(run, Some(data)) } else { epic_opt.to_string() };
+    if epic.is_empty() {
+        // 狀態機把 --epic 存在 run.json 的 args
+        epic = str_or_empty(data.get("args").and_then(|a| a.get("epic")));
+    }
+    match stage {
+        "test" => {
+            let (packs, notes) = slices::write_test_packs(run, root, repo, &epic, profile.as_ref());
+            if !packs.is_empty() {
+                out_args.insert("test_packs".into(), Value::Object(packs));
+            }
+            notes
+        }
+        "deliver" => {
+            let lay = crate::layout::for_project(root);
+            let base = match data.get("args").and_then(|a| a.get("base")).and_then(Value::as_str).filter(|b| !b.is_empty()) {
+                Some(b) => b.to_string(),
+                None => crate::layout::run_base_for_project(root, data).map(|b| format!("{}/{b}", lay.base_remote)).unwrap_or_else(|| lay.base_ref()),
+            };
+            match slices::write_review_pack(run, root, repo, &epic, &base, profile.as_ref(), kx) {
+                Ok((Some(path), notes)) => {
+                    out_args.insert("review_pack".into(), json!(path));
+                    notes
+                }
+                Ok((None, notes)) => notes,
+                Err(e) => vec![format!("審查資料包產生失敗，照舊用派工單（{}：{}）", e.class, e.msg)],
+            }
+        }
+        _ => {
+            let (extra, notes) = slices::write_revise_packs(run, root, repo, &epic, profile.as_ref());
+            out_args.extend(extra);
+            notes
+        }
+    }
+}
+
 /// 產生一段的資料包。`argv[0]` 是段名。stdout 的文字寫進 `out`；回傳 exit code。
 /// `Err` 是 0.x 的 Python 版沒有接住的例外（那邊是 traceback、exit 1）。
 pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> {
@@ -1556,6 +1597,12 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
             Err(e) => notes.push(format!("子任務資料包產生失敗，照舊用派工單（{}：{}）", e.class, e.msg)),
         }
     }
+    // 小節資料包的說明只印在輸出，不寫進 pack.md（那一份的內容和沒有小節資料包時相同）
+    let mut slice_notes: Vec<String> = Vec::new();
+    if !has(argv, "--no-slices") && matches!(stage, "test" | "deliver" | "design") {
+        // 小節層級的資料包（輔助：沒有對應資料就沒有新的鍵，出錯只記一行說明）
+        slice_notes = slice_packs(stage, &run, root, repo, &data, opt(argv, "--epic"), kx.as_ref(), &mut out_args);
+    }
     if stage == "design" || stage == "deliver" {
         // 交付文件：design 段要留哪些小節、deliver 段要更新哪些文件的哪些小節。沒有交付設定時什麼都不帶
         let pf = opt(argv, "--paths-file");
@@ -1613,6 +1660,7 @@ pub fn run_pack(argv: &[String], root: &str, out: &mut String) -> PyResult<i32> 
         return unwritable(out, &PyErr::os(&e, &pack_md).msg);
     }
     out_args.insert("pack".into(), json!(posix(&pack_md)));
+    notes.extend(slice_notes);
     let args_val = Value::Object(out_args);
     if let Err(e) = write_lf(&args_file, &format!("{}\n", dumps_sorted(&args_val))) {
         return unwritable(out, &PyErr::os(&e, &args_file).msg);

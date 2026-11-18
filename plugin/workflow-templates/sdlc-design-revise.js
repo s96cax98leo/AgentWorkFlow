@@ -745,11 +745,54 @@ const SPEC = `${EPIC_DIR}/{{SPECS_DIR}}/${A.epic}`
 const CTX = `目標 repo：${A.repo}\nepic worktree：${EPIC_DIR}\nrun 目錄：${A.run_dir}\nintent.md 已核准，不得修改。\nrecipe：${RECIPE.summary}\n${METH_NOTE}` +
   (A.authorization ? `\n授權補充：${A.authorization}` : '')
 
+// 修正輪資料包（awf pack design 在已經有 design.json 時產生，pack-args.json 的 revise_pack／revise_packs）：總覽一份、每個子計劃一份。
+// 只採用這個 run 的 design/revise 目錄底下的（路徑由 run_dir 組出來，不用 args 給的字串）；沒有就照舊，派工單逐字不變
+const packAt = (p, tail) => typeof p === 'string' && p.replace(/\\/g, '/').endsWith(tail) && !p.split(/[\\/]/).includes('..')
+const REVISE_PACK = packAt(A.revise_pack, '/design/revise/pack.md') ? `${A.run_dir}/design/revise/pack.md` : ''
+const SUB_PACKS = (A.revise_packs && typeof A.revise_packs === 'object' && !Array.isArray(A.revise_packs)) ? A.revise_packs : {}
+const subPack = (id) => (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && packAt(SUB_PACKS[id], `/design/revise/${id}/pack.md`) ? `${A.run_dir}/design/revise/${id}/pack.md` : '')
+
+// 只重做受影響的子計劃：這一輪的每一項（決定、問題）都指得到子計劃時，只重做被指到的（加上依賴它們的）與跨子計劃的整合子任務，
+// 其餘子計劃的子任務沿用上一輪存下來的（pack-args.json 的 prev_subtasks，取自 design.json）。
+// 判斷不出來就全部重做（和原本一樣）：沒有 2 個以上子計劃、沒有上一輪的子任務、上一輪有對不到子計劃的子任務、
+// 有任何一項沒指到子計劃、算出來全部都要重做；args.revise_all＝true 時也全部重做。
+const PREV = Array.isArray(A.prev_subtasks) ? A.prev_subtasks.filter((t) => t && typeof t === 'object' && typeof t.id === 'string' && t.id) : []
+const SUB_IDS = SUBS.map((x) => x.id)
+const subOf = (t) => (typeof t.sub_plan === 'string' && t.sub_plan ? t.sub_plan : String(t.id).startsWith('int-') ? 'integration' : (SUB_IDS.filter((id) => String(t.id).startsWith(`${id}-`)).sort((x, y) => y.length - x.length)[0] || ''))
+// 「指到」＝文字裡出現子計劃的 id 或它的子任務 id（前後不是英數字或底線；多認只會多重做）
+const reEsc = (x) => String(x).replace(/[^A-Za-z0-9_]/g, (c) => `\\${c}`)
+const mentions = (text, id) => new RegExp(`(^|[^A-Za-z0-9_])${reEsc(id)}($|[^A-Za-z0-9_])`).test(text)
+const ITEMS = [...A.decisions.map((d) => String(d)), ...A.issues.map((x) => `${x.target_id} ${x.reason}`)]
+const POINTED = ITEMS.map((t) => SUB_IDS.filter((id) => mentions(t, id) || PREV.some((p) => subOf(p) === id && mentions(t, p.id))))
+const PREV_OK = PREV.length > 0 && new Set(PREV.map((t) => t.id)).size === PREV.length && PREV.every((t) => subOf(t) === 'integration' || SUB_IDS.includes(subOf(t)))
+let REDO = null
+if (A.revise_all !== true && SUBS.length >= 2 && PREV_OK && ITEMS.length && POINTED.every((p) => p.length)) {
+  const hit = new Set(POINTED.flat())
+  // 依賴被指到的子計劃的也一起重做（上游的介面可能跟著變）
+  for (let grew = true; grew;) { grew = false; SUBS.forEach((x) => { if (!hit.has(x.id) && (x.depends_on || []).some((d) => hit.has(d))) { hit.add(x.id); grew = true } }) }
+  if (hit.size < SUBS.length) REDO = SUB_IDS.filter((id) => hit.has(id))
+}
+const KEEP = REDO ? SUB_IDS.filter((id) => !REDO.includes(id)) : []
+const KEPT_TASKS = REDO ? PREV.filter((t) => KEEP.includes(subOf(t))) : []
+if (REDO) log(`只重做子計劃 ${REDO.join('、')}（決定與問題指到的，加上依賴它們的）；${KEEP.join('、')} 沿用上一輪的 ${KEPT_TASKS.length} 個子任務`)
+const PACK_IDS = (REDO || SUB_IDS).filter((id) => subPack(id))
+const PACK_NOTE = REVISE_PACK
+  ? `修正輪資料包（開工先讀這份：〈對照〉表目前的內容、子任務清單的 id／標題／擁有／相依、驗收條件的小節已經附上內文）：${REVISE_PACK}\n` +
+    (PACK_IDS.length ? `要改的子計劃各有一份資料包（子任務與它們指到的小節內文）：${PACK_IDS.map((id) => `${id} → ${subPack(id)}`).join('、')}\n` : '') +
+    `資料包已經附上要改的小節，不用整份讀 ${A.run_dir}/design.json 與 spec.md；要看其他小節時照資料包最後列的行號範圍讀。\n`
+  : ''
+const SCOPE_NOTE = REDO
+  ? `這一輪只重做子計劃 ${REDO.join('、')}（決定與問題指到的，加上依賴它們的）與跨子計劃的整合子任務（id 以「int-」開頭）；子計劃 ${KEEP.join('、')} 沒被指到，文件與子任務沿用上一輪的：不要改它們的文件，也不用讀。\n` +
+    `payload subtasks 只交重做的子計劃與整合的子任務：這些要交完整（上一輪有的一個都不能少；要拿掉必須在 open_questions 寫明子任務 id 與理由），沿用的子計劃的子任務不要交。要依賴沿用的子任務時 depends_on 直接寫它的 id（${KEPT_TASKS.map((t) => t.id).join('、') || '無'}），或寫「@<子計劃 id>」。\n` +
+    `修正時發現沿用的子計劃也非改不可：不要動手，status 回 needs_decision 並在 open_questions 說明要改哪個子計劃與理由。\n`
+  : ''
+
 if (R.errors.length) return { stage: 'design', round: 'revise', halted: true, halt_reason: `recipe 解析有錯：${R.errors.join('；')}`, gate: null, epic_dir: EPIC_DIR, missing: [], recipe: RECIPE, next: '修正 args.recipe／modifiers 後重跑 sdlc-design-revise', trace: awfTrace() }
 phase('Revise')
 const revised = await awfAgent(
   `${CTX}\n\n## 派工單（修正輪）\n依下面的使用者決定與 skeptic 問題，修正 ${SPEC}/ 的 ${awfDesignDocs(MP, false).join('、')}，並重新拆子任務（payload subtasks，owns 不重疊、depends_on 與 plan 分層一致）。\n` +
   (SUBS.length ? `這個 epic 拆成了子計劃（${SUBS.map((x) => x.id).join('、')}）：子計劃文件在 ${SPEC}/sub/<id>/，大綱在 ${SPEC}/outline.md；修正時保留子任務的 sub_plan 欄位與「<子計劃 id>-」開頭的 id，owns 不得超出該子計劃的範圍。\n` : '') +
+  SCOPE_NOTE + PACK_NOTE +
   `每一條問題都要處理：修正，或說明為什麼不改（附依據）。處理對照表寫到 ${A.run_dir}/design-revise-對照.md（問題 → 處理 → 改了哪裡）。\n` +
   // 和第一輪（sdlc-design）同一套規則：產出文件、需求寫法、profile 的指引、系統設計方法、delta spec、拆子任務的規則（spec_refs、expected_red…）
   awfDesignDocRules(MP, SPEC) + awfDeltaRule(R.name, R.plan_mode) +
@@ -777,11 +820,59 @@ const LENSES = [
 // 缺件不是「沒有發現」（rules.md 規則 26）：修正或複查缺件都停下交人
 const halt = (reason, extra) => ({ stage: 'design', round: 'revise', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, recipe: RECIPE, ...extra, trace: awfTrace() })
 if (!revised) return halt('revise 缺件：修正輪沒有交件，設計狀態不明，停下交人', { missing: ['revise'] })
+// 只重做一部分時：把沿用的子任務接回來，並做確定性核對（比全部重做多查，不少查）。不一致一律停下交人
+let design = revised
+if (REDO) {
+  const scope = { revised_sub_plans: REDO, reused_sub_plans: KEEP }
+  if (revised.status !== 'done') return halt(`修正輪回報 ${revised.status}（只重做子計劃 ${REDO.join('、')}）：可能要動到沿用的子計劃，停下交人`, { missing: [], ...scope, next: '看 open_questions；要全部重做就在 args 加 revise_all＝true 重跑 sdlc-design-revise' })
+  const got = (revised.payload.subtasks || []).map((t) => ({ ...t }))
+  const all = [...KEPT_TASKS.map((t) => ({ ...t })), ...got]
+  const errs = []
+  const outside = got.filter((t) => subOf(t) !== 'integration' && !REDO.includes(subOf(t))).map((t) => t.id)
+  if (outside.length) errs.push(`交回了不在這一輪範圍的子任務 ${outside.join('、')}（沿用的子計劃不能改，對不到子計劃的也不收）`)
+  const gotIds = got.map((t) => t.id)
+  const explained = JSON.stringify(revised.open_questions || [])
+  const silent = PREV.filter((t) => !KEEP.includes(subOf(t)) && !gotIds.includes(t.id) && !explained.includes(t.id)).map((t) => t.id)
+  if (silent.length) errs.push(`修正後少了子任務 ${silent.join('、')}，open_questions 沒有說明`)
+  REDO.forEach((id) => { if (!got.some((t) => subOf(t) === id)) errs.push(`子計劃 ${id} 沒有交回任何子任務`) })
+  // 展開 @<子計劃>（和第一輪同一套規則）：查不到、展開後是空的、指向自己都記錯
+  const bySub = (id) => all.filter((t) => subOf(t) === id).map((t) => t.id)
+  got.forEach((t) => {
+    t.depends_on = [...new Set((t.depends_on || []).flatMap((d) => {
+      if (typeof d !== 'string' || !d.startsWith('@')) return [d]
+      const target = d.slice(1)
+      if (target === subOf(t)) { errs.push(`子任務 ${t.id} 的相依 ${d} 指向自己所在的子計劃`); return [] }
+      if (!SUB_IDS.includes(target)) { errs.push(`子任務 ${t.id} 的相依 ${d} 查不到這個子計劃`); return [] }
+      const ids = bySub(target)
+      if (!ids.length) errs.push(`子任務 ${t.id} 的相依 ${d} 展開後是空的（子計劃 ${target} 沒有子任務）`)
+      return ids
+    }))]
+  })
+  // 接回後的完整清單：沿用的一個都不能少（由這裡接回，不靠 agent）、id 唯一、owns 不重疊、相依都存在、沒有循環
+  const finalIds = all.map((t) => t.id)
+  finalIds.filter((x, i) => finalIds.indexOf(x) !== i).forEach((x) => errs.push(`子任務 id ${x} 重複`))
+  const owner = {}
+  all.forEach((t) => {
+    ;(t.owns || []).forEach((f) => { if (owner[f] && owner[f] !== t.id) errs.push(`子任務 ${owner[f]} 與 ${t.id} 同時擁有 ${f}`); owner[f] = t.id })
+    ;(t.depends_on || []).forEach((d) => { if (!finalIds.includes(d)) errs.push(`子任務 ${t.id} 依賴不存在的 ${d}`) })
+  })
+  const done = new Set()
+  for (let rest = all.slice(); rest.length;) {
+    const ready = rest.filter((t) => (t.depends_on || []).every((d) => done.has(d) || !finalIds.includes(d)))
+    if (!ready.length) { errs.push(`子任務相依有循環：${rest.map((t) => t.id).join('、')}`); break }
+    ready.forEach((t) => done.add(t.id))
+    rest = rest.filter((t) => !ready.includes(t))
+  }
+  if (errs.length) return halt(`只重做部分子計劃後的子任務清單不一致，停下交人：${errs.join('；')}`, { missing: [], ...scope, next: '修正後重跑 sdlc-design-revise；要全部重做就在 args 加 revise_all＝true' })
+  design = { ...revised, payload: { ...revised.payload, subtasks: all } }
+}
+const RECHECK_NOTE = (REDO ? `\n這一輪只重做了子計劃 ${REDO.join('、')}，${KEEP.join('、')} 的文件與子任務沿用上一輪（子任務清單裡照原樣帶著）；重做的部分和沿用的部分之間的介面、相依、owns 一樣要查。` : '') +
+  (REVISE_PACK ? `\n修正輪資料包（修正前整理的：子任務清單的 id／標題／擁有／相依、驗收條件的小節內文與各文件的小節行段；要看原檔時照它列的行號範圍讀，不用整份讀）：${REVISE_PACK}` : '')
 const recheck = await parallel(LENSES.map((l) => () => awfAgent(
-  `${CTX}\n\n## 派工單（複查：${l.key}）\n讀 ${SPEC}/ 與 ${A.run_dir}/design-revise-對照.md。子任務：${JSON.stringify(revised.payload)}\n${l.ask}\nrefuted=true 表示「這裡還有問題」。\n\n原問題：\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}\n使用者決定：\n${A.decisions.join('\n')}`,
+  `${CTX}\n\n## 派工單（複查：${l.key}）\n讀 ${SPEC}/ 與 ${A.run_dir}/design-revise-對照.md。子任務：${JSON.stringify(design.payload)}\n${l.ask}\nrefuted=true 表示「這裡還有問題」。${RECHECK_NOTE}\n\n原問題：\n${A.issues.map((x, i) => `${i + 1}. [${x.target_id}] ${x.reason}`).join('\n')}\n使用者決定：\n${A.decisions.join('\n')}`,
   { label: `recheck:${l.key}`, phase: 'Recheck', ...awfStep(MP, 'design.recheck', NS), schema: VERDICTS },
 )))
 const missing = LENSES.map((l) => `recheck:${l.key}`).filter((l, i) => !recheck[i])
-if (missing.length) return halt(`複查類 agent 缺件：${missing.join('、')}，修正沒經過完整複查，停下交人`, { missing, analysis: recheck.filter(Boolean) })
+if (missing.length) return halt(`複查類 agent 缺件：${missing.join('、')}，修正沒經過完整複查，停下交人`, { missing, design, analysis: recheck.filter(Boolean) })
 
-return { stage: 'design', round: 'revise', halted: false, missing: [], gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design: revised, analysis: recheck, recipe: RECIPE, next: `spec＋plan 核准後跑 sdlc-${NEXT_OF('design')}（args 加 subtasks＝design.payload.subtasks，recipe 照舊）`, trace: awfTrace() }
+return { stage: 'design', round: 'revise', halted: false, missing: [], gate: 'spec＋plan 核准', epic_dir: EPIC_DIR, sub_plans: SUBS, design, ...(REDO ? { revised_sub_plans: REDO, reused_sub_plans: KEEP } : {}), analysis: recheck, recipe: RECIPE, next: `spec＋plan 核准後跑 sdlc-${NEXT_OF('design')}（args 加 subtasks＝design.payload.subtasks，recipe 照舊）`, trace: awfTrace() }

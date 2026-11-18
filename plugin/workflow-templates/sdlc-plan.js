@@ -1,7 +1,7 @@
 export const meta = {
   name: 'sdlc-plan',
   description: 'AI-native SDLC 第 1 段 Plan：先判斷需求類型（recipe）、調研角度與模型等級，兩段式調研（先定位行段、再分析），在 epic worktree 起草 intent.md，skeptic 挑錯後停在 intent 核准閘門（沒有 design 段的 recipe 另拆子任務）',
-  whenToUse: '開發一個新需求的第一步；由 tpm-team skill 帶 args 呼叫（repo、epic、requirement、base、run_dir；選填 recipe、modifiers、size、source、pack、reuse）',
+  whenToUse: '開發一個新需求的第一步；由 tpm-team skill 帶 args 呼叫（repo、epic、requirement、base、run_dir；選填 recipe、modifiers、size、source、pack、reuse；intent 起草過、人答完待釐清問題後要改 intent 時加 answers＝答覆清單，走修正輪：不重做調研，只改 intent 再複查）',
   phases: [
     { title: 'Triage', detail: 'tpm-planner 判斷需求類型、建議 recipe、調研角度與模型等級（args 帶 recipe 時略過）' },
     { title: 'Locate', detail: '每個調研角度先定位：只找出哪個檔的哪幾行值得讀（tpm-researcher，輕量模型）' },
@@ -921,7 +921,19 @@ const BASE_ANGLES = resolveRecipe(METHODOLOGY, recipe.name, [], size).research_a
 const ALL_ANGLES = recipe.research_angles || []
 const FORCED = ALL_ANGLES.filter((k) => !BASE_ANGLES.includes(k))
 const PICKED = TRIAGE_TRUSTED && Array.isArray(triage.angles) ? BASE_ANGLES.filter((k) => triage.angles.includes(k)) : []
-const ANGLE_KEYS = PICKED.length ? ALL_ANGLES.filter((k) => PICKED.includes(k) || FORCED.includes(k)) : ALL_ANGLES
+const WANTED_KEYS = PICKED.length ? ALL_ANGLES.filter((k) => PICKED.includes(k) || FORCED.includes(k)) : ALL_ANGLES
+// ── 修正輪（args.answers：人在閘門上的答覆，字串或 { question, answer }；最多 20 條）──
+// intent 已經起草過、人答了待釐清的問題：這一輪只派 intent 作者依答覆修改 intent.md，再由 skeptic 複查（和 sdlc-design／sdlc-design-revise 的關係一樣）。
+// 不重做調研：只沿用 args.reuse 裡來源沒變的角度（awf save-run stage plan 一樣用 verify_reuse 重新核對）；沒有可以沿用的角度不派工，
+// 列在回傳的 not_redone_angles 並寫進派工單（那些角度的事實要 intent 作者自己查證）。沒有 answers 時以下每一處都和原本相同。
+const ANSWERS = (Array.isArray(A.answers) ? A.answers : [])
+  .map((x) => (typeof x === 'string' ? x.trim() : (x && typeof x === 'object' && typeof x.answer === 'string' && x.answer.trim() ? `問：${String(x.question || '').trim() || '（沒有記題目）'} ｜答：${x.answer.trim()}` : '')))
+  .filter(Boolean).slice(0, 20)
+const REVISE = ANSWERS.length > 0
+const RV_REUSE = A.reuse && typeof A.reuse === 'object' && !Array.isArray(A.reuse) ? A.reuse : {}
+const rvHas = (k) => { const r = Object.prototype.hasOwnProperty.call(RV_REUSE, k) ? RV_REUSE[k] : null; return !!(r && typeof r === 'object' && r.plan_mode === MODE && r.envelope && typeof r.envelope === 'object' && r.envelope.payload) }
+const NOT_REDONE = REVISE ? WANTED_KEYS.filter((k) => !rvHas(k)) : []
+const ANGLE_KEYS = REVISE ? WANTED_KEYS.filter(rvHas) : WANTED_KEYS
 const angles = { chosen: ANGLE_KEYS, skipped: ALL_ANGLES.filter((k) => !ANGLE_KEYS.includes(k)), by: PICKED.length ? 'triage' : 'recipe' }
 
 // ── 調研重用（A5）：awf pack 比對過來源檔的 hash，來源沒變的角度把上次的信封放在 args.reuse，這裡直接沿用、不派工 ──
@@ -1038,15 +1050,29 @@ const RESEARCH_LABELS = [...ANGLE_KEYS.map((k) => `research:${k}`), ...EXT.map((
 const missing = RESEARCH_LABELS.filter((l, i) => !research[i])
 // research_by_angle：workflow 自己依派工對應的 {角度: 信封}（save_run 記調研重用時用它，不用信封裡 agent 自填的 lens）
 const researchByAngle = Object.fromEntries(ANGLE_KEYS.map((k, i) => [k, research[i]]).filter(([, v]) => v))
-const common = () => ({ recipe, ...triageField(triage), angles, reused: [...reused], locations, located_by: { ...locatedBy }, research_by_angle: researchByAngle, estimated_agents: estimateAgents(recipe, !!triage) })
+const common = () => ({ ...(REVISE ? { round: 'revise', answers: ANSWERS.length, not_redone_angles: NOT_REDONE } : {}), recipe, ...triageField(triage), angles, reused: [...reused], locations, located_by: { ...locatedBy }, research_by_angle: researchByAngle, estimated_agents: estimateAgents(recipe, !!triage) })
 const halt = (reason, extra) => withTrace({ stage: 'plan', halted: true, halt_reason: reason, gate: null, epic_dir: EPIC_DIR, research: got, missing, ...common(), ...extra })
 const extMissing = missing.filter((l) => l.startsWith('ext:'))
 if (extMissing.length) return halt(`審查類 agent 缺件：${extMissing.join('、')}，停下交人（缺件不是沒有發現）`)
 const MISSING_NOTE = missing.length ? `\n\n## 缺件的調研角度\n${missing.join('、')} 沒有交件：這些角度的事實不能當成「查過、沒有問題」；intent 涉及的部分標成待查，放進 open_questions。` : ''
-const SKIPPED_NOTE = angles.skipped.length ? `\n這次沒做的調研角度（triage 判斷不需要）：${angles.skipped.join('、')}；intent 用到這些角度的事實時要自己查證並附出處。` : ''
+const SKIPPED_NOTE = REVISE
+  ? (NOT_REDONE.length ? `\n這一輪不重做調研；沒有可以沿用的結論的角度（來源變了，或上一輪沒做）：${NOT_REDONE.join('、')}；intent 用到這些角度的事實時要自己查證並附出處。` : '')
+  : angles.skipped.length ? `\n這次沒做的調研角度（triage 判斷不需要）：${angles.skipped.join('、')}；intent 用到這些角度的事實時要自己查證並附出處。` : ''
+const ANSWER_LIST = ANSWERS.map((a, i) => `${i + 1}. ${a}`).join('\n')
 
 phase('Intent')
 const intent = await awfAgent(
+  REVISE
+    ? `${CTX}${RECIPE_NOTE}\n\n## 派工單（SDLC 第 1 段 Plan 的修正輪，plan_mode=${MODE}）\n` +
+      `${SPEC_DIR}/intent.md 已經起草過，人在閘門上答了下面 ${ANSWERS.length} 條。這一輪只依答覆修改 intent：不重寫整份、不重做調研。\n` +
+      `1. 在 ${EPIC_DIR}（已經存在，沿用；不要重建、不要切換主工作目錄的分支）先讀現在的 intent.md。\n` +
+      `2. 逐條落實答覆：只改答覆影響到的小節，其餘原樣保留。每一條在執行紀錄寫「答覆 → 改了哪一節」；答覆不影響 intent 的寫明不用改與理由。答覆彼此矛盾、或和調研結果衝突時不要自己選，放進 open_questions（blocking）。\n` +
+      `   必要節照舊（每節一個標題，標題要逐字含節名，節下要有內容；awf save-run stage plan 會檢查）：${SECTIONS.join('、')}。\n` +
+      `   驗收條件仍然要可驗證：每條附驗證指令或可觀察的結果，不能只寫「正常運作」「體驗良好」。\n` +
+      `3. open_questions 只留答覆之後仍然沒解決的問題，已經答過的不要再問；新冒出來的 blocking 問題附 ${awfQuestionOptions(MP)} 個選項與代價。要引用調研結果時讀 artifacts 列的調研紀錄檔，不用重讀原始檔。${STAGE.guidance ? `\n   profile 的指引：${STAGE.guidance}` : ''}\n` +
+      `4. commit（${commitFor('docs', A.epic)}，內容是依閘門的答覆修正 intent；結尾 {{ATTRIBUTION_LINE}}）。不 push。\n` +
+      `payload 用 docs（kind=intent）。\n\n## 人的答覆\n${ANSWER_LIST}\n\n## 調研結果（上一輪的，沿用）\n${got.map(brief).join('\n')}${SKIPPED_NOTE}${MISSING_NOTE}`
+    :
   `${CTX}${RECIPE_NOTE}\n\n## 派工單（SDLC 第 1 段 Plan，plan_mode=${MODE}）\n` +
   `1. 若 ${EPIC_DIR} 不存在：git -C "${A.repo}" worktree add {{WORKTREES_DIR}}/${A.epic} -b {{BRANCH_PREFIX}}${A.epic} ${A.base}；已存在就沿用（不要重建、不要切換主工作目錄的分支）。\n` +
   `2. 照 ${EPIC_DIR}/{{SPEC_TEMPLATES_DIR}}/intent.md（沒有範本就用這個格式：${STAGE.template || '問題、期望結果、受影響的使用者與系統、限制、待解問題'}）寫 ${SPEC_DIR}/intent.md` +
@@ -1068,7 +1094,8 @@ const challenge = await awfAgent(
   `${CTX}${RECIPE_NOTE}\n\n## 派工單\n試著反駁 ${SPEC_DIR}/intent.md（plan_mode=${MODE}）：${modeRefute}` +
   `另外每一份 intent 都要檢查：必要節（${SECTIONS.join('、')}）有沒有齊、節下有沒有內容；驗收條件是否可驗證（每條要有驗證指令或可觀察的結果，不可驗證的判 refuted）；有沒有忽略調研發現的衝突。` +
   `${SD ? `另依系統設計方法（${SD.source}）的第 1 步檢查 SA：用例、限制、假設與量級有沒有寫齊，每個數字有沒有出處或標成假設（沒標的判 refuted）。` : ''}逐點判定（target_id 用 intent 的節名），不確定就判 refuted=true。` +
-  `要查證 intent 的出處時只讀它引用的那幾行（帶 offset／limit），不重做調研。\n調研結果：\n${got.map(brief).join('\n')}${missing.length ? `\n缺件的調研角度：${missing.join('、')}（intent 若把這些角度的事實當成已確認，判 refuted）` : ''}`,
+  `要查證 intent 的出處時只讀它引用的那幾行（帶 offset／limit），不重做調研。\n調研結果：\n${got.map(brief).join('\n')}${missing.length ? `\n缺件的調研角度：${missing.join('、')}（intent 若把這些角度的事實當成已確認，判 refuted）` : ''}` +
+  (REVISE ? `\n\n這是修正輪：intent 剛依下面的答覆改過。另外逐條確認每一條答覆有沒有落實到 intent（target_id 用「答覆 <編號>」；沒落實、落實錯了、或答覆沒要求的地方被改掉，判 refuted=true），以及 open_questions 有沒有把已經答過的問題再問一次。${NOT_REDONE.length ? `這一輪沒有重做調研，${NOT_REDONE.join('、')} 沒有可以沿用的結論：intent 若把這些角度的事實當成已確認，判 refuted。` : ''}\n人的答覆：\n${ANSWER_LIST}` : ''),
   { label: 'challenge:intent', phase: 'Challenge', ...awfStep(MP, 'plan.challenge', NS), schema: VERDICTS },
 )
 // 反駁類缺件＝結果 hold（規則 26），不能當成「沒有被推翻」

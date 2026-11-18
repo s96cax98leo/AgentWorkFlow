@@ -322,4 +322,26 @@ export default [
       fakes: { 'verify:api#1': CRIT([crit('A1', 'fail')]), 'verify:ui#1': CRIT([crit('U1', 'fail')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'fail'), crit('ui:U1', 'fail'), crit('integration:I1', 'pass')]) },
       expect: (r) => (/\n有衝突不要自己解：git merge --abort 還原後以 needs_decision 回報衝突的檔，交人處理。合完跑 /.test(r.prompts['integrate:fix#1'] || '') ? [] : ['整合修正的派工單沒有照 integrate_conflicts=stop']),
     },
+    {
+      // 小節資料包（awf pack test）：每個分片引用自己那一份（路徑由 run_dir 組出來）；路徑不合規則、不是自己那一片的不採用
+      name: '小節資料包：有 → 分片的派工單指到自己那一份；路徑不合規則的被丟掉',
+      args: { sub_plans: SUB_PLANS, test_packs: { api: '_runs/demo/test/api/pack.md', ui: '_runs/demo/test/../../secrets/test/ui/pack.md', integration: '_runs/demo/test/api/pack.md' } },
+      fakes: { 'verify:api#1': CRIT([crit('A1', 'pass')]), 'verify:ui#1': CRIT([crit('U1', 'pass')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'pass'), crit('ui:U1', 'pass'), crit('integration:I1', 'pass')]) },
+      expect: (r) => [
+        ...(r.out && r.out.halted ? [`不該中斷：${r.out.halt_reason}`] : []),
+        ...(/\n驗證資料包（開工先讀這份[^\n]*不用整份讀）：\/tmp\/run\/test\/api\/pack\.md/.test(r.prompts['verify:api#1'] || '') ? [] : ['api 分片的派工單要指到自己的資料包（run_dir 底下）']),
+        ...Object.entries(r.prompts).filter(([k, v]) => k !== 'verify:api#1' && /驗證資料包（開工先讀/.test(v)).map(([k]) => `${k} 不該引用資料包（路徑含 .. 或不是自己那一片）`),
+      ],
+    },
+    {
+      name: '小節資料包：沒有分片時指到 all 那一份',
+      args: { test_packs: { all: 'C:\\proj\\_runs\\demo\\test\\all\\pack.md' } },
+      expect: (r) => (/\n驗證資料包（開工先讀這份[^\n]*：\/tmp\/run\/test\/all\/pack\.md/.test(r.prompts['verify#1'] || '') ? [] : ['沒有分片時 verify 的派工單要指到 all 的資料包']),
+    },
+    {
+      name: '小節資料包：沒有 → 派工單沒有這一句（test_packs 不是物件也一樣）',
+      args: { sub_plans: SUB_PLANS, test_packs: ['_runs/demo/test/api/pack.md'] },
+      fakes: { 'verify:api#1': CRIT([crit('A1', 'pass')]), 'verify:ui#1': CRIT([crit('U1', 'pass')]), 'verify:integration#1': CRIT([crit('I1', 'pass')]), 'consolidate#1': CRIT([crit('api:A1', 'pass'), crit('ui:U1', 'pass'), crit('integration:I1', 'pass')]) },
+      expect: (r) => Object.entries(r.prompts).filter(([, v]) => /驗證資料包/.test(v)).map(([k]) => `${k} 不該出現資料包的句子`),
+    },
 ]
