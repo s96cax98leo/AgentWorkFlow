@@ -28,7 +28,7 @@ hook 的案例不在這裡：在 `tests/hooks/`（`cases.jsonl`、`fixtures.json
 ## 格式
 
 - 每個檔是一份 JSON：照順序做的劇本（檔案操作、指令、只能在程式內呼叫的函式）與不碰檔案的函式探測；各檔的欄位見對應測試檔開頭的說明。
-- 會變動的內容換成記號再比：暫存路徑 `@TMP@`、模版的位置 `@SRC@`、耗時數字 `@MS@`、隨 git 版本變動的錯誤文字 `@GIT@`。
+- 會變動的內容換成記號再比：暫存路徑 `@TMP@`、模版的位置 `@SRC@`、耗時數字 `@MS@`、隨 git 版本變動的錯誤文字 `@GIT@`、`awf next` 產生的腳本的雜湊 `@SHA1@`（run.json 的 `awf.pending.script_sha1`、`awf.last_script`：腳本內嵌暫存目錄的絕對路徑，每次不同；只有 `state.expected.json`）。
 - 劇本裡的時間是固定的，測試不取系統時間。
 
 ## 怎麼更新
