@@ -1,0 +1,27 @@
+{
+ "schema": "deliverables",
+ "data": {
+  "dir": "docs/deliverables",
+  "summary_template": "docs/templates/summary.md",
+  "documents": [
+   {
+    "id": "acme-handover",
+    "title": "示範客戶 ACME 的交付說明書",
+    "source": "auto",
+    "on": [
+     "code",
+     "doc"
+    ],
+    "template": "docs/templates/handover.md"
+   },
+   {
+    "id": "db-design",
+    "template": "docs/templates/db-design.md",
+    "sections": [
+     "資料表",
+     "索引"
+    ]
+   }
+  ]
+ }
+}

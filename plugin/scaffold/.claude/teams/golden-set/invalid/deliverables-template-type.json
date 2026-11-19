@@ -1,0 +1,13 @@
+{
+ "schema": "deliverables",
+ "data": {
+  "documents": [
+   {
+    "id": "db-design",
+    "template": [
+     "a.md"
+    ]
+   }
+  ]
+ }
+}

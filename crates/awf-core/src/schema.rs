@@ -1360,7 +1360,7 @@ fn deliverables_errors_with(d: Option<&Value>, place: &str, typed: bool) -> Vec<
     let mut errs = Vec::new();
     let mut terrs: Vec<String> = Vec::new();
     let Some(d) = d.filter(|d| d.is_object()) else { return errs };
-    for key in ["dir", "repo", "banned_terms_file"] {
+    for key in ["dir", "repo", "banned_terms_file", "summary_template"] {
         if let Some(v) = get(d, key).and_then(Value::as_str).filter(|v| !v.is_empty()) {
             if outside(v) {
                 errs.push(format!("{place}.{key} 要是專案內的相對路徑，不能是絕對路徑或含 ..（收到 {v}）"));
@@ -1386,6 +1386,11 @@ fn deliverables_errors_with(d: Option<&Value>, place: &str, typed: bool) -> Vec<
     }
     for x in &docs {
         let xid = str_opt(get(x, "id"));
+        if let Some(t) = get(x, "template").and_then(Value::as_str).filter(|v| !v.is_empty()) {
+            if outside(t) {
+                errs.push(format!("{place}.documents[{xid}].template 要是專案內的相對路徑，不能是絕對路徑或含 ..（收到 {t}）"));
+            }
+        }
         for g in strings_of(get(x, "sources"), &format!("{place}.documents[{xid}].sources"), &mut terrs) {
             if let Some(gs) = g.as_str() {
                 if outside(gs) {

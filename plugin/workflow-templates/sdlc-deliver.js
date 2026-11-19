@@ -875,7 +875,9 @@ const DELIV_IN = A.deliverables && typeof A.deliverables === 'object' ? A.delive
 const DELIV_DOCS = (Array.isArray(DELIV_IN.affected) ? DELIV_IN.affected : []).slice(0, 12)
   .map((d) => ({ id: dStr(d && d.id, 64), title: dStr(d && d.title, 60), file: dRel(d && d.file), depth: d && d.depth === 'summary' ? 'summary' : 'full', why: dStr(d && d.why, 80),
     sections: (Array.isArray(d && d.sections) ? d.sections : []).map((x) => dStr(x, 60)).filter(Boolean).slice(0, 12),
-    sources: (Array.isArray(d && d.sources) ? d.sources : []).map(dRel).filter(Boolean).slice(0, 12) }))
+    sources: (Array.isArray(d && d.sources) ? d.sources : []).map(dRel).filter(Boolean).slice(0, 12),
+    // 交付範本（交付設定的 documents[].template，awf pack 確認讀得到才帶）：路徑不合規則就當成沒有
+    template: dRel(d && d.template) }))
   .filter((d) => d.title && d.file && d.sections.length)
 const DELIV_SUMMARY = dStr(DELIV_IN.summary, 300)
 // 交付摘要的節與讀者（交付設定的 summary_sections、audience，由 awf pack 帶進 args.deliverables）：
@@ -884,16 +886,21 @@ const DS_IN = DELIV_IN.summary_sections
 const DS_OK = Array.isArray(DS_IN) && DS_IN.length >= 1 && DS_IN.length <= 8 && DS_IN.every((x) => awfLine(x, 40, '') === x && x) && new Set(DS_IN).size === DS_IN.length
 const DELIV_SECTIONS_TEXT = DS_OK ? `${DS_IN.length} 個小節${DS_IN.map((x) => `「${x}」`).join('')}` : '三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」'
 const AUDIENCE = awfLine(DELIV_IN.audience, 20, '客戶')
+// 使用者的範本：文件各自的 template、交付摘要的 summary_template。都沒有時派工單逐字不變
+const SUMMARY_TPL = dRel(DELIV_IN.summary_template)
+const HAS_TPL = DELIV_DOCS.some((d) => d.template) || !!(DELIV_SUMMARY && SUMMARY_TPL)
+const TPL_RULE = HAS_TPL ? '範本：標了「範本」的文件先讀那個範本檔，版面、小節順序、用語與表格欄位照它寫；範本裡的填寫說明換成實際內容，不要原樣留著；範本沒有的小節不要自己加。範本檔本身不要改。\n' : ''
 let delivDocs = null
 if (DELIV_SUMMARY || DELIV_DOCS.length) {
-  const list = DELIV_DOCS.map((d) => `- ${d.title}（${d.file}；${d.depth === 'summary' ? '寫摘要' : '寫完整'}${d.why ? `；${d.why}` : ''}）：小節〈${d.sections.join('〉〈')}〉${d.sources.length ? `；原料 ${d.sources.join('、')}` : ''}`).join('\n')
+  const list = DELIV_DOCS.map((d) => `- ${d.title}（${d.file}；${d.depth === 'summary' ? '寫摘要' : '寫完整'}${d.why ? `；${d.why}` : ''}）：小節〈${d.sections.join('〉〈')}〉${d.sources.length ? `；原料 ${d.sources.join('、')}` : ''}${d.template ? `；範本 ${d.template}` : ''}`).join('\n')
   delivDocs = await awfAgent(
     `${CTX}\n\n## 派工單（交付文件）\n交付文件是給${AUDIENCE}看的正式文件，路徑相對於專案根目錄。` +
     (DELIV_DOCS.length ? `這次的改動影響下列文件，只改列出的小節，其他小節與其他文件不動：\n${list}\n` : '這次沒有受影響的文件小節，只寫交付摘要。\n') +
+    TPL_RULE +
     `規則：\n1. 內容依原料寫（{{SPECS_DIR}}/${A.epic}/ 的 intent、design、spec、verifier，以及 git diff ${BASE}...HEAD 的實際改動）；找不到依據的寫「待確認」，不要編。\n` +
     `2. 小節標題下一行的來源標記（awf:source 開頭的註解）要保留；用到標記以外的檔時，把它的路徑加進標記（分號分隔，相對 repo 根目錄）。不要改檔頭。\n` +
     `3. 不寫內部編號、run 目錄、agent 名稱、個人信箱、本機路徑、內部網址與任何金鑰；用${AUDIENCE}讀得懂的話。\n` +
-    (DELIV_SUMMARY ? `4. 另寫交付摘要到 ${DELIV_SUMMARY}：${DELIV_SECTIONS_TEXT}，同樣遵守第 3 點。\n` : '') +
+    (DELIV_SUMMARY ? `4. 另寫交付摘要到 ${DELIV_SUMMARY}：${DELIV_SECTIONS_TEXT}${SUMMARY_TPL ? `，照範本 ${SUMMARY_TPL} 的版面與用語` : ''}，同樣遵守第 3 點。\n` : '') +
     `${DELIV_SUMMARY ? 5 : 4}. 寫完跑 awf deliverables check --run ${A.run_dir}，隱私字串、禁用字、失效連結修到沒有；「還沒記錄來源」是正常的（之後由主 session 記錄），不用處理。payload 用 docs。`,
     { label: 'deliverables', phase: 'Write', agentType: NS + 'tpm-writer', schema: DOCS },
   )

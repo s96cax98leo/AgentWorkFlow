@@ -59,7 +59,7 @@ pub const TOPICS: &[(&str, &str, &str, &[&str])] = &[
     ("scrub", "去客戶化掃描", "要不要掃（預設不啟用）、規則檔放哪、什麼時候掃（when：publish）", &["scrub"]),
     ("knowledge", "知識庫與知識圖", "知識庫來源；要不要建知識圖、流程要不要自動更新與帶位置（knowledge.auto.*）、跨 repo（knowledge.repos）", &["knowledge"]),
     ("links", "連結", "要不要記連結帳本（驗收條件 ↔ spec 小節、檔案、測試、commit）；links.enforce：不齊時要不要擋政策核准", &["links"]),
-    ("deliverables", "交付文件", "要不要產交付文件（預設不啟用）；細項用 /agent-workflow:deliverables 設定", &["deliverables"]),
+    ("deliverables", "交付文件", "要不要產交付文件（預設不啟用）；有沒有固定格式的範本檔（有就用 awf deliverables configure --template <文件id>=<範本檔> 掛上去）；細項用 /agent-workflow:deliverables 設定", &["deliverables"]),
     ("ci", "專案的測試／lint CI", "要不要由 awf ci render 產生 CI 檔（預設不啟用）；跑哪些指令、哪些必過", &["ci"]),
     ("build_loop", "build 修正迴圈", "修正迴圈要不要只跑受影響的測試（預設關；test 段的閘門照舊全跑）", &["affected_tests_only"]),
     ("auto_merge", "合併與自動合併", "合併方式（pr 或本機合併 local，預設 pr）；blocking 的問題要不要照建議先做（預設 off）；要不要啟用自動合併（預設關；啟用前要完成信任模型的檢查清單）", &["merge_mode", "auto_accept", "auto_merge"]),

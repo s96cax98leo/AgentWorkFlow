@@ -430,6 +430,7 @@
           "description": "選填：禁用字清單（一行一個正規式），交付文件出現就檢查不過"
         },
         "summary_sections": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^\\s`]([^\\r\\n`]*[^\\s`])?$"}, "description": "選填：交付摘要要有哪些節（不能重複；沒寫用：這次交付了什麼、怎麼驗證、需要客戶配合的事）。sdlc-deliver 寫交付文件的 writer 照它寫"},
+        "summary_template": {"type": "string", "minLength": 1, "maxLength": 300, "description": "選填：交付摘要的範本檔（專案內的相對路徑，文字檔）。有設時 writer 照它的小節與版面寫；沒寫 summary_sections 時小節取範本的二級標題"},
         "audience": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[^\\s`]([^\\r\\n`]*[^\\s`])?$", "description": "選填：交付文件給誰看（寫進派工單的稱呼；沒寫用「客戶」），例如「內部使用單位」。隱私規則不因此放寬"},
         "show_approvers": {"type": "boolean", "description": "選填：功能開發紀錄的核准紀錄要不要寫核准者名字；預設 false（只寫「人工核准」或「依政策自動核准」）"},
         "privacy_allow": {
@@ -514,6 +515,7 @@
                 "type": "object",
                 "description": "選填：某個小節只在特定改動時更新。鍵是小節標題，值同 on"
               },
+              "template": {"type": "string", "minLength": 1, "maxLength": 300, "description": "選填：這份文件的範本檔（專案內的相對路徑，文字檔）。骨架照範本建立、writer 照它的版面與用語寫；沒寫 sections 時小節取範本的二級標題"},
               "design_sections": {
                 "type": "array",
                 "items": {

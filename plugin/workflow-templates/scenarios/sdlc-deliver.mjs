@@ -233,6 +233,23 @@ export default [
     expect: (r) => { const p = r.prompts.deliverables || ''; return /交付文件是給客戶看的正式文件/.test(p) && /三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」/.test(p) ? [] : ['不合法的 summary_sections／audience 要退回內建'] },
   },
   {
+    // 交付範本（交付設定的 documents[].template、summary_template，由 awf pack 確認讀得到才帶進 args.deliverables）
+    name: '交付範本：文件與交付摘要都有範本 → 派工單列出範本路徑與「照範本寫」的規則',
+    args: { deliverables: { summary: '_tpm/runs/x/deliver/交付摘要.md', summary_template: 'docs/templates/summary.md',
+      affected: [{ id: 'handover', title: '交付說明書', file: 'docs/deliverables/handover.md', depth: 'full', why: '改了程式', sections: ['一、範圍'], sources: [], template: 'docs/templates/handover.md' }] } },
+    expect: (r) => { const p = r.prompts.deliverables || ''; return [
+      ...(/小節〈一、範圍〉；範本 docs\/templates\/handover\.md/.test(p) ? [] : ['受影響的文件要列出範本路徑']),
+      ...(/範本：標了「範本」的文件先讀那個範本檔，版面、小節順序、用語與表格欄位照它寫/.test(p) ? [] : ['要有照範本寫的規則']),
+      ...(/交付摘要\.md：三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」，照範本 docs\/templates\/summary\.md 的版面與用語，同樣遵守第 3 點。/.test(p) ? [] : ['交付摘要要指到範本']),
+    ] },
+  },
+  {
+    name: '交付範本：路徑不合規則（絕對路徑、含 ..）→ 當成沒有範本，派工單和原本逐字相同',
+    args: { deliverables: { summary: '_tpm/runs/x/deliver/交付摘要.md', summary_template: '/etc/summary.md',
+      affected: [{ id: 'handover', title: '交付說明書', file: 'docs/deliverables/handover.md', depth: 'full', why: '改了程式', sections: ['一、範圍'], sources: [], template: '../outside.md' }] } },
+    expect: (r) => { const p = r.prompts.deliverables || ''; return !/範本/.test(p) && /小節〈一、範圍〉\n/.test(p) && /三個小節「這次交付了什麼」「怎麼驗證」「需要客戶配合的事」，同樣遵守第 3 點。/.test(p) ? [] : ['不合規則的範本路徑不能進派工單'] },
+  },
+  {
     // 小節資料包（awf pack deliver）：各審查軸共用一份（路徑由 run_dir 組出來）；反駁與寫 PR 說明的派工單不帶
     name: '小節資料包：有 → 每個審查軸的派工單指到同一份審查資料包',
     args: { review_pack: '_runs/demo/deliver/review/pack.md' },

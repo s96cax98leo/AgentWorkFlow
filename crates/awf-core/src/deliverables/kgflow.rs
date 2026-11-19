@@ -47,8 +47,12 @@ pub(super) fn extend_affected(g: &Graph, prefix: Option<&str>, cfg: &Value, root
             }
             None => {
                 let depth = if truthy(get(d, "depth")) { get(d, "depth").clone() } else { json!("full") };
-                aff.push(json!({"id": id, "title": get(d, "title"), "file": path, "depth": depth, "source": get(d, "source"), "why": format!("知識圖：{why}"),
-                    "sections": [title], "sources": iter_any(get(d, "sources"))}));
+                let mut item = json!({"id": id, "title": get(d, "title"), "file": path, "depth": depth, "source": get(d, "source"), "why": format!("知識圖：{why}"),
+                    "sections": [title], "sources": iter_any(get(d, "sources"))});
+                if let (Some(t), Some(m)) = (d.get("template").and_then(|t| super::template::usable(root, t)), item.as_object_mut()) {
+                    m.insert("template".into(), json!(t));
+                }
+                aff.push(item);
             }
         }
         locs.push(Loc { path, start: 0, end: 0, why: format!("小節「{title}」：{why}") });

@@ -173,6 +173,17 @@ pub fn single_topics() -> Vec<&'static str> {
     v
 }
 
+/// 還沒設定過的主題：答案檔（`init-answers.json`）裡沒有這個主題任何一個鍵的答案。
+/// 交付文件另外看專案有沒有 `.claude/teams/deliverables.json`（那一份是用 `awf deliverables configure` 設的，不進答案檔）。
+/// 只看「有沒有回答過」，不判斷值好不好；直接手改 methodology.json、沒經過訪談的設定在這裡仍然算還沒設定。
+pub fn unset_topics<'a>(target: &Path, topics: &'a [Topic], saved: &Map<String, Value>) -> Vec<&'a Topic> {
+    topics.iter().filter(|t| {
+        let answered = t.answer_keys.iter().any(|k| saved.get(*k).is_some_and(|v| !v.is_null()));
+        let own_file = t.id == "deliverables" && target.join(".claude").join("teams").join("deliverables.json").is_file();
+        !(answered || own_file)
+    }).collect()
+}
+
 /// 守門主題會問、所以互動模式不在佔位符那一輪重複問的佔位符。
 pub const GUARD_PLACEHOLDERS: &[&str] = &["PROTECTED_BRANCHES", "DOCS_DIRS", "BASE_BRANCH", "BASE_REMOTE", "SPECS_DIR", "WORKTREES_DIR", "SPEC_TEMPLATES_DIR"];
 /// `DOCS_DIRS` 沒有紀錄時的值（同 workflow.config.example 的預設）。

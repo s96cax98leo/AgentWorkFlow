@@ -125,8 +125,13 @@ pub fn affected(root: &str, run: &str, paths: &[String], milestone: bool, close:
             secs = sections;
         }
         let depth = if truthy(get(d, "depth")) { get(d, "depth").clone() } else { json!("full") };
-        aff.push(json!({"id": id, "title": title, "file": rel_to(&doc_path(&cfg, root, d), root), "depth": depth, "source": get(d, "source"), "why": why,
-            "sections": secs, "sources": iter_any(get(d, "sources"))}));
+        let mut item = json!({"id": id, "title": title, "file": rel_to(&doc_path(&cfg, root, d), root), "depth": depth, "source": get(d, "source"), "why": why,
+            "sections": secs, "sources": iter_any(get(d, "sources"))});
+        // 這份文件設了範本而且讀得到才帶：writer 照它的版面與用語寫。沒設時這個鍵不存在，資料包逐字不變
+        if let (Some(t), Some(m)) = (d.get("template").and_then(|t| super::template::usable(root, t)), item.as_object_mut()) {
+            m.insert("template".into(), json!(t));
+        }
+        aff.push(item);
     }
     for d in cat_docs(&cat) {
         let id = sget(d, "id");
@@ -206,6 +211,10 @@ pub fn pack_args_with(stage: &str, run: &str, root: &str, repo: Option<&str>, da
     }
     if let Some(a) = audience(&cfg) {
         out.insert("audience".into(), json!(a));
+    }
+    // 交付摘要的範本（設定的 summary_template）：讀得到才帶
+    if let Some(t) = cfg.get("summary_template").and_then(|t| super::template::usable(root, t)) {
+        out.insert("summary_template".into(), json!(t));
     }
     let mut aff = list("affected");
     let mut glines = Vec::new();
@@ -441,7 +450,7 @@ pub fn ensure_doc(cfg: &Value, cat: &Value, root: &str, doc_id: &str) -> Option<
     let doc = resolve_docs(cfg, cat).into_iter().find(|d| sget(d, "id") == doc_id)?;
     let p = doc_path(cfg, root, &doc);
     if !is_file(&p) {
-        write_lf(&p, &skeleton(&doc));
+        write_lf(&p, &skeleton_for(root, &doc));
     }
     Some((doc, p))
 }
@@ -832,6 +841,29 @@ pub fn configure(root: &str, argv: &[String]) -> (i32, Value, Vec<String>) {
     for i in csv(&opt(argv, "--remove")) {
         chosen.shift_remove(&i);
     }
+    // 範本：--template <文件 id>=<範本檔>。型錄與設定都沒有的 id 新增成自訂文件，小節取範本的二級標題
+    let pairs = match super::template::parse_pairs(&opt(argv, "--template")) {
+        Ok(p) => p,
+        Err(e) => return (2, Value::Object(out), vec![e]),
+    };
+    for (id, path) in pairs {
+        let Some(text) = super::template::read(root, &json!(path)) else {
+            return (2, Value::Object(out), vec![format!("範本讀不到或不合規則（要是專案內的文字檔、{} 位元組以內）：{path}", super::template::MAX_BYTES)]);
+        };
+        let custom = !idx.contains_key(&id);
+        if custom && !chosen.contains_key(&id) {
+            if super::template::headings(&text).is_empty() {
+                return (2, Value::Object(out), vec![format!("範本沒有二級標題（## ），不知道 {id} 有哪些小節：{path}")]);
+            }
+            // 自訂文件沒有型錄的觸發條件：預設任何改動都更新（要縮小範圍就改設定檔的 on）
+            chosen.insert(id.clone(), json!({"id": id, "title": super::template::title(&text).unwrap_or_else(|| id.clone()), "source": "auto", "on": ["code", "test", "doc", "migration", "manifest"]}));
+            reasons.insert(id.clone(), json!(format!("依範本 {path} 新增的自訂文件")));
+        }
+        if let Some(m) = chosen.get_mut(&id).and_then(Value::as_object_mut) {
+            super::template::apply(m, &path, &text, custom);
+        }
+        set_default(&mut reasons, &id, json!(format!("照範本 {path}")));
+    }
     let order = |id: &str| cat_docs(&cat).iter().rposition(|d| sget(d, "id") == id).unwrap_or(1_000_000);
     let mut docs: Vec<Value> = chosen.values().cloned().collect();
     docs.sort_by(|a, b| { let (x, y) = (sget(a, "id"), sget(b, "id")); order(x).cmp(&order(y)).then_with(|| x.cmp(y)) });
@@ -846,6 +878,13 @@ pub fn configure(root: &str, argv: &[String]) -> (i32, Value, Vec<String>) {
     let dir = opt(argv, "--dir");
     if !dir.is_empty() {
         new.insert("dir".into(), json!(dir));
+    }
+    let sum_tpl = opt(argv, "--summary-template");
+    if !sum_tpl.is_empty() {
+        if super::template::read(root, &json!(sum_tpl)).is_none() {
+            return (2, Value::Object(out), vec![format!("交付摘要的範本讀不到或不合規則（要是專案內的文字檔、{} 位元組以內）：{sum_tpl}", super::template::MAX_BYTES)]);
+        }
+        new.insert("summary_template".into(), json!(sum_tpl));
     }
     set_default(&mut new, "dir", json!(DEFAULT_DIR));
     new.insert("documents".into(), Value::Array(docs.clone()));
@@ -896,7 +935,7 @@ pub fn init_docs(root: &str) -> (i32, Vec<String>) {
         }
         let p = doc_path(&cfg, root, &d);
         if !is_file(&p) {
-            write_lf(&p, &skeleton(&d));
+            write_lf(&p, &skeleton_for(root, &d));
             made.push(rel_to(&p, root));
         }
     }

@@ -635,10 +635,23 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     if a.json && !a.detect {
         return die("--json 要搭配 --detect");
     }
+    if a.unset && !(a.detect || a.reconfigure) {
+        return die("--unset 要搭配 --detect（只列還沒設定的主題）或 --reconfigure（只問還沒設定的主題）");
+    }
     if a.detect {
         // 只印偵測結果：不建目錄、不寫任何檔
         let root = PathBuf::from(pyutil::resolve(&target_user.real.to_string_lossy()));
-        let topics = detect::detect(&root, cfg!(windows));
+        let mut topics = detect::detect(&root, cfg!(windows));
+        if a.unset {
+            // 只留還沒設定過的主題（答案檔讀不懂時當成都沒回答過：只是列表，不擋）
+            let saved = interview::load_answers(&root.join(interview::ANSWERS_FILE)).ok().flatten().unwrap_or_default();
+            let keep: Vec<&str> = interview::unset_topics(&root, &topics, &saved).iter().map(|t| t.id).collect();
+            topics.retain(|t| keep.contains(&t.id));
+            if topics.is_empty() && !a.json {
+                con.say("每個主題都設定過了。要改某一項：awf init --reconfigure <主題>；全部重問一輪：awf init --reconfigure。");
+                return Ok(0);
+            }
+        }
         if a.json {
             con.say(&crate::recipe::dumps(&detect::to_json(&root, &topics), Some(2)));
         } else {
@@ -1071,6 +1084,15 @@ fn go(argv: &[String], env: &Env, con: &mut Console) -> R<i32> {
     if a.upgrade {
         con.say(&format!("\n升級完成：{} → {new_ver}。用 git diff 檢查變更；驗證指令見下面第 5 步。", if old_ver.is_empty() { "未記錄" } else { &old_ver }));
         con.say("記得也更新 plugin（agents、skills、hooks、awf 執行檔）：claude plugin update agent-workflow@agentworkflow，再 /reload-plugins。");
+        // 你的設定都保留了；順便提示還有哪些主題沒設定過（新版多出來的也在裡面）。只是提示：讀不到答案檔就不提
+        if let Ok(saved) = interview::load_answers(&target.join(interview::ANSWERS_FILE)) {
+            let topics = detect::detect(target, cfg!(windows));
+            let unset = interview::unset_topics(target, &topics, &saved.unwrap_or_default());
+            if !unset.is_empty() {
+                con.say(&format!("設定都保留了，不用重設。還沒設定過的主題 {} 個（維持預設也可以）：{}。", unset.len(), unset.iter().map(|t| t.title).collect::<Vec<_>>().join("、")));
+                con.say("  只補這些：awf init --target <專案> --reconfigure --unset（對話裡 /agent-workflow:settings-missing）；全部重問一輪：awf init --target <專案> --reconfigure（/agent-workflow:settings）。");
+            }
+        }
     }
 
     if hook_bin.is_some() && !gitignore_covers(target, ".claude/hooks/bin") {
@@ -1147,8 +1169,25 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
         }
     };
 
+    // `--reconfigure --unset`：只處理還沒設定過的主題，已經回答過的不問、也不接受改
+    let unset: Vec<&detect::Topic> = if a.unset { interview::unset_topics(target, &topics, &saved) } else { Vec::new() };
+    if a.unset {
+        if only.is_some() {
+            return die("--unset 和 --reconfigure <主題> 只能擇一");
+        }
+        if unset.is_empty() {
+            con.say("每個主題都設定過了，沒有要補問的。要改某一項：awf init --reconfigure <主題>；全部重問一輪：awf init --reconfigure。");
+            return Ok(0);
+        }
+        con.say(&format!("還沒設定的主題 {} 個：{}", unset.len(), unset.iter().map(|t| format!("{}（{}）", t.title, t.id)).collect::<Vec<_>>().join("、")));
+    }
+
     let mut new_ans = saved.clone();
     let asked = a.answers.as_deref().filter(|s| !s.is_empty()).is_none() && !a.defaults && con.tty;
+    if a.unset && !asked && a.answers.as_deref().filter(|s| !s.is_empty()).is_none() {
+        con.say("這裡不是互動環境，沒有問、沒有改。用 awf init --detect --unset --json 看每一題要確認什麼，把答案寫成檔再跑 awf init --reconfigure --unset --answers <檔>。");
+        return Ok(0);
+    }
     if let Some(file) = a.answers.as_deref().filter(|s| !s.is_empty()) {
         let p = site.user_path(file);
         if !p.real.is_file() {
@@ -1156,6 +1195,13 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
         }
         // 答案檔只要寫要改的鍵；值寫 null＝拿掉那個答案（回到 profile 的預設）
         let given = load_object(&p.real, "答案檔")?;
+        if a.unset {
+            let allowed: Vec<&str> = unset.iter().flat_map(|t| t.answer_keys.iter().copied()).collect();
+            let other: Vec<&str> = given.keys().map(String::as_str).filter(|k| !allowed.contains(k)).collect();
+            if !other.is_empty() {
+                return die(format!("--unset 只補還沒設定的主題（答案檔可以有的鍵：{}），答案檔卻還有已經設定過的：{}。拿掉它們，或不帶 --unset 重跑", allowed.join("、"), other.join("、")));
+            }
+        }
         if let Some(t) = only_topic {
             let other: Vec<&str> = given.keys().map(String::as_str).filter(|k| !t.answer_keys.contains(k)).collect();
             if !other.is_empty() {
@@ -1183,6 +1229,25 @@ fn reconfigure(con: &mut Console, site: &Site, target: &Path, a: &Args) -> R<i32
             let base = profile::load_profile(site, &name)?;
             let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
             interview::ask_more(con, &mut new_ans, base, &topics, &vals, false, Some(t.id))?;
+        }
+    } else if asked && a.unset {
+        con.say("只問還沒設定的主題；已經設定過的不問、不動。每題的預設值是偵測到的現況或 profile，Enter＝用預設。");
+        let singles = interview::single_topics();
+        let grouped: Vec<String> = unset.iter().filter(|t| !singles.contains(&t.id)).map(|t| format!("{}（{}）", t.title, t.id)).collect();
+        let name = saved.get("methodology").and_then(Value::as_str).or(vals.get("METHODOLOGY")).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
+        let base = profile::load_profile(site, &name)?;
+        let Some(base) = base.as_object() else { return crash("開發規範 profile 要是 JSON 物件") };
+        for t in unset.iter().filter(|t| singles.contains(&t.id)) {
+            if t.id == "main_session" {
+                let m = con.ask("你既有的 skill 或習慣會不會在主 session 直接 push main、合併 PR（y／n）", "n");
+                let free = pyutil::strip(&m).to_lowercase().starts_with('y') || pyutil::strip(&m) == "會";
+                new_ans.insert("main_session_push_merge".to_string(), Value::Bool(free));
+            } else {
+                interview::ask_more(con, &mut new_ans, base, &topics, &vals, false, Some(t.id))?;
+            }
+        }
+        if !grouped.is_empty() {
+            con.say(&format!("這幾個主題的題目互相有關，這裡不單獨問：{}。要設定請跑 awf init --reconfigure 問一整輪，或用 --answers 只寫要改的鍵。", grouped.join("、")));
         }
     } else if asked {
         con.say("重新設定：每題的預設值是上次的答案（沒有的用偵測到的現況），Enter＝不改。");
