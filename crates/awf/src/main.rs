@@ -62,8 +62,36 @@ hook：
 "
 }
 
+/// 自己沒有處理 `--help` 的子指令：`awf <子指令> --help` 只印說明、不執行（原本 `build --help` 會真的去內嵌、
+/// `doctor --help` 會真的跑檢查、`check-envelope --help` 會把 `--help` 當檔名）。回 `None`＝這個子指令自己會處理。
+fn sub_help(sub: &str) -> Option<ExitCode> {
+    let text = match sub {
+        "start" | "next" | "done" | "approve" | "render" | "handoff" => {
+            let _ = awf_core::state::main(&["state".to_string(), "--help".to_string()]);
+            return Some(ExitCode::SUCCESS);
+        }
+        "statusline" => "印一行給狀態列用的進度（唯讀）。\n\n用法：\n    awf statusline\n\n整合方式見 docs/監控與整合.md；看完整進度用 awf watch --once。\n",
+        "build" => "把片段、schema 與專案的 methodology.json 內嵌進 workflow 腳本。\n\n用法：\n    awf build            # 專案裡只處理覆寫檔（.claude/workflows/*.js）；模版 repo 裡處理 plugin/workflow-templates/\n    awf build --check    # 只比對、不寫：內嵌內容和片段有漂移時 exit 1\n\n改了 schema、profile 或片段之後重跑。擴充 agent 沒登記守門角色時拒絕內嵌（exit 1）。\n",
+        "doctor" => "安裝檢查（只讀、不連網）：環境、plugin 與專案版本、hook 註冊、專案設定與體檢提示。有 error 才 exit 1。\n\n用法：\n    awf doctor [--json] [--plugin-dir <plugin 目錄>]\n    awf doctor --selftest\n\n每一項都有修法（fix）；照它說的做。\n",
+        "check-agents" => "檢查 tpm-*／dev-* agent 檔的格式與角色名單（只讀）。\n\n用法：\n    awf check-agents --plugin-dir <AgentWorkFlow>/plugin\n    awf check-agents --agents-dir <agents 目錄>\n",
+        "check-envelope" => awf_core::check_envelope::USAGE,
+        "check-rules" => awf_core::check_rules::USAGE,
+        "hook" => "hook 入口：由 Claude Code 的 hook 呼叫，從 stdin 讀 hook 的輸入（JSON）。平常不用手動跑。\n\n用法：\n    awf hook <guard-shell|guard-paths|envelope|session-start|mark-dirty|prompt-context> < hook-input.json\n\n註冊方式與失敗語意見 docs/自訂與擴充.md 與 plugin/hooks/hooks.json。\n",
+        _ => return None,
+    };
+    print!("{text}");
+    Some(ExitCode::SUCCESS)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [sub, flag] = args.as_slice() {
+        if flag == "--help" || flag == "-h" {
+            if let Some(code) = sub_help(sub) {
+                return code;
+            }
+        }
+    }
     match args.first().map(String::as_str) {
         Some("--version") | Some("-V") => {
             println!("awf {} (source {})", awf_core::VERSION, SOURCE_HASH);
