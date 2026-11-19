@@ -394,6 +394,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **新增 guard.config 欄位**：`guard.config.json.tmpl` 的 `_說明`、`config.rs` 的預設值、`docs/自動合併信任模型.md` 或 `docs/自訂與擴充.md` 一起改；`awf init --upgrade` 會把新鍵補進既有專案。
 - **版本（VERSION）**：發佈前遞增 `plugin/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json`（`metadata.version` 與 `plugins[].version`）。init 寫的 `.claude/teams/VERSION` 取自 plugin.json，三處一致由 `crates/awf/tests/smoke_init.rs` 檢查。
 - **CHANGELOG**：每次發佈在 `CHANGELOG.md` 補一節，破壞性變更（角色改名、command 刪除、hook 語意）與升級步驟要寫清楚。
+- **改 README**：`README.md`（繁體中文，`cargo xtask check-docs` 核對的是這一份）改了，英文版 `README.en.md` 要跟著改；英文版沒有自動核對，結構（章節、表格列數、程式碼區塊）要和中文版一對一。`docs/` 目前只有繁體中文。
 - **完成前**：每次都跑 `cargo test --workspace` 與 `cargo xtask check-all`（兩個都過才算），`cargo build --all-targets` 不能有警告。
 
 完整的擴充說明見 `docs/自訂與擴充.md`，實戰教訓見 `docs/踩坑手冊.md`。

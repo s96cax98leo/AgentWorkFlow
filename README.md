@@ -1,5 +1,7 @@
 # AgentWorkFlow
 
+**繁體中文** | [English](README.en.md)
+
 AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以套用到任何專案。它只規定**工作流程**：怎麼拆工、怎麼平行處理、在哪裡停下來讓人核准、用什麼格式交件、誰能合併 PR。開發規範（TDD、DDD、spec 驅動……）和慣例（code style、commit 格式、分支命名、PR 大小、文件格式）都由使用者自己定義。
 
 這份 README 先講**做法**（為什麼這樣設計、一個需求怎麼走完、誰把關），再講安裝與使用。
@@ -8,7 +10,7 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 - **其他事件**（簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看）各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
 
-所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具是單一執行檔 `awf`（Rust，隨 plugin 提供），在 macOS、Linux、Windows（PowerShell）上都能執行，不需要 Python。目前版本 **0.6.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
+所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具是單一執行檔 `awf`（Rust，隨 plugin 提供），在 macOS、Linux、Windows（PowerShell）上都能執行，不需要 Python。目前版本 **1.2.2**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 做法
 
@@ -347,7 +349,6 @@ plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。�
 | | `tpm-skeptic` | 專門反駁別人的發現，不確定時判反駁成立 |
 | | `tpm-writer` | 把定稿的素材寫成文件，寫完跑 `awf check-rules` |
 | 網站分析 | `tech-architect`、`infra-analyst`、`biz-analyst`、`perf-auditor`、`competitor-scout`、`lead-synthesizer` | 分別負責技術架構、基礎設施、商業模式、效能、競品，最後由 lead-synthesizer 交叉驗證、合成總報告 |
-
 | 資料助手 | `awf-lookup`、`awf-refresh` | 查詢員：用 `awf` 的唯讀子指令與讀檔把資料查出來、整理後回報（模式：診斷、閘門摘要、成本、交付盤點、設定體檢）。更新員：重建知識庫索引、更新知識圖、重寫交付文件總目錄。都只讀專案的檔、不交信封，由主對話直接派 |
 
 上面是 14 個核心角色（dev 9 個、tpm 5 個）、6 個網站分析 agent 與 2 個資料助手。另有 2 個舊名薄殼，相容一版、下一版移除：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`，舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。還在用舊名的專案請跑 `awf init --upgrade`。
