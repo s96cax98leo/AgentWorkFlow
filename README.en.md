@@ -12,7 +12,7 @@ This README covers the **approach** first (why it is designed this way, how one 
 - **Other events** (briefs, upstream changes, meetings, PR reviews, requirement changes, decision follow-through, pre-demo checks, post-merge monitoring) are each handled in parallel and produce documents.
 - **Website analysis**: analyzes a site in parallel from five angles (technical architecture, infrastructure, business model, performance, competitors), then synthesizes one report.
 
-All documents, comments, and agent prompts are in Traditional Chinese. The agents' output language is configurable (`{{OUTPUT_LANGUAGE}}`, default Traditional Chinese). The tool is a single executable, `awf` (Rust, shipped with the plugin), which runs on macOS, Linux, and Windows (PowerShell) and does not need Python. The current version is **1.2.2**; see [`CHANGELOG.md`](CHANGELOG.md) for changes.
+All documents, comments, and agent prompts are in Traditional Chinese. The agents' output language is configurable (`{{OUTPUT_LANGUAGE}}`, default Traditional Chinese). The tool is a single executable, `awf` (Rust, shipped with the plugin), which supports macOS, Linux, and Windows (PowerShell) and does not need Python (the bundled executable is currently macOS arm64 only; see Requirements). The current version is **1.2.2**; see [`CHANGELOG.md`](CHANGELOG.md) for changes.
 
 ## Approach
 
@@ -106,6 +106,9 @@ Measured before the redesign, the plan stage of one requirement took 21 to 29M t
 | Decision memory | Questions a human has answered at a gate are recorded, and later context packs include the relevant ones, so agents do not ask again | `awf save-run approve --answer`, `decide` |
 | Research reuse | When plan is re-run, research angles whose source files have not changed are reused directly; the gate re-checks the sources' hashes | `awf pack --reuse-from`, `--keep-research` |
 | Dispatch cap | The maximum number of agents one workflow may dispatch; at the cap it stops and goes to a human, with no silent truncation | `limits.max_agents` |
+| Turn budget | When an agent's tool calls reach the threshold (default 50), it is reminded to write down its findings and hand in; by default it only reminds, and only `enforce` blocks | `limits.turns` |
+| Section-level context packs | The test stage, the deliver stage, and the design revision round also receive only the relevant sections and line ranges, instead of reading the whole spec and design | `awf pack` (automatic); `--no-slices` turns it off |
+| Knowledge graph | When a graph has been built, the context pack includes the files, symbols, and impact range for the requirement; without a graph the flow is unchanged | `awf kg build`; `knowledge` |
 
 The only thing that touches output is the **handoff envelope**: summary is at most 400 characters and evidence at most 12 items. It governs only the JSON an agent returns to the workflow; the details are still written in full in files, and the envelope carries only paths.
 
@@ -139,7 +142,7 @@ You can add your own agents to any of the plan, design, test, and deliver stages
 ## Requirements
 
 - Claude Code
-- The tool is the `awf` executable bundled in the plugin (x64 and arm64 for macOS, Linux, and Windows); no interpreter or package needs to be installed separately. For other platforms, or if you want to build it yourself, you need a Rust toolchain; see "Building it yourself" below and [`docs/建置與發佈.md`](docs/建置與發佈.md).
+- The tool is the `awf` executable bundled in the plugin; no interpreter or package needs to be installed separately. **Right now the plugin bundles only the macOS arm64 (Apple Silicon) executable.** The code supports x64 and arm64 on macOS, Linux, and Windows, but the executables for the other platforms have not been published yet, so you have to build it yourself first (this needs a Rust toolchain); see "Building it yourself" below and [`docs/建置與發佈.md`](docs/建置與發佈.md).
 - git; if you want to open PRs or merge, you also need `gh`.
 - Node.js 18 or later, needed only for dry-run validation of workflows.
 
@@ -323,6 +326,11 @@ For details see [`docs/自訂與擴充.md`](docs/自訂與擴充.md), the sectio
 | `/agent-workflow:cost`, how many tokens were spent | `cost` skill | Run directory (optional) |
 | `/agent-workflow:kb`, where is this written in the docs | `kb` skill | The question to look up |
 | `/agent-workflow:doctor`, check the installation | `doctor` skill | none |
+| `/agent-workflow:awf`, which `awf` command do I need | `awf` skill (a table of every subcommand: whether it writes, who decides) | what you want to do, or a subcommand name |
+| `/agent-workflow:init-workflow`, set up this project | `init-workflow` skill | none |
+| `/agent-workflow:settings`, `/agent-workflow:settings-missing`, change settings, fill in what is not configured | `settings`, `settings-missing` skills | none |
+| where is this run stuck, summarize the key points before I approve, where did the cost go | lookup agent `awf-lookup` (read-only agent, dispatched directly by the main conversation) | none |
+| rebuild the index, update the knowledge graph | refresh agent `awf-refresh` (can run only a fixed set of refresh commands) | none |
 | `/agent-workflow:deliverables`, which documents to deliver, inventory before closing | `deliverables` skill | configure, status, check, or what to do |
 | Compare options, A or B | `team-debate` skill | none |
 | Analyze a website | `site-report` skill | URL |
@@ -384,6 +392,8 @@ After updating, run `/reload-plugins` in Claude Code to load the new version. Ru
 # First update the plugin as above (scaffold lives in the plugin, so the new template is only available after the plugin is updated)
 awf init --target . --upgrade [--adopt-new-fields]
 ```
+
+Upgrading does not wipe your settings; at the end it lists the topics that are not yet configured, which you can fill in with `/agent-workflow:settings-missing`. Run `awf doctor` once after upgrading.
 
 For the complete steps for upgrading from 0.x to 1.0, see [`docs/升級到1.0.md`](docs/升級到1.0.md).
 
@@ -496,7 +506,7 @@ AgentWorkFlow/
 │   ├── workflow.config.example       # placeholder values
 │   ├── legacy-tools.json             # fingerprints of the tool files 0.x copied into projects (awf init --upgrade uses them to remove unmodified legacy copies)
 │   ├── bin/                          # the awf executable (launcher plus per-platform executables)
-│   └── hooks/                        # hooks.json: registers awf hook (guard-shell, guard-paths, envelope, session-start)
+│   └── hooks/                        # hooks.json: registers awf hook (guard-shell, guard-paths, envelope, session-start, mark-dirty, prompt-context)
 ├── crates/                           # awf's source (Rust): awf-core (all logic), awf (executable entry point), xtask (build and checks)
 ├── CHANGELOG.md、SECURITY.md、LICENSE
 ├── docs/                             # documentation
@@ -548,7 +558,7 @@ cargo run -q -p awf -- <子指令> --selftest   # selftest of a single subcomman
 
 For the other `cargo xtask` subcommands (golden, check-kernel, check-patterns, check-launchers, gen-legacy, bench, dist, checksums) see `cargo xtask --help`. How to update the regression baselines is in [`tests/parity/README.md`](tests/parity/README.md).
 
-- **CI** (`.github/workflows/ci.yml`): every push and PR runs `cargo build`, `cargo test --workspace`, and `cargo xtask check-all` on ubuntu-latest, macos-latest, and windows-latest. All actions used by CI are pinned to commit SHAs.
+- **CI** (`.github/workflows/ci.yml`): every push and PR runs `cargo build`, `cargo test --workspace`, and `cargo xtask check-all` on macos-latest (this is currently the only platform verified in CI; the executables for the five platforms are built by a separate, manually triggered `dist` job). All actions used by CI are pinned to commit SHAs.
 - **Dependabot** (`.github/dependabot.yml`): weekly, it checks whether the GitHub Actions used by CI have new versions and, if so, opens a PR automatically that updates both the SHA and the version comment. These PRs are opened by GitHub's `dependabot[bot]` and are this repo's own configuration, not submitted by outsiders; decide whether to merge only after CI is green and you have read the upstream release notes.
 - The **de-identification scan** reads two lists: `tests/scrub_terms.txt` (public generic rules: local paths, credential formats, personal emails) and `tests/scrub_terms.local.txt` (real names to block, not under version control). Examples always use the fictional "demo customer ACME".
 
