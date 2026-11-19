@@ -278,6 +278,19 @@ target/release/awf init --target ~/work/my-project
 
 **加入自己的段**：在 profile 的 `flow` 宣告自訂段（例如 test 之後的客戶驗收），recipe 點名了才會跑，並進整條閘門鏈。內容可以是自己寫的腳本（`run: "script"`），或用資料宣告一串步驟（`run: "steps"`：fanout、challenge、write、loop、check，由 plugin 的 `flow-steps` 範本執行；`check` 與 loop 的結束指令由 `awf` 在存檔時自己執行）。用步驟宣告的段可以設成政策核准，其餘一律等人核准。事件類型也能用同一套步驟，或用 `extends` 只改內建類型的一部分。見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈自訂段〉與 [`docs/事件處理.md`](docs/事件處理.md)。
 
+**人的決定怎麼接回流程**（1.2）：
+- 某一段只差人回答問題時，不用重跑：`awf approve --run <run> <段> --by <人> --answer "#N=<答覆>"`，每一題阻擋性問題都要答；這樣通過的段之後不能改用政策核准。
+- 答覆會改變 intent 時，用 `awf next --revise` 跑 plan 的修正輪：只重派 intent 作者與 skeptic，不重做調研。
+- 手改產生的腳本或結果檔、手動給結果（`awf done --output`）、用自訂腳本跑的段，都會標成非標準結果，只能由人核准。
+- **照建議先做**（預設關閉，`decisions.auto_accept`）：低風險的待決問題先照 agent 的建議做並記成未確認；人確認之前，政策核准、推送、合併都會拒絕。
+- **本機合併**（`conventions.merge.mode: local`）：不走 PR 的專案由人自己合併，再用 `awf next --confirm-merge --by <人>` 讓工具核對合併 commit 等於審過的內容後結案。agent 的合併仍然只走 PR 與 merge gate。
+
+**可調整的其他項目**（1.2，都寫在 profile）：
+- **profile 繼承**：`extends` 指到內建 profile 或 `.claude/teams/` 底下的另一份，只寫要改的部分。
+- **派工單語言**：`prompt_lang`（`zh-TW` 或 `en`）換共同前綴的語言，`prompt_overrides` 可以逐句改寫。內建範本的派工單本文與閘門核對的固定標題目前仍是中文。
+- **輪數與讀取預算**：`limits.turns` 在 agent 跑太多輪時提醒先交件（預設只提醒、不擋）；`limits.mode` 開啟讀取預算（預設不啟用）。
+- **交付範本**：交付文件可以指定你自己的 Markdown 範本，章節照範本產生，見 [`docs/交付文件.md`](docs/交付文件.md)〈用你自己的範本〉。
+
 **守門 hooks**：入口只有一個，`awf hook`。
 - `guard-shell` 同時涵蓋 Bash 與 PowerShell 工具，擋推送、寫上游、推受保護分支，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - `guard-paths` 擋越權寫入，以及用 Read、Grep 讀機敏檔（`.env`、金鑰、憑證）。只能寫紀錄的角色只准寫 runs_dir 裡的 `.md`；所有模版 agent 都不能改 `.claude/teams/`、run.json 與執行紀錄索引。
@@ -396,7 +409,11 @@ awf init --target . --upgrade [--adopt-new-fields]
 awf init --target <專案> [--config workflow.config] [--answers <答案.json>] [--defaults]
                 [--hooks plugin|project] [--with-mcp] [--with-merge-gate]
                 [--upgrade] [--adopt-new-fields] [--force] [--overwrite-user-files]
+awf init --detect --target <專案> [--json] [--unset]              # 只偵測、只印
+awf init --target <專案> --reconfigure [<主題>] [--unset] [--answers <檔>]   # 改已套用專案的設定；--unset 只處理還沒設定的主題
 ```
+
+已套用的專案要改設定，在 Claude Code 裡用 `/agent-workflow:settings`（全部重問一輪）或 `/agent-workflow:settings-missing`（只問還沒設定的）最方便。
 
 | 選項 | 說明 |
 |---|---|
@@ -463,7 +480,7 @@ AgentWorkFlow/
 ├── .github/                          # 本 repo 的 CI（ci.yml）與 Dependabot 設定
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）；從 marketplace 安裝時只有這個目錄，它也是 awf init 的模版
 │   ├── agents/                       # agent 共 24 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent、2 個資料助手
-│   ├── skills/                       # tpm-team、awf、init-workflow、settings、settings-missing、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
+│   ├── skills/                       # tpm-team、awf、init-workflow、settings、settings-missing、add-agent、correct、deliverables、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge，加上自訂段用步驟宣告時跑的 flow-steps）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
 │   │   ├── snippets/                 # 多支 workflow 共用的片段（awf build 內嵌進範本）

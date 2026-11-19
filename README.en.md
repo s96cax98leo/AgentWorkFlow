@@ -280,6 +280,19 @@ For details see [`docs/自訂與擴充.md`](docs/自訂與擴充.md), the sectio
 
 **Adding your own stages**: declare a custom stage in the profile's `flow` (for example customer acceptance after test); it runs only when a recipe names it, and it joins the whole gate chain. The content can be a script you write yourself (`run: "script"`), or a sequence of steps declared as data (`run: "steps"`: fanout, challenge, write, loop, check, executed by the plugin's `flow-steps` template; the `check` and loop exit commands are run by `awf` itself at save time). A stage declared with steps can be set to policy approval; all others always wait for a human. Event types can also use the same steps, or use `extends` to change only part of a built-in type. See [`docs/自訂與擴充.md`](docs/自訂與擴充.md), the section on custom stages (自訂段), and [`docs/事件處理.md`](docs/事件處理.md).
 
+**How human decisions feed back into the flow** (1.2):
+- When a stage only needs a human to answer questions, there is no need to rerun it: `awf approve --run <run> <stage> --by <person> --answer "#N=<answer>"`. Every blocking question must be answered; a stage passed this way can no longer be approved by policy.
+- When the answers change the intent, run the plan revision round with `awf next --revise`: only the intent author and the skeptic are dispatched again, and the research is not redone.
+- Hand-edited generated scripts or result files, manually supplied results (`awf done --output`), and stages run with a custom script are all marked as non-standard results and can only be approved by a human.
+- **Proceed on the recommendation** (off by default, `decisions.auto_accept`): low-risk open questions go ahead on the agent's recommendation and are recorded as unconfirmed; until a human confirms them, policy approval, publishing, and merging are all refused.
+- **Local merge** (`conventions.merge.mode: local`): for projects that do not use PRs, a human merges and then runs `awf next --confirm-merge --by <person>`, and the tool checks that the merge commit equals the reviewed content before closing the run. Agent merges still go only through PRs and the merge gate.
+
+**Other adjustable items** (1.2, all set in the profile):
+- **Profile inheritance**: `extends` points to a built-in profile or another one under `.claude/teams/`, so you only write the parts you change.
+- **Task brief language**: `prompt_lang` (`zh-TW` or `en`) switches the language of the common prefix, and `prompt_overrides` can rewrite individual sentences. The body of the built-in templates' task briefs and the fixed headings that the gates check are still in Chinese for now.
+- **Turn and read budgets**: `limits.turns` reminds an agent to hand in its work when it has run too many turns (by default it only reminds and does not block); `limits.mode` turns on the read budget (off by default).
+- **Deliverable templates**: deliverables can use your own Markdown template, and the sections are generated from it; see [`docs/交付文件.md`](docs/交付文件.md), the section on using your own template (用你自己的範本).
+
 **Guard hooks**: there is a single entry point, `awf hook`.
 - `guard-shell` covers both the Bash and PowerShell tools and blocks pushing, writing to upstream, pushing protected branches, and every merge and approval path: `gh pr merge`, `--approve`, `gh api`, GraphQL, curl, Invoke-RestMethod.
 - `guard-paths` blocks unauthorized writes, and reading secret files (`.env`, keys, credentials) with Read and Grep. Roles that may only write records may write only `.md` files in runs_dir; no template agent can modify `.claude/teams/`, run.json, or the run record index.
@@ -398,7 +411,11 @@ For the complete steps for upgrading from 0.x to 1.0, see [`docs/升級到1.0.md
 awf init --target <專案> [--config workflow.config] [--answers <答案.json>] [--defaults]
                 [--hooks plugin|project] [--with-mcp] [--with-merge-gate]
                 [--upgrade] [--adopt-new-fields] [--force] [--overwrite-user-files]
+awf init --detect --target <專案> [--json] [--unset]              # detect and print only
+awf init --target <專案> --reconfigure [<主題>] [--unset] [--answers <檔>]   # change the settings of a project that is already set up; --unset handles only topics not yet configured
 ```
+
+To change the settings of a project that is already set up, the easiest way is `/agent-workflow:settings` (asks everything again) or `/agent-workflow:settings-missing` (asks only what is not yet configured) in Claude Code.
 
 | Option | Description |
 |---|---|
@@ -465,7 +482,7 @@ AgentWorkFlow/
 ├── .github/                          # this repo's CI (ci.yml) and Dependabot settings
 ├── plugin/                           # the plugin itself (name agent-workflow); only this directory is present when installed from the marketplace, and it is also the awf init template
 │   ├── agents/                       # 24 agents in total: 14 core roles, 2 legacy-name shims, 6 website analysis agents, 2 data helpers
-│   ├── skills/                       # tpm-team, awf, init-workflow, settings, settings-missing, add-agent, correct, status, cost, kb, doctor, team-debate, the site-report series, design-system-template
+│   ├── skills/                       # tpm-team, awf, init-workflow, settings, settings-missing, add-agent, correct, deliverables, status, cost, kb, doctor, team-debate, the site-report series, design-system-template
 │   ├── commands/                     # 4 commands: /sdlc, /event, /brief, /demo-check
 │   ├── workflow-templates/           # workflow templates (8 sdlc, 4 event: the shared event plus event-brief, event-pr-review, event-post-merge, and flow-steps, which runs when a custom stage is declared with steps) and legacy.json (fingerprints of legacy copies); awf next generates scripts stage by stage
 │   │   ├── snippets/                 # fragments shared by several workflows (awf build embeds them into the templates)
