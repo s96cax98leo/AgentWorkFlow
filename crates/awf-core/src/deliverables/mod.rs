@@ -21,6 +21,7 @@ mod kgflow;
 mod py;
 mod selftest;
 mod selftest_v1;
+mod template;
 
 pub use self::core::{
     body_hash, broken_links, builtin_catalog, catalog_index, check_all, config_errors, doc_path, doc_sections, doc_status, glob_re, index_text, is_placeholder,
@@ -61,6 +62,7 @@ const DOC: &str = "交付文件：型錄、交付設定、逐節的來源標記�
 用法（在已 init 的專案根目錄）：
     awf deliverables configure [--preset <名>] [--suggest] [--import <清單檔>] [--add a,b] [--remove a,b]
                                       [--custom-unmatched] [--dir <目錄>] [--write --by <誰>] [--json]
+                                      [--template <文件id>=<範本檔>[,…]] [--summary-template <範本檔>]   # 照你的範本輸出
     awf deliverables init                     # 依交付設定建目錄與文件骨架（已有的檔不動）
     awf deliverables status [--json]          # 每份文件：齊全、過期、缺原料、等人補
     awf deliverables check                    # 檔頭、過期小節、禁用字、隱私字串、失效連結、總目錄；有問題 exit 1

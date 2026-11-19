@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-19
+
+### 新增
+
+- **交付範本**：使用者有固定格式的文件時，交付文件照範本輸出。
+  - 設定：每份文件的 `template`、整份設定的 `summary_template`（專案內的相對路徑；`deliverables.json`、profile 的 `deliverables`、init 答案檔都收），或 `awf deliverables configure --template <文件id>=<範本檔>[,…] --summary-template <範本檔>`。
+  - 小節取範本的二級標題（設定有寫 `sections`／`summary_sections` 時以設定為準）；骨架照範本的內文建立，保留版面與填寫說明，只加檔頭與來源標記；已有的文件不動。
+  - `sdlc-deliver` 寫交付文件的派工單列出範本路徑，並多一條「照範本的版面、小節順序、用語與表格欄位寫」的規則。
+  - 範本路徑不合規則（絕對路徑、含 `..`、機敏檔）時交付設定判有問題；範本檔讀不到時當成沒設定，流程不停。
+  - 沒設定範本時，資料包、派工單、骨架逐字不變。閘門不讀範本。
+
+- **只補還沒設定的主題**：`awf init --reconfigure --unset`（互動時只問沒回答過的主題；配 `--answers` 時答案檔只能有那些主題的鍵，寫到已經設定過的會被拒絕）與 `awf init --detect --unset [--json]`（只列）。「還沒設定」＝答案檔 `init-answers.json` 裡沒有那個主題的答案；交付文件另看有沒有 `deliverables.json`。
+- **兩個 skill**：`/agent-workflow:settings`（全部主題重問一輪，預設值是上次的答案）與 `/agent-workflow:settings-missing`（只補還沒設定的）。兩個都會在交付文件那一題問有沒有範本檔。
+- **升級結尾的提示**：`awf init --upgrade` 完成後多兩行，說明設定都保留了，並列出還沒設定過的主題與補設定的指令。升級本來就不會改 `methodology.json`、`deliverables.json`、`workflow.config`、`init-answers.json`，`guard.config.json` 只補新鍵。
+
+### 確認過、沒有改動的
+
+- **Workflow 派出的 agent 可以用 `awf` 查知識**：`awf kb query`、`awf kg locate`／`trace`／`impact`／`neighbors`／`check`、`awf locate` 對全部有 shell 的模版角色放行（Bash 與 PowerShell、從 worktree 裡執行、接管線），`kb build`、`kg build`、`kg export`、帶 `--out` 的仍然擋。13 支範本、自訂段、自訂事件、自訂腳本在有知識圖時都會在共同前綴帶查圖的指示（`kg`），profile 設了 `knowledge.sources` 時帶 `awf kb query`。`tpm-planner` 沒有 shell 工具，查不了。
+- **參數**：自訂段與自訂事件的 `context`、`ask`、`body`、`heading` 裡的 `{參數名}`、`{參數名|預設}` 由 `awf next --set 參數名=值` 代入（指令字串不代入，照舊）。查知識的主題與輸出範本的路徑都可以這樣帶。
+
+### 行為改變
+
+- `awf deliverables` 的說明多一行 `--template`。
+- `awf init --upgrade` 的輸出結尾多「設定都保留了」與還沒設定的主題兩行（有沒設定的主題時才印）。
+- `awf init --detect` 交付文件主題的「要確認什麼」多一句範本。
+
 ## [1.2.0]
 
 這一版有兩部分。第一部分把「段的名單與順序、事件流程的形狀、派工單的語言」開放給使用者設定。第二部分依一個實際專案升級 1.0 之後的使用紀錄做修正（10 個 run、577 個 subagent、結案 0 個）：run 常卡在「需要人決定」之後走不下去，主 session 改用手動給結果繞過狀態機；守門誤擋唯讀指令；subagent 的輸入有七成是累積的工具結果被每一輪重讀。

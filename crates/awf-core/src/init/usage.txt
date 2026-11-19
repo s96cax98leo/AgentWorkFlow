@@ -2,8 +2,9 @@ AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，�
 
 工具都在 awf 這支執行檔裡，不複製進專案，也不需要 Python。macOS、Linux、Windows（PowerShell 或 cmd）都能直接跑：
 
-  awf init --detect --target <專案目錄> [--json]
-  awf init --target <專案目錄> --reconfigure [<主題>] [--answers <檔>]
+  awf init --detect --target <專案目錄> [--json] [--unset]
+  awf init --target <專案目錄> --reconfigure [<主題>] [--answers <檔>]      # 全部重問一輪，或只問一個主題
+  awf init --target <專案目錄> --reconfigure --unset [--answers <檔>]       # 只問還沒設定過的主題
   awf init --target <專案目錄>（或直接寫 <專案目錄>） [--config <檔>] [--answers <檔>] [--upgrade] [--adopt-new-fields]
            [--force] [--overwrite-user-files] [--hooks plugin|project] [--with-mcp] [--with-workflows]
            [--with-merge-gate [--merge-gate-bin <檔> [--merge-gate-checksums <檔>]]] [--defaults] [--source <plugin 目錄>]
@@ -26,6 +27,9 @@ AgentWorkFlow 專案初始化：把 scaffold/ 的設定複製到目標專案，�
               搭配 --answers 時答案檔只能有那個主題的鍵。可以單獨重問的主題：requirements、models、scrub、links、ci、
               build_loop、auto_merge、hooks、knowledge、deliverables、parallelism、guard、main_session
               （methodology、conventions、constraints、read_limits 的題目互相有關，要問一整輪）
+  --unset     只看還沒設定過的主題（答案檔裡沒有那個主題的答案；交付文件另看有沒有 deliverables.json）。
+              搭配 --detect：只列那些主題與每題要確認什麼。搭配 --reconfigure：只問那些主題，已經設定過的不問、不動；
+              配 --answers 時答案檔只能有還沒設定的主題的鍵。升級後用它補新版多出來的主題
   --upgrade   升級已 init 過的專案（建議的更新方式）：模版檔一律換成這版，使用者的設定保留：
                 .claude/teams/methodology.json：不動；列出這版內建 profile 新增、你的 profile 還沒有的欄位與預設值
                 .claude/teams/guard.config.json：你的值一律保留，只補上這版新增的鍵（說明文字 _說明 換成新版）

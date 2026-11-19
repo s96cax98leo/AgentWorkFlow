@@ -460,7 +460,7 @@ AgentWorkFlow/
 ├── .github/                          # 本 repo 的 CI（ci.yml）與 Dependabot 設定
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）；從 marketplace 安裝時只有這個目錄，它也是 awf init 的模版
 │   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
-│   ├── skills/                       # tpm-team、init-workflow、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
+│   ├── skills/                       # tpm-team、init-workflow、settings、settings-missing、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge，加上自訂段用步驟宣告時跑的 flow-steps）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
 │   │   ├── snippets/                 # 多支 workflow 共用的片段（awf build 內嵌進範本）

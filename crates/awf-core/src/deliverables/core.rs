@@ -338,6 +338,9 @@ pub fn config_errors(cfg: &Value) -> Vec<String> {
             errs.push(format!("dir 要是專案內的相對路徑（不能是絕對路徑或含 ..）：{}", repr(d)));
         }
     }
+    if let Some(e) = obj.get("summary_template").and_then(super::template::path_error) {
+        errs.push(format!("summary_template {e}"));
+    }
     let Some(docs) = get(cfg, "documents").as_array() else {
         errs.push("documents 要是陣列".to_string());
         return errs;
@@ -361,6 +364,9 @@ pub fn config_errors(cfg: &Value) -> Vec<String> {
                     errs.push(format!("{id} 的 {key} 要是 {}：{}", allowed.join("／"), repr(v)));
                 }
             }
+        }
+        if let Some(e) = d.get("template").and_then(super::template::path_error) {
+            errs.push(format!("{id} 的 template {e}"));
         }
         for key in ["sections", "sources", "on", "design_sections"] {
             if d.get(key).is_some_and(|v| !is_str_list(v)) {
@@ -390,11 +396,14 @@ pub fn load_config(root: &str) -> (Option<Value>, String) {
     let rel = format!(".claude/teams/{CONFIG_NAME}");
     let p = pyish::pjoin(root, &rel);
     if is_file(&p) {
-        let cfg = match load_json(&p) {
+        let mut cfg = match load_json(&p) {
             Some(v @ Value::Object(_)) => v,
             _ => return (None, format!("{rel} 讀不懂")),
         };
         let errs = config_errors(&cfg);
+        if errs.is_empty() {
+            super::template::fill(root, &mut cfg);
+        }
         return if errs.is_empty() { (Some(cfg), rel) } else { (None, format!("交付設定有問題：{}", join_head(&errs))) };
     }
     let pf = pyish::pjoin(root, ".claude/teams/methodology.json");
@@ -403,7 +412,11 @@ pub fn load_config(root: &str) -> (Option<Value>, String) {
     let d = get(&prof, "deliverables");
     if d.is_object() && get(d, "enabled") == &Value::Bool(true) && get(d, "documents").is_array() {
         let errs = config_errors(d);
-        return if errs.is_empty() { (Some(d.clone()), "methodology.json 的 deliverables".to_string()) } else { (None, format!("profile 的 deliverables 有問題：{}", join_head(&errs))) };
+        let mut d = d.clone();
+        if errs.is_empty() {
+            super::template::fill(root, &mut d);
+        }
+        return if errs.is_empty() { (Some(d), "methodology.json 的 deliverables".to_string()) } else { (None, format!("profile 的 deliverables 有問題：{}", join_head(&errs))) };
     }
     (None, "沒有交付設定（用 awf deliverables configure 產生；沒有時流程不產生也不檢查交付文件）".to_string())
 }
@@ -473,6 +486,14 @@ pub fn skeleton(doc: &Value) -> String {
         head.extend([format!("## {s}"), format!("<!-- awf:source {srcs} -->"), String::new(), PLACEHOLDER.to_string(), String::new()]);
     }
     head.join("\n")
+}
+
+/// 文件骨架：這份文件設了範本而且讀得到就照範本（[`super::template::skeleton`]），否則是 [`skeleton`]。
+pub fn skeleton_for(root: &str, doc: &Value) -> String {
+    match doc.get("template").and_then(|t| super::template::read(root, t)) {
+        Some(tpl) => super::template::skeleton(doc, &tpl),
+        None => skeleton(doc),
+    }
 }
 
 /// 文件的一個小節（二級標題）。

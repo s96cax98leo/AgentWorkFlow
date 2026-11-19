@@ -36,6 +36,8 @@ pub struct Args {
     pub reconfigure: bool,
     /// `--reconfigure <主題>`：只重問這一個主題（主題 id 見 `--detect`）。
     pub reconfigure_topic: Option<String>,
+    /// `--unset`：只看還沒設定過的主題（搭配 `--detect` 只列、搭配 `--reconfigure` 只問那些）。
+    pub unset: bool,
     /// 指令列有沒有明確給 `--hooks`（沒給時答案檔的 `hooks` 才算數）。
     pub hooks_given: bool,
 }
@@ -69,10 +71,11 @@ const OPTS: &[(&str, bool)] = &[
     ("--detect", false),
     ("--json", false),
     ("--reconfigure", false),
+    ("--unset", false),
 ];
 
 pub const USAGE: &str = "usage: awf init [-h] [--target TARGET] [--config CONFIG] [--answers ANSWERS] [--upgrade] [--adopt-new-fields] [--force] \
-[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--source SOURCE] [--merge-gate-bin MERGE_GATE_BIN] [--merge-gate-checksums MERGE_GATE_CHECKSUMS] [--detect] [--json] [--reconfigure [TOPIC]] [positional]";
+[--overwrite-user-files] [--hooks HOOKS] [--with-mcp] [--with-workflows] [--with-merge-gate] [--defaults] [--source SOURCE] [--merge-gate-bin MERGE_GATE_BIN] [--merge-gate-checksums MERGE_GATE_CHECKSUMS] [--detect] [--json] [--unset] [--reconfigure [TOPIC]] [positional]";
 
 enum Seen {
     Plain,
@@ -210,6 +213,7 @@ pub fn parse(argv: &[String]) -> Result<Args, ArgStop> {
                 "--defaults" => a.defaults = true,
                 "--detect" => a.detect = true,
                 "--json" => a.json = true,
+                "--unset" => a.unset = true,
                 _ => {}
             }
             continue;

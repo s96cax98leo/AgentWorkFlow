@@ -104,6 +104,12 @@
             "type": "object",
             "description": "選填：某個小節只在特定改動時更新。鍵是小節標題，值同 on"
           },
+          "template": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": "選填：這份文件的範本檔（專案內的相對路徑，文字檔）。骨架照範本建立、writer 照它的版面與用語寫；沒寫 sections 時小節取範本的二級標題"
+          },
           "design_sections": {
             "type": "array",
             "items": {
@@ -114,6 +120,12 @@
           }
         }
       }
+    },
+    "summary_template": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "選填：交付摘要的範本檔（專案內的相對路徑，文字檔）。有設時 writer 照它的小節與版面寫；沒寫 summary_sections 時小節取範本的二級標題"
     },
     "confirmed_by": {
       "type": "string",

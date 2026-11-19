@@ -1727,13 +1727,13 @@
     {
      "id": "plugin",
      "level": "ok",
-     "msg": "plugin 版本 1.2.0",
+     "msg": "plugin 版本 1.2.1",
      "fix": ""
     },
     {
      "id": "version",
      "level": "warn",
-     "msg": "專案的工具是 0.5.0，plugin 是 1.2.0：新版 workflow 的回傳，舊的閘門工具可能不認得",
+     "msg": "專案的工具是 0.5.0，plugin 是 1.2.1：新版 workflow 的回傳，舊的閘門工具可能不認得",
      "fix": "跑 awf init --target <這個專案> --upgrade（已套用的專案不會自動更新）"
     },
     {
@@ -1761,8 +1761,8 @@
      "fix": "在專案根目錄跑 awf kb build（之後文件有改再跑一次，只會重建改過的）；要索引哪些檔在 methodology.json 的 knowledge.sources 設定"
     }
    ],
-   "text": "[通過] 找得到 git\n[通過] 找得到 gh\n[通過] 找得到 node\n[通過] plugin 版本 1.2.0\n[注意] 專案的工具是 0.5.0，plugin 是 1.2.0：新版 workflow 的回傳，舊的閘門工具可能不認得\n       修法：跑 awf init --target <這個專案> --upgrade（已套用的專案不會自動更新）\n[說明] Claude Code 沒有登記這個專案可用的 agent-workflow 安裝（用 --plugin-dir、環境變數或在模版 repo 裡執行時不需要）\n       修法：要安裝：claude plugin marketplace add <模版 repo>，再 claude plugin install agent-workflow@agentworkflow\n[通過] methodology.json 通過 schema 與語意規則\n[通過] guard.config.json 讀得懂\n[說明] 知識庫還沒建（_tpm/kb/kb.sqlite 不存在）：agent 查不到「哪個檔的哪幾行」，會直接讀整份文件\n       修法：在專案根目錄跑 awf kb build（之後文件有改再跑一次，只會重建改過的）；要索引哪些檔在 methodology.json 的 knowledge.sources 設定\ndoctor：0 個問題、1 個注意",
-   "json": "{\n  \"ok\": true,\n  \"checks\": [\n    {\n      \"id\": \"git\",\n      \"level\": \"ok\",\n      \"msg\": \"找得到 git\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"gh\",\n      \"level\": \"ok\",\n      \"msg\": \"找得到 gh\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"node\",\n      \"level\": \"ok\",\n      \"msg\": \"找得到 node\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"plugin\",\n      \"level\": \"ok\",\n      \"msg\": \"plugin 版本 1.2.0\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"version\",\n      \"level\": \"warn\",\n      \"msg\": \"專案的工具是 0.5.0，plugin 是 1.2.0：新版 workflow 的回傳，舊的閘門工具可能不認得\",\n      \"fix\": \"跑 awf init --target <這個專案> --upgrade（已套用的專案不會自動更新）\"\n    },\n    {\n      \"id\": \"install\",\n      \"level\": \"info\",\n      \"msg\": \"Claude Code 沒有登記這個專案可用的 agent-workflow 安裝（用 --plugin-dir、環境變數或在模版 repo 裡執行時不需要）\",\n      \"fix\": \"要安裝：claude plugin marketplace add <模版 repo>，再 claude plugin install agent-workflow@agentworkflow\"\n    },\n    {\n      \"id\": \"methodology\",\n      \"level\": \"ok\",\n      \"msg\": \"methodology.json 通過 schema 與語意規則\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"guard\",\n      \"level\": \"ok\",\n      \"msg\": \"guard.config.json 讀得懂\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"kb\",\n      \"level\": \"info\",\n      \"msg\": \"知識庫還沒建（_tpm/kb/kb.sqlite 不存在）：agent 查不到「哪個檔的哪幾行」，會直接讀整份文件\",\n      \"fix\": \"在專案根目錄跑 awf kb build（之後文件有改再跑一次，只會重建改過的）；要索引哪些檔在 methodology.json 的 knowledge.sources 設定\"\n    }\n  ]\n}",
+   "text": "[通過] 找得到 git\n[通過] 找得到 gh\n[通過] 找得到 node\n[通過] plugin 版本 1.2.1\n[注意] 專案的工具是 0.5.0，plugin 是 1.2.1：新版 workflow 的回傳，舊的閘門工具可能不認得\n       修法：跑 awf init --target <這個專案> --upgrade（已套用的專案不會自動更新）\n[說明] Claude Code 沒有登記這個專案可用的 agent-workflow 安裝（用 --plugin-dir、環境變數或在模版 repo 裡執行時不需要）\n       修法：要安裝：claude plugin marketplace add <模版 repo>，再 claude plugin install agent-workflow@agentworkflow\n[通過] methodology.json 通過 schema 與語意規則\n[通過] guard.config.json 讀得懂\n[說明] 知識庫還沒建（_tpm/kb/kb.sqlite 不存在）：agent 查不到「哪個檔的哪幾行」，會直接讀整份文件\n       修法：在專案根目錄跑 awf kb build（之後文件有改再跑一次，只會重建改過的）；要索引哪些檔在 methodology.json 的 knowledge.sources 設定\ndoctor：0 個問題、1 個注意",
+   "json": "{\n  \"ok\": true,\n  \"checks\": [\n    {\n      \"id\": \"git\",\n      \"level\": \"ok\",\n      \"msg\": \"找得到 git\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"gh\",\n      \"level\": \"ok\",\n      \"msg\": \"找得到 gh\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"node\",\n      \"level\": \"ok\",\n      \"msg\": \"找得到 node\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"plugin\",\n      \"level\": \"ok\",\n      \"msg\": \"plugin 版本 1.2.1\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"version\",\n      \"level\": \"warn\",\n      \"msg\": \"專案的工具是 0.5.0，plugin 是 1.2.1：新版 workflow 的回傳，舊的閘門工具可能不認得\",\n      \"fix\": \"跑 awf init --target <這個專案> --upgrade（已套用的專案不會自動更新）\"\n    },\n    {\n      \"id\": \"install\",\n      \"level\": \"info\",\n      \"msg\": \"Claude Code 沒有登記這個專案可用的 agent-workflow 安裝（用 --plugin-dir、環境變數或在模版 repo 裡執行時不需要）\",\n      \"fix\": \"要安裝：claude plugin marketplace add <模版 repo>，再 claude plugin install agent-workflow@agentworkflow\"\n    },\n    {\n      \"id\": \"methodology\",\n      \"level\": \"ok\",\n      \"msg\": \"methodology.json 通過 schema 與語意規則\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"guard\",\n      \"level\": \"ok\",\n      \"msg\": \"guard.config.json 讀得懂\",\n      \"fix\": \"\"\n    },\n    {\n      \"id\": \"kb\",\n      \"level\": \"info\",\n      \"msg\": \"知識庫還沒建（_tpm/kb/kb.sqlite 不存在）：agent 查不到「哪個檔的哪幾行」，會直接讀整份文件\",\n      \"fix\": \"在專案根目錄跑 awf kb build（之後文件有改再跑一次，只會重建改過的）；要索引哪些檔在 methodology.json 的 knowledge.sources 設定\"\n    }\n  ]\n}",
    "code": 0
   },
   {
