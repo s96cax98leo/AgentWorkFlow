@@ -3651,7 +3651,7 @@
   {
    "op": "docs_real",
    "rc": 0,
-   "out": "文件一致性檢查通過：agent 22 個（核心 14、舊名 2、網站分析 6），command 4 支，workflow 13 支\n",
+   "out": "文件一致性檢查通過：agent 24 個（核心 14、舊名 2、網站分析 6、資料助手 2），command 4 支，workflow 13 支\n",
    "err": ""
   }
  ]

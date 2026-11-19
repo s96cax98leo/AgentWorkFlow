@@ -4,7 +4,7 @@
 //! 檢查的文件：README.md、CLAUDE.md、plugin/scaffold/.claude/teams/README.md、.claude-plugin/marketplace.json 與
 //! plugin/.claude-plugin/plugin.json 的 description。實際狀態從檔案算：
 //!   - agent：plugin/agents/*.md；核心角色與舊名取自 `awf_core::check_agents` 的 `CORE`、`ALIASES`，
-//!     其餘是網站分析 agent。
+//!     資料助手是 `awf_core::config` 的 `LOOKUP_AGENT`、`REFRESH_AGENT`（1.2.2），其餘是網站分析 agent。
 //!   - command：plugin/commands/*.md；skill：plugin/skills/*/。
 //!   - workflow：plugin/workflow-templates/*.js；SDLC 段落順序取自 `awf_core::save_run::SDLC`。
 //!
@@ -58,6 +58,8 @@ struct Facts {
     /// 舊名 → 併入的角色
     aliases: Vec<(String, String)>,
     site: BTreeSet<String>,
+    /// 資料助手（awf-lookup、awf-refresh）：實際有檔的才算。
+    helpers: BTreeSet<String>,
     commands: BTreeSet<String>,
     skills: BTreeSet<String>,
     workflows: BTreeSet<String>,
@@ -88,7 +90,9 @@ fn facts(root: &Path, consts: &Consts) -> Result<Facts, String> {
     let agents = stems(&root.join("plugin").join("agents"), ".md");
     let core: BTreeSet<String> = consts.core.iter().cloned().collect();
     let (aliases, sdlc) = (consts.aliases.clone(), consts.sdlc.clone());
-    let site: BTreeSet<String> = agents.iter().filter(|a| !core.contains(*a) && !aliases.iter().any(|(k, _)| k == *a)).cloned().collect();
+    let helper_names = [awf_core::config::LOOKUP_AGENT, awf_core::config::REFRESH_AGENT];
+    let helpers: BTreeSet<String> = agents.iter().filter(|a| helper_names.contains(&a.as_str())).cloned().collect();
+    let site: BTreeSet<String> = agents.iter().filter(|a| !core.contains(*a) && !helpers.contains(*a) && !aliases.iter().any(|(k, _)| k == *a)).cloned().collect();
     let skills: BTreeSet<String> = std::fs::read_dir(root.join("plugin").join("skills")).into_iter().flatten().flatten()
         .filter(|e| e.path().join("SKILL.md").exists())
         .filter_map(|e| e.file_name().to_str().map(str::to_string))
@@ -96,7 +100,7 @@ fn facts(root: &Path, consts: &Consts) -> Result<Facts, String> {
     Ok(Facts {
         commands: stems(&root.join("plugin").join("commands"), ".md"),
         workflows: stems(&root.join("plugin").join("workflow-templates"), ".js"),
-        agents, core, aliases, site, skills, sdlc,
+        agents, core, aliases, site, helpers, skills, sdlc,
     })
 }
 
@@ -289,6 +293,23 @@ fn check(root: &Path, consts: &Consts) -> Result<(Facts, Vec<String>), String> {
             errs.push(format!("README.md 少了網站分析 agent `{role}`"));
         }
     }
+    for role in &f.helpers {
+        if !readme.contains(&format!("`{role}`")) {
+            errs.push(format!("README.md 少了資料助手 `{role}`"));
+        }
+    }
+    if !f.helpers.is_empty() {
+        // 文件寫的「N 個資料助手」要和實際一致（N 是緊接在前面的數字）
+        for (key, text) in &d {
+            for (i, _) in text.match_indices("個資料助手") {
+                let rev: String = text[..i].trim_end().chars().rev().take_while(char::is_ascii_digit).collect();
+                let digits: String = rev.chars().rev().collect();
+                if !digits.is_empty() && digits.parse::<usize>().ok() != Some(f.helpers.len()) {
+                    errs.push(format!("{key} 寫資料助手 {digits} 個，實際 {} 個", f.helpers.len()));
+                }
+            }
+        }
+    }
     for w in &f.workflows {
         if !readme.contains(&format!("`{w}`")) {
             errs.push(format!("README.md 沒提到 workflow `{w}`"));
@@ -333,8 +354,10 @@ pub fn run_with(root: &Path, consts: &Consts) -> (i32, String, String) {
         let lines: Vec<String> = errs.iter().map(|e| format!("  - {e}")).collect();
         return (1, format!("文件與實際檔案不一致：\n{}\n", lines.join("\n")), String::new());
     }
+    // 沒有資料助手的 repo（對跑基準的迷你 repo）輸出和原本逐字相同
+    let helpers = if f.helpers.is_empty() { String::new() } else { format!("、資料助手 {}", f.helpers.len()) };
     let out = format!(
-        "文件一致性檢查通過：agent {} 個（核心 {}、舊名 {}、網站分析 {}），command {} 支，workflow {} 支\n",
+        "文件一致性檢查通過：agent {} 個（核心 {}、舊名 {}、網站分析 {}{helpers}），command {} 支，workflow {} 支\n",
         f.agents.len(), f.core.len(), f.aliases.len(), f.site.len(), f.commands.len(), f.workflows.len()
     );
     (0, out, String::new())

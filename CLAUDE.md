@@ -96,9 +96,9 @@ awf scrub [路徑…] [--json]、awf scrub --selftest                 # 專案�
 
 ## 架構
 
-### agent（`plugin/agents/`，agent 檔共 22 個）
+### agent（`plugin/agents/`，agent 檔共 24 個）
 
-14 個核心角色（`awf check-agents` 的 `CORE`）、2 個舊名薄殼（`ALIASES`）、6 個網站分析 agent。
+14 個核心角色（`awf check-agents` 的 `CORE`）、2 個舊名薄殼（`ALIASES`）、6 個網站分析 agent、2 個資料助手。
 
 - **`dev-*`（9 個）**：spec-author、acceptance-tester、implementer、integrator、verifier、design-reviewer、security-reviewer、merge-steward、release-watcher。AI-native SDLC，依序 plan → design → build → sync → test → deliver → merge，各段對應一支 `sdlc-*.js`。
   - plan、design、test、deliver 之間有核准閘門，用 `awf save-run approve` 記錄。`--by policy` 會讀信封的實際內容（`policy_violations`：未通過條目、反作弊發現、blocking 問題、blocker／important 發現、skeptic 推翻、agent 缺件、halted），不只看 status；plan 一律由人核准。重存某段會清掉該段核准，核准要整條閘門鏈都通過。需求取消用 `awf save-run abandon`，之後不能核准也不能推送。
@@ -107,6 +107,7 @@ awf scrub [路徑…] [--json]、awf scrub --selftest                 # 專案�
   - `sdlc-sync`（dev-integrator 執行）：build 之後、test 之前，以及 merge 因 PR 落後或衝突判 hold（`needs_sync`）之後跑。由 `awf sync-branch` 決定策略（profile 的 `conventions.sync`，預設 auto：已跟上不動、沒推送且沒衝突 rebase、已推送且沒衝突 merge base、有衝突走中轉分支）。中轉分支從 base 開（命名依 `conventions.sync.transit_naming`）、把分支 merge 進來解衝突，`check-transit` 擋殘留衝突標記與夾帶改動，workflow 核對回報的衝突檔與預測一致；之後用 `awf publish --supersedes` 開 PR 取代原 PR。head 變了一律重跑 `sdlc-test`，後續各段用 `branch` arg 帶中轉分支名。
 - **`tpm-*`（5 個）**：planner、researcher、reviewer、skeptic、writer。事件處理，對應 `event.js`（會議、決策落地、demo 前檢查、需求變動、上游變動與 profile 自訂的類型共用）與 `event-brief.js`、`event-pr-review.js`、`event-post-merge.js`；`tpm-reviewer` 另有 deliver 模式（`sdlc-deliver` 的四軸審查），`tpm-researcher` 另有上游模式（`event.js` 的 upstream 類型）。
 - **2 個舊名薄殼**：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`、舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。相容一版、下一版移除；`crates/awf-core/src/config.rs` 的 `ROLE_ALIASES` 讓舊名照新角色套規則。新 workflow 一律派新名。
+- **資料助手（1.2.2）**：`awf-lookup`（查詢員）、`awf-refresh`（更新員）。主對話直接派、不進 workflow、**不交信封**（`hooks/envelope.rs` 略過）。守門把它們寫死當成唯讀角色 tpm-reviewer（`config::is_lookup_agent`、`extension_role`；設定檔改不掉），所以 shell 只能讀、`awf` 只能跑唯讀子指令。更新員另外只放行**整條指令逐字相符**的幾個更新指令（`guard_shell.rs` 的 `REFRESH_EXACT`：`awf kb build`、`awf kg build [--full] [--timeout N]`、`awf deliverables index`；都是衍生資料、閘門不讀）。要加項目先確認它不寫閘門資料，並在 `crates/awf/tests/data_helpers.rs` 補該放與該擋。沒有 Edit／Write。
 - **網站分析組（6 個）**：tech-architect、infra-analyst、biz-analyst、perf-auditor、competitor-scout、lead-synthesizer。由 skills 驅動，**不交信封**，也不受角色寫入範圍限制。
 
 ### 交件信封
@@ -324,6 +325,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - **CI 檔（1.0）**：模版角色不能寫任何 repo 的 `.github/workflows/`（`guard_paths::ci_workflow_path`、`guard_shell` 的 `shell_writes_ci`／`CI_TARGET`；Edit／Write 與 shell 寫入都擋，讀可以）。CI 檔由人或主 session 改（`awf ci render --write`）。這是事前擋；`awf merge-gate` 對 diff 動到 `.github/` 一律 escalate 是事後的另一層，兩邊不衝突。主 session 與使用者自己的 agent 不受影響。
 - **team agent 寫不到的位置（1.0 第二次審查補的）**：`<runs_dir>/program.json`（`guard::PROGRAM_FILE`）、`~/.claude/projects/` 底下（記憶與對話紀錄；讀可以）、作用目錄在 vault 裡的寫入與 `sqlite3 <graph.db>`、整個目錄搬進 `.github`／`.claude`（`shell_moves_tree`）。同一條指令裡的簡單賦值會展開一次、多跑一次規則（`expand_simple_vars`：只會更嚴，16KB 以內）。`hooks/awf_cli.rs` 放行的唯讀子指令另外過 `flag_deny`：不能帶寫入旗標（`WRITE_FLAGS`）、不能把 git 選項塞進參數（`GIT_INJECT`），`awf script assemble`、`awf checklist check --write` 擋（不帶 `--write` 的 check 照舊放行：它執行檔裡的驗證指令，列在 SECURITY.md 的已知限制）；設定或拿掉 `CLAUDE_PROJECT_DIR` 擋。案例在 `crates/awf/tests/review_guard.rs`。
 - **進對話的文字（`hooks/safe.rs`）**：`text`（一行、去控制字元、反引號、角括號、截短）、`odd`、`plain_run_name`、`instruction_like`（祈使句式、授權宣稱、shell 指令樣式；寧可多濾）、`sh_quote`。`kg::format_answer`、vault 匯出、`awf program` 的 title、SessionStart 摘要與 prompt-context 都用它；hook 路徑過不了的整筆不放，決策只列筆數與位置，run 名稱不符合 `^[A-Za-z0-9._-]{1,64}$` 的列「（名稱略）」。新的會進對話的欄位一律先過這一層。
+- **PowerShell 算出來的指令（1.2.2）**：team agent 的 `& (…)`、`. (…)`、`Invoke-Expression`／`iex` 接運算式或變數一律擋（`guard_shell.rs` 的 `PS_CALL_EXPR`）：指令名是算出來的，比對指令名的規則都看不到（原本 `& (echo git) push origin main` 會放行）。主 session 與使用者自己的 agent 不受影響。
 - **`guard-shell` 擋什麼**：同時處理 Bash 與 PowerShell 工具。擋推送、寫上游、推受保護分支、越權寫入，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - **steward 合併什麼時候放行**：由 `crates/awf-core/src/hooks/guard_shell.rs` 的 `merge_refusal` 判斷，以下全部成立才放行：
   - `auto_merge` 已啟用。
@@ -347,6 +349,7 @@ Workflow 腳本不能 import 檔案，所以 workflow 裡只寫標記：`/*@sche
 - 其他入口是 skill，用 `/agent-workflow:<skill>` 叫用（沒有同名指令時可省略前綴）。不要再新增和 skill 同名的 command。
   - `/agent-workflow:init-workflow`：先跑 `awf init --detect`，逐主題在對話中確認使用者的做法，再跑 `awf init --answers` 並唸出對照表（訪談在 `crates/awf-core/src/init/detect.rs`、`interview.rs`；答案存 `.claude/teams/init-answers.json`，`--reconfigure` 只改有變的設定；`--reconfigure <主題>` 只重問一個主題，可以單獨問的主題是 `interview::single_topics()`）。
   - `/agent-workflow:settings`、`/agent-workflow:settings-missing`（1.2.1）：已套用的專案全部重問一輪（`awf init --reconfigure --answers`）、或只補還沒設定的主題（`awf init --detect --unset --json` → `--reconfigure --unset --answers`）。「還沒設定」的判斷只有一處：`init/interview.rs` 的 `unset_topics`（答案檔沒有那個主題的鍵；交付文件另看 `deliverables.json`）；`--unset` 配答案檔時不收已設定主題的鍵。`awf init --upgrade` 結尾用同一個函式提示。測試在 `crates/awf/tests/settings_unset_e2e.rs`。
+  - `/agent-workflow:awf`（1.2.2）：`awf` 全部子指令的總入口（`plugin/skills/awf/SKILL.md` 的對照表：想做的事 → 子指令、會不會寫入、誰決定；常用寫法在 `reference/指令.md`）。確切參數一律指向 `awf <子指令> --help`；`crates/awf/src/main.rs` 的 `sub_help` 讓原本沒有說明的子指令（`build`、`doctor`、`start`、`next`…）帶 `--help` 時只印說明、不執行。**新增或改名子指令時，`main.rs` 的 `usage()`、這份 skill 的對照表與 `reference/指令.md` 一起改**（`crates/awf/tests/skill_awf_cli.rs` 會核對涵蓋率與「--help 不寫檔」）。總入口做成 skill 而不是 agent：閘門類指令要人決定，而且模版的 team agent 被守門擋著不能跑會寫入的 `awf`；查資料與更新衍生資料另有兩個資料助手 agent（見〈agent〉）。
   - `/agent-workflow:add-agent`：把使用者自己的 agent 加進 SDLC。
   - `/agent-workflow:correct`：把一則教訓變成最高可行層級的強制機制，並在 rules.md〈專案規則〉維護「規則 ↔ 強制方式」對照表。
   - `/agent-workflow:deliverables`：薄殼，在對話中走交付設定（提案 → 人確認 → `--write`）與盤點（`status`、`check`）。

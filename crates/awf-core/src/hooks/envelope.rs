@@ -55,7 +55,8 @@ pub fn run(data: &Value, cfg: &Config, ws: &str) -> R<()> {
     let sch = Schemas::new(teams);
     let event = data.get("hook_event_name").and_then(Value::as_str).unwrap_or("");
     let agent = super::guard::str_or_empty(data, "agent_type")?;
-    let team = config::is_team_agent(&agent, cfg); // 完整 agent_type；使用者自己的 agent 不檢查信封
+    // 完整 agent_type；使用者自己的 agent 不檢查信封。內建的查詢員（awf-lookup）只回整理好的文字，也不交信封
+    let team = config::is_team_agent(&agent, cfg) && !config::is_lookup_agent(&agent, cfg);
 
     if event == "PreToolUse" {
         let tool = data.get("tool_name").and_then(Value::as_str).unwrap_or("");

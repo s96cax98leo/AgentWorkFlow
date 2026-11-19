@@ -638,8 +638,34 @@ pub fn namespace(agent: &str) -> String {
     }
 }
 
+/// 內建的資料助手（1.2.2）：plugin 的 `awf-lookup`（查資料、整理後回報）與 `awf-refresh`（把衍生資料更新到最新）。都不交信封。
+/// 守門把它們當成 [`LOOKUP_RULES_AS`] 那個唯讀角色：shell 只能讀、`awf` 只能跑唯讀子指令。這個對應寫死，設定檔改不掉（只會更嚴）。
+/// `awf-refresh` 另外可以跑逐字相符的幾個更新指令（`hooks/guard_shell.rs` 的 `REFRESH_EXACT`）。
+pub const LOOKUP_AGENT: &str = "awf-lookup";
+pub const REFRESH_AGENT: &str = "awf-refresh";
+const LOOKUP_RULES_AS: &str = "tpm-reviewer";
+/// 是不是內建的更新員（命名空間的規則同 [`is_lookup_agent`]）。
+pub fn is_refresh_agent(agent: &str, cfg: &Config) -> bool {
+    role_name(agent) == REFRESH_AGENT && is_lookup_agent(agent, cfg)
+}
+
+/// 是不是內建的資料助手（查詢員或更新員）：帶模版的命名空間，或沒有命名空間的同名 agent（和 [`RESERVED_ROLES`] 的同名規則一致）。
+pub fn is_lookup_agent(agent: &str, cfg: &Config) -> bool {
+    if role_name(agent) != LOOKUP_AGENT && role_name(agent) != REFRESH_AGENT {
+        return false;
+    }
+    let ns = namespace(agent);
+    let default_ns = [DEFAULT_NS.to_string()];
+    let team_ns: &[String] = if cfg.team_agent_namespaces.is_empty() { &default_ns } else { &cfg.team_agent_namespaces };
+    ns.is_empty() || team_ns.contains(&ns)
+}
+
 /// 登記在 extension_agents 的擴充 agent 回傳要套用的模版角色名；沒登記回空字串。比對完整 agent_type。
+/// 內建的查詢員（[`is_lookup_agent`]）一律套唯讀角色，不看設定檔。
 pub fn extension_role(agent: &str, cfg: &Config) -> &'static str {
+    if is_lookup_agent(agent, cfg) {
+        return LOOKUP_RULES_AS;
+    }
     let Some(ext) = cfg.extension_agents.as_object() else { return "" };
     if agent.is_empty() {
         return "";

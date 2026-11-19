@@ -30,6 +30,12 @@ re!(GH_WRITE, concat!(
     r"repo\s+(?:edit|delete|rename|archive|sync|create|fork)|",
     r"workflow\s+(?:run|enable|disable)|run\s+(?:rerun|cancel|delete)|",
     r"label\s+(?:create|edit|delete)|secret\s+(?:set|delete)|variable\s+(?:set|delete))\b"));
+// awf-refresh 可以跑的更新指令：整條指令要逐字相符（一個空白分隔；沒有引號、變數、管線、串接、換行、路徑），裡面藏不了別的東西。
+// 都是「從專案現有的檔重新產生衍生資料」：知識庫索引、知識圖、交付文件的總目錄。閘門不讀這些。要加項目先確認它不寫閘門資料。
+re!(REFRESH_EXACT, r"\Aawf (?:kb build|kg build(?: --full)?(?: --timeout [0-9]{1,4})?|deliverables index)\z");
+// PowerShell 的呼叫運算子（& 或 .）後面接運算式：要執行的指令名是算出來的（`& (echo git) push origin main`），
+// 比對指令名的規則全部看不到。Invoke-Expression／iex 接運算式或變數（內容是算出來的）同理。team agent 一律擋（1.2.2 補的；Bash 的 `$(echo git) push` 本來就會擋）。
+re!(PS_CALL_EXPR, r"(?:^|[;|{(\r\n]|&&|\|\|)\s*[&.]\s*\$?\(|(?i)\b(?:invoke-expression|iex)\s+[($]");
 re!(GH_BYPASS, r"\bgh\s+(?:alias\s+(?:set|import)|extension\s+(?:install|upgrade|exec|create)|ext\s+(?:install|upgrade|exec|create))\b");
 re!(GH_ACCOUNT_WRITE, concat!(
     r"\bgh\s+(?:alias\s+(?:delete)|extension\s+(?:remove)|ssh-key\s+(?:add|delete)|gpg-key\s+(?:add|delete)|",
@@ -304,7 +310,7 @@ re!(REFS_HEADS, r"^refs/heads/");
 
 /// 這個模組所有固定的樣式（測試用：確認都編得過）。
 pub fn all_patterns() -> Vec<&'static Re> {
-    vec![&GH_WRITE, &GH_BYPASS, &GH_ACCOUNT_WRITE, &GH_INNER_REPO, &GH_API_WRITE, &DESTRUCTIVE, &GH_PR_MERGE, &GH_PR_REVIEW, &API_CLIENT,
+    vec![&REFRESH_EXACT, &PS_CALL_EXPR, &GH_WRITE, &GH_BYPASS, &GH_ACCOUNT_WRITE, &GH_INNER_REPO, &GH_API_WRITE, &DESTRUCTIVE, &GH_PR_MERGE, &GH_PR_REVIEW, &API_CLIENT,
          &MERGE_TARGET, &REVIEW_TARGET, &APPROVE_WORD, &APPROVE_FLAG, &APPROVE_INPUT, &GITHUB_API_HOST, &WEB_CLIENT, &CURL_WRITE, &PS_WEB_WRITE,
          &HTTPIE_WRITE, &INTERP, &SHA40, &PR_URL, &SUBST, &SHELL_WRITE, &STATE_FRAGMENT, &WRITE_API, &CONTEXT_FRAGMENT, &RUN_INDEX_FRAGMENT, &KG_TARGET,
          &NULL_REDIR, &HARMLESS, &QUOTED, &QUOTE_CHARS, &RECORD_REDIRECT, &RECORD_WRITE_CMD, &INTERP_WRITE, &ENV_ASSIGN, &FREEZE_DESTROY,
@@ -1647,8 +1653,16 @@ impl Guard {
         if cmd.is_empty() {
             return Ok(());
         }
+        // 內建的更新員（awf-refresh）：整條指令和固定的幾個更新指令逐字相符才放行（其餘照唯讀角色的規則往下判）。
+        // 逐字相符＝沒有引號、變數、管線、串接、路徑，所以不用再跑後面的規則；多一個空白也不算相符。
+        if let Some(Value::String(a)) = data.get("agent_type") {
+            if config::is_refresh_agent(a, &self.cfg) && REFRESH_EXACT.is_match(&cmd) {
+                return Ok(());
+            }
+        }
         let tool = data.get("tool_name").and_then(Value::as_str).unwrap_or("");
         let is_ps = tool == "PowerShell";
+        let raw_cmd = cmd.clone();
         let vars_ok = data.get(VARS_CHECKED).is_some();
         let segs: Vec<String> = if is_ps {
             let s = ps_segments(&cmd);
@@ -1664,6 +1678,9 @@ impl Guard {
         let raw_agent = str_or_empty(data, "agent_type")?;
         let agent = config::role_name(&raw_agent).to_string();
         let team = config::is_team_agent(&raw_agent, cfg);
+        if team && is_ps && (PS_CALL_EXPR.is_match(&raw_cmd) || PS_CALL_EXPR.is_match(&cmd)) {
+            return Err(self.block(&format!("{agent} 不能執行算出來的指令（& (…)、. (…)、Invoke-Expression 接運算式或變數）：守門看不出實際要執行什麼。把指令直接寫出來")));
+        }
         let configured = cfg.configured;
         let git_rules = team || (configured && cfg.main_session_git_rules);
         let gh_rules = team || (configured && cfg.main_session_github_rules);

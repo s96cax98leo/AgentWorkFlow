@@ -348,7 +348,9 @@ plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。�
 | | `tpm-writer` | 把定稿的素材寫成文件，寫完跑 `awf check-rules` |
 | 網站分析 | `tech-architect`、`infra-analyst`、`biz-analyst`、`perf-auditor`、`competitor-scout`、`lead-synthesizer` | 分別負責技術架構、基礎設施、商業模式、效能、競品，最後由 lead-synthesizer 交叉驗證、合成總報告 |
 
-上面是 14 個核心角色（dev 9 個、tpm 5 個）與 6 個網站分析 agent。另有 2 個舊名薄殼，相容一版、下一版移除：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`，舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。還在用舊名的專案請跑 `awf init --upgrade`。
+| 資料助手 | `awf-lookup`、`awf-refresh` | 查詢員：用 `awf` 的唯讀子指令與讀檔把資料查出來、整理後回報（模式：診斷、閘門摘要、成本、交付盤點、設定體檢）。更新員：重建知識庫索引、更新知識圖、重寫交付文件總目錄。都只讀專案的檔、不交信封，由主對話直接派 |
+
+上面是 14 個核心角色（dev 9 個、tpm 5 個）、6 個網站分析 agent 與 2 個資料助手。另有 2 個舊名薄殼，相容一版、下一版移除：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`，舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。還在用舊名的專案請跑 `awf init --upgrade`。
 
 ## 更新與釘版本
 
@@ -459,8 +461,8 @@ AgentWorkFlow/
 ├── .claude-plugin/marketplace.json   # marketplace（名稱 agentworkflow）
 ├── .github/                          # 本 repo 的 CI（ci.yml）與 Dependabot 設定
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）；從 marketplace 安裝時只有這個目錄，它也是 awf init 的模版
-│   ├── agents/                       # agent 共 22 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent
-│   ├── skills/                       # tpm-team、init-workflow、settings、settings-missing、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
+│   ├── agents/                       # agent 共 24 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent、2 個資料助手
+│   ├── skills/                       # tpm-team、awf、init-workflow、settings、settings-missing、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge，加上自訂段用步驟宣告時跑的 flow-steps）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
 │   │   ├── snippets/                 # 多支 workflow 共用的片段（awf build 內嵌進範本）

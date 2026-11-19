@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-19
+
+### 新增
+
+- **`/agent-workflow:awf`**：`awf` 全部子指令的總入口 skill。一張對照表（想做的事 → 子指令、會不會寫入、誰決定）加常用寫法（`reference/指令.md`），讓 Claude Code 需要用 `awf` 時知道該下哪個子指令、哪些要先問人。確切的參數指向工具自己的 `--help`。
+- 做成 skill、沒有做成 agent：核准、推送、結案這些指令要人決定，交給一個自己跑的 agent 等於跳過人；模版的 team agent 也被守門擋著，只能跑唯讀的查詢。
+
+- **兩個資料助手 agent**，由主對話直接派，把耗 context 的查詢與重建留在它們自己的 context：
+  - `awf-lookup`（查詢員）：用 `awf` 的唯讀子指令（`kb query`、`kg locate／trace／impact`、`save-run status`、`deliverables status`、`cost`、`spec status`…）與讀檔把資料查出來、整理成附出處的結論。五種模式：診斷（run 卡在哪、下一步指令）、閘門摘要（核准前一頁重點，只整理、不建議核准與否）、成本、交付盤點、設定體檢；照平常的問法問，Claude Code 會自己派。
+  - `awf-refresh`（更新員）：把衍生資料更新到最新，只能跑 `awf kb build`、`awf kg build [--full] [--timeout N]`、`awf deliverables index`，而且整條指令要逐字相符（接管線、串指令、加路徑都不放行）。
+  - 兩個都沒有 Edit／Write、不交信封；守門把它們固定當成唯讀角色，設定檔改不掉。核准、推送、結案、跑 workflow 都不能做。
+
+### 安全
+
+- **PowerShell 用算出來的指令名可以繞過守門**：模版角色下 `& (echo git) push origin main`、`& (echo gh) pr merge 3`、`& (echo awf) approve …` 原本會放行（Bash 的對應寫法本來就擋）。現在 `& (…)`、`. (…)`、`Invoke-Expression`／`iex` 接運算式或變數一律擋。真正的信任邊界仍在伺服器端（見 `SECURITY.md`）。
+
+### 行為改變
+
+- 模版角色在 PowerShell 用 `& (…)`、`. (…)`、`iex $變數` 會被擋（見上）；把指令直接寫出來即可。
+- **每個子指令的 `--help` 都只印說明、不執行。** 原本 `awf build --help` 會真的去內嵌、`awf doctor --help` 會真的跑檢查、`awf check-envelope --help`／`check-rules --help` 把 `--help` 當成檔名、`awf start`／`next`／`done`／`approve`／`render`／`handoff`／`hook --help` 回錯誤；現在都印用法、exit 0（只有「子指令後面只接一個 `--help` 或 `-h`」時）。
+
 ## [1.2.1] - 2026-11-19
 
 ### 新增
