@@ -1,5 +1,7 @@
 # AgentWorkFlow
 
+**繁體中文** | [English](README.en.md)
+
 AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以套用到任何專案。它只規定**工作流程**：怎麼拆工、怎麼平行處理、在哪裡停下來讓人核准、用什麼格式交件、誰能合併 PR。開發規範（TDD、DDD、spec 驅動……）和慣例（code style、commit 格式、分支命名、PR 大小、文件格式）都由使用者自己定義。
 
 這份 README 先講**做法**（為什麼這樣設計、一個需求怎麼走完、誰把關），再講安裝與使用。
@@ -8,7 +10,7 @@ AgentWorkFlow 是一套 Claude Code 的 agent team 工作流程模版，可以�
 - **其他事件**（簡報、上游變動、會議、PR 審查、需求變動、決策落地、Demo 前檢查、合併後監看）各自平行處理後產出文件。
 - **網站分析**：從技術架構、基礎設施、商業模式、效能、競品五個面向平行分析，再合成一份報告。
 
-所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具是單一執行檔 `awf`（Rust，隨 plugin 提供），在 macOS、Linux、Windows（PowerShell）上都能執行，不需要 Python。目前版本 **0.6.0**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
+所有文件、註解與 agent 提示都用繁體中文。agent 的輸出語言可以設定（`{{OUTPUT_LANGUAGE}}`，預設繁體中文）。工具是單一執行檔 `awf`（Rust，隨 plugin 提供），支援 macOS、Linux、Windows（PowerShell），不需要 Python（目前內附的執行檔只有 macOS arm64，見〈需求〉）。目前版本 **1.2.2**，變更見 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 做法
 
@@ -102,6 +104,9 @@ workflow 自己也做確定性核對：子計劃範圍不能重疊、彙整後�
 | 決策記憶 | 人在閘門上答過的問題記下來，之後的資料包帶上相關的，agent 不再重問 | `awf save-run approve --answer`、`decide` |
 | 調研重用 | plan 重跑時，來源檔沒變的調研角度直接沿用；閘門會重新核對來源的雜湊 | `awf pack --reuse-from`、`--keep-research` |
 | 派工數上限 | 一支 workflow 最多派幾個 agent，到上限就停下交人，不靜默截斷 | `limits.max_agents` |
+| 輪數預算 | agent 的工具呼叫到門檻（預設 50）時提醒先把發現寫下來並交件；預設只提醒，`enforce` 才擋 | `limits.turns` |
+| 小節資料包 | test、deliver、design 修正輪也只給對應的小節與行段，不用整份讀 spec 與 design | `awf pack`（自動）；`--no-slices` 關閉 |
+| 知識圖 | 有建圖時，資料包帶上需求對應的檔案、符號與影響範圍；沒建圖時流程不變 | `awf kg build`；`knowledge` |
 
 唯一碰到輸出的是**交件信封**：summary 不超過 400 字、evidence 最多 12 則。它只管 agent 交回給 workflow 的那份 JSON；細節照樣完整寫在檔案裡，信封只放路徑。
 
@@ -135,7 +140,7 @@ awf cost --project . --run-dir <run 目錄>
 ## 需求
 
 - Claude Code
-- 工具是 plugin 內附的執行檔 `awf`（macOS、Linux、Windows 的 x64 與 arm64），不用另外安裝直譯器或套件；其他平台或想自己建置時需要 Rust 工具鏈，見下面〈自己建置〉與 [`docs/建置與發佈.md`](docs/建置與發佈.md)。
+- 工具是 plugin 內附的執行檔 `awf`，不用另外安裝直譯器或套件。**目前 plugin 內附的只有 macOS arm64（Apple Silicon）的執行檔**；程式本身支援 macOS、Linux、Windows 的 x64 與 arm64，其他平台的執行檔還沒發佈，要先自己建置（需要 Rust 工具鏈），見下面〈自己建置〉與 [`docs/建置與發佈.md`](docs/建置與發佈.md)。
 - git；要開 PR 或合併的話另外需要 `gh`。
 - Node.js 18 以上，只有乾跑驗證 workflow 時才需要。
 
@@ -276,6 +281,19 @@ target/release/awf init --target ~/work/my-project
 
 **加入自己的段**：在 profile 的 `flow` 宣告自訂段（例如 test 之後的客戶驗收），recipe 點名了才會跑，並進整條閘門鏈。內容可以是自己寫的腳本（`run: "script"`），或用資料宣告一串步驟（`run: "steps"`：fanout、challenge、write、loop、check，由 plugin 的 `flow-steps` 範本執行；`check` 與 loop 的結束指令由 `awf` 在存檔時自己執行）。用步驟宣告的段可以設成政策核准，其餘一律等人核准。事件類型也能用同一套步驟，或用 `extends` 只改內建類型的一部分。見 [`docs/自訂與擴充.md`](docs/自訂與擴充.md)〈自訂段〉與 [`docs/事件處理.md`](docs/事件處理.md)。
 
+**人的決定怎麼接回流程**（1.2）：
+- 某一段只差人回答問題時，不用重跑：`awf approve --run <run> <段> --by <人> --answer "#N=<答覆>"`，每一題阻擋性問題都要答；這樣通過的段之後不能改用政策核准。
+- 答覆會改變 intent 時，用 `awf next --revise` 跑 plan 的修正輪：只重派 intent 作者與 skeptic，不重做調研。
+- 手改產生的腳本或結果檔、手動給結果（`awf done --output`）、用自訂腳本跑的段，都會標成非標準結果，只能由人核准。
+- **照建議先做**（預設關閉，`decisions.auto_accept`）：低風險的待決問題先照 agent 的建議做並記成未確認；人確認之前，政策核准、推送、合併都會拒絕。
+- **本機合併**（`conventions.merge.mode: local`）：不走 PR 的專案由人自己合併，再用 `awf next --confirm-merge --by <人>` 讓工具核對合併 commit 等於審過的內容後結案。agent 的合併仍然只走 PR 與 merge gate。
+
+**可調整的其他項目**（1.2，都寫在 profile）：
+- **profile 繼承**：`extends` 指到內建 profile 或 `.claude/teams/` 底下的另一份，只寫要改的部分。
+- **派工單語言**：`prompt_lang`（`zh-TW` 或 `en`）換共同前綴的語言，`prompt_overrides` 可以逐句改寫。內建範本的派工單本文與閘門核對的固定標題目前仍是中文。
+- **輪數與讀取預算**：`limits.turns` 在 agent 跑太多輪時提醒先交件（預設只提醒、不擋）；`limits.mode` 開啟讀取預算（預設不啟用）。
+- **交付範本**：交付文件可以指定你自己的 Markdown 範本，章節照範本產生，見 [`docs/交付文件.md`](docs/交付文件.md)〈用你自己的範本〉。
+
 **守門 hooks**：入口只有一個，`awf hook`。
 - `guard-shell` 同時涵蓋 Bash 與 PowerShell 工具，擋推送、寫上游、推受保護分支，以及所有合併與核准路徑：`gh pr merge`、`--approve`、`gh api`、GraphQL、curl、Invoke-RestMethod。
 - `guard-paths` 擋越權寫入，以及用 Read、Grep 讀機敏檔（`.env`、金鑰、憑證）。只能寫紀錄的角色只准寫 runs_dir 裡的 `.md`；所有模版 agent 都不能改 `.claude/teams/`、run.json 與執行紀錄索引。
@@ -306,6 +324,11 @@ target/release/awf init --target ~/work/my-project
 | `/agent-workflow:cost`、花了多少 token | `cost` skill | run 目錄（可省略） |
 | `/agent-workflow:kb`、文件裡哪裡有寫 | `kb` skill | 要查的問題 |
 | `/agent-workflow:doctor`、檢查安裝 | `doctor` skill | — |
+| `/agent-workflow:awf`、這個要下哪個 `awf` 指令 | `awf` skill（全部子指令的對照表：會不會寫入、誰決定） | 想做的事或子指令名 |
+| `/agent-workflow:init-workflow`、套用到這個專案 | `init-workflow` skill | — |
+| `/agent-workflow:settings`、`/agent-workflow:settings-missing`、改設定、補沒設定的 | `settings`、`settings-missing` skill | — |
+| 這個 run 卡在哪、核准前幫我整理重點、錢花在哪 | 查詢員 `awf-lookup`（唯讀 agent，主對話直接派） | — |
+| 重建索引、更新知識圖 | 更新員 `awf-refresh`（只能跑固定的幾個更新指令） | — |
 | `/agent-workflow:deliverables`、要交哪些文件、結案前盤點 | `deliverables` skill | configure、status、check 或要做的事 |
 | 比較方案、A 還是 B | `team-debate` skill | — |
 | 分析某個網站 | `site-report` skill | 網址 |
@@ -347,7 +370,6 @@ plugin 提供 4 支 command：`/sdlc`、`/event`、`/brief`、`/demo-check`。�
 | | `tpm-skeptic` | 專門反駁別人的發現，不確定時判反駁成立 |
 | | `tpm-writer` | 把定稿的素材寫成文件，寫完跑 `awf check-rules` |
 | 網站分析 | `tech-architect`、`infra-analyst`、`biz-analyst`、`perf-auditor`、`competitor-scout`、`lead-synthesizer` | 分別負責技術架構、基礎設施、商業模式、效能、競品，最後由 lead-synthesizer 交叉驗證、合成總報告 |
-
 | 資料助手 | `awf-lookup`、`awf-refresh` | 查詢員：用 `awf` 的唯讀子指令與讀檔把資料查出來、整理後回報（模式：診斷、閘門摘要、成本、交付盤點、設定體檢）。更新員：重建知識庫索引、更新知識圖、重寫交付文件總目錄。都只讀專案的檔、不交信封，由主對話直接派 |
 
 上面是 14 個核心角色（dev 9 個、tpm 5 個）、6 個網站分析 agent 與 2 個資料助手。另有 2 個舊名薄殼，相容一版、下一版移除：舊名 `dev-pr-reviewer` 已併入 `tpm-reviewer`，舊名 `tpm-upstream-analyst` 已併入 `tpm-researcher`。還在用舊名的專案請跑 `awf init --upgrade`。
@@ -368,6 +390,8 @@ claude plugin update agent-workflow@agentworkflow   # 或在 Claude Code 的 /pl
 # 先照上面更新 plugin（scaffold 在 plugin 裡，plugin 更新後才有新版模版）
 awf init --target . --upgrade [--adopt-new-fields]
 ```
+
+升級不會洗掉你的設定；結尾會列出還沒設定的主題，用 `/agent-workflow:settings-missing` 補。升級後跑一次 `awf doctor`。
 
 從 0.x 升到 1.0 的完整步驟見 [`docs/升級到1.0.md`](docs/升級到1.0.md)。
 
@@ -395,7 +419,11 @@ awf init --target . --upgrade [--adopt-new-fields]
 awf init --target <專案> [--config workflow.config] [--answers <答案.json>] [--defaults]
                 [--hooks plugin|project] [--with-mcp] [--with-merge-gate]
                 [--upgrade] [--adopt-new-fields] [--force] [--overwrite-user-files]
+awf init --detect --target <專案> [--json] [--unset]              # 只偵測、只印
+awf init --target <專案> --reconfigure [<主題>] [--unset] [--answers <檔>]   # 改已套用專案的設定；--unset 只處理還沒設定的主題
 ```
+
+已套用的專案要改設定，在 Claude Code 裡用 `/agent-workflow:settings`（全部重問一輪）或 `/agent-workflow:settings-missing`（只問還沒設定的）最方便。
 
 | 選項 | 說明 |
 |---|---|
@@ -462,7 +490,7 @@ AgentWorkFlow/
 ├── .github/                          # 本 repo 的 CI（ci.yml）與 Dependabot 設定
 ├── plugin/                           # plugin 本體（名稱 agent-workflow）；從 marketplace 安裝時只有這個目錄，它也是 awf init 的模版
 │   ├── agents/                       # agent 共 24 個：14 個核心角色、2 個舊名薄殼、6 個網站分析 agent、2 個資料助手
-│   ├── skills/                       # tpm-team、awf、init-workflow、settings、settings-missing、add-agent、correct、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
+│   ├── skills/                       # tpm-team、awf、init-workflow、settings、settings-missing、add-agent、correct、deliverables、status、cost、kb、doctor、team-debate、site-report 系列、design-system-template
 │   ├── commands/                     # 4 支 command：/sdlc、/event、/brief、/demo-check
 │   ├── workflow-templates/           # workflow 範本（sdlc 8 支、事件 4 支：共用的 event 與 event-brief、event-pr-review、event-post-merge，加上自訂段用步驟宣告時跑的 flow-steps）與 legacy.json（舊副本指紋）；awf next 逐段產生腳本
 │   │   ├── snippets/                 # 多支 workflow 共用的片段（awf build 內嵌進範本）
@@ -476,7 +504,7 @@ AgentWorkFlow/
 │   ├── workflow.config.example       # 佔位符的值
 │   ├── legacy-tools.json             # 0.x 複製進專案的工具檔指紋（awf init --upgrade 用來移除沒改過的舊副本）
 │   ├── bin/                          # 執行檔 awf（啟動器＋各平台的執行檔）
-│   └── hooks/                        # hooks.json：註冊 awf hook（guard-shell、guard-paths、envelope、session-start）
+│   └── hooks/                        # hooks.json：註冊 awf hook（guard-shell、guard-paths、envelope、session-start、mark-dirty、prompt-context）
 ├── crates/                           # awf 的原始碼（Rust）：awf-core（全部邏輯）、awf（執行檔入口）、xtask（建置與檢查）
 ├── CHANGELOG.md、SECURITY.md、LICENSE
 ├── docs/                             # 說明文件
@@ -528,7 +556,7 @@ cargo run -q -p awf -- <子指令> --selftest   # 單一子指令的 selftest，
 
 其他 `cargo xtask` 子指令（golden、check-kernel、check-patterns、check-launchers、gen-legacy、bench、dist、checksums）見 `cargo xtask --help`。回歸基準怎麼更新見 [`tests/parity/README.md`](tests/parity/README.md)。
 
-- **CI**（`.github/workflows/ci.yml`）：每個 push 與 PR 都在 ubuntu-latest、macos-latest、windows-latest 跑 `cargo build`、`cargo test --workspace`、`cargo xtask check-all`。CI 用到的 action 都釘 commit SHA。
+- **CI**（`.github/workflows/ci.yml`）：每個 push 與 PR 都在 macos-latest 跑 `cargo build`、`cargo test --workspace`、`cargo xtask check-all`（目前只有這一個平台在 CI 驗證；五個平台的執行檔由另一個手動觸發的 `dist` 工作建置）。CI 用到的 action 都釘 commit SHA。
 - **Dependabot**（`.github/dependabot.yml`）：每週檢查 CI 用到的 GitHub Actions 有沒有新版，有就自動開 PR，同時更新 SHA 與版本註解。這些 PR 由 GitHub 的 `dependabot[bot]` 開，是這個 repo 自己的設定，不是外人提交的；CI 綠了、讀過上游 release notes 再決定要不要合併。
 - **去客戶化掃描**讀兩份清單：`tests/scrub_terms.txt`（公開的通用規則：本機路徑、憑證格式、個人信箱）與 `tests/scrub_terms.local.txt`（要擋的真實名稱，不進版控）。範例一律用虛構的「示範客戶 ACME」。
 
